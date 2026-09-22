@@ -33,3 +33,22 @@ class AuditStatus(StrEnum):
     REJECTED = "rejected"
     AUTO_APPROVED = "auto_approved"
     AUTO_REJECTED = "auto_rejected"
+
+
+class JoinRequestStatus(StrEnum):
+    """入群申请状态。"""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
+class PermissionLevel(StrEnum):
+    """群管理权限级别。"""
+
+    GUEST = "guest"
+    MEMBER = "member"
+    MODERATOR = "moderator"
+    GROUP_ADMIN = "group_admin"
+    SUPER_ADMIN = "super_admin"
