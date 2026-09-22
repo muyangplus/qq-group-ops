@@ -20,6 +20,7 @@ QQ Group Ops 官方接入层
   ├── adapters/fakeEventGateway.ts 测试网关
   ├── adapters/webSocketGateway.ts WebSocket 网关骨架
   ├── adapters/eventMapper.ts      事件映射器
+  ├── adapters/standardWebSocketFactory.ts 标准 WebSocket 工厂
   └── gatewayRunner.ts             网关到事件路由的绑定
       │
       ▼
@@ -39,6 +40,8 @@ TypeScript 核心服务
   ├── adapters/fetchTransport.ts 原生 fetch 传输
   ├── adapters/fakeQqOfficial.ts 官方 API 测试替身
   ├── db/queryable.ts            数据库查询抽象
+  ├── db/pgQueryable.ts          PostgreSQL 连接池适配
+  ├── db/migrate.ts              数据库迁移入口
   ├── db/schema.ts               PostgreSQL schema
   ├── db/auditRepository.ts      审计仓储
   ├── db/joinRequestRepository.ts 入群申请仓储
