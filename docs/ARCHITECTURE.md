@@ -27,6 +27,7 @@ NoneBot2 运行时
       ├── services/moderation.py     规则引擎
       ├── services/message_guard.py  消息审核执行
       ├── services/join_audit.py     入群审核状态机
+      ├── services/join_audit_sync.py 官方申请同步
       ├── services/admin_commands.py 管理员命令
       ├── services/group_config.py   多群配置
       ├── services/activity.py       活动报名
