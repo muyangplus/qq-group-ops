@@ -6,9 +6,9 @@
 
 - 当前阶段：**Node.js / TypeScript 重写完成，Phase 0 待实测**
 - 技术路线：**仅使用 QQ 官方开放平台 API**，不使用 OneBot、NapCat、Lagrange 等个人号协议端。
-- 已实现：配置、领域模型、规则引擎、审计日志、权限模型、多群配置、入群审核状态机、入群申请同步、消息审核执行、事件路由、运行时装配、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
+- 已实现：配置、领域模型、规则引擎、审计日志、权限模型、多群配置、入群审核状态机、入群申请同步、消息审核执行、事件路由、事件网关抽象、运行时装配、Phase 0 检查核心、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
 - 待实现：真实官方 API 请求体与 WebSocket/Webhook 网关、Web 管理后台、内容安全与 AI 辅助。
-- 测试：Vitest，共 72 个测试。
+- 测试：Vitest，共 77 个测试。
 
 ## 技术栈
 
@@ -73,7 +73,17 @@ pnpm dev         # 本地开发入口
 pnpm test        # 运行 Vitest
 pnpm typecheck   # TypeScript 类型检查
 pnpm build       # 编译到 dist/
+pnpm phase0      # 需要官方凭据和测试群 ID，运行 Phase 0 检查
 pnpm start       # 运行编译后的入口
+```
+
+Phase 0 检查需要：
+
+```bash
+QQ_BOT_APP_ID=...
+QQ_BOT_CLIENT_SECRET=...
+QQ_BOT_TEST_GROUP_ID=...
+PHASE0_SEND_TEST_MESSAGE=true   # 可选：会发送并尝试撤回一条测试消息
 ```
 
 ## 项目结构

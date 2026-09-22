@@ -16,6 +16,9 @@ QQ 官方开放平台
       │ WebSocket / Webhook（Phase 1 实现）
       ▼
 QQ Group Ops 官方接入层
+  ├── adapters/eventGateway.ts     事件网关接口
+  ├── adapters/fakeEventGateway.ts 测试网关
+  └── gatewayRunner.ts             网关到事件路由的绑定
       │
       ▼
 TypeScript 核心服务
@@ -33,7 +36,7 @@ TypeScript 核心服务
   ├── adapters/qqOfficial.ts     官方 REST 客户端与传输抽象
   ├── adapters/fetchTransport.ts 原生 fetch 传输
   ├── adapters/fakeQqOfficial.ts 官方 API 测试替身
-  └── db/                        PostgreSQL 持久化（Phase 1）
+  └── phase0.ts                  Phase 0 检查核心
       │
       ▼
 Web 管理 API + 管理后台（Phase 2）
@@ -43,11 +46,12 @@ Web 管理 API + 管理后台（Phase 2）
 
 | 目录 | 职责 |
 |---|---|
-| `src/adapters/` | 官方 API 鉴权、HTTP 调用、错误映射、测试替身 |
+| `src/adapters/` | 官方 API 鉴权、HTTP 调用、错误映射、事件网关、测试替身 |
 | `src/core/` | 领域模型、枚举、通用类型 |
 | `src/services/` | 规则引擎、审核流程、审计、权限、活动报名、信息导出、命令 |
 | `src/config.ts` | 环境变量加载与校验 |
 | `src/runtime.ts` | 运行时装配：按配置选择真实/测试 API 并连接服务 |
+| `src/phase0.ts` | Phase 0 检查核心 |
 | `src/main.ts` | 本地开发入口 |
 | `test/` | Vitest 单元测试与集成测试 |
 | `docs/` | 架构、路线图、验证和合规文档 |

@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "phase0": "tsx src/phase0Cli.ts",
     "start": "node dist/main.js"
   },
   "devDependencies": {
