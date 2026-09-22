@@ -147,4 +147,55 @@ describe("QQOfficialGateway", () => {
     expect(gateway.isRunning).toBe(false);
     expect(socket.closed).toBe(true);
   });
+
+  it("dispatches full group messages without mention", async () => {
+    const api = new FakeQQOfficialAPI();
+    const socket = new FakeSocket();
+    const gateway = new QQOfficialGateway({
+      api,
+      createSocket: () => socket,
+      mapper: new QQOfficialEventMapper(),
+      scheduler: new FakeScheduler(),
+    });
+    const received: QQEvent[] = [];
+    await gateway.start((event) => {
+      received.push(event);
+    });
+
+    socket.emit("open");
+    socket.emit(
+      "message",
+      JSON.stringify({ op: 10, d: { heartbeat_interval: 1000 } }),
+    );
+    socket.emit(
+      "message",
+      JSON.stringify({ op: 0, s: 1, t: "READY", d: { session_id: "sess" } }),
+    );
+    socket.emit(
+      "message",
+      JSON.stringify({
+        op: 0,
+        s: 2,
+        t: "GROUP_MESSAGE_CREATE",
+        d: {
+          id: "m2",
+          group_openid: "g1",
+          content: "/myperm",
+          author: { member_openid: "u2" },
+        },
+      }),
+    );
+
+    expect(received).toEqual([
+      {
+        type: "group_message",
+        groupId: "g1",
+        userId: "u2",
+        messageId: "m2",
+        content: "/myperm",
+      },
+    ]);
+
+    await gateway.stop();
+  });
 });

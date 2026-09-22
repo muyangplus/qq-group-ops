@@ -144,6 +144,15 @@ export class QQOfficialGateway implements EventGateway {
     if (typeof raw.t !== "string") {
       return;
     }
+    log.debug("dispatch", {
+      eventType: raw.t,
+      sequence: typeof raw.s === "number" ? raw.s : null,
+    });
+    if (raw.t === "GROUP_MSG_RECEIVE") {
+      log.info("group message reception enabled", {
+        groupId: isRecord(data) ? data.group_openid : undefined,
+      });
+    }
     const event = this.options.mapper.map(raw.t, data);
     if (event && this.handler) {
       await this.handler(event);

@@ -99,3 +99,11 @@
 - 决策：`PermissionService` 改为运行时可变；新增 `/myperm` 查询指令和 `/perm` 超管配置指令；`ADMIN_QQ_IDS` 作为初始超级管理员种子。
 - 理由：不依赖数据库即可完成权限管理和验证；结构清晰，便于后续接入 PostgreSQL 仓储。
 - 影响：当前权限变更保存在内存中，进程重启后恢复为 `ADMIN_QQ_IDS`；后续需要增加 `PermissionRepository` 做持久化。
+
+## ADR-0013：支持群聊非 @ 指令识别
+
+- 状态：已采纳
+- 背景：用户希望在群内不 @ 机器人也能识别 `/` 指令。
+- 决策：复用 `GROUP_AND_C2C_EVENT` intent，同时处理 `GROUP_AT_MESSAGE_CREATE` 和 `GROUP_MESSAGE_CREATE`；由群管理员在机器人资料页开启“接收所有消息”。
+- 理由：官方已提供群消息全量模式，代码侧无需额外协议分支。
+- 影响：开启前只有 @ 消息会触发；开启后非 @ 的 `/` 指令也会被识别和处理。
