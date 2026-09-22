@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { FakeEventGateway } from "../src/adapters/fakeEventGateway.js";
+import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { loadSettings } from "../src/config.js";
 import { attachGateway } from "../src/gatewayRunner.js";
 import { createRuntime } from "../src/runtime.js";
@@ -53,5 +54,24 @@ describe("FakeEventGateway", () => {
     });
 
     expect(runtime.joinAudit.pending("g1")).toHaveLength(1);
+  });
+
+  it("sends command replies back to the group", async () => {
+    const runtime = createRuntime(loadSettings({ ADMIN_QQ_IDS: "mod" }));
+    const api = runtime.api as FakeQQOfficialAPI;
+    const gateway = new FakeEventGateway();
+    await attachGateway(runtime, gateway);
+
+    await gateway.emit({
+      type: "group_message",
+      groupId: "g1",
+      userId: "mod",
+      messageId: "m1",
+      content: "/test",
+    });
+
+    expect(api.sentMessages).toHaveLength(1);
+    expect(api.sentMessages[0]?.content).toContain("测试成功");
+    expect(api.sentMessages[0]?.msgId).toBe("m1");
   });
 });
