@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "基于 QQ 官方开放平台 API 的开源 QQ 群管理与运营平台：群管、审核、活动报名、信息导出"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [
   { name = "qq-group-ops contributors" },
 ]
@@ -17,7 +17,7 @@ classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Framework :: AsyncIO",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",

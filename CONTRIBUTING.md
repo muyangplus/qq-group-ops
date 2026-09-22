@@ -66,4 +66,4 @@ mypy src
 
 ## 许可证
 
-贡献代码即表示同意以 MIT License 发布。
+贡献代码即表示同意以 Apache-2.0 发布。

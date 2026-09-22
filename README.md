@@ -152,4 +152,4 @@ PYTHONPATH=src python -m qq_group_ops
 
 ## 许可证
 
-[MIT](LICENSE)
+[Apache-2.0](LICENSE)
