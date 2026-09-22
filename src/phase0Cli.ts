@@ -2,7 +2,7 @@ import { FetchTransport } from "./adapters/fetchTransport.js";
 import { QQOfficialClient } from "./adapters/qqOfficial.js";
 import { loadSettings } from "./config.js";
 import { loadEnvFile } from "./env.js";
-import { runPhase0Check } from "./phase0.js";
+import { isLikelyGroupNumber, runPhase0Check } from "./phase0.js";
 
 async function main(): Promise<void> {
   loadEnvFile();
@@ -13,8 +13,17 @@ async function main(): Promise<void> {
     console.error(
       "缺少配置：需要 QQ_BOT_APP_ID、QQ_BOT_CLIENT_SECRET 和 QQ_BOT_TEST_GROUP_ID。",
     );
+    console.error(
+      "注意：QQ_BOT_TEST_GROUP_ID 必须是 group_openid，不是普通 QQ 群号；group_openid 无法由群号换算，只能从官方事件或查询接口获取。",
+    );
     process.exitCode = 1;
     return;
+  }
+
+  if (isLikelyGroupNumber(groupId)) {
+    console.warn(
+      "警告：QQ_BOT_TEST_GROUP_ID 看起来像普通 QQ 群号。官方要求 group_openid，无法由群号换算，只能从官方事件或查询接口获取。",
+    );
   }
 
   const client = new QQOfficialClient(

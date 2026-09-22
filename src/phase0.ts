@@ -12,6 +12,10 @@ export interface Phase0CheckResult {
   errors: string[];
 }
 
+export function isLikelyGroupNumber(value: string): boolean {
+  return /^\d{5,12}$/u.test(value.trim());
+}
+
 export async function runPhase0Check(
   api: QQOfficialAPI,
   groupId: string,

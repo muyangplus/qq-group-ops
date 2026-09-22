@@ -24,8 +24,20 @@ cp .env.example .env
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `QQ_BOT_TEST_GROUP_ID` | Phase 0 是 | 测试群 openid，不是普通群号 |
+| `QQ_BOT_TEST_GROUP_ID` | Phase 0 是 | 测试群 group_openid，不是普通 QQ 群号 |
 | `PHASE0_SEND_TEST_MESSAGE` | 否 | `true` 时发送并尝试撤回一条测试消息 |
+
+### 如何获取 group_openid
+
+`group_openid` 是 QQ 官方机器人用来标识群聊的唯一 ID，**无法从普通 QQ 群号换算**。
+
+获取方式：
+
+1. 机器人加入测试群后，从官方事件中读取 `group_openid` 字段。
+2. 使用官方文档提供的群信息查询接口（如有）。
+3. 不要把 9 位 QQ 群号当作 `group_openid` 填写。
+
+如果 `QQ_BOT_TEST_GROUP_ID` 看起来像普通群号，程序会给出警告。
 
 运行：
 
