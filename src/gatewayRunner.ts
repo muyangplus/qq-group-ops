@@ -10,7 +10,22 @@ export async function attachGateway(
 ): Promise<void> {
   await gateway.start(async (event) => {
     const result = await runtime.router.handle(event);
-    if (result.kind === "command" && result.text) {
+    if (
+      (result.kind === "command" || result.kind === "private_message") &&
+      result.text
+    ) {
+      if (event.type === "private_message") {
+        log.debug("sending private reply", {
+          userId: event.userId,
+          messageId: event.messageId,
+        });
+        await runtime.api.sendPrivateMessage(
+          event.userId,
+          result.text,
+          event.messageId,
+        );
+        return;
+      }
       const messageId =
         event.type === "group_message" ? event.messageId : undefined;
       log.debug("sending command reply", {

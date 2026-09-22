@@ -77,6 +77,28 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 - `mod`：当前群的审核员。
 - 当前权限配置保存在内存中，重启后恢复为 `ADMIN_USER_IDS` 的初始值；PostgreSQL 持久化待实现。
 
+### 私信指令
+
+私信支持以下指令：
+
+- `/myid`
+- `/myperm`
+- `/help`
+- `/test`（超级管理员）
+- `/perm`（超级管理员）
+
+群管理指令在私信中需要额外提供 `group_openid`：
+
+```text
+/pending <group_openid>
+/approve <group_openid> <申请ID>
+/reject <group_openid> <申请ID> [原因]
+/rules <group_openid>
+/status <group_openid>
+/perm grant admin <group_openid> <userId>
+/perm grant mod <group_openid> <userId>
+```
+
 ## 数据库
 
 | 变量 | 必填 | 说明 |

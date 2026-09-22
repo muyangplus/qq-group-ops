@@ -12,6 +12,9 @@ export class QQOfficialEventMapper implements OfficialEventMapper {
     if (eventType === "GROUP_JOIN_REQUEST") {
       return mapJoinRequest(data);
     }
+    if (eventType === "C2C_MESSAGE_CREATE") {
+      return mapPrivateMessage(data);
+    }
     return null;
   }
 }
@@ -34,8 +37,21 @@ function mapGroupMessage(data: unknown): QQEvent | null {
   return { type: "group_message", groupId, userId, messageId, content };
 }
 
-function mapJoinRequest(data: unknown): QQEvent | null {
+function mapPrivateMessage(data: unknown): QQEvent | null {
   if (!isRecord(data)) {
+    return null;
+  }
+  const messageId = asString(data.id);
+  const content = asString(data.content);
+  const author = isRecord(data.author) ? data.author : undefined;
+  const userId = asString(author?.user_openid) ?? asString(author?.id);
+  if (!messageId || content === undefined || !userId) {
+    return null;
+  }
+  return { type: "private_message", userId, messageId, content };
+}
+
+function mapJoinRequest(data: unknown): QQEvent | null {  if (!isRecord(data)) {
     return null;
   }
   const groupId = asString(data.group_openid);

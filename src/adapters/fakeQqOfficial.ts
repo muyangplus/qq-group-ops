@@ -4,6 +4,7 @@ import type { QQOfficialAPI } from "./qqOfficial.js";
 
 export class FakeQQOfficialAPI implements QQOfficialAPI {
   public readonly sentMessages: Array<Record<string, unknown>> = [];
+  public readonly sentPrivateMessages: Array<Record<string, unknown>> = [];
   public readonly recalledMessages: Array<[string, string]> = [];
   public readonly mutedMembers: Array<[string, string, number]> = [];
   public readonly removedMembers: Array<[string, string]> = [];
@@ -25,6 +26,16 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
   ): Promise<Record<string, unknown>> {
     const messageId = randomUUID();
     this.sentMessages.push({ groupId, content, msgId, messageId });
+    return { id: messageId };
+  }
+
+  public async sendPrivateMessage(
+    userOpenid: string,
+    content: string,
+    msgId?: string,
+  ): Promise<Record<string, unknown>> {
+    const messageId = randomUUID();
+    this.sentPrivateMessages.push({ userOpenid, content, msgId, messageId });
     return { id: messageId };
   }
 

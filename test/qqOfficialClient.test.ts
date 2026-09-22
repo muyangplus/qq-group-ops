@@ -137,8 +137,28 @@ describe("QQOfficialClient", () => {
     );
   });
 
-  it("supports custom endpoints", async () => {
+  it("sends private messages", async () => {
     const transport = new FakeTransport([
+      { statusCode: 200, jsonData: { id: "pmid" }, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+    });
+
+    await expect(
+      client.sendPrivateMessage("u1", "hello", "m1"),
+    ).resolves.toEqual({ id: "pmid" });
+    expect(transport.calls[0]?.method).toBe("POST");
+    expect(transport.calls[0]?.url).toContain("/v2/users/u1/messages");
+    expect(transport.calls[0]?.json).toEqual({
+      msg_type: 0,
+      content: "hello",
+      msg_id: "m1",
+    });
+  });
+
+  it("supports custom endpoints", async () => {    const transport = new FakeTransport([
       { statusCode: 200, jsonData: {}, text: "" },
     ]);
     const client = new QQOfficialClient("app", "secret", {

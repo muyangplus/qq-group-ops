@@ -93,4 +93,16 @@ describe("EventRouter", () => {
     expect(result.ok).toBe(true);
     expect(result.text).toContain("测试成功");
   });
+
+  it("routes private slash commands", async () => {
+    const result = await router.handle({
+      type: "private_message",
+      userId: "root",
+      messageId: "pm1",
+      content: "/myid",
+    });
+    expect(result.kind).toBe("private_message");
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("你的 userId：root");
+  });
 });

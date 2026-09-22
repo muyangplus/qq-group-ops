@@ -12,6 +12,15 @@ describe("FakeQQOfficialAPI", () => {
     expect(api.sentMessages[0]?.msgId).toBe("m1");
   });
 
+  it("sends private messages", async () => {
+    const api = new FakeQQOfficialAPI();
+    const result = await api.sendPrivateMessage("u1", "hello", "m1");
+    expect(result).toHaveProperty("id");
+    expect(api.sentPrivateMessages[0]?.userOpenid).toBe("u1");
+    expect(api.sentPrivateMessages[0]?.content).toBe("hello");
+    expect(api.sentPrivateMessages[0]?.msgId).toBe("m1");
+  });
+
   it("recalls and mutes", async () => {
     const api = new FakeQQOfficialAPI();
     await api.recallGroupMessage("g1", "m1");

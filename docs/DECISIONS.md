@@ -108,6 +108,14 @@
 - 理由：避免用户误填 QQ 号；用户可以先用 `/myid` 获取正确值，再配置为超级管理员。
 - 影响：配置模板和文档改用 `ADMIN_USER_IDS`；旧变量仍可读取。
 
+## ADR-0015：指令支持私信
+
+- 状态：已采纳
+- 背景：用户希望能在私聊中使用机器人指令。
+- 决策：事件映射支持 `C2C_MESSAGE_CREATE`；`EventRouter` 支持 `private_message`；命令回复通过 `sendPrivateMessage` 发送；群管理指令在私信中需要提供 `group_openid`。
+- 理由：私信适合自助查询（`/myid`、`/myperm`）和超管配置；群管理操作仍明确绑定到具体群。
+- 影响：新增 `POST /v2/users/{user_openid}/messages` 调用；私信回复使用被动消息 `msg_id`。
+
 ## ADR-0013：支持群聊非 @ 指令识别
 
 - 状态：已采纳

@@ -13,6 +13,11 @@ export interface QQOfficialAPI {
     content: string,
     msgId?: string,
   ): Promise<Record<string, unknown>>;
+  sendPrivateMessage(
+    userOpenid: string,
+    content: string,
+    msgId?: string,
+  ): Promise<Record<string, unknown>>;
   recallGroupMessage(groupId: string, messageId: string): Promise<void>;
   muteGroupMember(
     groupId: string,
@@ -50,6 +55,7 @@ export interface QQOfficialEndpoints {
   tokenUrl: string;
   gatewayUrl: string;
   sendGroupMessage: string;
+  sendPrivateMessage: string;
   recallGroupMessage: string;
   muteGroupMember: string;
   removeGroupMember: string;
@@ -62,6 +68,7 @@ export const DEFAULT_ENDPOINTS: QQOfficialEndpoints = {
   tokenUrl: "https://bots.qq.com/app/getAppAccessToken",
   gatewayUrl: "/gateway",
   sendGroupMessage: "/v2/groups/{groupId}/messages",
+  sendPrivateMessage: "/v2/users/{userOpenid}/messages",
   recallGroupMessage: "/v2/groups/{groupId}/messages/{messageId}",
   muteGroupMember: "/v2/groups/{groupId}/restrict_chat_setting",
   removeGroupMember: "/v2/groups/{groupId}/batch_remove_members",
@@ -172,6 +179,23 @@ export class QQOfficialClient implements QQOfficialAPI {
     const response = await this.request(
       "POST",
       fill(this.endpoints.sendGroupMessage, { groupId }),
+      payload,
+    );
+    return isRecord(response.jsonData) ? response.jsonData : {};
+  }
+
+  public async sendPrivateMessage(
+    userOpenid: string,
+    content: string,
+    msgId?: string,
+  ): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = { msg_type: 0, content };
+    if (msgId) {
+      payload.msg_id = msgId;
+    }
+    const response = await this.request(
+      "POST",
+      fill(this.endpoints.sendPrivateMessage, { userOpenid }),
       payload,
     );
     return isRecord(response.jsonData) ? response.jsonData : {};

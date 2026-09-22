@@ -56,6 +56,21 @@ describe("QQOfficialEventMapper", () => {
     });
   });
 
+  it("maps private messages", () => {
+    expect(
+      mapper.map("C2C_MESSAGE_CREATE", {
+        id: "m1",
+        content: "/myid",
+        author: { user_openid: "u1" },
+      }),
+    ).toEqual({
+      type: "private_message",
+      userId: "u1",
+      messageId: "m1",
+      content: "/myid",
+    });
+  });
+
   it("rejects invalid payloads", () => {
     expect(mapper.map("UNKNOWN", {})).toBeNull();
     expect(mapper.map("GROUP_AT_MESSAGE_CREATE", {})).toBeNull();

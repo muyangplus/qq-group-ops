@@ -23,6 +23,13 @@ export interface JoinRequestEvent {
   reason?: string;
 }
 
+export interface PrivateMessageEvent {
+  type: "private_message";
+  userId: string;
+  messageId: string;
+  content: string;
+}
+
 export interface AdminCommandEvent {
   type: "admin_command";
   groupId: string;
@@ -30,10 +37,14 @@ export interface AdminCommandEvent {
   text: string;
 }
 
-export type QQEvent = GroupMessageEvent | JoinRequestEvent | AdminCommandEvent;
+export type QQEvent =
+  | GroupMessageEvent
+  | PrivateMessageEvent
+  | JoinRequestEvent
+  | AdminCommandEvent;
 
 export interface EventRouterResult {
-  kind: "message" | "join_request" | "command";
+  kind: "message" | "private_message" | "join_request" | "command";
   action?: ModerationAction;
   executed?: boolean;
   detail?: string;
@@ -49,7 +60,11 @@ export class EventRouter {
   ) {}
 
   public async handle(event: QQEvent): Promise<EventRouterResult> {
-    log.debug("route", { type: event.type, groupId: event.groupId });
+    log.debug("route", {
+      type: event.type,
+      userId: event.userId,
+      ...("groupId" in event ? { groupId: event.groupId } : {}),
+    });
     switch (event.type) {
       case "group_message": {
         if (event.content.trim().startsWith("/")) {
@@ -91,6 +106,21 @@ export class EventRouter {
         } catch (error) {
           return { kind: "join_request", ok: false, detail: String(error) };
         }
+      }
+      case "private_message": {
+        if (event.content.trim().startsWith("/")) {
+          const result = this.adminCommands.handle(
+            undefined,
+            event.userId,
+            event.content,
+          );
+          return {
+            kind: "private_message",
+            ok: result.ok,
+            text: result.text,
+          };
+        }
+        return { kind: "private_message", ok: true, text: "" };
       }
       case "admin_command": {
         const result = this.adminCommands.handle(

@@ -74,4 +74,22 @@ describe("FakeEventGateway", () => {
     expect(api.sentMessages[0]?.content).toContain("测试成功");
     expect(api.sentMessages[0]?.msgId).toBe("m1");
   });
+
+  it("sends private command replies", async () => {
+    const runtime = createRuntime(loadSettings({}));
+    const api = runtime.api as FakeQQOfficialAPI;
+    const gateway = new FakeEventGateway();
+    await attachGateway(runtime, gateway);
+
+    await gateway.emit({
+      type: "private_message",
+      userId: "u1",
+      messageId: "m1",
+      content: "/myid",
+    });
+
+    expect(api.sentPrivateMessages).toHaveLength(1);
+    expect(api.sentPrivateMessages[0]?.content).toContain("你的 userId：u1");
+    expect(api.sentPrivateMessages[0]?.msgId).toBe("m1");
+  });
 });

@@ -12,6 +12,7 @@ type QQOfficialMethod =
   | "getAccessToken"
   | "getGatewayUrl"
   | "sendGroupMessage"
+  | "sendPrivateMessage"
   | "recallGroupMessage"
   | "muteGroupMember"
   | "removeGroupMember"
@@ -45,6 +46,23 @@ export function instrumentQQOfficialAPI(
       const result = await api.sendGroupMessage(groupId, content, msgId);
       log.debug("sendGroupMessage ok", {
         groupId,
+        messageId: typeof result.id === "string" ? result.id : undefined,
+      });
+      return result;
+    },
+    sendPrivateMessage: async (
+      userOpenid: string,
+      content: string,
+      msgId?: string,
+    ) => {
+      log.debug("sendPrivateMessage", {
+        userOpenid,
+        msgId,
+        contentLength: content.length,
+      });
+      const result = await api.sendPrivateMessage(userOpenid, content, msgId);
+      log.debug("sendPrivateMessage ok", {
+        userOpenid,
         messageId: typeof result.id === "string" ? result.id : undefined,
       });
       return result;
@@ -176,8 +194,8 @@ export function instrumentEventGateway(
       await gateway.start(async (event) => {
         log.debug("event", {
           type: event.type,
-          groupId: event.groupId,
           userId: event.userId,
+          ...("groupId" in event ? { groupId: event.groupId } : {}),
         });
         await handler(event);
       });

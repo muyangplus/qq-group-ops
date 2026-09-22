@@ -137,4 +137,29 @@ describe("AdminCommandService", () => {
     expect(result.ok).toBe(false);
     expect(result.text).toContain("仅超级管理员");
   });
+
+  it("supports private self commands", () => {
+    const result = service.handle(undefined, "member", "/myid");
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("当前会话：私聊");
+    expect(result.text).toContain("你的 userId：member");
+  });
+
+  it("requires group_openid for group commands in private", () => {
+    const missing = service.handle(undefined, "root", "/pending");
+    expect(missing.ok).toBe(false);
+    expect(missing.text).toContain("group_openid");
+
+    const withGroup = service.handle(undefined, "root", "/pending g1");
+    expect(withGroup.ok).toBe(true);
+  });
+
+  it("configures group permissions from private with group_openid", () => {
+    const grant = service.handle(undefined, "root", "/perm grant mod g1 u4");
+    expect(grant.ok).toBe(true);
+    expect(grant.text).toContain("u4");
+
+    const groupPermission = service.handle("g1", "u4", "/myperm");
+    expect(groupPermission.text).toContain("你的权限等级：moderator");
+  });
 });
