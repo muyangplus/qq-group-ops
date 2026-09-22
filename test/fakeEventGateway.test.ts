@@ -59,6 +59,7 @@ describe("FakeEventGateway", () => {
   it("sends command replies back to the group", async () => {
     const runtime = createRuntime(loadSettings({ ADMIN_USER_IDS: "mod" }));
     runtime.identityMap.bindUser("mod", "10001");
+    runtime.identityMap.bindGroup("g1", "654321");
     const api = runtime.api as FakeQQOfficialAPI;
     const gateway = new FakeEventGateway();
     await attachGateway(runtime, gateway);
@@ -86,11 +87,11 @@ describe("FakeEventGateway", () => {
       type: "private_message",
       userId: "u1",
       messageId: "m1",
-      content: "/myid",
+      content: "/bind qq 123456",
     });
 
     expect(api.sentPrivateMessages).toHaveLength(1);
-    expect(api.sentPrivateMessages[0]?.content).toContain("你的 userId：u1");
+    expect(api.sentPrivateMessages[0]?.content).toContain("已绑定");
     expect(api.sentPrivateMessages[0]?.msgId).toBe("m1");
   });
 });

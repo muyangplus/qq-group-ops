@@ -100,20 +100,20 @@
 - 理由：不依赖数据库即可完成权限管理和验证；结构清晰，便于后续接入 PostgreSQL 仓储。
 - 影响：当前权限变更保存在内存中，进程重启后恢复为 `ADMIN_USER_IDS`；后续需要增加 `PermissionRepository` 做持久化。
 
-## ADR-0014：权限配置使用官方 userId，并支持 `/myid`
+## ADR-0014：权限配置使用官方 userId
 
 - 状态：已采纳
 - 背景：官方事件中的用户标识是 OpenID / member_openid，不是 QQ 号。
-- 决策：`ADMIN_USER_IDS` 作为主配置，`ADMIN_QQ_IDS` 作为兼容别名；新增 `/myid` 查询自己的 userId。
-- 理由：避免用户误填 QQ 号；用户可以先用 `/myid` 获取正确值，再配置为超级管理员。
+- 决策：`ADMIN_USER_IDS` 作为主配置，`ADMIN_QQ_IDS` 作为兼容别名；用户通过 `/bind qq <QQ号>` 建立 QQ 号与 userId 的映射。
+- 理由：避免用户误填 QQ 号；绑定后可以直接用 QQ 号配置权限。
 - 影响：配置模板和文档改用 `ADMIN_USER_IDS`；旧变量仍可读取。
 
 ## ADR-0015：指令支持私信
 
 - 状态：已采纳
 - 背景：用户希望能在私聊中使用机器人指令。
-- 决策：事件映射支持 `C2C_MESSAGE_CREATE`；`EventRouter` 支持 `private_message`；命令回复通过 `sendPrivateMessage` 发送；群管理指令在私信中需要提供 `group_openid`。
-- 理由：私信适合自助查询（`/myid`、`/myperm`）和超管配置；群管理操作仍明确绑定到具体群。
+- 决策：事件映射支持 `C2C_MESSAGE_CREATE`；`EventRouter` 支持 `private_message`；命令回复通过 `sendPrivateMessage` 发送；群管理指令在私信中需要提供 `group_openid` 或已绑定群号。
+- 理由：私信适合自助绑定、权限查询和超管配置；群管理操作仍明确绑定到具体群。
 - 影响：新增 `POST /v2/users/{user_openid}/messages` 调用；私信回复使用被动消息 `msg_id`。
 
 ## ADR-0016：全量消息模式诊断
@@ -132,12 +132,12 @@
 - 理由：管理员可以继续用熟悉的 QQ号/群号操作，同时底层仍使用官方 OpenID 调用 API。
 - 影响：当前映射保存在内存中，重启后丢失；后续需要增加 PostgreSQL 持久化。
 
-## ADR-0018：强制绑定 QQ 号后才能使用
+## ADR-0018：强制绑定 QQ 号和群号后才能使用
 
 - 状态：已采纳
 - 背景：需要确保命令参数能稳定解析到官方 OpenID，并避免匿名使用管理能力。
-- 决策：除 `/help`、`/bind`、`/myid` 外，未绑定 QQ 号的用户不能使用其他指令；私信群管理命令要求群号已绑定。
-- 理由：强制绑定可以保证用户身份可追踪，QQ号/群号参数可正确解析。
+- 决策：除 `/help`、`/bind` 外，用户必须绑定 QQ 号，群聊必须绑定群号；私信群管理命令要求目标群已绑定。
+- 理由：强制绑定可以保证用户和群身份可追踪，QQ号/群号参数可正确解析。
 - 影响：首次使用需要先执行 `/bind qq <QQ号>`；群号需要在群内由群管理员执行 `/bind group <群号>` 绑定。
 
 ## ADR-0013：支持群聊非 @ 指令识别

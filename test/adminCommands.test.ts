@@ -119,11 +119,10 @@ describe("AdminCommandService", () => {
     expect(result.text).toContain("权限不足");
   });
 
-  it("shows own userId", () => {
-    const result = service.handle("g1", "member", "/myid");
-    expect(result.ok).toBe(true);
-    expect(result.text).toContain("你的 userId：member");
-    expect(result.text).toContain("不是 QQ 号");
+  it("requires group binding before using group commands", () => {
+    const result = service.handle("g2", "root", "/status");
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("请先绑定本群");
   });
 
   it("shows own permissions", () => {
@@ -155,11 +154,10 @@ describe("AdminCommandService", () => {
     expect(result.text).toContain("仅超级管理员");
   });
 
-  it("supports private self commands", () => {
-    const result = service.handle(undefined, "member", "/myid");
+  it("supports private binding commands", () => {
+    const result = service.handle(undefined, "member", "/bind qq 999999");
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("当前会话：私聊");
-    expect(result.text).toContain("你的 userId：member");
+    expect(identityMap.getQq("member")).toBe("999999");
   });
 
   it("requires group_openid for group commands in private", () => {
@@ -184,9 +182,6 @@ describe("AdminCommandService", () => {
     const bind = service.handle("g1", "member", "/bind qq 123456");
     expect(bind.ok).toBe(true);
     expect(identityMap.resolveUserId("123456")).toBe("member");
-
-    const myId = service.handle("g1", "member", "/myid");
-    expect(myId.text).toContain("你的 QQ 号：123456");
   });
 
   it("binds current group number and resolves it", () => {

@@ -65,20 +65,18 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 权限相关指令：
 
 ```text
-/myid
 /myperm
 /perm list
-/perm grant super <userId>
-/perm revoke super <userId>
-/perm grant admin <userId>
-/perm revoke admin <userId>
-/perm grant mod <userId>
-/perm revoke mod <userId>
+/perm grant super <userId|QQ号>
+/perm revoke super <userId|QQ号>
+/perm grant admin <userId|QQ号>
+/perm revoke admin <userId|QQ号>
+/perm grant mod <userId|QQ号>
+/perm revoke mod <userId|QQ号>
 ```
 
 说明：
 
-- `/myid`：所有用户可查询自己的官方 userId。
 - `/myperm`：所有用户可查询自己的权限。
 - `/perm`：仅超级管理员可用。
 - `super`：全局超级管理员。
@@ -90,7 +88,6 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 
 私信支持以下指令：
 
-- `/myid`
 - `/myperm`
 - `/help`
 - `/test`（超级管理员）
@@ -130,9 +127,11 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 
 强制绑定规则：
 
-- 除 `/help`、`/bind`、`/myid` 外，未绑定 QQ 号的用户不能使用其他指令。
+- 除 `/help`、`/bind` 外，用户必须绑定 QQ 号。
+- 群聊内除 `/help`、`/bind` 外，群必须绑定群号。
 - 私信中按群号执行群管理命令时，该群号必须已绑定。
-- 未绑定会返回：`请先绑定 QQ 号：/bind qq <QQ号>`。
+- 未绑定用户会返回：`请先绑定 QQ 号：/bind qq <QQ号>`。
+- 未绑定群会返回：`请先绑定本群：/bind group <群号>`。
 
 当前映射保存在内存中，重启后丢失；PostgreSQL 持久化待实现。
 

@@ -99,10 +99,10 @@ describe("EventRouter", () => {
       type: "private_message",
       userId: "root",
       messageId: "pm1",
-      content: "/myid",
+      content: "/bind qq 123456",
     });
     expect(result.kind).toBe("private_message");
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("你的 userId：root");
+    expect(result.text).toContain("已绑定");
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { QQOfficialEventMapper } from "../src/adapters/qqOfficialEventMapper.js";
 
@@ -60,14 +60,14 @@ describe("QQOfficialEventMapper", () => {
     expect(
       mapper.map("C2C_MESSAGE_CREATE", {
         id: "m1",
-        content: "/myid",
+        content: "/bind qq 123456",
         author: { user_openid: "u1" },
       }),
     ).toEqual({
       type: "private_message",
       userId: "u1",
       messageId: "m1",
-      content: "/myid",
+      content: "/bind qq 123456",
     });
   });
 

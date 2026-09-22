@@ -8,29 +8,32 @@ import type { PermissionService } from "./permissions.js";
 const log = getLogger("admin-commands");
 
 const HELP_TEXT = `可用指令：
-/myid - 查询自己的 userId
-/myperm - 查看自己的权限
-/perm list [group_openid] - 查看权限配置（超管）
-/perm grant super <userId> - 授予全局超管（超管）
-/perm revoke super <userId> - 撤销全局超管（超管）
-/perm grant admin [group_openid] <userId> - 授予群管理员（超管）
-/perm revoke admin [group_openid] <userId> - 撤销群管理员（超管）
-/perm grant mod [group_openid] <userId> - 授予审核员（超管）
-/perm revoke mod [group_openid] <userId> - 撤销审核员（超管）
-/pending [group_openid] - 查看待审批入群申请
-/approve [group_openid] <申请ID> - 通过入群申请
-/reject [group_openid] <申请ID> [原因] - 拒绝入群申请
-/rules [group_openid] - 查看群规则配置
-/status [group_openid] - 查看群运行状态
-/test - 测试机器人是否正常响应
 /help - 显示帮助
 /bind qq <QQ号> - 绑定自己的 QQ 号
 /bind group <群号> - 绑定当前群号（群管理员）
 /bind user <userId> <QQ号> - 绑定任意用户（超管）
 /bind groupid <group_openid> <群号> - 绑定任意群（超管）
 /whois <QQ号|userId|群号|group_openid> - 查询映射（超管）
+/myperm - 查看自己的权限
+/perm list [group_openid|群号] - 查看权限配置（超管）
+/perm grant super <userId|QQ号> - 授予全局超管（超管）
+/perm revoke super <userId|QQ号> - 撤销全局超管（超管）
+/perm grant admin [group_openid|群号] <userId|QQ号> - 授予群管理员（超管）
+/perm revoke admin [group_openid|群号] <userId|QQ号> - 撤销群管理员（超管）
+/perm grant mod [group_openid|群号] <userId|QQ号> - 授予审核员（超管）
+/perm revoke mod [group_openid|群号] <userId|QQ号> - 撤销审核员（超管）
+/pending [group_openid|群号] - 查看待审批入群申请
+/approve [group_openid|群号] <申请ID> - 通过入群申请
+/reject [group_openid|群号] <申请ID> [原因] - 拒绝入群申请
+/rules [group_openid|群号] - 查看群规则配置
+/status [group_openid|群号] - 查看群运行状态
+/test - 测试机器人是否正常响应
 
-说明：私信中执行群管理指令时，需要提供 group_openid 或已绑定的群号。`;
+说明：
+- 除 /help 和 /bind 外，用户和群聊都需要先绑定。
+- 用户绑定：/bind qq <QQ号>
+- 群绑定：/bind group <群号>
+- 私信中执行群管理指令时，需要提供 group_openid 或已绑定的群号。`;
 
 export interface CommandResult {
   ok: boolean;
@@ -58,7 +61,7 @@ export class AdminCommandService {
     const command = parts[0]!.replace(/^\//u, "").toLowerCase();
     log.debug("command", { groupId, userId, command });
 
-    const bindingExempt = new Set(["help", "帮助", "bind", "绑定", "myid", "我的id"]);
+    const bindingExempt = new Set(["help", "帮助", "bind", "绑定"]);
     if (
       !bindingExempt.has(command) &&
       this.identityMap &&
@@ -71,13 +74,23 @@ export class AdminCommandService {
       };
     }
 
+    if (
+      groupId &&
+      !bindingExempt.has(command) &&
+      this.identityMap &&
+      !this.identityMap.getGroupNumber(groupId)
+    ) {
+      log.warn("group binding required", { groupId, userId, command });
+      return {
+        ok: false,
+        text: "请先绑定本群：/bind group <群号>",
+      };
+    }
+
     switch (command) {
       case "help":
       case "帮助":
         return { ok: true, text: HELP_TEXT };
-      case "myid":
-      case "我的id":
-        return this.handleMyId(groupId, userId);
       case "myperm":
       case "我的权限":
         return this.handleMyPermission(groupId, userId);
@@ -111,25 +124,6 @@ export class AdminCommandService {
       default:
         return { ok: false, text: `未知指令：${parts[0]}\n\n${HELP_TEXT}` };
     }
-  }
-
-  private handleMyId(groupId: string | undefined, userId: string): CommandResult {
-    const qq = this.identityMap?.getQq(userId);
-    const groupNumber = groupId
-      ? this.identityMap?.getGroupNumber(groupId)
-      : undefined;
-    return {
-      ok: true,
-      text: [
-        `你的 userId：${userId}`,
-        qq ? `你的 QQ 号：${qq}` : "你的 QQ 号：未绑定",
-        groupId ? `当前群 ID：${groupId}` : "当前会话：私聊",
-        groupNumber ? `当前群号：${groupNumber}` : undefined,
-        "注意：这是官方 OpenID，不是 QQ 号。",
-      ]
-        .filter((line): line is string => line !== undefined)
-        .join("\n"),
-    };
   }
 
   private handleBind(
