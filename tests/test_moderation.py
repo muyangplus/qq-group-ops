@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from qq_group_guard.core.enums import ModerationAction, RiskLevel
-from qq_group_guard.services.moderation import ModerationRule, RuleEngine
+from qq_group_ops.core.enums import ModerationAction, RiskLevel
+from qq_group_ops.services.moderation import ModerationRule, RuleEngine
 
 
 class RuleEngineTests(unittest.TestCase):

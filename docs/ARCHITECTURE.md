@@ -21,10 +21,13 @@ nonebot-adapter-qq
 NoneBot2 运行时
   ├── plugins/join_audit.py      入群申请审批
   ├── plugins/message_guard.py   消息规则与处理
+  ├── plugins/activity.py        活动报名
   └── plugins/admin.py           管理指令
       │
       ├── services/moderation.py 规则引擎
       ├── services/audit.py      审计日志
+      ├── services/activity.py   活动报名
+      ├── services/export.py     信息导出
       ├── services/permissions.py 权限模型
       ├── adapters/qq_official.py 官方 REST 调用
       └── db/                     PostgreSQL 持久化
@@ -40,12 +43,12 @@ Vue 3 管理后台（Phase 2）
 
 | 目录 | 职责 |
 |---|---|
-| `src/qq_group_guard/adapters/` | 官方 API 鉴权、HTTP 调用、错误映射 |
-| `src/qq_group_guard/core/` | 领域模型、枚举、通用类型 |
-| `src/qq_group_guard/services/` | 规则引擎、审核流程、审计、权限 |
-| `src/qq_group_guard/plugins/` | NoneBot2 插件入口 |
-| `src/qq_group_guard/db/` | 数据库模型与会话 |
-| `src/qq_group_guard/web/` | FastAPI 管理后台 |
+| `src/qq_group_ops/adapters/` | 官方 API 鉴权、HTTP 调用、错误映射 |
+| `src/qq_group_ops/core/` | 领域模型、枚举、通用类型 |
+| `src/qq_group_ops/services/` | 规则引擎、审核流程、审计、权限、活动报名、信息导出 |
+| `src/qq_group_ops/plugins/` | NoneBot2 插件入口，包括群管、审核和活动指令 |
+| `src/qq_group_ops/db/` | 数据库模型与会话 |
+| `src/qq_group_ops/web/` | FastAPI 管理后台 |
 | `tests/` | 单元测试与集成测试 |
 | `docs/` | 架构、路线图、验证和合规文档 |
 

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import unittest
 
-from qq_group_guard.core.enums import AuditStatus
-from qq_group_guard.core.models import AuditRecord
-from qq_group_guard.services.audit import InMemoryAuditLog
+from qq_group_ops.core.enums import AuditStatus
+from qq_group_ops.core.models import AuditRecord
+from qq_group_ops.services.audit import InMemoryAuditLog
 
 
 class AuditLogTests(unittest.TestCase):

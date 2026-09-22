@@ -11,4 +11,4 @@ COPY src ./src
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir .
 
-CMD ["python", "-m", "qq_group_guard"]
+CMD ["python", "-m", "qq_group_ops"]

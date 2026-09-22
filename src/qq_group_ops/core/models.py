@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from qq_group_guard.core.enums import AuditStatus, ModerationAction, RiskLevel
+from qq_group_ops.core.enums import AuditStatus, ModerationAction, RiskLevel
 
 
 def utc_now() -> datetime:

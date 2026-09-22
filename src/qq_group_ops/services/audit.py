@@ -5,7 +5,7 @@ Phase 1 会接入 PostgreSQL；当前提供内存实现用于测试和本地开�
 
 from __future__ import annotations
 
-from qq_group_guard.core.models import AuditRecord
+from qq_group_ops.core.models import AuditRecord
 
 
 class AuditLog:

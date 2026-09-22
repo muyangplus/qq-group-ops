@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from qq_group_guard.config import load_settings
+from qq_group_ops.config import load_settings
 
 
 class SettingsTests(unittest.TestCase):

@@ -7,4 +7,4 @@ lint:
 	ruff check .
 
 run:
-	PYTHONPATH=src python -m qq_group_guard
+	PYTHONPATH=src python -m qq_group_ops

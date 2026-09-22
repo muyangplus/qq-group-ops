@@ -9,8 +9,8 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from qq_group_guard.core.enums import ModerationAction, RiskLevel
-from qq_group_guard.core.models import RuleMatch
+from qq_group_ops.core.enums import ModerationAction, RiskLevel
+from qq_group_ops.core.models import RuleMatch
 
 _ACTION_PRIORITY: dict[ModerationAction, int] = {
     ModerationAction.ALLOW: 0,

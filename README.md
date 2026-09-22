@@ -1,6 +1,6 @@
-# QQ Group Guard
+# QQ Group Ops
 
-> 基于 QQ 官方开放平台 API 的开源群管理与审核机器人。
+> 基于 QQ 官方开放平台 API 的开源 QQ 群管理与运营平台：群管理、审核、活动报名、信息导出。
 
 ## 项目状态
 
@@ -25,6 +25,8 @@
 - 图片、文件与链接内容安全
 - 加好友 / 群邀请审核
 - 举报与申诉流程
+- 活动报名：活动发布、报名收集、名单管理、签到/统计
+- 信息导出：审核日志、报名名单、活动数据导出
 - AI 辅助审核与入群理由判断
 - 统计报表与自动化策略
 
@@ -56,7 +58,7 @@ QQ 官方开放平台
 nonebot-adapter-qq
       │
       ▼
-QQ Group Guard 业务层
+QQ Group Ops 业务层
   ├── 入群审核
   ├── 消息规则引擎
   ├── 群管动作
@@ -107,10 +109,10 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 
 ```bash
 # Windows PowerShell
-$env:PYTHONPATH="src"; python -m qq_group_guard
+$env:PYTHONPATH="src"; python -m qq_group_ops
 
 # Linux / macOS
-PYTHONPATH=src python -m qq_group_guard
+PYTHONPATH=src python -m qq_group_ops
 ```
 
 ## 项目结构
@@ -125,7 +127,7 @@ PYTHONPATH=src python -m qq_group_guard
 │   ├── PHASE-0-VERIFICATION.md # Phase 0 验证清单
 │   └── ROADMAP.md              # 分阶段路线图
 ├── scripts/                    # 开发脚本
-├── src/qq_group_guard/
+├── src/qq_group_ops/
 │   ├── adapters/               # 官方 API 适配层
 │   ├── core/                   # 领域模型
 │   ├── plugins/                # NoneBot2 插件入口

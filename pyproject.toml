@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "qq-group-guard"
+name = "qq-group-ops"
 version = "0.1.0"
-description = "基于 QQ 官方开放平台 API 的开源群管理与审核机器人"
+description = "基于 QQ 官方开放平台 API 的开源 QQ 群管理与运营平台：群管、审核、活动报名、信息导出"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
-  { name = "qq-group-guard contributors" },
+  { name = "qq-group-ops contributors" },
 ]
 keywords = ["qq", "qqbot", "group-management", "moderation", "nonebot"]
 classifiers = [
@@ -47,10 +47,10 @@ dev = [
 ]
 
 [project.scripts]
-qq-group-guard = "qq_group_guard.__main__:main"
+qq-group-ops = "qq_group_ops.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/qq_group_guard"]
+packages = ["src/qq_group_ops"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

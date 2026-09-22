@@ -1,6 +1,6 @@
 # Contributing
 
-感谢参与 QQ Group Guard。
+感谢参与 QQ Group Ops。
 
 ## 开发环境
 

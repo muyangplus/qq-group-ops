@@ -40,7 +40,7 @@ class Settings:
     qq_bot_client_secret: str = ""
     qq_bot_token: str = ""
     qq_bot_sandbox: bool = False
-    database_url: str = "postgresql+asyncpg://qqbot:change-me@localhost:5432/qq_group_guard"
+    database_url: str = "postgresql+asyncpg://qqbot:change-me@localhost:5432/qq_group_ops"
     admin_qq_ids: tuple[str, ...] = ()
     log_level: str = "INFO"
     raw_message_retention_days: int = 0
@@ -62,7 +62,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         qq_bot_sandbox=_as_bool(source.get("QQ_BOT_SANDBOX"), default=False),
         database_url=source.get(
             "DATABASE_URL",
-            "postgresql+asyncpg://qqbot:change-me@localhost:5432/qq_group_guard",
+            "postgresql+asyncpg://qqbot:change-me@localhost:5432/qq_group_ops",
         ),
         admin_qq_ids=_split_csv(source.get("ADMIN_QQ_IDS")),
         log_level=source.get("LOG_LEVEL", "INFO").upper(),
