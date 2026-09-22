@@ -33,6 +33,16 @@ class AuditStatus(StrEnum):
     REJECTED = "rejected"
     AUTO_APPROVED = "auto_approved"
     AUTO_REJECTED = "auto_rejected"
+    EXECUTED = "executed"
+
+
+class ActivityStatus(StrEnum):
+    """活动状态。"""
+
+    DRAFT = "draft"
+    OPEN = "open"
+    CLOSED = "closed"
+    CANCELLED = "cancelled"
 
 
 class JoinRequestStatus(StrEnum):
