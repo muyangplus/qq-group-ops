@@ -96,17 +96,39 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 - `/test`（超级管理员）
 - `/perm`（超级管理员）
 
-群管理指令在私信中需要额外提供 `group_openid`：
+群管理指令在私信中需要额外提供 `group_openid` 或已绑定的群号：
 
 ```text
-/pending <group_openid>
-/approve <group_openid> <申请ID>
-/reject <group_openid> <申请ID> [原因]
-/rules <group_openid>
-/status <group_openid>
-/perm grant admin <group_openid> <userId>
-/perm grant mod <group_openid> <userId>
+/pending <group_openid|群号>
+/approve <group_openid|群号> <申请ID>
+/reject <group_openid|群号> <申请ID> [原因]
+/rules <group_openid|群号>
+/status <group_openid|群号>
+/perm grant admin <group_openid|群号> <userId|QQ号>
+/perm grant mod <group_openid|群号> <userId|QQ号>
 ```
+
+### 绑定 QQ号 / 群号
+
+官方只提供 OpenID，因此需要自己维护映射：
+
+```text
+/bind qq <QQ号>                         # 绑定自己的 userId ↔ QQ号
+/bind group <群号>                      # 群管理员绑定当前群
+/bind user <userId> <QQ号>              # 超管绑定任意用户
+/bind groupid <group_openid> <群号>     # 超管绑定任意群
+/whois <QQ号|userId|群号|group_openid>  # 超管查询映射
+```
+
+绑定后可以直接用 QQ号/群号执行命令：
+
+```text
+/perm grant mod 123456
+/status 654321
+/pending 654321
+```
+
+当前映射保存在内存中，重启后丢失；PostgreSQL 持久化待实现。
 
 ## 数据库
 

@@ -1,6 +1,7 @@
 import { getLogger } from "../core/logger.js";
 import type { GroupConfigStore } from "./groupConfig.js";
 import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
+import type { IdentityMapService } from "./identityMap.js";
 import type { JoinAuditService } from "./joinAudit.js";
 import type { PermissionService } from "./permissions.js";
 
@@ -23,8 +24,13 @@ const HELP_TEXT = `可用指令：
 /status [group_openid] - 查看群运行状态
 /test - 测试机器人是否正常响应
 /help - 显示帮助
+/bind qq <QQ号> - 绑定自己的 QQ 号
+/bind group <群号> - 绑定当前群号（群管理员）
+/bind user <userId> <QQ号> - 绑定任意用户（超管）
+/bind groupid <group_openid> <群号> - 绑定任意群（超管）
+/whois <QQ号|userId|群号|group_openid> - 查询映射（超管）
 
-说明：私信中执行群管理指令时，需要提供 group_openid。`;
+说明：私信中执行群管理指令时，需要提供 group_openid 或已绑定的群号。`;
 
 export interface CommandResult {
   ok: boolean;
@@ -37,6 +43,7 @@ export class AdminCommandService {
     private readonly joinAudit: JoinAuditService,
     private readonly configStore: GroupConfigStore,
     private readonly groupMessageMode?: GroupMessageModeRegistry,
+    private readonly identityMap?: IdentityMapService,
   ) {}
 
   public handle(
@@ -60,6 +67,12 @@ export class AdminCommandService {
       case "myperm":
       case "我的权限":
         return this.handleMyPermission(groupId, userId);
+      case "bind":
+      case "绑定":
+        return this.handleBind(groupId, userId, parts);
+      case "whois":
+      case "查询":
+        return this.handleWhois(userId, parts);
       case "perm":
       case "权限":
         return this.handlePermissionConfig(groupId, userId, parts);
@@ -87,14 +100,165 @@ export class AdminCommandService {
   }
 
   private handleMyId(groupId: string | undefined, userId: string): CommandResult {
+    const qq = this.identityMap?.getQq(userId);
+    const groupNumber = groupId
+      ? this.identityMap?.getGroupNumber(groupId)
+      : undefined;
     return {
       ok: true,
       text: [
         `你的 userId：${userId}`,
+        qq ? `你的 QQ 号：${qq}` : "你的 QQ 号：未绑定",
         groupId ? `当前群 ID：${groupId}` : "当前会话：私聊",
+        groupNumber ? `当前群号：${groupNumber}` : undefined,
         "注意：这是官方 OpenID，不是 QQ 号。",
-      ].join("\n"),
+      ]
+        .filter((line): line is string => line !== undefined)
+        .join("\n"),
     };
+  }
+
+  private handleBind(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): CommandResult {
+    const target = normalize(parts[1]);
+    if (!target) {
+      return {
+        ok: false,
+        text:
+          "用法：\n" +
+          "/bind qq <QQ号>\n" +
+          "/bind group <群号>\n" +
+          "/bind user <userId> <QQ号>（超管）\n" +
+          "/bind groupid <group_openid> <群号>（超管）",
+      };
+    }
+
+    if (target === "qq") {
+      const qq = parts[2]?.trim();
+      if (!qq) {
+        return { ok: false, text: "用法：/bind qq <QQ号>" };
+      }
+      this.identityMap?.bindUser(userId, qq);
+      log.info("bound user qq", { userId, qq });
+      return { ok: true, text: `已绑定：userId ${userId} ↔ QQ ${qq}` };
+    }
+
+    if (target === "group") {
+      const groupNumber = parts[2]?.trim();
+      if (!groupId || !groupNumber) {
+        return {
+          ok: false,
+          text: "该指令需要在群内使用。用法：/bind group <群号>",
+        };
+      }
+      if (
+        !this.permissions.canApproveJoin(userId, groupId) &&
+        !this.permissions.isSuperAdmin(userId)
+      ) {
+        return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
+      }
+      this.identityMap?.bindGroup(groupId, groupNumber);
+      log.info("bound group number", { groupId, groupNumber, userId });
+      return { ok: true, text: `已绑定：group_openid ${groupId} ↔ 群号 ${groupNumber}` };
+    }
+
+    if (target === "user") {
+      if (!this.permissions.isSuperAdmin(userId)) {
+        return { ok: false, text: "权限不足：仅超级管理员可以绑定任意用户。" };
+      }
+      const officialId = parts[2]?.trim();
+      const qq = parts[3]?.trim();
+      if (!officialId || !qq) {
+        return { ok: false, text: "用法：/bind user <userId> <QQ号>" };
+      }
+      this.identityMap?.bindUser(officialId, qq);
+      log.info("bound user qq", { officialId, qq, operator: userId });
+      return { ok: true, text: `已绑定：userId ${officialId} ↔ QQ ${qq}` };
+    }
+
+    if (target === "groupid") {
+      if (!this.permissions.isSuperAdmin(userId)) {
+        return { ok: false, text: "权限不足：仅超级管理员可以绑定任意群。" };
+      }
+      const officialId = parts[2]?.trim();
+      const groupNumber = parts[3]?.trim();
+      if (!officialId || !groupNumber) {
+        return { ok: false, text: "用法：/bind groupid <group_openid> <群号>" };
+      }
+      this.identityMap?.bindGroup(officialId, groupNumber);
+      log.info("bound group number", {
+        officialId,
+        groupNumber,
+        operator: userId,
+      });
+      return {
+        ok: true,
+        text: `已绑定：group_openid ${officialId} ↔ 群号 ${groupNumber}`,
+      };
+    }
+
+    return {
+      ok: false,
+      text:
+        "未知绑定类型。用法：\n" +
+        "/bind qq <QQ号>\n" +
+        "/bind group <群号>\n" +
+        "/bind user <userId> <QQ号>（超管）\n" +
+        "/bind groupid <group_openid> <群号>（超管）",
+    };
+  }
+
+  private handleWhois(userId: string, parts: readonly string[]): CommandResult {
+    if (!this.permissions.isSuperAdmin(userId)) {
+      return { ok: false, text: "权限不足：仅超级管理员可以查询映射。" };
+    }
+    if (!this.identityMap) {
+      return { ok: false, text: "映射服务未启用。" };
+    }
+    const input = parts[1]?.trim();
+    if (!input) {
+      return {
+        ok: false,
+        text: "用法：/whois <QQ号|userId|群号|group_openid>",
+      };
+    }
+    const resolvedUserId = this.identityMap.resolveUserId(input);
+    if (resolvedUserId) {
+      const qq = this.identityMap.getQq(resolvedUserId) ?? "（未绑定）";
+      return {
+        ok: true,
+        text: `类型：用户\nuserId：${resolvedUserId}\nQQ：${qq}`,
+      };
+    }
+    const resolvedGroupId = this.identityMap.resolveGroupId(input);
+    if (resolvedGroupId) {
+      const groupNumber =
+        this.identityMap.getGroupNumber(resolvedGroupId) ?? "（未绑定）";
+      return {
+        ok: true,
+        text: `类型：群\n群 ID：${resolvedGroupId}\n群号：${groupNumber}`,
+      };
+    }
+    return { ok: false, text: "未找到映射。" };
+  }
+
+  private resolveUserId(input: string | undefined): string | undefined {
+    const trimmed = input?.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    return this.identityMap?.resolveUserId(trimmed) ?? trimmed;
+  }
+
+  private resolveGroupId(input: string | undefined): string | undefined {
+    const trimmed = input?.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    return this.identityMap?.resolveGroupId(trimmed) ?? trimmed;
   }
 
   private handleMyPermission(
@@ -128,7 +292,7 @@ export class AdminCommandService {
 
     const action = normalize(parts[1]);
     if (!action || action === "list" || action === "列表") {
-      const targetGroupId = groupId ?? parts[2]?.trim();
+      const targetGroupId = this.resolveGroupId(groupId ?? parts[2]);
       return {
         ok: true,
         text: this.formatPermissionList(targetGroupId),
@@ -137,14 +301,14 @@ export class AdminCommandService {
 
     const role = normalize(parts[2]);
     const isSuperRole = role === "super" || role === "超管";
-    let targetGroupId = groupId;
+    let targetGroupId: string | undefined;
     let targetUserId: string | undefined;
 
     if (isSuperRole) {
-      targetUserId = parts[3]?.trim();
+      targetUserId = this.resolveUserId(parts[3]);
     } else {
-      targetGroupId = groupId ?? parts[3]?.trim();
-      targetUserId = groupId ? parts[3]?.trim() : parts[4]?.trim();
+      targetGroupId = this.resolveGroupId(groupId ?? parts[3]);
+      targetUserId = this.resolveUserId(groupId ? parts[3] : parts[4]);
     }
 
     if (!role || !targetUserId) {
@@ -152,15 +316,15 @@ export class AdminCommandService {
         ok: false,
         text:
           "用法：\n" +
-          "/perm grant|revoke super <userId>\n" +
-          "/perm grant|revoke admin|mod [group_openid] <userId>",
+          "/perm grant|revoke super <userId|QQ号>\n" +
+          "/perm grant|revoke admin|mod [group_openid|群号] <userId|QQ号>",
       };
     }
 
     if (!isSuperRole && !targetGroupId) {
       return {
         ok: false,
-        text: "私信中配置群管理员/审核员需要提供 group_openid。",
+        text: "私信中配置群管理员/审核员需要提供 group_openid 或已绑定的群号。",
       };
     }
 
@@ -174,8 +338,8 @@ export class AdminCommandService {
           ok: false,
           text:
             "用法：\n" +
-            "/perm grant|revoke super <userId>\n" +
-            "/perm grant|revoke admin|mod [group_openid] <userId>",
+            "/perm grant|revoke super <userId|QQ号>\n" +
+            "/perm grant|revoke admin|mod [group_openid|群号] <userId|QQ号>",
         };
       }
     } catch (error) {
@@ -266,7 +430,7 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const targetGroupId = groupId ?? parts[1]?.trim();
+    const targetGroupId = this.resolveGroupId(groupId ?? parts[1]);
     if (!targetGroupId) {
       return {
         ok: false,
@@ -293,7 +457,7 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const targetGroupId = groupId ?? parts[1]?.trim();
+    const targetGroupId = this.resolveGroupId(groupId ?? parts[1]);
     const requestId = groupId ? parts[1]?.trim() : parts[2]?.trim();
     if (!targetGroupId || !requestId) {
       return {
@@ -323,7 +487,7 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const targetGroupId = groupId ?? parts[1]?.trim();
+    const targetGroupId = this.resolveGroupId(groupId ?? parts[1]);
     const requestId = groupId ? parts[1]?.trim() : parts[2]?.trim();
     if (!targetGroupId || !requestId) {
       return {
@@ -360,7 +524,7 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const targetGroupId = groupId ?? parts[1]?.trim();
+    const targetGroupId = this.resolveGroupId(groupId ?? parts[1]);
     if (!targetGroupId) {
       return {
         ok: false,
@@ -390,7 +554,7 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const targetGroupId = groupId ?? parts[1]?.trim();
+    const targetGroupId = this.resolveGroupId(groupId ?? parts[1]);
     if (!targetGroupId) {
       return {
         ok: false,
@@ -401,17 +565,21 @@ export class AdminCommandService {
       return { ok: false, text: "权限不足：需要审核员或以上权限。" };
     }
     const config = this.configStore.get(targetGroupId);
+    const groupNumber = this.identityMap?.getGroupNumber(targetGroupId);
     return {
       ok: true,
       text: [
         `群 ${targetGroupId} 状态：`,
+        groupNumber ? `群号：${groupNumber}` : undefined,
         `机器人启用：${config.enabled}`,
         `消息过滤：${config.wordFilterEnabled}`,
         `全量消息模式：${this.groupMessageMode?.get(targetGroupId) ?? "unknown"}`,
         `入群审核：${config.joinAuditEnabled}`,
         `导出功能：${config.exportEnabled}`,
         `禁言时长：${config.muteDurationSeconds} 秒`,
-      ].join("\n"),
+      ]
+        .filter((line): line is string => line !== undefined)
+        .join("\n"),
     };
   }
 

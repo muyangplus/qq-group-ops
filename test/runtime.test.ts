@@ -9,6 +9,7 @@ describe("createRuntime", () => {
     expect(runtime.mode).toBe("fake");
     expect(runtime.api).toBeDefined();
     expect(runtime.groupMessageMode.get("g1")).toBe("unknown");
+    expect(runtime.identityMap.listUsers()).toEqual([]);
   });
 
   it("wires join request routing", async () => {

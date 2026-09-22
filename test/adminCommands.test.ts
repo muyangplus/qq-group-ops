@@ -4,6 +4,7 @@ import { JoinRequestStatus } from "../src/core/enums.js";
 import { AdminCommandService } from "../src/services/adminCommands.js";
 import { InMemoryAuditLog } from "../src/services/audit.js";
 import { GroupConfigStore } from "../src/services/groupConfig.js";
+import { IdentityMapService } from "../src/services/identityMap.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
 import { PermissionService } from "../src/services/permissions.js";
 
@@ -11,6 +12,7 @@ describe("AdminCommandService", () => {
   let auditLog: InMemoryAuditLog;
   let joinAudit: JoinAuditService;
   let configStore: GroupConfigStore;
+  let identityMap: IdentityMapService;
   let service: AdminCommandService;
 
   beforeEach(() => {
@@ -25,7 +27,14 @@ describe("AdminCommandService", () => {
       groupId: "__default__",
       keywords: ["广告"],
     });
-    service = new AdminCommandService(permissions, joinAudit, configStore);
+    identityMap = new IdentityMapService();
+    service = new AdminCommandService(
+      permissions,
+      joinAudit,
+      configStore,
+      undefined,
+      identityMap,
+    );
   });
 
   it("shows help", () => {
@@ -162,5 +171,66 @@ describe("AdminCommandService", () => {
 
     const groupPermission = service.handle("g1", "u4", "/myperm");
     expect(groupPermission.text).toContain("你的权限等级：moderator");
+  });
+
+  it("binds and resolves user QQ numbers", () => {
+    const bind = service.handle("g1", "member", "/bind qq 123456");
+    expect(bind.ok).toBe(true);
+    expect(identityMap.resolveUserId("123456")).toBe("member");
+
+    const myId = service.handle("g1", "member", "/myid");
+    expect(myId.text).toContain("你的 QQ 号：123456");
+  });
+
+  it("binds current group number and resolves it", () => {
+    const bind = service.handle("g1", "admin", "/bind group 654321");
+    expect(bind.ok).toBe(true);
+    expect(identityMap.resolveGroupId("654321")).toBe("g1");
+
+    const status = service.handle(undefined, "root", "/status 654321");
+    expect(status.ok).toBe(true);
+    expect(status.text).toContain("群号：654321");
+  });
+
+  it("resolves QQ numbers when granting permissions", () => {
+    service.handle("g1", "member", "/bind qq 123456");
+    const grant = service.handle("g1", "root", "/perm grant mod 123456");
+    expect(grant.ok).toBe(true);
+    expect(identityMap.resolveUserId("123456")).toBe("member");
+
+    const permission = service.handle("g1", "member", "/myperm");
+    expect(permission.text).toContain("你的权限等级：moderator");
+  });
+
+  it("allows super admin to bind arbitrary ids and query mappings", () => {
+    const userBind = service.handle(
+      undefined,
+      "root",
+      "/bind user openid-user 111111",
+    );
+    expect(userBind.ok).toBe(true);
+    const groupBind = service.handle(
+      undefined,
+      "root",
+      "/bind groupid openid-group 222222",
+    );
+    expect(groupBind.ok).toBe(true);
+
+    const whoisUser = service.handle(undefined, "root", "/whois 111111");
+    expect(whoisUser.ok).toBe(true);
+    expect(whoisUser.text).toContain("openid-user");
+    const whoisGroup = service.handle(undefined, "root", "/whois 222222");
+    expect(whoisGroup.ok).toBe(true);
+    expect(whoisGroup.text).toContain("openid-group");
+  });
+
+  it("denies arbitrary binding to non-super-admin", () => {
+    const result = service.handle(
+      undefined,
+      "admin",
+      "/bind user openid-user 111111",
+    );
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("仅超级管理员");
   });
 });
