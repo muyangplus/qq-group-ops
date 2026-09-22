@@ -1,9 +1,11 @@
 import { FetchTransport } from "./adapters/fetchTransport.js";
 import { QQOfficialClient } from "./adapters/qqOfficial.js";
 import { loadSettings } from "./config.js";
+import { loadEnvFile } from "./env.js";
 import { runPhase0Check } from "./phase0.js";
 
 async function main(): Promise<void> {
+  loadEnvFile();
   const settings = loadSettings();
   const groupId = process.env.QQ_BOT_TEST_GROUP_ID;
 

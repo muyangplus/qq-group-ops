@@ -9,6 +9,8 @@ cp .env.example .env
 # 然后编辑 .env
 ```
 
+`pnpm dev`、`pnpm phase0`、`pnpm start` 会自动读取项目根目录的 `.env`。如果系统环境变量已经存在，则优先使用系统环境变量。
+
 ## 官方机器人
 
 | 变量 | 必填 | 说明 |

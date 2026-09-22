@@ -5,7 +5,10 @@ import type {
 } from "./qqOfficial.js";
 
 export class FetchTransport implements AsyncTransport {
-  public constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+  public constructor(
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly timeoutMs = 10_000,
+  ) {}
 
   public async request(
     method: string,
@@ -13,7 +16,11 @@ export class FetchTransport implements AsyncTransport {
     headers: Record<string, string>,
     json?: JsonValue,
   ): Promise<HttpResponse> {
-    const init: RequestInit = { method, headers };
+    const init: RequestInit = {
+      method,
+      headers,
+      signal: AbortSignal.timeout(this.timeoutMs),
+    };
     if (json !== undefined) {
       init.body = JSON.stringify(json);
     }

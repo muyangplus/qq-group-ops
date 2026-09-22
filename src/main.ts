@@ -1,7 +1,9 @@
 import { hasQqCredentials, loadSettings } from "./config.js";
+import { loadEnvFile } from "./env.js";
 import { createRuntime } from "./runtime.js";
 
 function main(): void {
+  loadEnvFile();
   const settings = loadSettings();
   const runtime = createRuntime(settings);
   console.log("qq-group-ops Node.js runtime");
