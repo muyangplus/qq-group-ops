@@ -26,6 +26,15 @@ async function main(): Promise<void> {
     api: runtime.api,
     createSocket: (url) => new NativeWebSocketFactory(url).create(),
     mapper: new QQOfficialEventMapper(),
+    onHello: (heartbeatIntervalMs) => {
+      console.log(`gateway hello: heartbeat_interval=${heartbeatIntervalMs}ms`);
+    },
+    onReady: () => {
+      console.log("gateway ready: bot authenticated");
+    },
+    onError: (error) => {
+      console.error(`gateway error: ${String(error)}`);
+    },
   });
 
   await attachGateway(runtime, gateway);

@@ -18,6 +18,9 @@ export interface QQOfficialGatewayOptions {
   shard?: [number, number];
   properties?: Record<string, string>;
   scheduler?: Scheduler;
+  onHello?: (heartbeatIntervalMs: number) => void;
+  onReady?: (sessionId: string) => void;
+  onError?: (error: unknown) => void;
 }
 
 export class QQOfficialGateway implements EventGateway {
@@ -72,9 +75,10 @@ export class QQOfficialGateway implements EventGateway {
       this.running = false;
       this.clearHeartbeat();
     });
-    socket.on("error", () => {
+    socket.on("error", (error) => {
       this.running = false;
       this.clearHeartbeat();
+      this.options.onError?.(error);
     });
   }
 
@@ -102,6 +106,7 @@ export class QQOfficialGateway implements EventGateway {
       if (isRecord(data) && typeof data.heartbeat_interval === "number") {
         this.heartbeatIntervalMs = data.heartbeat_interval;
       }
+      this.options.onHello?.(this.heartbeatIntervalMs);
       this.sendIdentify();
       this.startHeartbeat();
       return;
@@ -124,6 +129,7 @@ export class QQOfficialGateway implements EventGateway {
       typeof data.session_id === "string"
     ) {
       this.sessionId = data.session_id;
+      this.options.onReady?.(this.sessionId);
     }
     if (typeof raw.t !== "string") {
       return;

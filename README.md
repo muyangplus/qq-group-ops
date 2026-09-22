@@ -4,7 +4,8 @@
 
 ## 项目状态
 
-- 当前阶段：**Node.js / TypeScript 重写完成，MVP 核心进行中**
+- 当前阶段：**Node.js / TypeScript 重写完成，官方 WebSocket 网关已鉴权成功，MVP 核心进行中**
+- 已验证：官方 WebSocket 网关已收到 `Hello` 并完成 `READY` 鉴权。
 - 技术路线：**仅使用 QQ 官方开放平台 API**，不使用 OneBot、NapCat、Lagrange 等个人号协议端。
 - 已实现：配置、领域模型、规则引擎、审计日志、权限模型、多群配置、入群审核状态机、入群申请同步、消息审核执行、事件路由、事件网关抽象、官方 WebSocket 协议网关、官方事件映射器、自动重连网关、原生 WebSocket 工厂、`/test` 自检指令、运行时装配、PostgreSQL schema/迁移/连接池适配与审计/入群申请/群配置仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
 - 待实现：真实环境联调、自动重连与 Resume 恢复、PostgreSQL 生产连接与迁移命令、Web 管理后台、内容安全与 AI 辅助。

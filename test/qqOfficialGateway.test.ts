@@ -67,12 +67,20 @@ describe("QQOfficialGateway", () => {
     const api = new FakeQQOfficialAPI();
     const socket = new FakeSocket();
     const scheduler = new FakeScheduler();
+    let helloHeartbeat = -1;
+    let readySession = "";
     const gateway = new QQOfficialGateway({
       api,
       createSocket: () => socket,
       mapper: new QQOfficialEventMapper(),
       scheduler,
       shard: [0, 1],
+      onHello: (heartbeatIntervalMs) => {
+        helloHeartbeat = heartbeatIntervalMs;
+      },
+      onReady: (sessionId) => {
+        readySession = sessionId;
+      },
     });
     const received: QQEvent[] = [];
     await gateway.start((event) => {
@@ -86,6 +94,8 @@ describe("QQOfficialGateway", () => {
       "message",
       JSON.stringify({ op: 10, d: { heartbeat_interval: 1000 } }),
     );
+    expect(helloHeartbeat).toBe(1000);
+
     const identify = JSON.parse(socket.sent[0] ?? "{}") as {
       op: number;
       d: { token: string; shard: number[] };
@@ -100,6 +110,7 @@ describe("QQOfficialGateway", () => {
       JSON.stringify({ op: 0, s: 1, t: "READY", d: { session_id: "sess" } }),
     );
     expect(gateway.session).toBe("sess");
+    expect(readySession).toBe("sess");
 
     socket.emit(
       "message",
