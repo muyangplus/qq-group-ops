@@ -78,6 +78,19 @@ export class PermissionService {
     return this.hasAtLeast(userId, groupId, PermissionLevel.GroupAdmin);
   }
 
+  public hasAnyGroupRole(userId: string, required: PermissionLevel): boolean {
+    const groupIds = new Set([
+      ...this.groupAdminIds.keys(),
+      ...this.moderatorIds.keys(),
+    ]);
+    for (const groupId of groupIds) {
+      if (LEVEL_RANK[this.levelFor(userId, groupId)] >= LEVEL_RANK[required]) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public isSuperAdmin(userId: string): boolean {
     return this.superAdminIds.has(userId);
   }

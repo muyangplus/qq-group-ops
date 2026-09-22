@@ -44,11 +44,41 @@ describe("AdminCommandService", () => {
     );
   });
 
-  it("shows help", () => {
-    const result = service.handle("g1", "member", "/help");
-    expect(result.ok).toBe(true);
-    expect(result.text).toContain("可用指令");
-    expect(result.text).toContain("/test");
+  it("shows only permitted commands in help", () => {
+    const member = service.handle("g1", "member", "/help");
+    expect(member.ok).toBe(true);
+    expect(member.text).toContain("/help");
+    expect(member.text).toContain("/bind qq");
+    expect(member.text).toContain("/myperm");
+    expect(member.text).not.toContain("/test");
+    expect(member.text).not.toContain("/approve");
+    expect(member.text).not.toContain("/perm");
+
+    const mod = service.handle("g1", "mod", "/help");
+    expect(mod.text).toContain("/pending");
+    expect(mod.text).toContain("/test");
+    expect(mod.text).not.toContain("/approve");
+    expect(mod.text).not.toContain("/perm");
+
+    const admin = service.handle("g1", "admin", "/help");
+    expect(admin.text).toContain("/approve");
+    expect(admin.text).not.toContain("/perm");
+
+    const root = service.handle("g1", "root", "/help");
+    expect(root.text).toContain("/perm");
+    expect(root.text).toContain("/whois");
+  });
+
+  it("shows binding help when user is not bound", () => {
+    const result = service.handle("g1", "unbound", "/help");
+    expect(result.text).toContain("/bind qq");
+    expect(result.text).not.toContain("/myperm");
+  });
+
+  it("shows group binding help when group is not bound", () => {
+    const result = service.handle("g2", "root", "/help");
+    expect(result.text).toContain("/bind group");
+    expect(result.text).not.toContain("/myperm");
   });
 
   it("rejects unknown commands", () => {

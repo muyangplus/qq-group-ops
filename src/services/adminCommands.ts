@@ -1,3 +1,4 @@
+import { PermissionLevel } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import type { GroupConfigStore } from "./groupConfig.js";
 import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
@@ -6,34 +7,6 @@ import type { JoinAuditService } from "./joinAudit.js";
 import type { PermissionService } from "./permissions.js";
 
 const log = getLogger("admin-commands");
-
-const HELP_TEXT = `可用指令：
-/help - 显示帮助
-/bind qq <QQ号> - 绑定自己的 QQ 号
-/bind group <群号> - 绑定当前群号（群管理员）
-/bind user <userId> <QQ号> - 绑定任意用户（超管）
-/bind groupid <group_openid> <群号> - 绑定任意群（超管）
-/whois <QQ号|userId|群号|group_openid> - 查询映射（超管）
-/myperm - 查看自己的权限
-/perm list [group_openid|群号] - 查看权限配置（超管）
-/perm grant super <userId|QQ号> - 授予全局超管（超管）
-/perm revoke super <userId|QQ号> - 撤销全局超管（超管）
-/perm grant admin [group_openid|群号] <userId|QQ号> - 授予群管理员（超管）
-/perm revoke admin [group_openid|群号] <userId|QQ号> - 撤销群管理员（超管）
-/perm grant mod [group_openid|群号] <userId|QQ号> - 授予审核员（超管）
-/perm revoke mod [group_openid|群号] <userId|QQ号> - 撤销审核员（超管）
-/pending [group_openid|群号] - 查看待审批入群申请
-/approve [group_openid|群号] <申请ID> - 通过入群申请
-/reject [group_openid|群号] <申请ID> [原因] - 拒绝入群申请
-/rules [group_openid|群号] - 查看群规则配置
-/status [group_openid|群号] - 查看群运行状态
-/test - 测试机器人是否正常响应
-
-说明：
-- 除 /help 和 /bind 外，用户和群聊都需要先绑定。
-- 用户绑定：/bind qq <QQ号>
-- 群绑定：/bind group <群号>
-- 私信中执行群管理指令时，需要提供 group_openid 或已绑定的群号。`;
 
 export interface CommandResult {
   ok: boolean;
@@ -56,7 +29,7 @@ export class AdminCommandService {
   ): CommandResult {
     const parts = text.trim().split(/\s+/u).filter((part) => part.length > 0);
     if (parts.length === 0) {
-      return { ok: false, text: HELP_TEXT };
+      return { ok: false, text: this.buildHelp(groupId, userId) };
     }
     const command = parts[0]!.replace(/^\//u, "").toLowerCase();
     log.debug("command", { groupId, userId, command });
@@ -90,7 +63,7 @@ export class AdminCommandService {
     switch (command) {
       case "help":
       case "帮助":
-        return { ok: true, text: HELP_TEXT };
+        return { ok: true, text: this.buildHelp(groupId, userId) };
       case "myperm":
       case "我的权限":
         return this.handleMyPermission(groupId, userId);
@@ -122,7 +95,7 @@ export class AdminCommandService {
       case "测试":
         return this.handleTest(groupId, userId);
       default:
-        return { ok: false, text: `未知指令：${parts[0]}\n\n${HELP_TEXT}` };
+        return { ok: false, text: `未知指令：${parts[0]}\n\n${this.buildHelp(groupId, userId)}` };
     }
   }
 
@@ -276,6 +249,82 @@ export class AdminCommandService {
       return trimmed;
     }
     return this.identityMap.resolveGroupId(trimmed);
+  }
+
+  private buildHelp(groupId: string | undefined, userId: string): string {
+    const lines: string[] = [
+      "可用指令：",
+      "/help - 显示帮助",
+      "/bind qq <QQ号> - 绑定自己的 QQ 号",
+    ];
+    const isSuper = this.permissions.isSuperAdmin(userId);
+    const canBindGroup =
+      groupId !== undefined &&
+      (isSuper || this.permissions.canApproveJoin(userId, groupId));
+    if (canBindGroup) {
+      lines.push("/bind group <群号> - 绑定当前群号");
+    }
+    if (isSuper) {
+      lines.push("/bind user <userId> <QQ号> - 绑定任意用户");
+      lines.push("/bind groupid <group_openid> <群号> - 绑定任意群");
+      lines.push("/whois <QQ号|userId|群号|group_openid> - 查询映射");
+    }
+
+    const isBound = this.identityMap
+      ? Boolean(this.identityMap.getQq(userId))
+      : true;
+    if (!isBound) {
+      lines.push("", "请先绑定 QQ 号：/bind qq <QQ号>");
+      lines.push("绑定后使用 /help 查看可用指令。");
+      return lines.join("\n");
+    }
+
+    const groupBound = groupId !== undefined
+      ? Boolean(this.identityMap?.getGroupNumber(groupId))
+      : true;
+    if (groupId !== undefined && !groupBound) {
+      lines.push("", "本群未绑定，群管理指令不可用。");
+      lines.push(
+        canBindGroup
+          ? "请先绑定本群：/bind group <群号>"
+          : "请联系群管理员绑定本群：/bind group <群号>",
+      );
+      return lines.join("\n");
+    }
+
+    lines.push("/myperm - 查看自己的权限");
+    const canModerate =
+      groupId !== undefined
+        ? this.permissions.canReviewContent(userId, groupId)
+        : this.permissions.hasAnyGroupRole(userId, PermissionLevel.Moderator);
+    const canAdmin =
+      groupId !== undefined
+        ? this.permissions.canApproveJoin(userId, groupId)
+        : this.permissions.hasAnyGroupRole(userId, PermissionLevel.GroupAdmin);
+
+    if (canModerate) {
+      lines.push("/pending [group_openid|群号] - 查看待审批入群申请");
+      lines.push("/rules [group_openid|群号] - 查看群规则配置");
+      lines.push("/status [group_openid|群号] - 查看群运行状态");
+      lines.push("/test - 测试机器人是否正常响应");
+    }
+    if (canAdmin) {
+      lines.push("/approve [group_openid|群号] <申请ID> - 通过入群申请");
+      lines.push("/reject [group_openid|群号] <申请ID> [原因] - 拒绝入群申请");
+    }
+    if (isSuper) {
+      lines.push("/perm list [group_openid|群号] - 查看权限配置");
+      lines.push("/perm grant super <userId|QQ号> - 授予全局超管");
+      lines.push("/perm revoke super <userId|QQ号> - 撤销全局超管");
+      lines.push("/perm grant admin [group_openid|群号] <userId|QQ号> - 授予群管理员");
+      lines.push("/perm revoke admin [group_openid|群号] <userId|QQ号> - 撤销群管理员");
+      lines.push("/perm grant mod [group_openid|群号] <userId|QQ号> - 授予审核员");
+      lines.push("/perm revoke mod [group_openid|群号] <userId|QQ号> - 撤销审核员");
+    }
+    if (!canModerate && !canAdmin && !isSuper) {
+      lines.push("当前没有更多可执行的管理指令。");
+    }
+    return lines.join("\n");
   }
 
   private handleMyPermission(
