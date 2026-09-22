@@ -58,6 +58,8 @@
 ```bash
 corepack enable
 pnpm install
+cp .env.example .env
+# 然后按需填写 .env
 ```
 
 如果默认 npm 源不可用，可使用镜像：
@@ -142,6 +144,7 @@ QQ Group Ops 核心服务
 ## 文档
 
 - [架构设计](docs/ARCHITECTURE.md)
+- [配置模板说明](docs/CONFIGURATION.md)
 - [路线图](docs/ROADMAP.md)
 - [Phase 0 验证清单](docs/PHASE-0-VERIFICATION.md)
 - [数据合规建议](docs/DATA-COMPLIANCE.md)
