@@ -1,5 +1,6 @@
 import { getLogger } from "../core/logger.js";
 import type { GroupConfigStore } from "./groupConfig.js";
+import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
 import type { JoinAuditService } from "./joinAudit.js";
 import type { PermissionService } from "./permissions.js";
 
@@ -35,6 +36,7 @@ export class AdminCommandService {
     private readonly permissions: PermissionService,
     private readonly joinAudit: JoinAuditService,
     private readonly configStore: GroupConfigStore,
+    private readonly groupMessageMode?: GroupMessageModeRegistry,
   ) {}
 
   public handle(
@@ -405,6 +407,7 @@ export class AdminCommandService {
         `群 ${targetGroupId} 状态：`,
         `机器人启用：${config.enabled}`,
         `消息过滤：${config.wordFilterEnabled}`,
+        `全量消息模式：${this.groupMessageMode?.get(targetGroupId) ?? "unknown"}`,
         `入群审核：${config.joinAuditEnabled}`,
         `导出功能：${config.exportEnabled}`,
         `禁言时长：${config.muteDurationSeconds} 秒`,

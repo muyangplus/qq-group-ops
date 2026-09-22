@@ -198,4 +198,46 @@ describe("QQOfficialGateway", () => {
 
     await gateway.stop();
   });
+
+  it("tracks group full-message mode events", async () => {
+    const api = new FakeQQOfficialAPI();
+    const socket = new FakeSocket();
+    const modes: Array<[string, boolean]> = [];
+    const gateway = new QQOfficialGateway({
+      api,
+      createSocket: () => socket,
+      mapper: new QQOfficialEventMapper(),
+      scheduler: new FakeScheduler(),
+      onGroupMessageMode: (groupId, enabled) => {
+        modes.push([groupId, enabled]);
+      },
+    });
+    await gateway.start(() => undefined);
+
+    socket.emit("open");
+    socket.emit(
+      "message",
+      JSON.stringify({
+        op: 0,
+        s: 1,
+        t: "GROUP_MSG_RECEIVE",
+        d: { group_openid: "g1" },
+      }),
+    );
+    socket.emit(
+      "message",
+      JSON.stringify({
+        op: 0,
+        s: 2,
+        t: "GROUP_MSG_REJECT",
+        d: { group_openid: "g1" },
+      }),
+    );
+
+    expect(modes).toEqual([
+      ["g1", true],
+      ["g1", false],
+    ]);
+    await gateway.stop();
+  });
 });

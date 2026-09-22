@@ -24,6 +24,7 @@ export interface QQOfficialGatewayOptions {
   onHello?: (heartbeatIntervalMs: number) => void;
   onReady?: (sessionId: string) => void;
   onError?: (error: unknown) => void;
+  onGroupMessageMode?: (groupId: string, enabled: boolean) => void;
 }
 
 export class QQOfficialGateway implements EventGateway {
@@ -148,10 +149,19 @@ export class QQOfficialGateway implements EventGateway {
       eventType: raw.t,
       sequence: typeof raw.s === "number" ? raw.s : null,
     });
-    if (raw.t === "GROUP_MSG_RECEIVE") {
-      log.info("group message reception enabled", {
-        groupId: isRecord(data) ? data.group_openid : undefined,
-      });
+    if (raw.t === "GROUP_MSG_RECEIVE" || raw.t === "GROUP_MSG_REJECT") {
+      const groupId = isRecord(data) ? asString(data.group_openid) : undefined;
+      if (groupId) {
+        const enabled = raw.t === "GROUP_MSG_RECEIVE";
+        log.info(
+          enabled
+            ? "group message reception enabled"
+            : "group message reception disabled",
+          { groupId },
+        );
+        this.options.onGroupMessageMode?.(groupId, enabled);
+      }
+      return;
     }
     const event = this.options.mapper.map(raw.t, data);
     if (event && this.handler) {
@@ -214,6 +224,10 @@ function parseJson(text: string): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function formatError(error: unknown): string {

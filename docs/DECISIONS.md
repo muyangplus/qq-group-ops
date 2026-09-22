@@ -116,6 +116,14 @@
 - 理由：私信适合自助查询（`/myid`、`/myperm`）和超管配置；群管理操作仍明确绑定到具体群。
 - 影响：新增 `POST /v2/users/{user_openid}/messages` 调用；私信回复使用被动消息 `msg_id`。
 
+## ADR-0016：全量消息模式诊断
+
+- 状态：已采纳
+- 背景：用户反馈群内非 @ 消息没有响应，但代码侧无法直接影响官方“接收所有消息”开关。
+- 决策：监听 `GROUP_MSG_RECEIVE` / `GROUP_MSG_REJECT`，在 `GroupMessageModeRegistry` 中记录每个群的全量消息模式，并在 `/status` 中显示。
+- 理由：帮助用户快速区分“平台未开启”和“代码未处理”两类问题。
+- 影响：`/status` 增加 `全量消息模式：all | at_only | unknown`。
+
 ## ADR-0013：支持群聊非 @ 指令识别
 
 - 状态：已采纳

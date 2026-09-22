@@ -51,6 +51,10 @@ async function main(): Promise<void> {
       onError: (error) => {
         log.error("gateway error", { error: formatError(error) });
       },
+      onGroupMessageMode: (groupId, enabled) => {
+        runtime.groupMessageMode.setEnabled(groupId, enabled);
+        log.info("group full-message mode changed", { groupId, enabled });
+      },
     }),
     log,
   );

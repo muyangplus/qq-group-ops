@@ -8,6 +8,7 @@ describe("createRuntime", () => {
     const runtime = createRuntime(loadSettings({}));
     expect(runtime.mode).toBe("fake");
     expect(runtime.api).toBeDefined();
+    expect(runtime.groupMessageMode.get("g1")).toBe("unknown");
   });
 
   it("wires join request routing", async () => {

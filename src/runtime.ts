@@ -14,6 +14,7 @@ import { AdminCommandService } from "./services/adminCommands.js";
 import { InMemoryAuditLog } from "./services/audit.js";
 import { EventRouter } from "./services/eventRouter.js";
 import { GroupConfigStore } from "./services/groupConfig.js";
+import { GroupMessageModeRegistry } from "./services/groupMessageMode.js";
 import { JoinAuditService } from "./services/joinAudit.js";
 import { MessageGuardService } from "./services/messageGuard.js";
 import { RuleEngine } from "./services/moderation.js";
@@ -25,6 +26,7 @@ export interface Runtime {
   auditLog: InMemoryAuditLog;
   joinAudit: JoinAuditService;
   configStore: GroupConfigStore;
+  groupMessageMode: GroupMessageModeRegistry;
   router: EventRouter;
 }
 
@@ -33,6 +35,7 @@ export function createRuntime(settings: Settings = loadSettings()): Runtime {
   const auditLog = new InMemoryAuditLog();
   const joinAudit = new JoinAuditService(auditLog);
   const configStore = new GroupConfigStore({ groupId: "__default__" });
+  const groupMessageMode = new GroupMessageModeRegistry();
   const permissions = new PermissionService({
     superAdminIds: new Set(settings.adminUserIds),
   });
@@ -46,6 +49,7 @@ export function createRuntime(settings: Settings = loadSettings()): Runtime {
     permissions,
     joinAudit,
     configStore,
+    groupMessageMode,
   );
   return {
     mode: settings.qqBotAppId && settings.qqBotClientSecret ? "official" : "fake",
@@ -53,6 +57,7 @@ export function createRuntime(settings: Settings = loadSettings()): Runtime {
     auditLog,
     joinAudit,
     configStore,
+    groupMessageMode,
     router: new EventRouter(messageGuard, joinAudit, adminCommands),
   };
 }

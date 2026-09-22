@@ -40,6 +40,15 @@ cp .env.example .env
 
 当前 gateway 已订阅 `GROUP_AND_C2C_EVENT`，代码无需额外改动。
 
+排查：
+
+- 运行 `pnpm dev`，查看是否出现 `dispatch {"eventType":"GROUP_MESSAGE_CREATE",...}`。
+- 如果没有出现，说明群管理员还没有开启“接收所有消息”。
+- 群内发送 `/status`，查看 `全量消息模式`：
+  - `all`：已开启
+  - `at_only`：已关闭
+  - `unknown`：还未收到开启/关闭事件
+
 ## 权限
 
 | 变量 | 必填 | 说明 |

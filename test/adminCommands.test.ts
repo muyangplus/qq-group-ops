@@ -86,6 +86,7 @@ describe("AdminCommandService", () => {
   it("shows status", () => {
     const result = service.handle("g1", "mod", "/status");
     expect(result.ok).toBe(true);
+    expect(result.text).toContain("全量消息模式");
     expect(result.text).toContain("禁言时长");
   });
 
