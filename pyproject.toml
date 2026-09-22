@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qq-group-guard"
+version = "0.1.0"
+description = "基于 QQ 官方开放平台 API 的开源群管理与审核机器人"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "qq-group-guard contributors" },
+]
+keywords = ["qq", "qqbot", "group-management", "moderation", "nonebot"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Framework :: AsyncIO",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Internet :: WWW/HTTP",
+  "Topic :: Communications :: Chat",
+]
+
+# 说明：依赖版本将在 Phase 0 / Phase 1 验证后锁定。
+dependencies = [
+  "nonebot2",
+  "nonebot-adapter-qq",
+  "fastapi",
+  "uvicorn[standard]",
+  "sqlalchemy[asyncio]",
+  "asyncpg",
+  "pydantic-settings",
+  "httpx",
+  "apscheduler",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+  "ruff",
+  "mypy",
+]
+
+[project.scripts]
+qq-group-guard = "qq_group_guard.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qq_group_guard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
