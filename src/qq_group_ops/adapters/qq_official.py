@@ -34,6 +34,9 @@ class QQOfficialAPI(Protocol):
     ) -> None:
         """禁言群成员。"""
 
+    async def remove_group_member(self, group_id: str, user_id: str) -> None:
+        """移除群成员。"""
+
     async def approve_join_request(
         self,
         group_id: str,
@@ -104,6 +107,9 @@ class QQOfficialClient:
         user_id: str,
         duration_seconds: int,
     ) -> None:
+        raise NotImplementedError("Phase 1: implement after Phase 0 verification")
+
+    async def remove_group_member(self, group_id: str, user_id: str) -> None:
         raise NotImplementedError("Phase 1: implement after Phase 0 verification")
 
     async def approve_join_request(

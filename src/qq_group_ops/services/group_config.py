@@ -17,6 +17,8 @@ class GroupConfig:
     word_filter_enabled: bool = True
     export_enabled: bool = False
     raw_message_retention_days: int = 0
+    mute_duration_seconds: int = 600
+    warning_message: str = "请遵守群规，不要发送违规内容。"
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +33,8 @@ class GroupConfigOverride:
     word_filter_enabled: bool | None = None
     export_enabled: bool | None = None
     raw_message_retention_days: int | None = None
+    mute_duration_seconds: int | None = None
+    warning_message: str | None = None
 
 
 class GroupConfigStore:
@@ -68,6 +72,14 @@ class GroupConfigStore:
             raw_message_retention_days=self._pick(
                 override.raw_message_retention_days,
                 self._default.raw_message_retention_days,
+            ),
+            mute_duration_seconds=self._pick(
+                override.mute_duration_seconds,
+                self._default.mute_duration_seconds,
+            ),
+            warning_message=self._pick(
+                override.warning_message,
+                self._default.warning_message,
             ),
         )
 

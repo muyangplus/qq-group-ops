@@ -24,13 +24,17 @@ NoneBot2 运行时
   ├── plugins/activity.py        活动报名
   └── plugins/admin.py           管理指令
       │
-      ├── services/moderation.py 规则引擎
-      ├── services/audit.py      审计日志
-      ├── services/activity.py   活动报名
-      ├── services/export.py     信息导出
-      ├── services/permissions.py 权限模型
-      ├── adapters/qq_official.py 官方 REST 调用
-      └── db/                     PostgreSQL 持久化
+      ├── services/moderation.py   规则引擎
+      ├── services/message_guard.py 消息审核执行
+      ├── services/join_audit.py   入群审核状态机
+      ├── services/group_config.py 多群配置
+      ├── services/activity.py     活动报名
+      ├── services/export.py       信息导出
+      ├── services/audit.py        审计日志
+      ├── services/permissions.py  权限模型
+      ├── adapters/qq_official.py  官方 REST 调用
+      ├── adapters/fake_qq_official.py 官方 API 测试替身
+      └── db/                      PostgreSQL 持久化
       │
       ▼
 FastAPI 管理 API（Phase 2）

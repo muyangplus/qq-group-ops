@@ -21,6 +21,7 @@ class FakeQQOfficialAPI:
         self.sent_messages: list[JsonDict] = []
         self.recalled_messages: list[tuple[str, str]] = []
         self.muted_members: list[tuple[str, str, int]] = []
+        self.removed_members: list[tuple[str, str]] = []
         self.join_requests: dict[str, JsonDict] = {}
         self.join_request_reviews: list[tuple[str, str, bool, str]] = []
 
@@ -51,6 +52,9 @@ class FakeQQOfficialAPI:
         duration_seconds: int,
     ) -> None:
         self.muted_members.append((group_id, user_id, duration_seconds))
+
+    async def remove_group_member(self, group_id: str, user_id: str) -> None:
+        self.removed_members.append((group_id, user_id))
 
     async def approve_join_request(
         self,
