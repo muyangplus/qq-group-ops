@@ -13,6 +13,12 @@ export interface WebSocketFactory {
   create(): WebSocketLike;
 }
 
+export interface GatewayLifecycle {
+  onOpen?: () => void;
+  onClose?: () => void;
+  onError?: (error: unknown) => void;
+}
+
 export class WebSocketGateway implements EventGateway {
   private socket: WebSocketLike | undefined;
   private handler: EventHandler | undefined;
@@ -21,6 +27,7 @@ export class WebSocketGateway implements EventGateway {
   public constructor(
     private readonly factory: WebSocketFactory,
     private readonly mapper: EventMapper,
+    private readonly lifecycle: GatewayLifecycle = {},
   ) {}
 
   public get isRunning(): boolean {
@@ -33,12 +40,15 @@ export class WebSocketGateway implements EventGateway {
     this.socket = socket;
     socket.on("open", () => {
       this.running = true;
+      this.lifecycle.onOpen?.();
     });
     socket.on("close", () => {
       this.running = false;
+      this.lifecycle.onClose?.();
     });
-    socket.on("error", () => {
+    socket.on("error", (error) => {
       this.running = false;
+      this.lifecycle.onError?.(error);
     });
     socket.on("message", (payload) => {
       void this.handleMessage(payload);
