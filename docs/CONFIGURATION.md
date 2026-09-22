@@ -68,6 +68,10 @@ DATABASE_URL=postgres://qqbot:change-me@localhost:5432/qq_group_ops
 | 变量 | 必填 | 说明 |
 |---|---|---|
 | `LOG_LEVEL` | 否 | `debug` / `info` / `warn` / `error`，默认 `info` |
+| `LOG_FILE` | 否 | 日志文件路径，默认 `logs/qq-group-ops.log`；设为空字符串可关闭文件日志 |
+| `LOG_CONSOLE` | 否 | 是否输出到控制台，默认 `true` |
+
+`pnpm dev` 会默认使用 `debug` 级别，便于开发调试。生产环境建议使用 `info` 或 `warn`。
 
 ## 数据保留
 

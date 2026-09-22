@@ -6,6 +6,8 @@ export interface Settings {
   databaseUrl: string;
   adminQqIds: readonly string[];
   logLevel: string;
+  logFile: string;
+  logConsole: boolean;
   rawMessageRetentionDays: number;
   auditLogRetentionDays: number;
 }
@@ -49,6 +51,8 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
       "postgres://qqbot:change-me@localhost:5432/qq_group_ops",
     adminQqIds: splitCsv(env.ADMIN_QQ_IDS),
     logLevel: (env.LOG_LEVEL ?? "info").toUpperCase(),
+    logFile: env.LOG_FILE ?? "logs/qq-group-ops.log",
+    logConsole: asBool(env.LOG_CONSOLE, true),
     rawMessageRetentionDays: asInt(env.RAW_MESSAGE_RETENTION_DAYS, 0),
     auditLogRetentionDays: asInt(env.AUDIT_LOG_RETENTION_DAYS, 180),
   };

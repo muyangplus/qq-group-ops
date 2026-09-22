@@ -6,9 +6,12 @@ import {
   SystemScheduler,
   type Scheduler,
 } from "./reconnectingWebSocketGateway.js";
+import { getLogger } from "../core/logger.js";
 
 export const GROUP_MEMBER_EVENT = 1 << 24;
 export const GROUP_AND_C2C_EVENT = 1 << 25;
+
+const log = getLogger("qq-official-gateway");
 
 export interface QQOfficialGatewayOptions {
   api: QQOfficialAPI;
@@ -63,10 +66,12 @@ export class QQOfficialGateway implements EventGateway {
     this.stopped = false;
     const gatewayUrl = await this.options.api.getGatewayUrl();
     this.token = await this.options.api.getAccessToken();
+    log.debug("connecting", { gatewayUrl });
     const socket = this.options.createSocket(gatewayUrl);
     this.socket = socket;
     socket.on("open", () => {
       this.running = true;
+      log.debug("socket open");
     });
     socket.on("message", (payload) => {
       void this.handleMessage(payload);
@@ -74,15 +79,18 @@ export class QQOfficialGateway implements EventGateway {
     socket.on("close", () => {
       this.running = false;
       this.clearHeartbeat();
+      log.warn("socket closed");
     });
     socket.on("error", (error) => {
       this.running = false;
       this.clearHeartbeat();
+      log.error("socket error", { error: formatError(error) });
       this.options.onError?.(error);
     });
   }
 
   public async stop(): Promise<void> {
+    log.info("stopping");
     this.stopped = true;
     this.clearHeartbeat();
     this.socket?.close();
@@ -106,6 +114,7 @@ export class QQOfficialGateway implements EventGateway {
       if (isRecord(data) && typeof data.heartbeat_interval === "number") {
         this.heartbeatIntervalMs = data.heartbeat_interval;
       }
+      log.debug("hello", { heartbeatIntervalMs: this.heartbeatIntervalMs });
       this.options.onHello?.(this.heartbeatIntervalMs);
       this.sendIdentify();
       this.startHeartbeat();
@@ -129,6 +138,7 @@ export class QQOfficialGateway implements EventGateway {
       typeof data.session_id === "string"
     ) {
       this.sessionId = data.session_id;
+      log.info("ready", { hasSession: Boolean(this.sessionId) });
       this.options.onReady?.(this.sessionId);
     }
     if (typeof raw.t !== "string") {
@@ -141,6 +151,7 @@ export class QQOfficialGateway implements EventGateway {
   }
 
   private sendIdentify(): void {
+    log.debug("identify", { intents: this.intents, shard: this.shard });
     this.send({
       op: 2,
       d: {
@@ -165,6 +176,7 @@ export class QQOfficialGateway implements EventGateway {
   }
 
   private sendHeartbeat(): void {
+    log.debug("heartbeat", { seq: this.lastSequence });
     this.send({ op: 1, d: this.lastSequence });
   }
 
@@ -193,4 +205,8 @@ function parseJson(text: string): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

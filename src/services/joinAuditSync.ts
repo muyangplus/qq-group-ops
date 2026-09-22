@@ -1,5 +1,8 @@
 import type { QQOfficialAPI } from "../adapters/qqOfficial.js";
+import { getLogger } from "../core/logger.js";
 import type { JoinAuditService, JoinRequest } from "./joinAudit.js";
+
+const log = getLogger("join-sync");
 
 export class JoinRequestSyncService {
   public constructor(
@@ -9,6 +12,7 @@ export class JoinRequestSyncService {
 
   public async syncGroup(groupId: string): Promise<JoinRequest[]> {
     const rawRequests = await this.api.getJoinRequests(groupId);
+    log.debug("sync start", { groupId, remoteCount: rawRequests.length });
     for (const item of rawRequests) {
       const requestId = firstString(item, "request_id", "id", "flag");
       const userId = firstString(item, "user_id", "member_openid", "user_openid");
@@ -22,7 +26,9 @@ export class JoinRequestSyncService {
         // 已同步过的申请不重复写入。
       }
     }
-    return this.joinAudit.pending(groupId);
+    const pending = this.joinAudit.pending(groupId);
+    log.debug("sync done", { groupId, pendingCount: pending.length });
+    return pending;
   }
 }
 

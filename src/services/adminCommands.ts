@@ -1,6 +1,9 @@
+import { getLogger } from "../core/logger.js";
 import type { GroupConfigStore } from "./groupConfig.js";
 import type { JoinAuditService } from "./joinAudit.js";
 import type { PermissionService } from "./permissions.js";
+
+const log = getLogger("admin-commands");
 
 const HELP_TEXT = `可用指令：
 /pending - 查看待审批入群申请
@@ -29,6 +32,7 @@ export class AdminCommandService {
       return { ok: false, text: HELP_TEXT };
     }
     const command = parts[0]!.replace(/^\//u, "").toLowerCase();
+    log.debug("command", { groupId, userId, command });
     switch (command) {
       case "help":
       case "帮助":
@@ -87,8 +91,10 @@ export class AdminCommandService {
     try {
       this.joinAudit.approve(requestId, userId);
     } catch (error) {
+      log.warn("approve failed", { requestId, error: String(error) });
       return { ok: false, text: `审批失败：${String(error)}` };
     }
+    log.info("approved join request", { requestId, userId });
     return { ok: true, text: `已通过入群申请 ${requestId}。` };
   }
 
@@ -108,8 +114,10 @@ export class AdminCommandService {
     try {
       this.joinAudit.reject(requestId, userId, reason);
     } catch (error) {
+      log.warn("reject failed", { requestId, error: String(error) });
       return { ok: false, text: `审批失败：${String(error)}` };
     }
+    log.info("rejected join request", { requestId, userId, hasReason: reason.length > 0 });
     return { ok: true, text: `已拒绝入群申请 ${requestId}。` };
   }
 
@@ -152,8 +160,10 @@ export class AdminCommandService {
 
   private handleTest(groupId: string, userId: string): CommandResult {
     if (!this.permissions.canReviewContent(userId, groupId)) {
+      log.warn("test permission denied", { groupId, userId });
       return { ok: false, text: "权限不足：需要审核员或以上权限。" };
     }
+    log.info("test command", { groupId, userId });
     return {
       ok: true,
       text: [

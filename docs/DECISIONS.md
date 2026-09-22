@@ -83,3 +83,11 @@
 - 决策：删除 Phase 0 CLI、警告和专属文档；在机器人内置 `/test` 自检指令。
 - 理由：`/test` 直接在真实 QQ 群中验证机器人响应、权限和消息链路，流程更自然。
 - 影响：不再需要 `QQ_BOT_TEST_GROUP_ID` 和 `PHASE0_SEND_TEST_MESSAGE` 环境变量；`docs/PHASE-0-VERIFICATION.md` 已删除。
+
+## ADR-0011：结构化日志与接口调试包装
+
+- 状态：已采纳
+- 背景：需要完整 debug 日志，并覆盖所有已实现接口。
+- 决策：实现可复用 Logger 组件，支持控制台和文件传输；通过 instrumentation 代理为官方 API、HTTP、数据库、事件网关统一记录调试信息。
+- 理由：模块化、低侵入、组件复用，避免在每个方法里重复手写日志。
+- 影响：`pnpm dev` 默认使用 `debug` 级别并写入 `logs/qq-group-ops.log`；token、secret、消息原文等敏感信息不写入日志。

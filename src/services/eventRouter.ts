@@ -1,8 +1,11 @@
 import type { ModerationAction } from "../core/enums.js";
+import { getLogger } from "../core/logger.js";
 import { newIncomingMessage } from "../core/models.js";
 import type { AdminCommandService } from "./adminCommands.js";
 import type { JoinAuditService } from "./joinAudit.js";
 import type { MessageGuardService } from "./messageGuard.js";
+
+const log = getLogger("event-router");
 
 export interface GroupMessageEvent {
   type: "group_message";
@@ -46,6 +49,7 @@ export class EventRouter {
   ) {}
 
   public async handle(event: QQEvent): Promise<EventRouterResult> {
+    log.debug("route", { type: event.type, groupId: event.groupId });
     switch (event.type) {
       case "group_message": {
         if (event.content.trim().startsWith("/")) {

@@ -5,6 +5,7 @@ import {
   AuditStatus,
   ModerationAction,
 } from "../core/enums.js";
+import { getLogger } from "../core/logger.js";
 import type {
   AuditRecord,
   IncomingMessage,
@@ -16,6 +17,8 @@ import { InMemoryAuditLog } from "./audit.js";
 import type { EffectiveGroupConfig } from "./groupConfig.js";
 import { GroupConfigStore } from "./groupConfig.js";
 import { RuleEngine } from "./moderation.js";
+
+const log = getLogger("message-guard");
 
 export interface MessageGuardResult {
   groupId: string;
@@ -42,6 +45,7 @@ export class MessageGuardService {
   public async handleMessage(message: IncomingMessage): Promise<MessageGuardResult> {
     const config = this.configStore.get(message.groupId);
     if (!config.enabled || !config.wordFilterEnabled) {
+      log.debug("skipped", { groupId: message.groupId, reason: "disabled" });
       return this.result(message, ModerationAction.Allow, [], false, "disabled");
     }
 
@@ -51,6 +55,12 @@ export class MessageGuardService {
     }
 
     const action = this.rules.highestAction(message.content);
+    log.info("rule matched", {
+      groupId: message.groupId,
+      userId: message.userId,
+      action,
+      rules: matches.map((match) => match.ruleId),
+    });
     const [executed, detail] = await this.execute(action, message, config);
     const record: AuditRecord = {
       recordId: randomUUID(),
@@ -71,6 +81,7 @@ export class MessageGuardService {
     message: IncomingMessage,
     config: EffectiveGroupConfig,
   ): Promise<[boolean, string]> {
+    log.debug("execute action", { action, groupId: message.groupId });
     switch (action) {
       case ModerationAction.Warn:
         await this.api.sendGroupMessage(message.groupId, config.warningMessage, message.messageId);

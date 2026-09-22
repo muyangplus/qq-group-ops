@@ -5,6 +5,11 @@ import {
   type QQOfficialAPI,
 } from "./adapters/qqOfficial.js";
 import { loadSettings, type Settings } from "./config.js";
+import {
+  instrumentQQOfficialAPI,
+  instrumentTransport,
+} from "./core/instrumentation.js";
+import { getLogger } from "./core/logger.js";
 import { AdminCommandService } from "./services/adminCommands.js";
 import { InMemoryAuditLog } from "./services/audit.js";
 import { EventRouter } from "./services/eventRouter.js";
@@ -24,7 +29,7 @@ export interface Runtime {
 }
 
 export function createRuntime(settings: Settings = loadSettings()): Runtime {
-  const api = createApi(settings);
+  const api = instrumentQQOfficialAPI(createApi(settings), getLogger("runtime"));
   const auditLog = new InMemoryAuditLog();
   const joinAudit = new JoinAuditService(auditLog);
   const configStore = new GroupConfigStore({ groupId: "__default__" });
@@ -56,7 +61,7 @@ function createApi(settings: Settings): QQOfficialAPI {
   if (settings.qqBotAppId && settings.qqBotClientSecret) {
     return new QQOfficialClient(settings.qqBotAppId, settings.qqBotClientSecret, {
       token: settings.qqBotToken,
-      transport: new FetchTransport(),
+      transport: instrumentTransport(new FetchTransport(), getLogger("runtime")),
     });
   }
   return new FakeQQOfficialAPI();

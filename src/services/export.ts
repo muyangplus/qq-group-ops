@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 
 import { AuditStatus } from "../core/enums.js";
+import { getLogger } from "../core/logger.js";
 import type { AuditRecord } from "../core/models.js";
 import { utcNow } from "../core/models.js";
 import type { Activity, ActivityRegistration } from "./activity.js";
 import type { AuditLog } from "./audit.js";
 import { InMemoryAuditLog } from "./audit.js";
 import type { PermissionService } from "./permissions.js";
+
+const log = getLogger("export");
 
 export function maskIdentifier(value: string | undefined, keep = 1): string {
   if (!value) {
@@ -63,6 +66,11 @@ export class ExportService {
       "export_activity_registrations",
       registrations.length,
     );
+    log.info("exported activity registrations", {
+      actorId,
+      groupId: activity.groupId,
+      count: registrations.length,
+    });
     return content;
   }
 
@@ -98,6 +106,7 @@ export class ExportService {
     ]);
     const content = renderCsv(headers, rows);
     this.writeAudit(actorId, groupId, "export_audit_records", records.length);
+    log.info("exported audit records", { actorId, groupId, count: records.length });
     return content;
   }
 

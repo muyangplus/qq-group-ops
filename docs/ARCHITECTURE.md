@@ -60,12 +60,15 @@ Web 管理 API + 管理后台（Phase 2）
 | 目录 | 职责 |
 |---|---|
 | `src/adapters/` | 官方 API 鉴权、HTTP 调用、错误映射、事件网关、测试替身 |
-| `src/core/` | 领域模型、枚举、通用类型 |
+| `src/core/` | 领域模型、枚举、通用类型、日志与接口调试包装 |
 | `src/services/` | 规则引擎、审核流程、审计、权限、活动报名、信息导出、命令 |
 | `src/db/` | PostgreSQL schema、查询抽象与仓储 |
 | `src/config.ts` | 环境变量加载与校验 |
+| `src/core/logger.ts` | 结构化日志：控制台 + 文件 |
+| `src/core/instrumentation.ts` | 官方 API、HTTP、数据库、事件网关的调试包装 |
 | `src/runtime.ts` | 运行时装配：按配置选择真实/测试 API 并连接服务 |
-| `src/main.ts` | 本地开发入口 |
+| `src/dev.ts` | 开发入口，默认启用 debug 日志 |
+| `src/main.ts` | 生产入口 |
 | `test/` | Vitest 单元测试与集成测试 |
 | `docs/` | 架构、路线图、验证和合规文档 |
 

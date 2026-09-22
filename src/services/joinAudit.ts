@@ -4,10 +4,13 @@ import {
   AuditStatus,
   JoinRequestStatus,
 } from "../core/enums.js";
+import { getLogger } from "../core/logger.js";
 import type { AuditRecord } from "../core/models.js";
 import { utcNow } from "../core/models.js";
 import type { AuditLog } from "./audit.js";
 import { InMemoryAuditLog } from "./audit.js";
+
+const log = getLogger("join-audit");
 
 export interface JoinRequest {
   requestId: string;
@@ -46,6 +49,7 @@ export class JoinAuditService {
       createdAt: utcNow(),
     };
     this.requests.set(requestId, request);
+    log.debug("submitted", { requestId, groupId, userId });
     return { ...request };
   }
 
@@ -118,6 +122,7 @@ export class JoinAuditService {
       createdAt: utcNow(),
     };
     this.auditLog.append(record);
+    log.info("reviewed", { requestId, status, reviewerId });
     return { ...updated };
   }
 }
