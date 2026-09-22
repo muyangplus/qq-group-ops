@@ -21,6 +21,7 @@ QQ Group Ops 官方接入层
 TypeScript 核心服务
   ├── services/moderation.ts     规则引擎
   ├── services/messageGuard.ts   消息审核执行
+  ├── services/eventRouter.ts    事件路由
   ├── services/joinAudit.ts      入群审核状态机
   ├── services/joinAuditSync.ts  官方申请同步
   ├── services/adminCommands.ts  管理员命令
