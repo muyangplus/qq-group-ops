@@ -1,29 +1,22 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.eggs/
-build/
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
 dist/
-.venv/
-venv/
-env/
+coverage/
 
 # Environment
 .env
 .env.*
 !.env.example
 
-# Test / coverage
-.pytest_cache/
-.coverage
-htmlcov/
-.mypy_cache/
-.ruff_cache/
-
-# Logs / runtime data
+# Logs
 *.log
 logs/
+pnpm-debug.log*
+
+# Runtime data
 data/
 backups/
 
@@ -33,5 +26,5 @@ backups/
 .DS_Store
 Thumbs.db
 
-# Docker
-*.pid
+# Test caches
+.vitest/

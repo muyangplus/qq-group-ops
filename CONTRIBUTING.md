@@ -4,43 +4,37 @@
 
 ## 开发环境
 
-- Python 3.11+（推荐 3.11 或 3.12）
+- Node.js 20.11+
+- pnpm
 - Git
 - Docker / Docker Compose（可选）
 
 ```bash
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# Linux / macOS
-source .venv/bin/activate
-
-pip install -e ".[dev]"
+corepack enable
+pnpm install
 ```
 
-## 测试
-
-当前测试使用标准库 `unittest`，不依赖第三方测试框架：
+如果默认 npm 源不可用：
 
 ```bash
-# Windows PowerShell
-$env:PYTHONPATH="src"; python -m unittest discover -s tests -v
+pnpm install --registry=https://registry.npmmirror.com
+```
 
-# Linux / macOS
-PYTHONPATH=src python -m unittest discover -s tests -v
+## 测试与检查
+
+```bash
+pnpm test        # Vitest
+pnpm typecheck   # TypeScript 类型检查
+pnpm build       # 编译到 dist/
 ```
 
 ## 代码风格
 
-- 行宽 100。
-- 使用类型标注。
-- 优先纯函数和可测试服务，不把业务逻辑写进插件入口。
-- 提交前运行：
-
-```bash
-ruff check .
-mypy src
-```
+- 使用 TypeScript。
+- 缩进 2 空格。
+- 优先纯函数和可测试服务，不把业务逻辑写进入口文件。
+- 平台适配层与业务服务层保持分离。
+- 提交前至少运行 `pnpm typecheck && pnpm test`。
 
 ## 分支与提交
 
@@ -57,7 +51,7 @@ mypy src
 
 - 描述改动背景、方案和验证方式。
 - 关联 Issue。
-- 确保测试通过。
+- 确保测试、类型检查和构建通过。
 - 不要提交密钥、真实群号、用户隐私数据或聊天原文。
 
 ## 安全

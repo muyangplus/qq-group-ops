@@ -7,7 +7,7 @@
 | 阶段 | 目标 | 状态 |
 |---|---|---|
 | Phase 0 | 验证官方 API 能力与账号权限 | 进行中 |
-| Phase 1 | 实现 MVP 核心：入群审核、消息规则、审计日志 | 待开始 |
+| Phase 1 | 实现 MVP 核心：入群审核、消息规则、审计日志 | 进行中（服务层已完成） |
 | Phase 2 | Web 管理后台、内容安全、群邀请/好友审核 | 待开始 |
 | Phase 3 | AI 辅助审核、举报申诉、统计报表 | 待开始 |
 | Phase 4 | 安全加固、文档完善、开源发布 | 待开始 |
@@ -39,7 +39,7 @@
 
 - 配置加载与校验。
 - `QQOfficialClient` 官方 REST 调用封装。
-- NoneBot2 + nonebot-adapter-qq 事件接入。
+- 官方 WebSocket / Webhook 网关（Phase 0 后实现）。
 - 入群申请审核：QQ 指令通过 / 拒绝。
 - 消息规则引擎：关键词、正则、白名单、动作映射。
 - 消息处理：警告、记录、撤回（如果官方能力允许）。
@@ -54,7 +54,7 @@
 - [ ] 测试群中可以完成一次入群申请审批闭环。
 - [ ] 关键词命中后可以按规则执行动作并记录日志。
 - [ ] 审计日志可持久化、可查询。
-- [ ] `python -m unittest discover -s tests -v` 通过。
+- [ ] `pnpm typecheck`、`pnpm test`、`pnpm build` 全部通过。
 - [ ] Docker Compose 可以启动 bot 与数据库。
 - [ ] README 中的快速开始步骤可复现。
 
@@ -64,7 +64,7 @@
 
 **范围**：
 
-- FastAPI 管理 API + 登录鉴权。
+- Fastify / Node.js 管理 API + 登录鉴权。
 - Vue 3 + TypeScript 管理后台。
 - 审核队列、规则配置、日志查询、权限管理。
 - 文本内容安全 API。

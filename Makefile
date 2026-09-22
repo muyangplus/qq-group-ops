@@ -1,10 +1,16 @@
-.PHONY: test lint run
+.PHONY: install dev test typecheck build
+
+install:
+	pnpm install
+
+dev:
+	pnpm dev
 
 test:
-	PYTHONPATH=src python -m unittest discover -s tests -v
+	pnpm test
 
-lint:
-	ruff check .
+typecheck:
+	pnpm typecheck
 
-run:
-	PYTHONPATH=src python -m qq_group_ops
+build:
+	pnpm build

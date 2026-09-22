@@ -11,28 +11,28 @@
 - 影响：部分能力受官方接口限制；Phase 0 必须先验证。
 - 备选：个人号协议端（已明确排除）。
 
-## ADR-0002：Python + NoneBot2 + FastAPI
+## ADR-0002：Node.js + TypeScript + 自研轻量核心
 
 - 状态：已采纳
 - 背景：需要事件接入、自定义审核流程和未来 Web 管理后台。
-- 决策：使用 Python 3.11+、NoneBot2、nonebot-adapter-qq、FastAPI、Vue 3。
-- 理由：Python 生态成熟，NoneBot2 适合事件驱动，FastAPI 适合管理 API。
-- 影响：比 AstrBot 方案开发量更大，但可控性更强。
-- 备选：AstrBot 快速原型；Koishi + TypeScript。
+- 决策：使用 Node.js 20.11+、TypeScript、pnpm、Vitest、自研轻量核心。
+- 理由：TypeScript 类型安全，Node.js 生态活跃；自研核心便于测试和长期维护。
+- 影响：官方 WebSocket/Webhook 网关需要自行实现或后续接入合适的 Node.js 适配器。
+- 备选：Koishi、Zhin.js 等 Node.js 机器人框架。
 
 ## ADR-0003：PostgreSQL 作为生产数据库
 
 - 状态：已采纳
 - 背景：需要保存多群配置、审核记录、操作日志和统计。
-- 决策：生产使用 PostgreSQL 16，开发可用 SQLite。
-- 理由：事务、JSONB、索引和生态成熟。
+- 决策：生产使用 PostgreSQL 16；当前测试使用内存实现。
+- 理由：事务、JSON、索引和生态成熟。
 - 影响：部署需要维护数据库；需配置备份和恢复。
 
 ## ADR-0004：事件接入与官方 REST 调用分层
 
 - 状态：已采纳
-- 背景：官方适配器负责任务事件，但群管理 REST 接口可能需要单独调用。
-- 决策：`nonebot-adapter-qq` 负责事件；`QQOfficialClient` 负责 REST。
+- 背景：官方事件接入和群管理 REST 接口需要分开处理。
+- 决策：官方 REST 调用放在 `src/adapters/qqOfficial.ts`；事件网关后续单独实现。
 - 理由：职责清晰，便于测试替换和错误处理。
 - 影响：需要维护鉴权、重试、频率限制和错误码映射。
 
@@ -48,7 +48,7 @@
 
 - 状态：已采纳
 - 背景：需要一个清晰的开源项目名，覆盖群管理、审核、活动报名和信息导出。
-- 决策：仓库名使用 `qq-group-ops`，Python 包名使用 `qq_group_ops`。
+- 决策：仓库名使用 `qq-group-ops`，npm 包名使用 `qq-group-ops`。
 - 理由：名称直观、简短，适合作为 QQ 群管理与运营平台。
 - 影响：对外文档、包名和部署配置均使用该名称。
 
@@ -67,3 +67,11 @@
 - 决策：使用 Apache License 2.0。
 - 理由：Apache-2.0 提供明确的专利授权、免责条款和再分发条件，适合开源基础设施项目。
 - 影响：贡献者默认同意以 Apache-2.0 发布贡献；第三方使用时需保留许可证和版权声明。
+
+## ADR-0009：从 Python 重置为 Node.js / TypeScript
+
+- 状态：已采纳
+- 背景：项目决定统一使用 Node.js 生态。
+- 决策：移除 Python 实现，使用 Node.js + TypeScript + pnpm + Vitest 重写核心服务。
+- 理由：统一技术栈，便于长期维护和与 Node.js 生态集成。
+- 影响：Python 版本的提交仍保留在 Git 历史中；当前 `main` 分支以 Node.js 版本为准。

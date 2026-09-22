@@ -4,11 +4,26 @@
 
 ## 项目状态
 
-- 当前阶段：**Phase 0 待实测 / Phase 1 服务层与运营核心已完成**
+- 当前阶段：**Node.js / TypeScript 重写完成，Phase 0 待实测**
 - 技术路线：**仅使用 QQ 官方开放平台 API**，不使用 OneBot、NapCat、Lagrange 等个人号协议端。
-- 已实现：配置加载、领域模型、规则引擎、审计日志抽象、权限模型、多群配置、入群审核状态机、入群申请同步服务、消息审核执行服务、管理员命令服务、活动报名服务、信息导出服务、官方 API 测试替身、可测试的官方 API 传输层。
-- 待实现：NoneBot2 插件、PostgreSQL 持久化、Web 后台，以及 Phase 0 实测后的真实官方 API 请求体。
-- 生产可用性：尚未达到；Phase 0 能力验证完成前，不承诺全部功能可用。
+- 已实现：配置、领域模型、规则引擎、审计日志、权限模型、多群配置、入群审核状态机、入群申请同步、消息审核执行、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
+- 待实现：真实官方 API 请求体与事件网关、Web 管理后台、内容安全与 AI 辅助。
+- 测试：Vitest，共 66 个测试。
+
+## 技术栈
+
+| 组件 | 选型 |
+|---|---|
+| 运行时 | Node.js 20.11+ |
+| 语言 | TypeScript |
+| 包管理器 | pnpm |
+| 测试 | Vitest |
+| 类型检查 | TypeScript `tsc --noEmit` |
+| 构建 | TypeScript `tsc` |
+| HTTP 客户端 | 原生 `fetch` + 可替换 transport |
+| 数据库 | PostgreSQL（Phase 1 接入） |
+| 部署 | Docker Compose |
+| 许可证 | Apache-2.0 |
 
 ## 目标功能
 
@@ -38,18 +53,48 @@
 - 不默认长期保存聊天原文。
 - 不在 Phase 0 验证前实现依赖未确认官方能力的“硬承诺”。
 
-## 技术栈
+## 快速开始
 
-| 组件 | 选型 |
-|---|---|
-| 语言 | Python 3.11+ |
-| 事件与消息框架 | NoneBot2 + nonebot-adapter-qq |
-| 官方 REST 调用 | 自研 `QQOfficialClient` 适配层 |
-| Web 管理后台 | FastAPI + Vue 3 + TypeScript（Phase 2） |
-| 数据库 | PostgreSQL 16（开发可用 SQLite） |
-| 定时任务 | APScheduler |
-| 部署 | Docker Compose + Caddy/Nginx |
-| 测试 | 标准库 `unittest`（后续可迁移 pytest） |
+```bash
+corepack enable
+pnpm install
+```
+
+如果默认 npm 源不可用，可使用镜像：
+
+```bash
+pnpm install --registry=https://registry.npmmirror.com
+```
+
+常用命令：
+
+```bash
+pnpm dev         # 本地开发入口
+pnpm test        # 运行 Vitest
+pnpm typecheck   # TypeScript 类型检查
+pnpm build       # 编译到 dist/
+pnpm start       # 运行编译后的入口
+```
+
+## 项目结构
+
+```text
+.
+├── .github/workflows/       # CI
+├── docs/                    # 架构、路线图、Phase 0、合规文档
+├── src/
+│   ├── adapters/            # 官方 API 客户端、fetch transport、测试替身
+│   ├── core/                # 领域模型与枚举
+│   ├── services/            # 规则、审核、权限、活动、导出、命令
+│   ├── config.ts            # 环境配置
+│   └── main.ts              # 入口
+├── test/                    # Vitest 测试
+├── package.json
+├── tsconfig.json
+├── vitest.config.ts
+├── Dockerfile
+└── docker-compose.yml
+```
 
 ## 架构概览
 
@@ -57,17 +102,19 @@
 QQ 官方开放平台
       │ WebSocket / Webhook
       ▼
-nonebot-adapter-qq
+官方接入层（Phase 1 实现）
       │
       ▼
-QQ Group Ops 业务层
-  ├── 入群审核
-  ├── 消息规则引擎
-  ├── 群管动作
+QQ Group Ops 核心服务
+  ├── 入群审核 / 同步
+  ├── 规则引擎 / 消息审核
+  ├── 管理员命令
+  ├── 活动报名
+  ├── 信息导出
   └── 审计日志
       │
       ├── PostgreSQL
-      └── FastAPI 管理 API（Phase 2）
+      └── Web 管理 API（Phase 2）
 ```
 
 ## Phase 0：必须先验证的官方能力
@@ -82,65 +129,13 @@ QQ Group Ops 业务层
 6. 内容安全 API 的价格、数据使用与跨境合规。
 7. 部署环境的架构、端口、证书与备份条件。
 
-## 快速开始
+## 文档
 
-> Phase 0 完成前，以下步骤只用于本地开发和结构验证。
-
-```bash
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# Linux / macOS
-source .venv/bin/activate
-
-pip install -e ".[dev]"
-cp .env.example .env
-```
-
-运行纯标准库测试：
-
-```bash
-# Windows PowerShell
-$env:PYTHONPATH="src"; python -m unittest discover -s tests -v
-
-# Linux / macOS
-PYTHONPATH=src python -m unittest discover -s tests -v
-```
-
-运行本地骨架入口：
-
-```bash
-# Windows PowerShell
-$env:PYTHONPATH="src"; python -m qq_group_ops
-
-# Linux / macOS
-PYTHONPATH=src python -m qq_group_ops
-```
-
-## 项目结构
-
-```text
-.
-├── .github/workflows/          # CI
-├── docs/
-│   ├── ARCHITECTURE.md         # 架构设计
-│   ├── DATA-COMPLIANCE.md      # 数据合规建议
-│   ├── DECISIONS.md            # 关键决策记录
-│   ├── PHASE-0-VERIFICATION.md # Phase 0 验证清单
-│   └── ROADMAP.md              # 分阶段路线图
-├── scripts/                    # 开发脚本
-├── src/qq_group_ops/
-│   ├── adapters/               # 官方 API 适配层
-│   ├── core/                   # 领域模型
-│   ├── plugins/                # NoneBot2 插件入口
-│   ├── services/               # 规则、审核、审计服务
-│   └── web/                    # FastAPI 管理后台
-└── tests/                      # 单元测试
-```
-
-## 路线图
-
-详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+- [架构设计](docs/ARCHITECTURE.md)
+- [路线图](docs/ROADMAP.md)
+- [Phase 0 验证清单](docs/PHASE-0-VERIFICATION.md)
+- [数据合规建议](docs/DATA-COMPLIANCE.md)
+- [关键决策](docs/DECISIONS.md)
 
 ## 贡献
 
@@ -148,7 +143,7 @@ PYTHONPATH=src python -m qq_group_ops
 
 ## 安全
 
-如果发现安全问题，请不要公开创建 Issue，先参考 [SECURITY.md](SECURITY.md)。
+安全问题请参考 [SECURITY.md](SECURITY.md)。
 
 ## 许可证
 

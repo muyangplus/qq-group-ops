@@ -65,8 +65,8 @@
 **公开线索**：
 
 - [撤回群聊消息](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_messages_message_id.delete.html)
-- [AstrBot 官方 bot 群管插件](https://github.com/Zhalslar/astrbot_plugin_qqadmin_official)
-- [AstrBot OneBot 群管插件](https://github.com/Zhalslar/astrbot_plugin_qqadmin)
+- [@zhin.js/adapter-qq](https://www.npmjs.com/package/@zhin.js/adapter-qq)
+- [koishi-plugin-qgroup-management](https://www.npmjs.com/package/koishi-plugin-qgroup-management)
 
 ## V0-3 入群申请审批
 

@@ -1,2 +1,2 @@
-$env:PYTHONPATH = "src"
-python -m unittest discover -s tests -v
+$env:CI = "true"
+pnpm test
