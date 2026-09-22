@@ -15,11 +15,19 @@ export class IdentityMapService {
   private readonly groupIdByGroupNumber = new Map<string, string>();
 
   public bindUser(officialId: string, qq: string): void {
+    const previousQq = this.qqByUserId.get(officialId);
+    if (previousQq) {
+      this.userIdByQq.delete(previousQq);
+    }
     this.qqByUserId.set(officialId, qq);
     this.userIdByQq.set(qq, officialId);
   }
 
   public bindGroup(officialId: string, groupNumber: string): void {
+    const previousGroupNumber = this.groupNumberByGroupId.get(officialId);
+    if (previousGroupNumber) {
+      this.groupIdByGroupNumber.delete(previousGroupNumber);
+    }
     this.groupNumberByGroupId.set(officialId, groupNumber);
     this.groupIdByGroupNumber.set(groupNumber, officialId);
   }

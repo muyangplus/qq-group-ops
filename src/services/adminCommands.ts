@@ -57,6 +57,20 @@ export class AdminCommandService {
     }
     const command = parts[0]!.replace(/^\//u, "").toLowerCase();
     log.debug("command", { groupId, userId, command });
+
+    const bindingExempt = new Set(["help", "帮助", "bind", "绑定", "myid", "我的id"]);
+    if (
+      !bindingExempt.has(command) &&
+      this.identityMap &&
+      !this.identityMap.getQq(userId)
+    ) {
+      log.warn("binding required", { groupId, userId, command });
+      return {
+        ok: false,
+        text: "请先绑定 QQ 号：/bind qq <QQ号>",
+      };
+    }
+
     switch (command) {
       case "help":
       case "帮助":
@@ -253,12 +267,21 @@ export class AdminCommandService {
     return this.identityMap?.resolveUserId(trimmed) ?? trimmed;
   }
 
-  private resolveGroupId(input: string | undefined): string | undefined {
+  private resolveTargetGroupId(
+    groupId: string | undefined,
+    input: string | undefined,
+  ): string | undefined {
+    if (groupId) {
+      return groupId;
+    }
     const trimmed = input?.trim();
     if (!trimmed) {
       return undefined;
     }
-    return this.identityMap?.resolveGroupId(trimmed) ?? trimmed;
+    if (!this.identityMap) {
+      return trimmed;
+    }
+    return this.identityMap.resolveGroupId(trimmed);
   }
 
   private handleMyPermission(
@@ -292,7 +315,7 @@ export class AdminCommandService {
 
     const action = normalize(parts[1]);
     if (!action || action === "list" || action === "列表") {
-      const targetGroupId = this.resolveGroupId(groupId ?? parts[2]);
+      const targetGroupId = this.resolveTargetGroupId(groupId, parts[2]);
       return {
         ok: true,
         text: this.formatPermissionList(targetGroupId),
@@ -307,7 +330,7 @@ export class AdminCommandService {
     if (isSuperRole) {
       targetUserId = this.resolveUserId(parts[3]);
     } else {
-      targetGroupId = this.resolveGroupId(groupId ?? parts[3]);
+      targetGroupId = this.resolveTargetGroupId(groupId, parts[3]);
       targetUserId = this.resolveUserId(groupId ? parts[3] : parts[4]);
     }
 
@@ -430,7 +453,7 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const targetGroupId = this.resolveGroupId(groupId ?? parts[1]);
+    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
     if (!targetGroupId) {
       return {
         ok: false,
@@ -457,7 +480,7 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const targetGroupId = this.resolveGroupId(groupId ?? parts[1]);
+    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
     const requestId = groupId ? parts[1]?.trim() : parts[2]?.trim();
     if (!targetGroupId || !requestId) {
       return {
@@ -487,7 +510,7 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const targetGroupId = this.resolveGroupId(groupId ?? parts[1]);
+    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
     const requestId = groupId ? parts[1]?.trim() : parts[2]?.trim();
     if (!targetGroupId || !requestId) {
       return {
@@ -524,7 +547,7 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const targetGroupId = this.resolveGroupId(groupId ?? parts[1]);
+    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
     if (!targetGroupId) {
       return {
         ok: false,
@@ -554,7 +577,7 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const targetGroupId = this.resolveGroupId(groupId ?? parts[1]);
+    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
     if (!targetGroupId) {
       return {
         ok: false,

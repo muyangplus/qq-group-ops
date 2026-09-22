@@ -28,6 +28,13 @@ describe("AdminCommandService", () => {
       keywords: ["广告"],
     });
     identityMap = new IdentityMapService();
+    identityMap.bindUser("member", "10001");
+    identityMap.bindUser("mod", "10002");
+    identityMap.bindUser("admin", "10003");
+    identityMap.bindUser("root", "10004");
+    identityMap.bindUser("u3", "10005");
+    identityMap.bindUser("u4", "10006");
+    identityMap.bindGroup("g1", "654321");
     service = new AdminCommandService(
       permissions,
       joinAudit,
@@ -232,5 +239,22 @@ describe("AdminCommandService", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.text).toContain("仅超级管理员");
+  });
+
+  it("requires QQ binding before using commands", () => {
+    const denied = service.handle("g1", "unbound", "/myperm");
+    expect(denied.ok).toBe(false);
+    expect(denied.text).toContain("请先绑定 QQ 号");
+
+    const bind = service.handle("g1", "unbound", "/bind qq 999999");
+    expect(bind.ok).toBe(true);
+
+    const allowed = service.handle("g1", "unbound", "/myperm");
+    expect(allowed.ok).toBe(true);
+  });
+
+  it("rejects unbound group numbers in private", () => {
+    const result = service.handle(undefined, "root", "/pending 999999");
+    expect(result.ok).toBe(false);
   });
 });
