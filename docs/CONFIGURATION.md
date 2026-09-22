@@ -34,13 +34,35 @@ cp .env.example .env
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `ADMIN_QQ_IDS` | 否 | 超级管理员 QQ 号，逗号分隔 |
+| `ADMIN_QQ_IDS` | 否 | 初始超级管理员 QQ 号，逗号分隔 |
 
 示例：
 
 ```env
 ADMIN_QQ_IDS=123456,234567
 ```
+
+权限相关指令：
+
+```text
+/myperm
+/perm list
+/perm grant super <QQ>
+/perm revoke super <QQ>
+/perm grant admin <QQ>
+/perm revoke admin <QQ>
+/perm grant mod <QQ>
+/perm revoke mod <QQ>
+```
+
+说明：
+
+- `/myperm`：所有用户可查询自己的权限。
+- `/perm`：仅超级管理员可用。
+- `super`：全局超级管理员。
+- `admin`：当前群的群管理员。
+- `mod`：当前群的审核员。
+- 当前权限配置保存在内存中，重启后恢复为 `ADMIN_QQ_IDS` 的初始值；PostgreSQL 持久化待实现。
 
 ## 数据库
 

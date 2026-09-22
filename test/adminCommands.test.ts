@@ -101,4 +101,33 @@ describe("AdminCommandService", () => {
     expect(result.ok).toBe(false);
     expect(result.text).toContain("权限不足");
   });
+
+  it("shows own permissions", () => {
+    const result = service.handle("g1", "member", "/myperm");
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("你的权限等级：member");
+    expect(result.text).toContain("配置权限：false");
+  });
+
+  it("allows super admin to list and grant permissions", () => {
+    const list = service.handle("g1", "root", "/perm list");
+    expect(list.ok).toBe(true);
+    expect(list.text).toContain("超级管理员：root");
+
+    const grant = service.handle("g1", "root", "/perm grant mod u3");
+    expect(grant.ok).toBe(true);
+    expect(grant.text).toContain("u3");
+
+    const memberPermission = service.handle("g1", "u3", "/myperm");
+    expect(memberPermission.text).toContain("你的权限等级：moderator");
+
+    const revoke = service.handle("g1", "root", "/perm revoke mod u3");
+    expect(revoke.ok).toBe(true);
+  });
+
+  it("denies permission configuration to non-super-admin", () => {
+    const result = service.handle("g1", "admin", "/perm list");
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("仅超级管理员");
+  });
 });

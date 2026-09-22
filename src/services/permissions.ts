@@ -22,14 +22,20 @@ export class PermissionDeniedError extends Error {
 }
 
 export class PermissionService {
-  private readonly superAdminIds: ReadonlySet<string>;
-  private readonly groupAdminIds: ReadonlyMap<string, ReadonlySet<string>>;
-  private readonly moderatorIds: ReadonlyMap<string, ReadonlySet<string>>;
+  private readonly superAdminIds = new Set<string>();
+  private readonly groupAdminIds = new Map<string, Set<string>>();
+  private readonly moderatorIds = new Map<string, Set<string>>();
 
   public constructor(policy: PermissionPolicy = {}) {
-    this.superAdminIds = policy.superAdminIds ?? new Set();
-    this.groupAdminIds = policy.groupAdminIds ?? new Map();
-    this.moderatorIds = policy.moderatorIds ?? new Map();
+    for (const userId of policy.superAdminIds ?? []) {
+      this.superAdminIds.add(userId);
+    }
+    for (const [groupId, userIds] of policy.groupAdminIds ?? []) {
+      this.groupAdminIds.set(groupId, new Set(userIds));
+    }
+    for (const [groupId, userIds] of policy.moderatorIds ?? []) {
+      this.moderatorIds.set(groupId, new Set(userIds));
+    }
   }
 
   public levelFor(userId: string, groupId?: string): PermissionLevel {
@@ -72,9 +78,64 @@ export class PermissionService {
     return this.hasAtLeast(userId, groupId, PermissionLevel.GroupAdmin);
   }
 
+  public isSuperAdmin(userId: string): boolean {
+    return this.superAdminIds.has(userId);
+  }
+
+  public grantSuperAdmin(userId: string): void {
+    this.superAdminIds.add(userId);
+  }
+
+  public revokeSuperAdmin(userId: string): boolean {
+    if (this.superAdminIds.size <= 1 && this.superAdminIds.has(userId)) {
+      throw new Error("cannot revoke the last super admin");
+    }
+    return this.superAdminIds.delete(userId);
+  }
+
+  public grantGroupAdmin(groupId: string, userId: string): void {
+    this.ensureGroupSet(groupId, this.groupAdminIds).add(userId);
+  }
+
+  public revokeGroupAdmin(groupId: string, userId: string): boolean {
+    return this.groupAdminIds.get(groupId)?.delete(userId) ?? false;
+  }
+
+  public grantModerator(groupId: string, userId: string): void {
+    this.ensureGroupSet(groupId, this.moderatorIds).add(userId);
+  }
+
+  public revokeModerator(groupId: string, userId: string): boolean {
+    return this.moderatorIds.get(groupId)?.delete(userId) ?? false;
+  }
+
+  public listSuperAdmins(): string[] {
+    return [...this.superAdminIds].sort();
+  }
+
+  public listGroupAdmins(groupId: string): string[] {
+    return [...(this.groupAdminIds.get(groupId) ?? [])].sort();
+  }
+
+  public listModerators(groupId: string): string[] {
+    return [...(this.moderatorIds.get(groupId) ?? [])].sort();
+  }
+
   public ensure(allowed: boolean, message = "permission denied"): void {
     if (!allowed) {
       throw new PermissionDeniedError(message);
     }
+  }
+
+  private ensureGroupSet(
+    groupId: string,
+    target: Map<string, Set<string>>,
+  ): Set<string> {
+    let set = target.get(groupId);
+    if (!set) {
+      set = new Set();
+      target.set(groupId, set);
+    }
+    return set;
   }
 }

@@ -91,3 +91,11 @@
 - 决策：实现可复用 Logger 组件，支持控制台和文件传输；通过 instrumentation 代理为官方 API、HTTP、数据库、事件网关统一记录调试信息。
 - 理由：模块化、低侵入、组件复用，避免在每个方法里重复手写日志。
 - 影响：`pnpm dev` 默认使用 `debug` 级别并写入 `logs/qq-group-ops.log`；控制台支持 `LOG_COLOR=auto/always/never` 彩色策略；token、secret、消息原文等敏感信息不写入日志。
+
+## ADR-0012：权限自助查询与超管运行时配置
+
+- 状态：已采纳
+- 背景：用户需要查询自己的权限，超级管理员需要动态调整管理员和审核员。
+- 决策：`PermissionService` 改为运行时可变；新增 `/myperm` 查询指令和 `/perm` 超管配置指令；`ADMIN_QQ_IDS` 作为初始超级管理员种子。
+- 理由：不依赖数据库即可完成权限管理和验证；结构清晰，便于后续接入 PostgreSQL 仓储。
+- 影响：当前权限变更保存在内存中，进程重启后恢复为 `ADMIN_QQ_IDS`；后续需要增加 `PermissionRepository` 做持久化。

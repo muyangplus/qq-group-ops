@@ -44,4 +44,34 @@ describe("PermissionService", () => {
       PermissionDeniedError,
     );
   });
+
+  it("grants and revokes super admins", () => {
+    const mutable = new PermissionService({
+      superAdminIds: new Set(["root"]),
+    });
+    mutable.grantSuperAdmin("u1");
+    expect(mutable.isSuperAdmin("u1")).toBe(true);
+    expect(mutable.listSuperAdmins()).toEqual(["root", "u1"]);
+
+    mutable.revokeSuperAdmin("u1");
+    expect(mutable.isSuperAdmin("u1")).toBe(false);
+    expect(() => mutable.revokeSuperAdmin("root")).toThrow(
+      /last super admin/u,
+    );
+  });
+
+  it("grants and revokes group roles", () => {
+    const mutable = new PermissionService();
+    mutable.grantGroupAdmin("g1", "u1");
+    mutable.grantModerator("g1", "u2");
+    expect(mutable.canApproveJoin("u1", "g1")).toBe(true);
+    expect(mutable.canReviewContent("u2", "g1")).toBe(true);
+    expect(mutable.listGroupAdmins("g1")).toEqual(["u1"]);
+    expect(mutable.listModerators("g1")).toEqual(["u2"]);
+
+    mutable.revokeGroupAdmin("g1", "u1");
+    mutable.revokeModerator("g1", "u2");
+    expect(mutable.canApproveJoin("u1", "g1")).toBe(false);
+    expect(mutable.canReviewContent("u2", "g1")).toBe(false);
+  });
 });
