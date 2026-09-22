@@ -4,7 +4,7 @@ export interface Settings {
   qqBotToken: string;
   qqBotSandbox: boolean;
   databaseUrl: string;
-  adminQqIds: readonly string[];
+  adminUserIds: readonly string[];
   logLevel: string;
   logFile: string;
   logConsole: boolean;
@@ -50,7 +50,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     databaseUrl:
       env.DATABASE_URL ??
       "postgres://qqbot:change-me@localhost:5432/qq_group_ops",
-    adminQqIds: splitCsv(env.ADMIN_QQ_IDS),
+    adminUserIds: splitCsv(env.ADMIN_USER_IDS ?? env.ADMIN_QQ_IDS),
     logLevel: (env.LOG_LEVEL ?? "info").toUpperCase(),
     logFile: env.LOG_FILE ?? "logs/qq-group-ops.log",
     logConsole: asBool(env.LOG_CONSOLE, true),

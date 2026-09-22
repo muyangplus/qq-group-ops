@@ -57,7 +57,7 @@ describe("FakeEventGateway", () => {
   });
 
   it("sends command replies back to the group", async () => {
-    const runtime = createRuntime(loadSettings({ ADMIN_QQ_IDS: "mod" }));
+    const runtime = createRuntime(loadSettings({ ADMIN_USER_IDS: "mod" }));
     const api = runtime.api as FakeQQOfficialAPI;
     const gateway = new FakeEventGateway();
     await attachGateway(runtime, gateway);

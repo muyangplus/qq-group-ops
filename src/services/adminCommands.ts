@@ -6,10 +6,11 @@ import type { PermissionService } from "./permissions.js";
 const log = getLogger("admin-commands");
 
 const HELP_TEXT = `可用指令：
+/myid - 查询自己的 userId
 /myperm - 查看自己的权限
 /perm list - 查看权限配置（超管）
-/perm grant super|admin|mod <QQ> - 授予权限（超管）
-/perm revoke super|admin|mod <QQ> - 撤销权限（超管）
+/perm grant super|admin|mod <userId> - 授予权限（超管）
+/perm revoke super|admin|mod <userId> - 撤销权限（超管）
 /pending - 查看待审批入群申请
 /approve <申请ID> - 通过入群申请
 /reject <申请ID> [原因] - 拒绝入群申请
@@ -41,6 +42,9 @@ export class AdminCommandService {
       case "help":
       case "帮助":
         return { ok: true, text: HELP_TEXT };
+      case "myid":
+      case "我的id":
+        return this.handleMyId(groupId, userId);
       case "myperm":
       case "我的权限":
         return this.handleMyPermission(groupId, userId);
@@ -68,6 +72,16 @@ export class AdminCommandService {
       default:
         return { ok: false, text: `未知指令：${parts[0]}\n\n${HELP_TEXT}` };
     }
+  }
+
+  private handleMyId(groupId: string, userId: string): CommandResult {
+    return {
+      ok: true,
+      text: [
+        `你的 userId：${userId}`,
+        `当前群 ID：${groupId}`,
+      ].join("\n"),
+    };
   }
 
   private handleMyPermission(groupId: string, userId: string): CommandResult {

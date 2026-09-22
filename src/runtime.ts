@@ -34,7 +34,7 @@ export function createRuntime(settings: Settings = loadSettings()): Runtime {
   const joinAudit = new JoinAuditService(auditLog);
   const configStore = new GroupConfigStore({ groupId: "__default__" });
   const permissions = new PermissionService({
-    superAdminIds: new Set(settings.adminQqIds),
+    superAdminIds: new Set(settings.adminUserIds),
   });
   const messageGuard = new MessageGuardService(
     api,

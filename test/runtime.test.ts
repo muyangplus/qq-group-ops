@@ -24,7 +24,7 @@ describe("createRuntime", () => {
   });
 
   it("wires admin commands with configured admins", async () => {
-    const runtime = createRuntime(loadSettings({ ADMIN_QQ_IDS: "admin" }));
+    const runtime = createRuntime(loadSettings({ ADMIN_USER_IDS: "admin" }));
     runtime.joinAudit.submit("g1", "u1", "想加入", "r1");
     const result = await runtime.router.handle({
       type: "admin_command",

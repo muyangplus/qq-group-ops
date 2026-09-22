@@ -18,7 +18,7 @@ describe("loadSettings", () => {
       QQ_BOT_APP_ID: "123",
       QQ_BOT_CLIENT_SECRET: "secret",
       QQ_BOT_SANDBOX: "true",
-      ADMIN_QQ_IDS: "1, 2",
+      ADMIN_USER_IDS: "1, 2",
       RAW_MESSAGE_RETENTION_DAYS: "7",
       LOG_FILE: "custom.log",
       LOG_CONSOLE: "false",
@@ -26,10 +26,15 @@ describe("loadSettings", () => {
     });
     expect(hasQqCredentials(settings)).toBe(true);
     expect(settings.qqBotSandbox).toBe(true);
-    expect(settings.adminQqIds).toEqual(["1", "2"]);
+    expect(settings.adminUserIds).toEqual(["1", "2"]);
     expect(settings.rawMessageRetentionDays).toBe(7);
     expect(settings.logFile).toBe("custom.log");
     expect(settings.logConsole).toBe(false);
     expect(settings.logColor).toBe("never");
+  });
+
+  it("supports the legacy ADMIN_QQ_IDS alias", () => {
+    const settings = loadSettings({ ADMIN_QQ_IDS: "legacy" });
+    expect(settings.adminUserIds).toEqual(["legacy"]);
   });
 });

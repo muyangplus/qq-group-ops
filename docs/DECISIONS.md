@@ -96,9 +96,17 @@
 
 - 状态：已采纳
 - 背景：用户需要查询自己的权限，超级管理员需要动态调整管理员和审核员。
-- 决策：`PermissionService` 改为运行时可变；新增 `/myperm` 查询指令和 `/perm` 超管配置指令；`ADMIN_QQ_IDS` 作为初始超级管理员种子。
+- 决策：`PermissionService` 改为运行时可变；新增 `/myperm` 查询指令和 `/perm` 超管配置指令；`ADMIN_USER_IDS` 作为初始超级管理员种子。
 - 理由：不依赖数据库即可完成权限管理和验证；结构清晰，便于后续接入 PostgreSQL 仓储。
-- 影响：当前权限变更保存在内存中，进程重启后恢复为 `ADMIN_QQ_IDS`；后续需要增加 `PermissionRepository` 做持久化。
+- 影响：当前权限变更保存在内存中，进程重启后恢复为 `ADMIN_USER_IDS`；后续需要增加 `PermissionRepository` 做持久化。
+
+## ADR-0014：权限配置使用官方 userId，并支持 `/myid`
+
+- 状态：已采纳
+- 背景：官方事件中的用户标识是 OpenID / member_openid，不是 QQ 号。
+- 决策：`ADMIN_USER_IDS` 作为主配置，`ADMIN_QQ_IDS` 作为兼容别名；新增 `/myid` 查询自己的 userId。
+- 理由：避免用户误填 QQ 号；用户可以先用 `/myid` 获取正确值，再配置为超级管理员。
+- 影响：配置模板和文档改用 `ADMIN_USER_IDS`；旧变量仍可读取。
 
 ## ADR-0013：支持群聊非 @ 指令识别
 

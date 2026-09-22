@@ -102,6 +102,13 @@ describe("AdminCommandService", () => {
     expect(result.text).toContain("权限不足");
   });
 
+  it("shows own userId", () => {
+    const result = service.handle("g1", "member", "/myid");
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("你的 userId：member");
+    expect(result.text).toContain("不是 QQ 号");
+  });
+
   it("shows own permissions", () => {
     const result = service.handle("g1", "member", "/myperm");
     expect(result.ok).toBe(true);

@@ -44,35 +44,38 @@ cp .env.example .env
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `ADMIN_QQ_IDS` | 否 | 初始超级管理员 QQ 号，逗号分隔 |
+| `ADMIN_USER_IDS` | 否 | 初始超级管理员 userId（官方 OpenID / member_openid），逗号分隔，不是 QQ 号 |
+| `ADMIN_QQ_IDS` | 否 | 兼容旧名称，等价于 `ADMIN_USER_IDS`，不推荐新项目使用 |
 
 示例：
 
 ```env
-ADMIN_QQ_IDS=123456,234567
+ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 ```
 
 权限相关指令：
 
 ```text
+/myid
 /myperm
 /perm list
-/perm grant super <QQ>
-/perm revoke super <QQ>
-/perm grant admin <QQ>
-/perm revoke admin <QQ>
-/perm grant mod <QQ>
-/perm revoke mod <QQ>
+/perm grant super <userId>
+/perm revoke super <userId>
+/perm grant admin <userId>
+/perm revoke admin <userId>
+/perm grant mod <userId>
+/perm revoke mod <userId>
 ```
 
 说明：
 
+- `/myid`：所有用户可查询自己的官方 userId。
 - `/myperm`：所有用户可查询自己的权限。
 - `/perm`：仅超级管理员可用。
 - `super`：全局超级管理员。
 - `admin`：当前群的群管理员。
 - `mod`：当前群的审核员。
-- 当前权限配置保存在内存中，重启后恢复为 `ADMIN_QQ_IDS` 的初始值；PostgreSQL 持久化待实现。
+- 当前权限配置保存在内存中，重启后恢复为 `ADMIN_USER_IDS` 的初始值；PostgreSQL 持久化待实现。
 
 ## 数据库
 
