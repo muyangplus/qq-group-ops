@@ -13,16 +13,18 @@
 ```text
 QQ 官方开放平台
       │
-      │ WebSocket / Webhook（Phase 1 实现）
+      │ WebSocket 已实现 / Webhook 预留
       ▼
 QQ Group Ops 官方接入层
   ├── adapters/eventGateway.ts     事件网关接口
   ├── adapters/fakeEventGateway.ts 测试网关
   ├── adapters/webSocketGateway.ts WebSocket 网关骨架
   ├── adapters/reconnectingWebSocketGateway.ts 自动重连网关
-  ├── adapters/eventMapper.ts      事件映射器
+  ├── adapters/eventMapper.ts      通用事件映射器
+  ├── adapters/qqOfficialEventMapper.ts 官方事件映射器
   ├── adapters/standardWebSocketFactory.ts 标准 WebSocket 工厂
   ├── adapters/nativeWebSocketFactory.ts   原生 WebSocket 工厂
+  ├── adapters/qqOfficialGateway.ts 官方 WebSocket 协议网关
   └── gatewayRunner.ts             网关到事件路由的绑定
       │
       ▼

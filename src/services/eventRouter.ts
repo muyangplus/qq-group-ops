@@ -48,6 +48,18 @@ export class EventRouter {
   public async handle(event: QQEvent): Promise<EventRouterResult> {
     switch (event.type) {
       case "group_message": {
+        if (event.content.trim().startsWith("/")) {
+          const commandResult = this.adminCommands.handle(
+            event.groupId,
+            event.userId,
+            event.content,
+          );
+          return {
+            kind: "command",
+            ok: commandResult.ok,
+            text: commandResult.text,
+          };
+        }
         const result = await this.messageGuard.handleMessage(
           newIncomingMessage(
             event.groupId,

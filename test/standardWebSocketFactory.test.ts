@@ -15,6 +15,10 @@ class FakeWebSocket implements WebSocketLike {
     return undefined;
   }
 
+  public send(_data: string): void {
+    return undefined;
+  }
+
   public close(): void {
     this.closed = true;
   }

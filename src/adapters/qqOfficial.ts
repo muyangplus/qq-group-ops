@@ -6,6 +6,8 @@ export type JsonValue =
   | undefined;
 
 export interface QQOfficialAPI {
+  getAccessToken(): Promise<string>;
+  getGatewayUrl(): Promise<string>;
   sendGroupMessage(
     groupId: string,
     content: string,
@@ -46,6 +48,7 @@ export interface AsyncTransport {
 export interface QQOfficialEndpoints {
   baseUrl: string;
   tokenUrl: string;
+  gatewayUrl: string;
   sendGroupMessage: string;
   recallGroupMessage: string;
   muteGroupMember: string;
@@ -57,6 +60,7 @@ export interface QQOfficialEndpoints {
 export const DEFAULT_ENDPOINTS: QQOfficialEndpoints = {
   baseUrl: "https://api.sgroup.qq.com",
   tokenUrl: "https://bots.qq.com/app/getAppAccessToken",
+  gatewayUrl: "/gateway",
   sendGroupMessage: "/v2/groups/{groupId}/messages",
   recallGroupMessage: "/v2/groups/{groupId}/messages/{messageId}",
   muteGroupMember: "/v2/groups/{groupId}/restrict_chat_setting",
@@ -140,6 +144,20 @@ export class QQOfficialClient implements QQOfficialAPI {
     }
     this.tokenValue = token;
     return token;
+  }
+
+  public async getAccessToken(): Promise<string> {
+    return this.ensureToken();
+  }
+
+  public async getGatewayUrl(): Promise<string> {
+    const response = await this.request("GET", this.endpoints.gatewayUrl);
+    const data = isRecord(response.jsonData) ? response.jsonData : {};
+    const url = data.url;
+    if (typeof url !== "string" || url.length === 0) {
+      throw new QQOfficialAPIError(response.statusCode, "gateway url missing", data);
+    }
+    return url;
   }
 
   public async sendGroupMessage(

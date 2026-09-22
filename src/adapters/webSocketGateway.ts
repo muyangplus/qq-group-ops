@@ -6,6 +6,7 @@ export type WebSocketListener = (payload?: unknown) => void;
 
 export interface WebSocketLike {
   on(event: WebSocketEventName, listener: WebSocketListener): void;
+  send(data: string): void;
   close(): void;
 }
 

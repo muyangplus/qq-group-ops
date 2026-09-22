@@ -9,6 +9,7 @@ import type { WebSocketLike } from "../src/adapters/webSocketGateway.js";
 class FakeNativeSocket implements NativeWebSocketLike {
   public static readonly instances: FakeNativeSocket[] = [];
   public readonly url: string;
+  public readonly sent: string[] = [];
   public closed = false;
   private readonly listeners = new Map<string, Array<(event: unknown) => void>>();
 
@@ -21,6 +22,10 @@ class FakeNativeSocket implements NativeWebSocketLike {
     const listeners = this.listeners.get(type) ?? [];
     listeners.push(listener);
     this.listeners.set(type, listeners);
+  }
+
+  public send(data: string): void {
+    this.sent.push(data);
   }
 
   public close(): void {

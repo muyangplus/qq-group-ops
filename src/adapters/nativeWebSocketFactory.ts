@@ -7,6 +7,7 @@ import type {
 
 export interface NativeWebSocketLike {
   addEventListener(type: string, listener: (event: unknown) => void): void;
+  send(data: string): void;
   close(code?: number, reason?: string): void;
 }
 
@@ -46,6 +47,9 @@ export class NativeWebSocketFactory implements WebSocketFactory {
             listener(payload);
           }
         });
+      },
+      send: (data: string) => {
+        socket.send(data);
       },
       close: () => {
         socket.close();

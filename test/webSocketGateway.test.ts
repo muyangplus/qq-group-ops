@@ -19,6 +19,10 @@ class FakeSocket implements WebSocketLike {
     this.listeners.set(event, listeners);
   }
 
+  public send(_data: string): void {
+    return undefined;
+  }
+
   public close(): void {
     this.closed = true;
     this.emit("close");

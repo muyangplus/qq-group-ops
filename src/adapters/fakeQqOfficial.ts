@@ -10,6 +10,14 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
   public readonly joinRequests = new Map<string, Record<string, unknown>>();
   public readonly joinRequestReviews: Array<[string, string, boolean, string]> = [];
 
+  public async getAccessToken(): Promise<string> {
+    return "fake-token";
+  }
+
+  public async getGatewayUrl(): Promise<string> {
+    return "wss://fake.example/websocket";
+  }
+
   public async sendGroupMessage(
     groupId: string,
     content: string,

@@ -80,4 +80,17 @@ describe("EventRouter", () => {
     expect(result.ok).toBe(true);
     expect(result.text).toContain("r1");
   });
+
+  it("routes group message slash commands to admin commands", async () => {
+    const result = await router.handle({
+      type: "group_message",
+      groupId: "g1",
+      userId: "mod",
+      messageId: "m1",
+      content: "/test",
+    });
+    expect(result.kind).toBe("command");
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("测试成功");
+  });
 });

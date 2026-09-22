@@ -155,4 +155,32 @@ describe("QQOfficialClient", () => {
 
     expect(transport.calls[0]?.url).toBe("https://example.test/custom/g1/send");
   });
+
+  it("reads the gateway URL", async () => {
+    const transport = new FakeTransport([
+      {
+        statusCode: 200,
+        jsonData: { url: "wss://gateway.example/websocket" },
+        text: "",
+      },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+    });
+
+    await expect(client.getGatewayUrl()).resolves.toBe(
+      "wss://gateway.example/websocket",
+    );
+    expect(transport.calls[0]?.method).toBe("GET");
+    expect(transport.calls[0]?.url).toBe("https://api.sgroup.qq.com/gateway");
+  });
+
+  it("returns the access token", async () => {
+    const transport = new FakeTransport([
+      { statusCode: 200, jsonData: { access_token: "tok" }, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", { transport });
+    await expect(client.getAccessToken()).resolves.toBe("tok");
+  });
 });
