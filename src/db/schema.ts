@@ -29,14 +29,14 @@ CREATE INDEX IF NOT EXISTS join_requests_group_status_idx
 
 CREATE TABLE IF NOT EXISTS group_configs (
   group_id TEXT PRIMARY KEY,
-  enabled BOOLEAN NOT NULL DEFAULT TRUE,
-  join_audit_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-  auto_approve_join BOOLEAN NOT NULL DEFAULT FALSE,
-  word_filter_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-  export_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-  raw_message_retention_days INTEGER NOT NULL DEFAULT 0,
-  mute_duration_seconds INTEGER NOT NULL DEFAULT 600,
-  warning_message TEXT NOT NULL DEFAULT '请遵守群规，不要发送违规内容。',
+  enabled BOOLEAN,
+  join_audit_enabled BOOLEAN,
+  auto_approve_join BOOLEAN,
+  word_filter_enabled BOOLEAN,
+  export_enabled BOOLEAN,
+  raw_message_retention_days INTEGER,
+  mute_duration_seconds INTEGER,
+  warning_message TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

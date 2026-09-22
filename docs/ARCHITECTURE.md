@@ -39,6 +39,8 @@ TypeScript 核心服务
   ├── db/queryable.ts            数据库查询抽象
   ├── db/schema.ts               PostgreSQL schema
   ├── db/auditRepository.ts      审计仓储
+  ├── db/joinRequestRepository.ts 入群申请仓储
+  ├── db/groupConfigRepository.ts 群配置仓储
   └── phase0.ts                  Phase 0 检查核心
       │
       ▼
