@@ -36,6 +36,9 @@ TypeScript 核心服务
   ├── adapters/qqOfficial.ts     官方 REST 客户端与传输抽象
   ├── adapters/fetchTransport.ts 原生 fetch 传输
   ├── adapters/fakeQqOfficial.ts 官方 API 测试替身
+  ├── db/queryable.ts            数据库查询抽象
+  ├── db/schema.ts               PostgreSQL schema
+  ├── db/auditRepository.ts      审计仓储
   └── phase0.ts                  Phase 0 检查核心
       │
       ▼
@@ -49,6 +52,7 @@ Web 管理 API + 管理后台（Phase 2）
 | `src/adapters/` | 官方 API 鉴权、HTTP 调用、错误映射、事件网关、测试替身 |
 | `src/core/` | 领域模型、枚举、通用类型 |
 | `src/services/` | 规则引擎、审核流程、审计、权限、活动报名、信息导出、命令 |
+| `src/db/` | PostgreSQL schema、查询抽象与仓储 |
 | `src/config.ts` | 环境变量加载与校验 |
 | `src/runtime.ts` | 运行时装配：按配置选择真实/测试 API 并连接服务 |
 | `src/phase0.ts` | Phase 0 检查核心 |

@@ -6,9 +6,9 @@
 
 - 当前阶段：**Node.js / TypeScript 重写完成，Phase 0 待实测**
 - 技术路线：**仅使用 QQ 官方开放平台 API**，不使用 OneBot、NapCat、Lagrange 等个人号协议端。
-- 已实现：配置、领域模型、规则引擎、审计日志、权限模型、多群配置、入群审核状态机、入群申请同步、消息审核执行、事件路由、事件网关抽象、运行时装配、Phase 0 检查核心、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
-- 待实现：真实官方 API 请求体与 WebSocket/Webhook 网关、Web 管理后台、内容安全与 AI 辅助。
-- 测试：Vitest，共 77 个测试。
+- 已实现：配置、领域模型、规则引擎、审计日志、权限模型、多群配置、入群审核状态机、入群申请同步、消息审核执行、事件路由、事件网关抽象、运行时装配、Phase 0 检查核心、PostgreSQL schema 与审计仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
+- 待实现：真实官方 API 请求体与 WebSocket/Webhook 网关、PostgreSQL 生产接入、Web 管理后台、内容安全与 AI 辅助。
+- 测试：Vitest，共 80 个测试。
 
 ## 技术栈
 
@@ -21,7 +21,7 @@
 | 类型检查 | TypeScript `tsc --noEmit` |
 | 构建 | TypeScript `tsc` |
 | HTTP 客户端 | 原生 `fetch` + 可替换 transport |
-| 数据库 | PostgreSQL（Phase 1 接入） |
+| 数据库 | PostgreSQL（schema 与审计仓储已定义，生产接入待完成） |
 | 部署 | Docker Compose |
 | 许可证 | Apache-2.0 |
 
