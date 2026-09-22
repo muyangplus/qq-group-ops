@@ -172,13 +172,13 @@ export class QQOfficialClient implements QQOfficialAPI {
     _durationSeconds: number,
   ): Promise<void> {
     throw new Error(
-      "Phase 0: verify restrict_chat_setting request body before enabling",
+      "Verify official restrict_chat_setting request body before enabling",
     );
   }
 
   public async removeGroupMember(_groupId: string, _userId: string): Promise<void> {
     throw new Error(
-      "Phase 0: verify batch_remove_members request body before enabling",
+      "Verify official batch_remove_members request body before enabling",
     );
   }
 
@@ -230,7 +230,7 @@ export class QQOfficialClient implements QQOfficialAPI {
   }
 
   private headers(): Record<string, string> {
-    // Phase 0: 核实 Authorization 与 X-Union-Appid 的实际要求。
+    // 官方文档要求需要核实：Authorization 与 X-Union-Appid。
     return {
       Authorization: `QQBot ${this.tokenValue}`,
       "Content-Type": "application/json",

@@ -32,6 +32,7 @@ describe("AdminCommandService", () => {
     const result = service.handle("g1", "member", "/help");
     expect(result.ok).toBe(true);
     expect(result.text).toContain("可用指令");
+    expect(result.text).toContain("/test");
   });
 
   it("rejects unknown commands", () => {
@@ -86,5 +87,18 @@ describe("AdminCommandService", () => {
     const result = service.handle("g1", "mod", "/status");
     expect(result.ok).toBe(true);
     expect(result.text).toContain("禁言时长");
+  });
+
+  it("responds to /test for reviewers", () => {
+    const result = service.handle("g1", "mod", "/test");
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("测试成功");
+    expect(result.text).toContain("待审批申请");
+  });
+
+  it("requires permission for /test", () => {
+    const result = service.handle("g1", "member", "/test");
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("权限不足");
   });
 });

@@ -4,11 +4,11 @@
 
 ## 项目状态
 
-- 当前阶段：**Node.js / TypeScript 重写完成，Phase 0 待实测**
+- 当前阶段：**Node.js / TypeScript 重写完成，MVP 核心进行中**
 - 技术路线：**仅使用 QQ 官方开放平台 API**，不使用 OneBot、NapCat、Lagrange 等个人号协议端。
-- 已实现：配置、领域模型、规则引擎、审计日志、权限模型、多群配置、入群审核状态机、入群申请同步、消息审核执行、事件路由、事件网关抽象、WebSocket 网关骨架、自动重连网关、原生 WebSocket 工厂、事件映射器、Phase 0 检查核心与事件订阅检查、运行时装配、PostgreSQL schema/迁移/连接池适配与审计/入群申请/群配置仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
+- 已实现：配置、领域模型、规则引擎、审计日志、权限模型、多群配置、入群审核状态机、入群申请同步、消息审核执行、事件路由、事件网关抽象、WebSocket 网关骨架、自动重连网关、原生 WebSocket 工厂、事件映射器、`/test` 自检指令、运行时装配、PostgreSQL schema/迁移/连接池适配与审计/入群申请/群配置仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
 - 待实现：真实官方事件格式映射、真实 WebSocket 连接验证、PostgreSQL 生产连接与迁移命令、Web 管理后台、内容安全与 AI 辅助。
-- 测试：Vitest，共 109 个测试。
+- 测试：Vitest，共 106 个测试。
 
 ## 技术栈
 
@@ -34,6 +34,7 @@
 - 违规消息处理（撤回能力以官方 API 实际权限为准）
 - 操作日志与审计记录
 - QQ 群/私聊指令审批与查询
+- `/test` 机器人自检指令
 - 多群统一默认配置 + 单群覆盖
 
 ### 后续阶段
@@ -51,7 +52,7 @@
 
 - 不使用个人 QQ 号协议端。
 - 不默认长期保存聊天原文。
-- 不在 Phase 0 验证前实现依赖未确认官方能力的“硬承诺”。
+- 不在官方能力未确认前实现依赖未确认能力的“硬承诺”。
 
 ## 快速开始
 
@@ -68,7 +69,7 @@ cp .env.example .env
 pnpm install --registry=https://registry.npmmirror.com
 ```
 
-`pnpm dev`、`pnpm phase0`、`pnpm start` 会自动读取项目根目录的 `.env`。
+`pnpm dev`、`pnpm start` 会自动读取项目根目录的 `.env`。
 
 常用命令：
 
@@ -77,17 +78,7 @@ pnpm dev         # 本地开发入口
 pnpm test        # 运行 Vitest
 pnpm typecheck   # TypeScript 类型检查
 pnpm build       # 编译到 dist/
-pnpm phase0      # 需要官方凭据和测试群 ID，运行 Phase 0 检查
 pnpm start       # 运行编译后的入口
-```
-
-Phase 0 检查需要：
-
-```bash
-QQ_BOT_APP_ID=...
-QQ_BOT_CLIENT_SECRET=...
-QQ_BOT_TEST_GROUP_ID=...
-PHASE0_SEND_TEST_MESSAGE=true   # 可选：会发送并尝试撤回一条测试消息
 ```
 
 ## 项目结构
@@ -95,7 +86,7 @@ PHASE0_SEND_TEST_MESSAGE=true   # 可选：会发送并尝试撤回一条测试�
 ```text
 .
 ├── .github/workflows/       # CI
-├── docs/                    # 架构、路线图、Phase 0、合规文档
+├── docs/                    # 架构、路线图、配置与合规文档
 ├── src/
 │   ├── adapters/            # 官方 API 客户端、fetch transport、测试替身
 │   ├── core/                # 领域模型与枚举
@@ -131,24 +122,11 @@ QQ Group Ops 核心服务
       └── Web 管理 API（Phase 2）
 ```
 
-## Phase 0：必须先验证的官方能力
-
-完整清单见 [docs/PHASE-0-VERIFICATION.md](docs/PHASE-0-VERIFICATION.md)。
-
-1. 官方 bot 能否接收未 @ 的全量群消息。
-2. 官方 bot 能否撤回其他成员的消息。
-3. 官方 bot 能否审批好友申请 / 群邀请。
-4. 官方 API 的频率限制、配额与可管理群数量。
-5. 当前开发者账号与 AppID 是否已开通群聊能力。
-6. 内容安全 API 的价格、数据使用与跨境合规。
-7. 部署环境的架构、端口、证书与备份条件。
-
 ## 文档
 
 - [架构设计](docs/ARCHITECTURE.md)
 - [配置模板说明](docs/CONFIGURATION.md)
 - [路线图](docs/ROADMAP.md)
-- [Phase 0 验证清单](docs/PHASE-0-VERIFICATION.md)
 - [数据合规建议](docs/DATA-COMPLIANCE.md)
 - [关键决策](docs/DECISIONS.md)
 

@@ -47,9 +47,7 @@ TypeScript 核心服务
   ├── db/schema.ts               PostgreSQL schema
   ├── db/auditRepository.ts      审计仓储
   ├── db/joinRequestRepository.ts 入群申请仓储
-  ├── db/groupConfigRepository.ts 群配置仓储
-  ├── phase0.ts                  Phase 0 检查核心
-  └── phase0EventCheck.ts        Phase 0 事件订阅检查
+  └── db/groupConfigRepository.ts 群配置仓储
       │
       ▼
 Web 管理 API + 管理后台（Phase 2）
@@ -65,7 +63,6 @@ Web 管理 API + 管理后台（Phase 2）
 | `src/db/` | PostgreSQL schema、查询抽象与仓储 |
 | `src/config.ts` | 环境变量加载与校验 |
 | `src/runtime.ts` | 运行时装配：按配置选择真实/测试 API 并连接服务 |
-| `src/phase0.ts` | Phase 0 检查核心 |
 | `src/main.ts` | 本地开发入口 |
 | `test/` | Vitest 单元测试与集成测试 |
 | `docs/` | 架构、路线图、验证和合规文档 |
@@ -83,7 +80,7 @@ Web 管理 API + 管理后台（Phase 2）
 
 - 需要统一处理鉴权、重试、频率限制、错误码和测试替身。
 - 官方 API 版本变化时，只需修改 client 和 endpoint 配置。
-- 真实请求体必须在 Phase 0 实测后确认，未确认的部分明确抛出错误。
+- 真实请求体必须在官方文档核实和真实环境测试后确认，未确认的部分明确抛出错误。
 
 ### 3. 为什么使用 PostgreSQL？
 
@@ -106,4 +103,4 @@ Web 管理 API + 管理后台（Phase 2）
 - 个人开发者账号的群聊权限范围。
 - `restrict_chat_setting` 和 `batch_remove_members` 的请求体结构。
 
-这些风险在 `docs/PHASE-0-VERIFICATION.md` 中跟踪，未确认前不写入“必然支持”的实现承诺。
+这些风险在开发过程中持续跟踪，未确认前不写入“必然支持”的实现承诺。

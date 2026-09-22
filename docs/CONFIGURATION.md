@@ -9,7 +9,7 @@ cp .env.example .env
 # 然后编辑 .env
 ```
 
-`pnpm dev`、`pnpm phase0`、`pnpm start` 会自动读取项目根目录的 `.env`。如果系统环境变量已经存在，则优先使用系统环境变量。
+`pnpm dev`、`pnpm start` 会自动读取项目根目录的 `.env`。如果系统环境变量已经存在，则优先使用系统环境变量。
 
 ## 官方机器人
 
@@ -20,39 +20,15 @@ cp .env.example .env
 | `QQ_BOT_TOKEN` | 否 | 已有 access token；留空时由客户端自动获取 |
 | `QQ_BOT_SANDBOX` | 否 | 是否使用沙箱环境，默认 `false` |
 
-## Phase 0 验证
+## 机器人自检
 
-| 变量 | 必填 | 说明 |
-|---|---|---|
-| `QQ_BOT_TEST_GROUP_ID` | Phase 0 是 | 测试群 group_openid，不是普通 QQ 群号 |
-| `PHASE0_SEND_TEST_MESSAGE` | 否 | `true` 时发送并尝试撤回一条测试消息 |
+配置完成后，在群内发送：
 
-### 如何获取 group_openid
-
-`group_openid` 是 QQ 官方机器人用来标识群聊的唯一 ID，**无法从普通 QQ 群号换算**。
-
-获取方式：
-
-1. 机器人加入测试群后，从官方事件中读取 `group_openid` 字段。
-2. 使用官方文档提供的群信息查询接口（如有）。
-3. 不要把 9 位 QQ 群号当作 `group_openid` 填写。
-
-如果 `QQ_BOT_TEST_GROUP_ID` 看起来像普通群号，程序会给出警告。
-
-运行：
-
-```bash
-pnpm phase0
+```text
+/test
 ```
 
-预期输出为 JSON 检查结果。Phase 0 还需要人工验证：
-
-- 全量群消息
-- 撤回他人消息
-- 好友申请 / 群邀请审批
-- 频率限制与配额
-
-具体步骤见 [PHASE-0-VERIFICATION.md](PHASE-0-VERIFICATION.md)。
+机器人会返回测试响应。该指令需要审核员或以上权限。
 
 ## 权限
 

@@ -8,7 +8,7 @@
 - 背景：项目需要群管理、审核和长期维护。
 - 决策：只使用 QQ 官方开放平台 API 和官方 SDK/适配器。
 - 理由：合规性、稳定性、账号安全、长期可维护性。
-- 影响：部分能力受官方接口限制；Phase 0 必须先验证。
+- 影响：部分能力受官方接口限制；官方能力必须先验证。
 - 备选：个人号协议端（已明确排除）。
 
 ## ADR-0002：Node.js + TypeScript + 自研轻量核心
@@ -75,3 +75,11 @@
 - 决策：移除 Python 实现，使用 Node.js + TypeScript + pnpm + Vitest 重写核心服务。
 - 理由：统一技术栈，便于长期维护和与 Node.js 生态集成。
 - 影响：Python 版本的提交仍保留在 Git 历史中；当前 `main` 分支以 Node.js 版本为准。
+
+## ADR-0010：移除 Phase 0 CLI，改为 `/test` 指令
+
+- 状态：已采纳
+- 背景：Phase 0 CLI 需要额外的 group_openid 配置，且不能在真实 QQ 会话中直接验证消息链路。
+- 决策：删除 Phase 0 CLI、警告和专属文档；在机器人内置 `/test` 自检指令。
+- 理由：`/test` 直接在真实 QQ 群中验证机器人响应、权限和消息链路，流程更自然。
+- 影响：不再需要 `QQ_BOT_TEST_GROUP_ID` 和 `PHASE0_SEND_TEST_MESSAGE` 环境变量；`docs/PHASE-0-VERIFICATION.md` 已删除。

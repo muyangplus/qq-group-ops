@@ -45,7 +45,7 @@ pnpm build       # 编译到 dist/
 - 提交信息尽量遵循 Conventional Commits，例如：
   - `feat(audit): add join request approval flow`
   - `fix(rules): handle empty keyword list`
-  - `docs(phase0): record official API verification`
+  - `docs(config): update configuration guide`
 
 ## Pull Request
 

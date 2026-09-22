@@ -8,6 +8,7 @@ const HELP_TEXT = `可用指令：
 /reject <申请ID> [原因] - 拒绝入群申请
 /rules - 查看当前群规则配置
 /status - 查看当前群运行状态
+/test - 测试机器人是否正常响应
 /help - 显示帮助`;
 
 export interface CommandResult {
@@ -47,6 +48,9 @@ export class AdminCommandService {
       case "status":
       case "状态":
         return this.handleStatus(groupId, userId);
+      case "test":
+      case "测试":
+        return this.handleTest(groupId, userId);
       default:
         return { ok: false, text: `未知指令：${parts[0]}\n\n${HELP_TEXT}` };
     }
@@ -142,6 +146,21 @@ export class AdminCommandService {
         `入群审核：${config.joinAuditEnabled}`,
         `导出功能：${config.exportEnabled}`,
         `禁言时长：${config.muteDurationSeconds} 秒`,
+      ].join("\n"),
+    };
+  }
+
+  private handleTest(groupId: string, userId: string): CommandResult {
+    if (!this.permissions.canReviewContent(userId, groupId)) {
+      return { ok: false, text: "权限不足：需要审核员或以上权限。" };
+    }
+    return {
+      ok: true,
+      text: [
+        "测试成功：机器人已响应。",
+        `群 ID：${groupId}`,
+        `用户 ID：${userId}`,
+        `待审批申请：${this.joinAudit.pending(groupId).length}`,
       ].join("\n"),
     };
   }
