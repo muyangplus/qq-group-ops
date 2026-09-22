@@ -18,6 +18,8 @@ QQ 官方开放平台
 QQ Group Ops 官方接入层
   ├── adapters/eventGateway.ts     事件网关接口
   ├── adapters/fakeEventGateway.ts 测试网关
+  ├── adapters/webSocketGateway.ts WebSocket 网关骨架
+  ├── adapters/eventMapper.ts      事件映射器
   └── gatewayRunner.ts             网关到事件路由的绑定
       │
       ▼
