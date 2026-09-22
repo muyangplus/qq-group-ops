@@ -47,6 +47,7 @@ Web 管理 API + 管理后台（Phase 2）
 | `src/core/` | 领域模型、枚举、通用类型 |
 | `src/services/` | 规则引擎、审核流程、审计、权限、活动报名、信息导出、命令 |
 | `src/config.ts` | 环境变量加载与校验 |
+| `src/runtime.ts` | 运行时装配：按配置选择真实/测试 API 并连接服务 |
 | `src/main.ts` | 本地开发入口 |
 | `test/` | Vitest 单元测试与集成测试 |
 | `docs/` | 架构、路线图、验证和合规文档 |
