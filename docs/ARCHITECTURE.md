@@ -22,6 +22,7 @@ QQ Group Ops 官方接入层
   ├── adapters/reconnectingWebSocketGateway.ts 自动重连网关
   ├── adapters/eventMapper.ts      事件映射器
   ├── adapters/standardWebSocketFactory.ts 标准 WebSocket 工厂
+  ├── adapters/nativeWebSocketFactory.ts   原生 WebSocket 工厂
   └── gatewayRunner.ts             网关到事件路由的绑定
       │
       ▼
@@ -47,7 +48,8 @@ TypeScript 核心服务
   ├── db/auditRepository.ts      审计仓储
   ├── db/joinRequestRepository.ts 入群申请仓储
   ├── db/groupConfigRepository.ts 群配置仓储
-  └── phase0.ts                  Phase 0 检查核心
+  ├── phase0.ts                  Phase 0 检查核心
+  └── phase0EventCheck.ts        Phase 0 事件订阅检查
       │
       ▼
 Web 管理 API + 管理后台（Phase 2）
