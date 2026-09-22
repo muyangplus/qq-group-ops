@@ -2,12 +2,29 @@ import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import { dirname } from "node:path";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
+export type LogColorMode = "auto" | "always" | "never";
 
 const LEVEL_RANK: Record<LogLevel, number> = {
   debug: 10,
   info: 20,
   warn: 30,
   error: 40,
+};
+
+const ANSI = {
+  reset: "\u001b[0m",
+  dim: "\u001b[2m",
+  gray: "\u001b[90m",
+  cyan: "\u001b[36m",
+  yellow: "\u001b[33m",
+  red: "\u001b[31m",
+} as const;
+
+const LEVEL_COLOR: Record<LogLevel, string> = {
+  debug: ANSI.gray,
+  info: ANSI.cyan,
+  warn: ANSI.yellow,
+  error: ANSI.red,
 };
 
 export interface LogEntry {
@@ -24,8 +41,10 @@ export interface LogTransport {
 }
 
 export class ConsoleTransport implements LogTransport {
+  public constructor(private readonly colorEnabled = false) {}
+
   public write(entry: LogEntry): void {
-    const line = formatEntry(entry);
+    const line = formatEntry(entry, this.colorEnabled);
     if (entry.level === "error") {
       console.error(line);
       return;
@@ -120,6 +139,43 @@ export class StructuredLogger implements Logger {
   }
 }
 
+export interface ColorResolutionOptions {
+  mode: LogColorMode;
+  env?: NodeJS.ProcessEnv;
+  isTTY?: boolean;
+  supportsColor?: boolean;
+}
+
+export function resolveColorEnabled(options: ColorResolutionOptions): boolean {
+  const env = options.env ?? process.env;
+  if (options.mode === "never") {
+    return false;
+  }
+  if (env.NO_COLOR && options.mode !== "always") {
+    return false;
+  }
+  if (env.FORCE_COLOR && env.FORCE_COLOR !== "0") {
+    return true;
+  }
+  if (options.mode === "always") {
+    return true;
+  }
+  return Boolean(options.isTTY && options.supportsColor);
+}
+
+export function formatEntry(entry: LogEntry, color = false): string {
+  const context = entry.context ? ` ${JSON.stringify(entry.context)}` : "";
+  if (!color) {
+    return `${entry.time} [${entry.level}] [${entry.module}] ${entry.message}${context}`;
+  }
+  return [
+    `${ANSI.dim}${entry.time}${ANSI.reset}`,
+    `${LEVEL_COLOR[entry.level]}[${entry.level}]${ANSI.reset}`,
+    `${ANSI.dim}[${entry.module}]${ANSI.reset}`,
+    `${entry.message}${context}`,
+  ].join(" ");
+}
+
 let activeLogger: Logger = new StructuredLogger("info", []);
 let activeTransports: LogTransport[] = [];
 
@@ -127,11 +183,21 @@ export function configureLogging(options: {
   level?: string;
   file?: string;
   console?: boolean;
+  color?: string;
 }): Logger {
   const level = parseLevel(options.level);
   const transports: LogTransport[] = [];
   if (options.console !== false) {
-    transports.push(new ConsoleTransport());
+    transports.push(
+      new ConsoleTransport(
+        resolveColorEnabled({
+          mode: parseColorMode(options.color),
+          env: process.env,
+          isTTY: Boolean(process.stdout.isTTY),
+          supportsColor: detectColorSupport(),
+        }),
+      ),
+    );
   }
   if (options.file) {
     transports.push(new FileTransport(options.file));
@@ -166,7 +232,28 @@ function parseLevel(value: string | undefined): LogLevel {
   return "info";
 }
 
-function formatEntry(entry: LogEntry): string {
-  const context = entry.context ? ` ${JSON.stringify(entry.context)}` : "";
-  return `${entry.time} [${entry.level}] [${entry.module}] ${entry.message}${context}`;
+function parseColorMode(value: string | undefined): LogColorMode {
+  const normalized = (value ?? "auto").toLowerCase();
+  if (normalized === "always" || normalized === "never") {
+    return normalized;
+  }
+  return "auto";
+}
+
+function detectColorSupport(): boolean {
+  try {
+    const stdout = process.stdout as unknown as {
+      isTTY?: boolean;
+      hasColors?: (depth?: number) => boolean;
+    };
+    if (!stdout.isTTY) {
+      return false;
+    }
+    if (typeof stdout.hasColors === "function") {
+      return stdout.hasColors();
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }

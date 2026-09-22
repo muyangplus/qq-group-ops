@@ -70,8 +70,16 @@ DATABASE_URL=postgres://qqbot:change-me@localhost:5432/qq_group_ops
 | `LOG_LEVEL` | 否 | `debug` / `info` / `warn` / `error`，默认 `info` |
 | `LOG_FILE` | 否 | 日志文件路径，默认 `logs/qq-group-ops.log`；设为空字符串可关闭文件日志 |
 | `LOG_CONSOLE` | 否 | 是否输出到控制台，默认 `true` |
+| `LOG_COLOR` | 否 | `auto` / `always` / `never`，默认 `auto` |
 
 `pnpm dev` 会默认使用 `debug` 级别，便于开发调试。生产环境建议使用 `info` 或 `warn`。
+
+彩色显示规则：
+
+- `auto`：仅当标准输出是 TTY 且终端支持 ANSI 时着色；尊重 `NO_COLOR` 和 `FORCE_COLOR`
+- `always`：始终输出 ANSI 颜色
+- `never`：始终纯文本
+- 文件日志始终为 JSON Lines，不包含 ANSI 颜色
 
 ## 数据保留
 

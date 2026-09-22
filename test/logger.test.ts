@@ -7,7 +7,9 @@ import { describe, expect, it } from "vitest";
 import {
   closeLogging,
   configureLogging,
+  formatEntry,
   getLogger,
+  resolveColorEnabled,
 } from "../src/core/logger.js";
 
 describe("logger", () => {
@@ -54,5 +56,61 @@ describe("logger", () => {
       configureLogging({ level: "info", console: false, file: "" });
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it("resolves color mode", () => {
+    expect(
+      resolveColorEnabled({
+        mode: "auto",
+        env: {},
+        isTTY: true,
+        supportsColor: true,
+      }),
+    ).toBe(true);
+    expect(
+      resolveColorEnabled({
+        mode: "auto",
+        env: { NO_COLOR: "1" },
+        isTTY: true,
+        supportsColor: true,
+      }),
+    ).toBe(false);
+    expect(
+      resolveColorEnabled({
+        mode: "always",
+        env: { NO_COLOR: "1" },
+        isTTY: false,
+        supportsColor: false,
+      }),
+    ).toBe(true);
+    expect(
+      resolveColorEnabled({
+        mode: "never",
+        env: {},
+        isTTY: true,
+        supportsColor: true,
+      }),
+    ).toBe(false);
+    expect(
+      resolveColorEnabled({
+        mode: "auto",
+        env: {},
+        isTTY: false,
+        supportsColor: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("formats colored and plain entries", () => {
+    const entry = {
+      time: "2026-01-01T00:00:00.000Z",
+      level: "info" as const,
+      module: "test",
+      message: "hello",
+    };
+    expect(formatEntry(entry)).toBe(
+      "2026-01-01T00:00:00.000Z [info] [test] hello",
+    );
+    expect(formatEntry(entry, true)).toContain("\u001b[");
   });
 });

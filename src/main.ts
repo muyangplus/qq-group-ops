@@ -15,6 +15,7 @@ async function main(): Promise<void> {
     level: settings.logLevel,
     file: settings.logFile,
     console: settings.logConsole,
+    color: settings.logColor,
   });
   const log = getLogger("main");
 

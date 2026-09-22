@@ -10,6 +10,7 @@ describe("loadSettings", () => {
     expect(settings.auditLogRetentionDays).toBe(180);
     expect(settings.logFile).toBe("logs/qq-group-ops.log");
     expect(settings.logConsole).toBe(true);
+    expect(settings.logColor).toBe("auto");
   });
 
   it("loads environment values", () => {
@@ -21,6 +22,7 @@ describe("loadSettings", () => {
       RAW_MESSAGE_RETENTION_DAYS: "7",
       LOG_FILE: "custom.log",
       LOG_CONSOLE: "false",
+      LOG_COLOR: "never",
     });
     expect(hasQqCredentials(settings)).toBe(true);
     expect(settings.qqBotSandbox).toBe(true);
@@ -28,5 +30,6 @@ describe("loadSettings", () => {
     expect(settings.rawMessageRetentionDays).toBe(7);
     expect(settings.logFile).toBe("custom.log");
     expect(settings.logConsole).toBe(false);
+    expect(settings.logColor).toBe("never");
   });
 });

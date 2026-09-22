@@ -8,6 +8,7 @@ export interface Settings {
   logLevel: string;
   logFile: string;
   logConsole: boolean;
+  logColor: string;
   rawMessageRetentionDays: number;
   auditLogRetentionDays: number;
 }
@@ -53,6 +54,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     logLevel: (env.LOG_LEVEL ?? "info").toUpperCase(),
     logFile: env.LOG_FILE ?? "logs/qq-group-ops.log",
     logConsole: asBool(env.LOG_CONSOLE, true),
+    logColor: env.LOG_COLOR ?? "auto",
     rawMessageRetentionDays: asInt(env.RAW_MESSAGE_RETENTION_DAYS, 0),
     auditLogRetentionDays: asInt(env.AUDIT_LOG_RETENTION_DAYS, 180),
   };

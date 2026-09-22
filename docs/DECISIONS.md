@@ -90,4 +90,4 @@
 - 背景：需要完整 debug 日志，并覆盖所有已实现接口。
 - 决策：实现可复用 Logger 组件，支持控制台和文件传输；通过 instrumentation 代理为官方 API、HTTP、数据库、事件网关统一记录调试信息。
 - 理由：模块化、低侵入、组件复用，避免在每个方法里重复手写日志。
-- 影响：`pnpm dev` 默认使用 `debug` 级别并写入 `logs/qq-group-ops.log`；token、secret、消息原文等敏感信息不写入日志。
+- 影响：`pnpm dev` 默认使用 `debug` 级别并写入 `logs/qq-group-ops.log`；控制台支持 `LOG_COLOR=auto/always/never` 彩色策略；token、secret、消息原文等敏感信息不写入日志。
