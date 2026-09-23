@@ -43,14 +43,14 @@ describe("AdminCommandService", async () => {
     identityMap.bindUser("u3", "10005");
     identityMap.bindUser("u4", "10006");
     identityMap.bindGroup("g1", "654321");
-    service = new AdminCommandService(
+    service = new AdminCommandService({
       permissions,
       joinAudit,
       configStore,
       joinApproval,
-      undefined,
+      auditLog,
       identityMap,
-    );
+    });
   });
 
   it("shows only permitted commands in help", async () => {
@@ -311,14 +311,14 @@ describe("AdminCommandService", async () => {
     const repository = new FakeIdentityBindingRepository();
     const map = new IdentityMapService(repository);
     await map.bindUser("member", "10001");
-    const localService = new AdminCommandService(
+    const localService = new AdminCommandService({
       permissions,
       joinAudit,
       configStore,
       joinApproval,
-      undefined,
-      map,
-    );
+      auditLog,
+      identityMap: map,
+    });
 
     repository.failNextBind = true;
     const result = await localService.handle("g1", "member", "/bind qq 999999");
@@ -333,14 +333,14 @@ describe("AdminCommandService", async () => {
     const repository = new FakeIdentityBindingRepository();
     const map = new IdentityMapService(repository);
     await map.bindUser("member", "10001");
-    const localService = new AdminCommandService(
+    const localService = new AdminCommandService({
       permissions,
       joinAudit,
       configStore,
       joinApproval,
-      undefined,
-      map,
-    );
+      auditLog,
+      identityMap: map,
+    });
 
     const result = await localService.handle("g1", "member", "/bind qq 10002");
 
@@ -349,5 +349,122 @@ describe("AdminCommandService", async () => {
     expect(repository.bindings).toEqual([
       { kind: "user", officialId: "member", externalId: "10002" },
     ]);
+  });
+
+  it("updates group keywords with /rules set", async () => {
+    const result = await service.handle("g1", "admin", "/rules set keywords 广告,刷屏");
+
+    expect(result.ok).toBe(true);
+    expect(configStore.get("g1").keywords).toEqual(["刷屏", "广告"]);
+    expect(result.text).toContain("刷屏");
+  });
+
+  it("clears keywords with /rules set keywords clear", async () => {
+    await service.handle("g1", "admin", "/rules set keywords 广告");
+    const result = await service.handle("g1", "admin", "/rules set keywords clear");
+
+    expect(result.ok).toBe(true);
+    expect(configStore.get("g1").keywords).toEqual([]);
+  });
+
+  it("toggles switches and numbers with /rules set", async () => {
+    await service.handle("g1", "admin", "/rules set autoApprove on");
+    await service.handle("g1", "admin", "/rules set wordFilter off");
+    await service.handle("g1", "admin", "/rules set muteDuration 120");
+    await service.handle("g1", "admin", "/rules set warning 请勿刷屏");
+
+    const config = configStore.get("g1");
+    expect(config.autoApproveJoin).toBe(true);
+    expect(config.wordFilterEnabled).toBe(false);
+    expect(config.muteDurationSeconds).toBe(120);
+    expect(config.warningMessage).toBe("请勿刷屏");
+  });
+
+  it("rejects invalid /rules set values", async () => {
+    const toggle = await service.handle("g1", "admin", "/rules set autoApprove maybe");
+    expect(toggle.ok).toBe(false);
+    expect(toggle.text).toContain("需要 on 或 off");
+
+    const field = await service.handle("g1", "admin", "/rules set unknown 1");
+    expect(field.ok).toBe(false);
+    expect(field.text).toContain("未知字段");
+
+    const missing = await service.handle("g1", "admin", "/rules set keywords");
+    expect(missing.ok).toBe(false);
+    expect(missing.text).toContain("/rules set");
+  });
+
+  it("requires group admin permission to change rules", async () => {
+    const result = await service.handle("g1", "mod", "/rules set keywords 广告");
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("权限不足");
+    expect(configStore.get("g1").keywords).toEqual(["广告"]);
+  });
+
+  it("supports /rules set from private with a group id", async () => {
+    const result = await service.handle(
+      undefined,
+      "root",
+      "/rules set g1 autoApprove on",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(configStore.get("g1").autoApproveJoin).toBe(true);
+  });
+
+  it("shows recent audit records", async () => {
+    joinAudit.submit("g1", "u1", "想加入", "r1");
+    await service.handle("g1", "admin", "/approve r1");
+
+    const result = await service.handle("g1", "mod", "/audit");
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("approve_join_request");
+    expect(result.text).toContain("admin");
+  });
+
+  it("limits and filters audit records per group", async () => {
+    auditLog.append({
+      recordId: "old",
+      groupId: "g1",
+      actorId: "admin",
+      action: "manual_old",
+      status: "executed",
+      reason: "",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    auditLog.append({
+      recordId: "new",
+      groupId: "g1",
+      actorId: "admin",
+      action: "manual_new",
+      status: "executed",
+      reason: "",
+      createdAt: new Date("2026-01-02T00:00:00.000Z"),
+    });
+    auditLog.append({
+      recordId: "other",
+      groupId: "g2",
+      actorId: "admin",
+      action: "other_group",
+      status: "executed",
+      reason: "",
+      createdAt: new Date("2026-01-03T00:00:00.000Z"),
+    });
+
+    const result = await service.handle("g1", "mod", "/audit 1");
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("manual_new");
+    expect(result.text).not.toContain("manual_old");
+    expect(result.text).not.toContain("other_group");
+  });
+
+  it("requires moderator permission to read audit records", async () => {
+    const result = await service.handle("g1", "member", "/audit");
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("权限不足");
   });
 });

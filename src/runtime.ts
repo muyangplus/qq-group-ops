@@ -106,14 +106,15 @@ export function createRuntime(
     auditLog,
   );
   const joinApproval = new JoinApprovalService(api, joinAudit, configStore);
-  const adminCommands = new AdminCommandService(
+  const adminCommands = new AdminCommandService({
     permissions,
     joinAudit,
     configStore,
     joinApproval,
+    auditLog,
     groupMessageMode,
     identityMap,
-  );
+  });
   const load = async (): Promise<void> => {
     await identityMap.reload();
     await auditLog.load();

@@ -1,6 +1,7 @@
 import { PermissionLevel } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
-import type { GroupConfigStore } from "./groupConfig.js";
+import type { AuditLog } from "./audit.js";
+import type { GroupConfigOverride, GroupConfigStore } from "./groupConfig.js";
 import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
 import type { IdentityMapService } from "./identityMap.js";
 import type { JoinApprovalService } from "./joinApproval.js";
@@ -14,15 +15,34 @@ export interface CommandResult {
   text: string;
 }
 
+export interface AdminCommandServiceOptions {
+  permissions: PermissionService;
+  joinAudit: JoinAuditService;
+  configStore: GroupConfigStore;
+  joinApproval: JoinApprovalService;
+  auditLog: AuditLog;
+  groupMessageMode?: GroupMessageModeRegistry | undefined;
+  identityMap?: IdentityMapService | undefined;
+}
+
 export class AdminCommandService {
-  public constructor(
-    private readonly permissions: PermissionService,
-    private readonly joinAudit: JoinAuditService,
-    private readonly configStore: GroupConfigStore,
-    private readonly joinApproval: JoinApprovalService,
-    private readonly groupMessageMode?: GroupMessageModeRegistry,
-    private readonly identityMap?: IdentityMapService,
-  ) {}
+  private readonly permissions: PermissionService;
+  private readonly joinAudit: JoinAuditService;
+  private readonly configStore: GroupConfigStore;
+  private readonly joinApproval: JoinApprovalService;
+  private readonly auditLog: AuditLog;
+  private readonly groupMessageMode: GroupMessageModeRegistry | undefined;
+  private readonly identityMap: IdentityMapService | undefined;
+
+  public constructor(options: AdminCommandServiceOptions) {
+    this.permissions = options.permissions;
+    this.joinAudit = options.joinAudit;
+    this.configStore = options.configStore;
+    this.joinApproval = options.joinApproval;
+    this.auditLog = options.auditLog;
+    this.groupMessageMode = options.groupMessageMode;
+    this.identityMap = options.identityMap;
+  }
 
   public async handle(
     groupId: string | undefined,
@@ -90,6 +110,9 @@ export class AdminCommandService {
       case "rules":
       case "规则":
         return this.handleRules(groupId, userId, parts);
+      case "audit":
+      case "日志":
+        return this.handleAudit(groupId, userId, parts);
       case "status":
       case "状态":
         return this.handleStatus(groupId, userId, parts);
@@ -351,12 +374,14 @@ export class AdminCommandService {
     if (canModerate) {
       lines.push("/pending [group_openid|群号] - 查看待审批入群申请");
       lines.push("/rules [group_openid|群号] - 查看群规则配置");
+      lines.push("/audit [group_openid|群号] [数量] - 查看最近审计记录");
       lines.push("/status [group_openid|群号] - 查看群运行状态");
       lines.push("/test - 测试机器人是否正常响应");
     }
     if (canAdmin) {
       lines.push("/approve [group_openid|群号] <申请ID> - 通过入群申请");
       lines.push("/reject [group_openid|群号] <申请ID> [原因] - 拒绝入群申请");
+      lines.push("/rules set <字段> <值> - 修改群规则（关键词、警告文案等）");
     }
     if (isSuper) {
       lines.push("/perm list [group_openid|群号] - 查看权限配置");
@@ -631,11 +656,16 @@ export class AdminCommandService {
     return { ok: true, text: `已拒绝入群申请 ${requestId}。` };
   }
 
-  private handleRules(
+  private async handleRules(
     groupId: string | undefined,
     userId: string,
     parts: readonly string[],
-  ): CommandResult {
+  ): Promise<CommandResult> {
+    const action = normalize(parts[1]);
+    if (action === "set" || action === "设置") {
+      return this.handleRulesSet(groupId, userId, parts);
+    }
+
     const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
     if (!targetGroupId) {
       return {
@@ -646,19 +676,102 @@ export class AdminCommandService {
     if (!this.permissions.canReviewContent(userId, targetGroupId)) {
       return { ok: false, text: "权限不足：需要审核员或以上权限。" };
     }
-    const config = this.configStore.get(targetGroupId);
-    const keywords = config.keywords.length > 0 ? config.keywords.join("、") : "（未配置）";
+    return { ok: true, text: this.formatRules(targetGroupId) };
+  }
+
+  private async handleRulesSet(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): Promise<CommandResult> {
+    const args = parts.slice(2);
+    const targetGroupId = groupId ?? this.resolveTargetGroupId(undefined, args[0]);
+    const field = groupId ? args[0] : args[1];
+    const valueParts = groupId ? args.slice(1) : args.slice(2);
+
+    if (!targetGroupId) {
+      return {
+        ok: false,
+        text: "私信中设置规则需要提供已绑定的 group_openid 或群号。用法：/rules set <group_openid> <字段> <值>",
+      };
+    }
+    if (!this.permissions.canManageRules(userId, targetGroupId)) {
+      return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
+    }
+    if (!field || valueParts.length === 0) {
+      return { ok: false, text: RULES_SET_USAGE };
+    }
+
+    const value = valueParts.join(" ").trim();
+    let override: GroupConfigOverride;
+    try {
+      override = parseRuleSetting(targetGroupId, field, value, this.configStore);
+    } catch (error) {
+      return { ok: false, text: `设置失败：${formatError(error)}` };
+    }
+
+    this.configStore.setOverride(override);
+    log.info("group rules updated", {
+      groupId: targetGroupId,
+      userId,
+      field: normalize(field),
+    });
     return {
       ok: true,
-      text: [
-        `群 ${targetGroupId} 规则配置：`,
-        `启用：${config.enabled}`,
-        `关键词过滤：${config.wordFilterEnabled}`,
-        `关键词：${keywords}`,
-        `入群审核：${config.joinAuditEnabled}`,
-        `自动通过：${config.autoApproveJoin}`,
-      ].join("\n"),
+      text: `已更新群规则。\n\n${this.formatRules(targetGroupId)}`,
     };
+  }
+
+  private formatRules(targetGroupId: string): string {
+    const config = this.configStore.get(targetGroupId);
+    const keywords = config.keywords.length > 0 ? config.keywords.join("、") : "（未配置）";
+    return [
+      `群 ${targetGroupId} 规则配置：`,
+      `启用：${config.enabled}`,
+      `关键词过滤：${config.wordFilterEnabled}`,
+      `关键词：${keywords}`,
+      `入群审核：${config.joinAuditEnabled}`,
+      `自动通过：${config.autoApproveJoin}`,
+      `导出功能：${config.exportEnabled}`,
+      `警告文案：${config.warningMessage}`,
+      `禁言时长：${config.muteDurationSeconds} 秒`,
+    ].join("\n");
+  }
+
+  private handleAudit(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): CommandResult {
+    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
+    if (!targetGroupId) {
+      return {
+        ok: false,
+        text: "该指令需要在群内使用，或在私信中提供 group_openid。用法：/audit [数量]",
+      };
+    }
+    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
+      return { ok: false, text: "权限不足：需要审核员或以上权限。" };
+    }
+    const limitArgument = groupId ? parts[1] : parts[2];
+    const limit = clampLimit(limitArgument);
+    const records = this.auditLog
+      .findByGroup(targetGroupId)
+      .slice(-limit)
+      .reverse();
+    if (records.length === 0) {
+      return { ok: true, text: "暂无审计记录。" };
+    }
+    const lines = [`最近 ${records.length} 条审计记录：`];
+    for (const record of records) {
+      const target = record.targetUserId ? ` → ${record.targetUserId}` : "";
+      lines.push(
+        `${formatTime(record.createdAt)} ${record.action} ${record.status}${
+          record.actorId ? ` by ${record.actorId}` : ""
+        }${target}`,
+      );
+    }
+    return { ok: true, text: lines.join("\n") };
   }
 
   private handleStatus(
@@ -727,4 +840,107 @@ function formatError(error: unknown): string {
 
 function bindingFailureText(): string {
   return "绑定失败：数据库写入异常，请查看服务端日志后重试。";
+}
+
+const RULES_SET_USAGE = [
+  "用法：/rules set <字段> <值>",
+  "字段：",
+  "  keywords 广告,刷屏 / keywords clear",
+  "  warning <文案> / warning clear",
+  "  muteDuration <秒>",
+  "  wordFilter on|off",
+  "  joinAudit on|off",
+  "  autoApprove on|off",
+  "  export on|off",
+  "  enabled on|off",
+  "私信中使用：/rules set <group_openid> <字段> <值>",
+].join("\n");
+
+const MAX_MUTE_DURATION_SECONDS = 30 * 24 * 60 * 60;
+const MAX_AUDIT_LIMIT = 50;
+const DEFAULT_AUDIT_LIMIT = 10;
+const TOGGLE_ON = new Set(["on", "true", "1", "yes", "y", "开", "启用", "是"]);
+const TOGGLE_OFF = new Set(["off", "false", "0", "no", "n", "关", "关闭", "否"]);
+const CLEAR_WORDS = new Set(["clear", "清空", "默认", "reset"]);
+
+function parseRuleSetting(
+  groupId: string,
+  field: string,
+  value: string,
+  configStore: GroupConfigStore,
+): GroupConfigOverride {
+  const cleared = CLEAR_WORDS.has(value.toLowerCase());
+  switch (normalize(field)) {
+    case "keywords":
+    case "keyword":
+    case "关键词":
+      return {
+        groupId,
+        keywords: cleared
+          ? []
+          : value
+              .split(/[,，、\s]+/u)
+              .map((item) => item.trim())
+              .filter((item) => item.length > 0),
+      };
+    case "warning":
+    case "warningmessage":
+    case "警告":
+      return {
+        groupId,
+        warningMessage: cleared ? configStore.default.warningMessage : value,
+      };
+    case "muteduration":
+    case "mute":
+    case "禁言时长":
+      return { groupId, muteDurationSeconds: parseDuration(value) };
+    case "autoapprove":
+    case "自动通过":
+      return { groupId, autoApproveJoin: parseToggle(field, value) };
+    case "joinaudit":
+    case "入群审核":
+      return { groupId, joinAuditEnabled: parseToggle(field, value) };
+    case "wordfilter":
+    case "关键词过滤":
+      return { groupId, wordFilterEnabled: parseToggle(field, value) };
+    case "export":
+    case "导出":
+      return { groupId, exportEnabled: parseToggle(field, value) };
+    case "enabled":
+    case "启用":
+      return { groupId, enabled: parseToggle(field, value) };
+    default:
+      throw new Error(`未知字段：${field}`);
+  }
+}
+
+function parseToggle(field: string, value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (TOGGLE_ON.has(normalized)) {
+    return true;
+  }
+  if (TOGGLE_OFF.has(normalized)) {
+    return false;
+  }
+  throw new Error(`${field} 需要 on 或 off`);
+}
+
+function parseDuration(value: string): number {
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error("禁言时长需要非负整数（秒）");
+  }
+  return Math.min(parsed, MAX_MUTE_DURATION_SECONDS);
+}
+
+function clampLimit(value: string | undefined): number {
+  const parsed = Number.parseInt((value ?? "").trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_AUDIT_LIMIT;
+  }
+  return Math.min(parsed, MAX_AUDIT_LIMIT);
+}
+
+function formatTime(date: Date): string {
+  return date.toISOString().replace("T", " ").slice(0, 19);
 }

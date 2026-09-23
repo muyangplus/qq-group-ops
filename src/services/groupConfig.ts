@@ -120,19 +120,30 @@ export class GroupConfigStore {
     };
   }
 
+  /**
+   * 局部更新单群配置。
+   *
+   * 传入的字段会与已有覆盖合并，因此 `/rules set keywords ...` 之后的
+   * `/rules set autoApprove on` 不会把关键词重置掉。
+   */
   public setOverride(override: GroupConfigOverride): void {
     if (override.groupId === "__default__") {
       throw new Error("cannot override the default group id");
     }
-    const normalized = normalizeOverride(override);
-    this.overrides.set(override.groupId, normalized);
+    const existing = this.overrides.get(override.groupId);
+    const merged = normalizeOverride({
+      ...existing,
+      ...override,
+      groupId: override.groupId,
+    });
+    this.overrides.set(override.groupId, merged);
     const repository = this.repository;
     if (repository) {
       this.queue?.enqueue("group-config.save", () =>
-        repository.saveOverride(normalized),
+        repository.saveOverride(merged),
       );
-      if (normalized.keywords !== undefined) {
-        const keywords = [...normalized.keywords];
+      if (override.keywords !== undefined) {
+        const keywords = [...(merged.keywords ?? [])];
         this.queue?.enqueue("group-config.keywords", () =>
           repository.replaceKeywords(override.groupId, keywords),
         );

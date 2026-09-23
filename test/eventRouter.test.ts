@@ -37,12 +37,13 @@ describe("EventRouter", () => {
       auditLog,
     );
     const joinApproval = new JoinApprovalService(api, joinAudit, configStore);
-    const adminCommands = new AdminCommandService(
+    const adminCommands = new AdminCommandService({
       permissions,
       joinAudit,
       configStore,
       joinApproval,
-    );
+      auditLog,
+    });
     router = new EventRouter(messageGuard, joinAudit, adminCommands, joinApproval);
   });
 

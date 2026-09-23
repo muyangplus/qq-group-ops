@@ -44,6 +44,16 @@ describe("GroupConfigStore", () => {
     expect(store.get("g1").autoApproveJoin).toBe(false);
   });
 
+  it("merges partial overrides instead of replacing them", () => {
+    const store = createStore();
+    store.setOverride({ groupId: "g1", keywords: ["刷屏"] });
+    store.setOverride({ groupId: "g1", autoApproveJoin: true });
+
+    const config = store.get("g1");
+    expect(config.keywords).toEqual(["刷屏"]);
+    expect(config.autoApproveJoin).toBe(true);
+  });
+
   it("rejects overriding the default group id", () => {
     const store = createStore();
     expect(() => store.setOverride({ groupId: "__default__" })).toThrow(
