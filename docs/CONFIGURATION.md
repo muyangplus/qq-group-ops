@@ -334,6 +334,14 @@ CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json CLASS_INDE
 /pending 654321
 ```
 
+**展示规则：已绑定就只显示解析号。**
+
+- 只要 QQ号 / 群号已绑定，机器人所有用户可见输出都只显示 QQ号 / 群号，不再显示内部 `userId` / `group_openid`；
+- 覆盖范围：`/pending`、`/sync`、推送卡片与纯文本降级、`/audit`、`/status`、`/test`、`/myperm`、`/perm list`、`/notify` 状态、`/rules` 标题、`/bind` 成功回复；
+- 未绑定时才回退显示内部 id（例如新申请人通常还没绑定 QQ号）；
+- 唯一例外是 `/whois`，它的用途就是查询 `OpenID ↔ QQ号/群号` 映射，因此会同时展示两边；
+- 指令参数仍可用群号或 openid（`/status 654321` 与 `/status B6B3...` 等价）。
+
 强制绑定规则：
 
 - 除 `/help`、`/bind` 外，用户必须绑定 QQ 号。

@@ -58,6 +58,7 @@
 - 官方调用域名从 `api.sgroup.qq.com` 迁移到 `api.bot.qq.com`（官方 2026-08-10 起统一域名）。
 - `/perm list` 第一行改为「全局超级管理员」，并新增「本群超级管理员」；`/myperm` 新增全局/本群超管两行。
 - 全局超级管理员在私信里发 `/rules`（不带群号）现在等价于 `/rules all`，直接查看全局默认规则。
+- **用户可见输出只显示解析号**：绑定过的 QQ号/群号在 `/pending`、`/sync`、推送卡片、`/audit`、`/status`、`/test`、`/myperm`、`/perm list`、`/notify` 状态、`/rules` 标题与 `/bind` 成功回复里都只显示 QQ号/群号，不再暴露内部 `userId`/`group_openid`；未绑定才回退显示内部 id。`/whois` 保持同时显示两边（它本身就是映射查询），卡片纯文本降级里的指令也改用群号（`/approve 654321 <申请ID>`）。
 
 ### 修复
 

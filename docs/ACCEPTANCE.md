@@ -48,6 +48,7 @@ B/C/D/G 组的核心链路（审批闭环、关键词警告/处罚与审计、�
 | B9 | 全局超管不被本群超管顶掉 | 只配置本群超管后重启进程 | 日志出现 `seeding super admins from configuration`，`ADMIN_USER_IDS` 仍是全局超管 |
 | B10 | 超管私信看帮助 | 全局超管私信 `/help rules`、`/help notify` | 正常返回详细帮助，不再出现「权限不足」 |
 | B11 | 超管私信看全局规则 | 全局超管私信发 `/rules`（不带群号） | 显示全局默认规则（等价 `/rules all`） |
+| B12 | 只显示解析号 | 绑定 QQ号/群号后执行 `/pending`、`/status`、`/perm list`、`/audit`，并触发一次入群推送 | 输出只出现 QQ号/群号，不出现 `userId`/`group_openid`；未绑定的申请人仍显示内部 id；`/whois` 仍同时显示两边 |
 
 ## 2. 入群审批闭环（Phase 1 关键退出条件）
 
