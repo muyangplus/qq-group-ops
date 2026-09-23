@@ -2,9 +2,14 @@ import { loadSettings } from "../../src/config.js";
 import { SqlActivityRepository } from "../../src/db/activityRepository.js";
 import { SqlAuditRepository } from "../../src/db/auditRepository.js";
 import { SqlGroupConfigRepository } from "../../src/db/groupConfigRepository.js";
+import { SqlGroupSettingsRepository } from "../../src/db/groupSettingsRepository.js";
 import { SqlGroupMessageModeRepository } from "../../src/db/groupMessageModeRepository.js";
 import { SqlIdentityBindingRepository } from "../../src/db/identityBindingRepository.js";
 import { SqlJoinRequestRepository } from "../../src/db/joinRequestRepository.js";
+import {
+  SqlNotificationDeliveryRepository,
+  SqlNotificationSubscriptionRepository,
+} from "../../src/db/notificationRepository.js";
 import { SqlPermissionRepository } from "../../src/db/permissionRepository.js";
 import type { Queryable } from "../../src/db/queryable.js";
 import { createRuntime, type Runtime } from "../../src/runtime.js";
@@ -19,10 +24,15 @@ export function createPersistentRuntime(
       audit: new SqlAuditRepository(queryable),
       joinRequests: new SqlJoinRequestRepository(queryable),
       groupConfigs: new SqlGroupConfigRepository(queryable),
+      groupSettings: new SqlGroupSettingsRepository(queryable),
       identityBindings: new SqlIdentityBindingRepository(queryable),
       groupMessageModes: new SqlGroupMessageModeRepository(queryable),
       permissions: new SqlPermissionRepository(queryable),
       activities: new SqlActivityRepository(queryable),
+      notificationSubscriptions:
+        new SqlNotificationSubscriptionRepository(queryable),
+      notificationDeliveries:
+        new SqlNotificationDeliveryRepository(queryable),
     },
   });
 }

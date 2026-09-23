@@ -11,12 +11,14 @@ import { JoinAuditService } from "../src/services/joinAudit.js";
 import { JoinRequestSyncService } from "../src/services/joinAuditSync.js";
 import { MessageGuardService } from "../src/services/messageGuard.js";
 import { RuleEngine } from "../src/services/moderation.js";
+import { NotificationService } from "../src/services/notifications.js";
 import { PermissionService } from "../src/services/permissions.js";
 
 describe("EventRouter", () => {
   let api: FakeQQOfficialAPI;
   let joinAudit: JoinAuditService;
   let configStore: GroupConfigStore;
+  let notifications: NotificationService;
   let router: EventRouter;
 
   beforeEach(() => {
@@ -49,7 +51,74 @@ describe("EventRouter", () => {
       joinSync,
       auditLog,
     });
-    router = new EventRouter(messageGuard, joinAudit, adminCommands, joinApproval);
+    notifications = new NotificationService(api, permissions, { configStore });
+    router = new EventRouter(
+      messageGuard,
+      joinAudit,
+      adminCommands,
+      joinApproval,
+      notifications,
+    );
+  });
+
+  it("pushes pending join requests to subscribed reviewers with quick buttons", async () => {
+    notifications.subscribe("admin", "g1");
+
+    const result = await router.handle({
+      type: "join_request",
+      groupId: "g1",
+      userId: "u1",
+      requestId: "r1",
+      reason: "想加入",
+    });
+
+    expect(result.detail).toBe("queued");
+    expect(api.sentPrivateMessages).toHaveLength(1);
+    const message = api.sentPrivateMessages[0]!;
+    expect(message.userOpenid).toBe("admin");
+    expect(message.markdown).toContain("新的入群申请");
+    const buttons = (
+      message.keyboard as {
+        content: { rows: Array<{ buttons: Array<{ action: { data: string } }> }> };
+      }
+    ).content.rows[0]!.buttons;
+    expect(buttons[0]!.action.data).toBe("/approve g1 r1");
+    expect(buttons[1]!.action.data).toContain("/reject g1 r1");
+  });
+
+  it("does not push join requests that are decided automatically", async () => {
+    configStore.setOverride({ groupId: "g1", autoApproveJoin: true });
+    notifications.subscribe("admin", "g1");
+
+    const result = await router.handle({
+      type: "join_request",
+      groupId: "g1",
+      userId: "u1",
+      requestId: "r1",
+      reason: "想加入",
+    });
+
+    expect(result.detail).toBe("auto_approved");
+    expect(api.sentPrivateMessages).toEqual([]);
+  });
+
+  it("handles duplicate join request events without throwing or pushing twice", async () => {
+    notifications.subscribe("admin", "g1");
+    const event = {
+      type: "join_request" as const,
+      groupId: "g1",
+      userId: "u1",
+      requestId: "r1",
+      reason: "想加入",
+    };
+
+    const first = await router.handle(event);
+    const second = await router.handle(event);
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(joinAudit.pending("g1")).toHaveLength(1);
+    expect(api.sentPrivateMessages).toHaveLength(1);
   });
 
   it("routes group messages through the guard service", async () => {

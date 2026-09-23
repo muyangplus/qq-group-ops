@@ -74,6 +74,26 @@ CREATE TABLE IF NOT EXISTS permission_grants (
   PRIMARY KEY (scope, group_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS notification_subscriptions (
+  user_id TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, scope)
+);
+
+CREATE TABLE IF NOT EXISTS notification_deliveries (
+  group_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('sent', 'failed')),
+  detail TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (group_id, request_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS notification_deliveries_created_idx
+  ON notification_deliveries (created_at);
+
 CREATE TABLE IF NOT EXISTS group_message_modes (
   group_id TEXT PRIMARY KEY,
   mode TEXT NOT NULL CHECK (mode IN ('all', 'at_only')),

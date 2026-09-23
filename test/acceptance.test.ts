@@ -13,6 +13,77 @@ import { createSqliteTestDatabase } from "./helpers/testDatabases.js";
  * 依赖真实平台的部分（真的进群、真的禁言）仍需人工按清单执行。
  */
 describe("acceptance dry run (sqlite)", () => {
+  it("pushes a join request card and approves it through the button command", async () => {
+    const database = await createSqliteTestDatabase();
+    try {
+      const runtime = createPersistentRuntime(database.queryable, "root");
+      await runtime.load();
+      const api = runtime.api as unknown as FakeQQOfficialAPI;
+      await runtime.identityMap.bindUser("root", "10001");
+      await runtime.identityMap.bindGroup("g1", "654321");
+
+      // 审核员开启推送
+      const subscribed = await runtime.router.handle({
+        type: "admin_command",
+        groupId: "g1",
+        userId: "root",
+        text: "/notify on",
+      });
+      expect(subscribed.ok).toBe(true);
+
+      // 新申请 → 私聊推送卡片（含快捷按钮）
+      const join = await runtime.router.handle({
+        type: "join_request",
+        groupId: "g1",
+        userId: "applicant-openid",
+        requestId: "r1",
+        reason: "材化2211 张三",
+      });
+      expect(join.detail).toBe("queued");
+      expect(api.sentPrivateMessages).toHaveLength(1);
+      const card = api.sentPrivateMessages[0]!;
+      expect(card.markdown).toContain("新的入群申请");
+      const buttons = (
+        card.keyboard as {
+          content: {
+            rows: Array<{ buttons: Array<{ action: { data: string } }> }>;
+          };
+        }
+      ).content.rows[0]!.buttons;
+      expect(buttons[0]!.action.data).toBe("/approve g1 r1");
+
+      // 点击按钮等价于在私聊里发送该指令
+      const approve = await runtime.router.handle({
+        type: "private_message",
+        userId: "root",
+        messageId: "pm1",
+        content: buttons[0]!.action.data,
+      });
+      expect(approve.ok).toBe(true);
+      expect(runtime.joinAudit.get("r1").status).toBe(
+        JoinRequestStatus.Approved,
+      );
+
+      // 订阅与投递记录都持久化：重启后不会重复推送
+      await runtime.flush();
+      const restarted = createPersistentRuntime(
+        await database.restart(),
+        "root",
+      );
+      await restarted.load();
+      expect(restarted.notifications.listScopes("root")).toContain("g1");
+      const again = await restarted.notifications.notifyJoinRequest({
+        groupId: "g1",
+        requestId: "r1",
+        userId: "applicant-openid",
+        reason: "材化2211 张三",
+      });
+      expect(again.skipped).toBe(1);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("completes the join approval loop through the official API", async () => {
     const database = await createSqliteTestDatabase();
     try {

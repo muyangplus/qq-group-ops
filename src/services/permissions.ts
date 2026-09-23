@@ -167,6 +167,18 @@ export class PermissionService {
     return false;
   }
 
+  /** 该用户能审批入群申请的群列表（全局超管对任何群都可审批，这里只返回已授权过的群）。 */
+  public listReviewableGroups(userId: string): string[] {
+    const groupIds = new Set([
+      ...this.groupSuperAdminIds.keys(),
+      ...this.groupAdminIds.keys(),
+      ...this.moderatorIds.keys(),
+    ]);
+    return [...groupIds]
+      .filter((groupId) => this.canApproveJoin(userId, groupId))
+      .sort();
+  }
+
   /** 全局超级管理员：可管理平台级能力。 */
   public isSuperAdmin(userId: string): boolean {
     return this.superAdminIds.has(userId);

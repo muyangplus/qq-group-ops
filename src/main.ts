@@ -35,10 +35,13 @@ async function main(): Promise<void> {
             audit: persistence.audit,
             joinRequests: persistence.joinRequests,
             groupConfigs: persistence.groupConfigs,
+            groupSettings: persistence.groupSettings,
             identityBindings: persistence.identityBindings,
             groupMessageModes: persistence.groupMessageModes,
             permissions: persistence.permissions,
             activities: persistence.activities,
+            notificationSubscriptions: persistence.notificationSubscriptions,
+            notificationDeliveries: persistence.notificationDeliveries,
           },
         }
       : {},
@@ -47,10 +50,15 @@ async function main(): Promise<void> {
     await runtime.load();
   }
 
-  const retention = new RetentionService(runtime.auditLog, runtime.joinAudit, {
-    auditLogRetentionDays: settings.auditLogRetentionDays,
-    joinRequestRetentionDays: settings.auditLogRetentionDays,
-  });
+  const retention = new RetentionService(
+    runtime.auditLog,
+    runtime.joinAudit,
+    {
+      auditLogRetentionDays: settings.auditLogRetentionDays,
+      joinRequestRetentionDays: settings.auditLogRetentionDays,
+    },
+    runtime.notifications,
+  );
 
   log.info("qq-group-ops Node.js runtime");
   log.info("configuration loaded", {

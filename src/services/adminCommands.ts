@@ -17,8 +17,9 @@ import type { JoinRuleEvaluator } from "./joinRules.js";
 import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
 import type { IdentityMapService } from "./identityMap.js";
 import type { JoinApprovalService } from "./joinApproval.js";
-import type { JoinAuditService } from "./joinAudit.js";
+import type { JoinAuditService, JoinRequest } from "./joinAudit.js";
 import type { JoinRequestSyncService } from "./joinAuditSync.js";
+import { NOTIFY_SCOPE_ALL, type NotificationService } from "./notifications.js";
 import type { PermissionService } from "./permissions.js";
 
 const log = getLogger("admin-commands");
@@ -39,6 +40,8 @@ export interface AdminCommandServiceOptions {
   joinRules?: JoinRuleEvaluator | undefined;
   groupMessageMode?: GroupMessageModeRegistry | undefined;
   identityMap?: IdentityMapService | undefined;
+  /** 入群申请推送（`/notify`）。 */
+  notifications?: NotificationService | undefined;
 }
 
 export class AdminCommandService {
@@ -51,6 +54,7 @@ export class AdminCommandService {
   private readonly joinRules: JoinRuleEvaluator | undefined;
   private readonly groupMessageMode: GroupMessageModeRegistry | undefined;
   private readonly identityMap: IdentityMapService | undefined;
+  private readonly notifications: NotificationService | undefined;
 
   public constructor(options: AdminCommandServiceOptions) {
     this.permissions = options.permissions;
@@ -62,6 +66,7 @@ export class AdminCommandService {
     this.joinRules = options.joinRules;
     this.groupMessageMode = options.groupMessageMode;
     this.identityMap = options.identityMap;
+    this.notifications = options.notifications;
   }
 
   public async handle(
@@ -124,6 +129,11 @@ export class AdminCommandService {
       case "sync":
       case "同步":
         return this.handleSync(groupId, userId, parts);
+      case "notify":
+      case "push":
+      case "推送":
+      case "订阅":
+        return this.handleNotify(groupId, userId, parts);
       case "approve":
       case "通过":
         return this.handleApprove(groupId, userId, parts);
@@ -466,6 +476,7 @@ export class AdminCommandService {
     if (canAdmin) {
       lines.push("/approve [group_openid|群号] <申请ID> - 通过入群申请");
       lines.push("/reject [group_openid|群号] <申请ID> [原因] - 拒绝入群申请");
+      lines.push("/notify - 配置入群申请推送（卡片 + 快捷同意/拒绝按钮）");
       lines.push("/rules set <字段> <值> - 修改群规则（关键词、警告文案等）");
     }
     if (isSuper) {
@@ -693,6 +704,8 @@ export class AdminCommandService {
     if (pending.length === 0) {
       return { ok: true, text: "已同步官方待审批申请：当前没有待审批申请。" };
     }
+    // 同步补齐的申请也走推送（投递表去重，已经推过的人不会再收到）。
+    await this.notifyPending(targetGroupId, pending);
     const lines = [`已同步官方待审批申请，当前待审批 ${pending.length} 条：`];
     for (const request of pending.slice(0, 5)) {
       const reason = request.reason ? ` 理由：${request.reason}` : "";
@@ -702,6 +715,145 @@ export class AdminCommandService {
       lines.push(`（仅显示前 5 条，使用 /pending 查看全部）`);
     }
     return { ok: true, text: lines.join("\n") };
+  }
+
+  /**
+   * `/notify`：审核员自助配置入群申请推送。
+   *
+   * 订阅范围只有两种：`__all__`（我担任群管理员的全部群）与单个群；
+   * 推送时还会再按「当前群是否有审批权限」过滤一次，越权订阅不会泄漏申请内容。
+   */
+  private async handleNotify(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): Promise<CommandResult> {
+    if (!this.notifications) {
+      return { ok: false, text: "推送服务未启用。" };
+    }
+    const arg1 = normalize(parts[1]);
+    if (!arg1) {
+      return { ok: true, text: this.renderNotifyStatus(userId, groupId) };
+    }
+    if (arg1 === "test" || arg1 === "测试") {
+      const result = await this.notifications.sendTestCard(userId, groupId);
+      return { ok: result.ok, text: result.text };
+    }
+    if (isToggleValue(arg1)) {
+      // 群内：订阅本群；私信：订阅全部群
+      const scope = groupId ?? NOTIFY_SCOPE_ALL;
+      return this.applyNotify(userId, scope, isToggleOn(arg1));
+    }
+    if (isAllScope(arg1)) {
+      const action = normalize(parts[2]);
+      if (!isToggleValue(action)) {
+        return { ok: false, text: NOTIFY_USAGE };
+      }
+      return this.applyNotify(userId, NOTIFY_SCOPE_ALL, isToggleOn(action));
+    }
+    const targetGroupId = this.resolveTargetGroupId(undefined, parts[1]);
+    const action = normalize(parts[2]);
+    if (!targetGroupId || !isToggleValue(action)) {
+      return { ok: false, text: NOTIFY_USAGE };
+    }
+    return this.applyNotify(userId, targetGroupId, isToggleOn(action));
+  }
+
+  private applyNotify(
+    userId: string,
+    scope: string,
+    enabled: boolean,
+  ): CommandResult {
+    const label =
+      scope === NOTIFY_SCOPE_ALL
+        ? "全部群（你担任群管理员的群）"
+        : `群 ${this.groupLabel(scope)}`;
+    if (!enabled) {
+      const removed = this.notifications?.unsubscribe(userId, scope) ?? false;
+      return {
+        ok: true,
+        text: removed
+          ? `已关闭：${label} 的入群申请推送。`
+          : `${label} 的推送本来就是关闭的。`,
+      };
+    }
+    const allowed =
+      scope === NOTIFY_SCOPE_ALL
+        ? this.permissions.isSuperAdmin(userId) ||
+          this.permissions.hasAnyGroupRole(userId, PermissionLevel.GroupAdmin)
+        : this.permissions.canApproveJoin(userId, scope);
+    if (!allowed) {
+      return { ok: false, text: NOTIFY_PERMISSION_DENIED };
+    }
+    this.notifications?.subscribe(userId, scope);
+    return {
+      ok: true,
+      text:
+        `已开启：${label} 的入群申请推送。\n` +
+        "有新的待审批申请时会私聊推送卡片，可直接点「同意 / 拒绝」按钮。",
+    };
+  }
+
+  private renderNotifyStatus(
+    userId: string,
+    groupId: string | undefined,
+  ): string {
+    const scopes = this.notifications?.listScopes(userId) ?? [];
+    const lines = [
+      "入群申请推送：",
+      `  全部群（你担任群管理员的群）：${
+        scopes.includes(NOTIFY_SCOPE_ALL) ? "已开启" : "未开启"
+      }`,
+    ];
+    for (const scope of scopes.filter((item) => item !== NOTIFY_SCOPE_ALL)) {
+      lines.push(`  群 ${this.groupLabel(scope)}：已开启`);
+    }
+    const reviewable = this.permissions.listReviewableGroups(userId);
+    lines.push(
+      "",
+      reviewable.length > 0
+        ? `可审批的群：${reviewable.map((id) => this.groupLabel(id)).join("、")}`
+        : "可审批的群：无（入群审批需要群管理员或以上权限）",
+    );
+    if (this.permissions.isSuperAdmin(userId)) {
+      lines.push("说明：你是全局超级管理员，可审批所有群。");
+    }
+    if (groupId) {
+      lines.push(`当前群：${this.groupLabel(groupId)}`);
+    }
+    lines.push("", NOTIFY_USAGE);
+    return lines.join("\n");
+  }
+
+  private groupLabel(groupId: string): string {
+    const number = this.identityMap?.getGroupNumber(groupId);
+    return number ? `${number}（${groupId}）` : groupId;
+  }
+
+  /** 同步补齐的申请也推送一次；投递表保证同一申请不会重复推给同一个人。 */
+  private async notifyPending(
+    groupId: string,
+    requests: readonly JoinRequest[],
+  ): Promise<void> {
+    if (!this.notifications) {
+      return;
+    }
+    for (const request of requests) {
+      await this.notifications
+        .notifyJoinRequest({
+          groupId,
+          requestId: request.requestId,
+          userId: request.userId,
+          reason: request.reason,
+        })
+        .catch((error: unknown) => {
+          log.warn("notify pending join request failed", {
+            groupId,
+            requestId: request.requestId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }
   }
 
   private handlePending(
@@ -1106,6 +1258,38 @@ const PERM_USAGE = [
 const TOGGLE_ON = new Set(["on", "true", "1", "yes", "y", "开", "启用", "是"]);
 const TOGGLE_OFF = new Set(["off", "false", "0", "no", "n", "关", "关闭", "否"]);
 const CLEAR_WORDS = new Set(["clear", "清空", "默认", "reset"]);
+/** `/notify all on` 里的「全部群」写法。 */
+const NOTIFY_ALL_WORDS = new Set([
+  "all",
+  "global",
+  "全部",
+  "全局",
+  "所有",
+  "默认",
+]);
+const NOTIFY_USAGE = [
+  "用法：",
+  "  /notify                              查看当前推送订阅",
+  "  /notify on|off                       群内=本群；私信=你担任群管理员的全部群",
+  "  /notify all on|off                   全部群（群内/私信均可）",
+  "  /notify <group_openid|群号> on|off    指定群",
+  "  /notify test                         给自己发一张推送测试卡片",
+].join("\n");
+const NOTIFY_PERMISSION_DENIED =
+  "权限不足：入群审批需要群管理员或以上权限（推送与快捷按钮只发给能审批的人）。";
+
+function isToggleValue(value: string | undefined): value is string {
+  const normalized = normalize(value);
+  return TOGGLE_ON.has(normalized) || TOGGLE_OFF.has(normalized);
+}
+
+function isToggleOn(value: string): boolean {
+  return TOGGLE_ON.has(normalize(value));
+}
+
+function isAllScope(value: string | undefined): boolean {
+  return NOTIFY_ALL_WORDS.has(normalize(value));
+}
 
 /** `/rules all`、`/rules 全局`、`/rules set default ...` 都指向全局规则。 */
 function isGlobalTarget(value: string | undefined): boolean {

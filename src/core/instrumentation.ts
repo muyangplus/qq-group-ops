@@ -5,6 +5,8 @@ import type {
   HttpResponse,
   JsonValue,
   QQOfficialAPI,
+  RemoveGroupMemberOptions,
+  RichMessageOptions,
 } from "../adapters/qqOfficial.js";
 import type { Queryable, QueryResult } from "../db/queryable.js";
 import type { Logger } from "./logger.js";
@@ -17,6 +19,7 @@ type QQOfficialMethod =
   | "recallGroupMessage"
   | "muteGroupMember"
   | "removeGroupMember"
+  | "updateMemberBlacklist"
   | "approveJoinRequest"
   | "getJoinRequests";
 
@@ -38,13 +41,19 @@ export function instrumentQQOfficialAPI(
       log.info("gateway url received", { url });
       return url;
     },
-    sendGroupMessage: async (groupId: string, content: string, msgId?: string) => {
+    sendGroupMessage: async (
+      groupId: string,
+      content: string,
+      msgId?: string,
+      options?: RichMessageOptions,
+    ) => {
       log.debug("sendGroupMessage", {
         groupId,
         msgId,
         contentLength: content.length,
+        ...richLogFields(options),
       });
-      const result = await api.sendGroupMessage(groupId, content, msgId);
+      const result = await api.sendGroupMessage(groupId, content, msgId, options);
       log.debug("sendGroupMessage ok", {
         groupId,
         messageId: typeof result.id === "string" ? result.id : undefined,
@@ -55,13 +64,20 @@ export function instrumentQQOfficialAPI(
       userOpenid: string,
       content: string,
       msgId?: string,
+      options?: RichMessageOptions,
     ) => {
       log.debug("sendPrivateMessage", {
         userOpenid,
         msgId,
         contentLength: content.length,
+        ...richLogFields(options),
       });
-      const result = await api.sendPrivateMessage(userOpenid, content, msgId);
+      const result = await api.sendPrivateMessage(
+        userOpenid,
+        content,
+        msgId,
+        options,
+      );
       log.debug("sendPrivateMessage ok", {
         userOpenid,
         messageId: typeof result.id === "string" ? result.id : undefined,
@@ -82,10 +98,27 @@ export function instrumentQQOfficialAPI(
       await api.muteGroupMember(groupId, userId, durationSeconds);
       log.debug("muteGroupMember ok", { groupId, userId });
     },
-    removeGroupMember: async (groupId: string, userId: string) => {
-      log.debug("removeGroupMember", { groupId, userId });
-      await api.removeGroupMember(groupId, userId);
+    removeGroupMember: async (
+      groupId: string,
+      userId: string,
+      options: RemoveGroupMemberOptions = {},
+    ) => {
+      log.debug("removeGroupMember", {
+        groupId,
+        userId,
+        addToMemberBlacklist: options.addToMemberBlacklist ?? false,
+      });
+      await api.removeGroupMember(groupId, userId, options);
       log.debug("removeGroupMember ok", { groupId, userId });
+    },
+    updateMemberBlacklist: async (
+      groupId: string,
+      userId: string,
+      add: boolean,
+    ) => {
+      log.debug("updateMemberBlacklist", { groupId, userId, add });
+      await api.updateMemberBlacklist(groupId, userId, add);
+      log.debug("updateMemberBlacklist ok", { groupId, userId, add });
     },
     approveJoinRequest: async (
       groupId: string,
@@ -219,6 +252,19 @@ export function instrumentEventGateway(
 function summarizeSql(text: string): string {
   const compact = text.replace(/\s+/gu, " ").trim();
   return compact.length > 200 ? `${compact.slice(0, 200)}...` : compact;
+}
+
+function richLogFields(options: RichMessageOptions | undefined): {
+  markdown?: boolean;
+  keyboard?: boolean;
+} {
+  if (!options?.markdown) {
+    return {};
+  }
+  return {
+    markdown: true,
+    keyboard: options.keyboard !== undefined,
+  };
 }
 
 function formatError(error: unknown): string {

@@ -93,6 +93,11 @@ export class JoinAuditService {
     return { ...request };
   }
 
+  /** 是否已经记录过该申请（用于事件重投时幂等处理）。 */
+  public has(requestId: string): boolean {
+    return this.requests.has(requestId);
+  }
+
   public pending(groupId: string): JoinRequest[] {
     return [...this.requests.values()]
       .filter(

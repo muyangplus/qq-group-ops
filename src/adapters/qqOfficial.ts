@@ -38,6 +38,65 @@ export interface ApproveJoinRequestOptions {
   addToMemberBlacklist?: boolean | undefined;
 }
 
+/** 按钮点击后的二次确认弹窗（官方 `action.modal`）。 */
+export interface KeyboardModal {
+  /** 提示文本，最多 40 个字符，不能包含 URL。 */
+  content: string;
+  /** 确认按钮文字，最多 4 个字符。 */
+  confirmText?: string | undefined;
+  /** 取消按钮文字，最多 4 个字符。 */
+  cancelText?: string | undefined;
+}
+
+export interface KeyboardButtonPermission {
+  /** 0=指定用户，1=管理员，2=所有人。 */
+  type: 0 | 1 | 2;
+  /** type=0 时有权限的用户 id 列表。 */
+  specifyUserIds?: readonly string[] | undefined;
+}
+
+export interface KeyboardButtonAction {
+  /** 0=跳转，1=回调，2=指令按钮（自动在输入框插入 @bot data）。 */
+  type: 0 | 1 | 2;
+  /** 操作数据；type=1/2 时必填。指令按钮即点击后发送的指令文本。 */
+  data: string;
+  permission?: KeyboardButtonPermission | undefined;
+  /** 指令按钮：点击后直接自动发送 data（仅单聊，客户端版本 8983+）。 */
+  enter?: boolean | undefined;
+  /** 指令按钮：指令是否带引用回复本消息。 */
+  reply?: boolean | undefined;
+  /** 客户端不支持该按钮时弹出的提示文案。 */
+  unsupportTips?: string | undefined;
+  modal?: KeyboardModal | undefined;
+}
+
+export interface KeyboardButton {
+  /** 同一键盘内唯一。 */
+  id: string;
+  /** 按钮文字，最多 10 个字符。 */
+  label: string;
+  /** 点击后的文字；不传则保持不变。 */
+  visitedLabel?: string | undefined;
+  /** 0 灰色线框 / 1 蓝色线框 / 3 白底红字 / 4 蓝底白字。 */
+  style?: 0 | 1 | 3 | 4 | undefined;
+  action: KeyboardButtonAction;
+}
+
+export interface KeyboardPayload {
+  content: {
+    /** 最多 5 行，每行最多 5 个按钮。 */
+    rows: ReadonlyArray<{ buttons: readonly KeyboardButton[] }>;
+  };
+}
+
+/** 富消息（Markdown + 内嵌按钮）；目前用于入群申请推送卡片。 */
+export interface RichMessageOptions {
+  /** 自定义 Markdown 正文（`msg_type=2`）。单聊/群聊已对所有机器人开放。 */
+  markdown?: string | undefined;
+  /** 消息底部按钮；仅挂在 Markdown 消息上。自定义按钮为官方内邀能力，失败时自动降级。 */
+  keyboard?: KeyboardPayload | undefined;
+}
+
 export interface QQOfficialAPI {
   getAccessToken(): Promise<string>;
   getGatewayUrl(): Promise<string>;
@@ -47,11 +106,13 @@ export interface QQOfficialAPI {
     groupId: string,
     content: string,
     msgId?: string,
+    options?: RichMessageOptions,
   ): Promise<Record<string, unknown>>;
   sendPrivateMessage(
     userOpenid: string,
     content: string,
     msgId?: string,
+    options?: RichMessageOptions,
   ): Promise<Record<string, unknown>>;
   recallGroupMessage(groupId: string, messageId: string): Promise<void>;
   muteGroupMember(
@@ -318,12 +379,10 @@ export class QQOfficialClient implements QQOfficialAPI {
     groupId: string,
     content: string,
     msgId?: string,
+    options?: RichMessageOptions,
   ): Promise<Record<string, unknown>> {
     this.assertPassiveReplyAllowed(msgId);
-    const payload: Record<string, unknown> = { content };
-    if (msgId) {
-      payload.msg_id = msgId;
-    }
+    const payload = buildMessagePayload(content, msgId, options);
     const response = await this.throttled(`group:${groupId}`, () =>
       this.request("POST", fill(this.endpoints.sendGroupMessage, { groupId }), payload),
     );
@@ -335,12 +394,10 @@ export class QQOfficialClient implements QQOfficialAPI {
     userOpenid: string,
     content: string,
     msgId?: string,
+    options?: RichMessageOptions,
   ): Promise<Record<string, unknown>> {
     this.assertPassiveReplyAllowed(msgId);
-    const payload: Record<string, unknown> = { msg_type: 0, content };
-    if (msgId) {
-      payload.msg_id = msgId;
-    }
+    const payload = buildMessagePayload(content, msgId, options, true);
     const response = await this.throttled(`user:${userOpenid}`, () =>
       this.request(
         "POST",
@@ -721,6 +778,85 @@ function fill(template: string, values: Record<string, string>): string {
     }
     return encodeURIComponent(value);
   });
+}
+
+/**
+ * 组装发消息请求体。
+ *
+ * 纯文本默认保持 `{ content }`（官方 `msg_type` 默认 0）；单聊接口历史上显式带
+ * `msg_type: 0`，用 `explicitTextMsgType` 保留该行为。传入 Markdown 时使用
+ * `msg_type=2` + `markdown.content`（此时不能再传 `content`），并把内核按钮挂在
+ * `keyboard` 上。单聊与群聊接口的字段结构一致。
+ */
+function buildMessagePayload(
+  content: string,
+  msgId: string | undefined,
+  options: RichMessageOptions | undefined,
+  explicitTextMsgType = false,
+): Record<string, unknown> {
+  const markdown = options?.markdown?.trim();
+  const payload: Record<string, unknown> = markdown
+    ? { msg_type: 2, markdown: { content: markdown } }
+    : explicitTextMsgType
+      ? { msg_type: 0, content }
+      : { content };
+  if (markdown && options?.keyboard) {
+    payload.keyboard = serializeKeyboard(options.keyboard);
+  }
+  if (msgId) {
+    payload.msg_id = msgId;
+  }
+  return payload;
+}
+
+/** 把内部 camelCase 按钮结构转成官方下划线字段。 */
+function serializeKeyboard(keyboard: KeyboardPayload): Record<string, unknown> {
+  return {
+    content: {
+      rows: keyboard.content.rows.map((row) => ({
+        buttons: row.buttons.map((button) => ({
+          id: button.id,
+          render_data: {
+            label: button.label,
+            visited_label: button.visitedLabel ?? button.label,
+            style: button.style ?? 1,
+          },
+          action: {
+            type: button.action.type,
+            data: button.action.data,
+            permission: {
+              type: button.action.permission?.type ?? 2,
+              ...(button.action.permission?.specifyUserIds
+                ? { specify_user_ids: [...button.action.permission.specifyUserIds] }
+                : {}),
+            },
+            ...(button.action.enter !== undefined
+              ? { enter: button.action.enter }
+              : {}),
+            ...(button.action.reply !== undefined
+              ? { reply: button.action.reply }
+              : {}),
+            ...(button.action.unsupportTips !== undefined
+              ? { unsupport_tips: button.action.unsupportTips }
+              : {}),
+            ...(button.action.modal
+              ? {
+                  modal: {
+                    content: button.action.modal.content,
+                    ...(button.action.modal.confirmText !== undefined
+                      ? { confirm_text: button.action.modal.confirmText }
+                      : {}),
+                    ...(button.action.modal.cancelText !== undefined
+                      ? { cancel_text: button.action.modal.cancelText }
+                      : {}),
+                  },
+                }
+              : {}),
+          },
+        })),
+      })),
+    },
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

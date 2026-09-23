@@ -119,7 +119,11 @@ describe("RetentionService", () => {
 
     const result = await service.runOnce();
 
-    expect(result).toEqual({ auditRecordsRemoved: 0, joinRequestsRemoved: 0 });
+    expect(result).toEqual({
+      auditRecordsRemoved: 0,
+      joinRequestsRemoved: 0,
+      notificationsRemoved: 0,
+    });
     expect(auditLog.all()).toHaveLength(1);
   });
 

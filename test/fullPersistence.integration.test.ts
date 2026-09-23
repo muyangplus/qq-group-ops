@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import {
   AuditStatus,
   JoinRequestStatus,
@@ -53,11 +54,35 @@ for (const driver of TEST_DATABASES) {
           reason: "test",
           createdAt: utcNow(),
         });
+        first.notifications.subscribe("admin", "g1");
+        first.notifications.subscribe("admin", "__all__");
+        await first.notifications.notifyJoinRequest({
+          groupId: "g1",
+          requestId: "r1",
+          userId: "u1",
+          reason: "想加入",
+        });
 
         await first.flush();
 
         const restarted = createPersistentRuntime(await database.restart());
         await restarted.load();
+
+        expect(restarted.notifications.listScopes("admin")).toEqual([
+          "__all__",
+          "g1",
+        ]);
+        // 投递记录也会恢复：同一申请不会重复推送
+        const pushAgain = await restarted.notifications.notifyJoinRequest({
+          groupId: "g1",
+          requestId: "r1",
+          userId: "u1",
+          reason: "想加入",
+        });
+        expect(pushAgain.skipped).toBe(1);
+        expect(
+          (restarted.api as FakeQQOfficialAPI).sentPrivateMessages,
+        ).toEqual([]);
 
         expect(restarted.identityMap.getQq("root")).toBe("10001");
         expect(restarted.identityMap.getGroupNumber("g1")).toBe("654321");

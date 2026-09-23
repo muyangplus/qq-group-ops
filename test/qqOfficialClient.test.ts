@@ -310,6 +310,73 @@ describe("QQOfficialClient", () => {
     });
   });
 
+  it("sends markdown with an inline keyboard in private messages", async () => {
+    const transport = new FakeTransport([
+      { statusCode: 200, jsonData: { id: "pmid" }, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+    });
+
+    await client.sendPrivateMessage("u1", "", undefined, {
+      markdown: "## 新的入群申请",
+      keyboard: {
+        content: {
+          rows: [
+            {
+              buttons: [
+                {
+                  id: "approve",
+                  label: "同意",
+                  action: {
+                    type: 2,
+                    data: "/approve g1 r1",
+                    permission: { type: 0, specifyUserIds: ["admin"] },
+                    enter: true,
+                    unsupportTips: "请直接发送 /approve",
+                    modal: { content: "确认通过？", confirmText: "通过" },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(transport.calls[0]?.json).toEqual({
+      msg_type: 2,
+      markdown: { content: "## 新的入群申请" },
+      keyboard: {
+        content: {
+          rows: [
+            {
+              buttons: [
+                {
+                  id: "approve",
+                  render_data: {
+                    label: "同意",
+                    visited_label: "同意",
+                    style: 1,
+                  },
+                  action: {
+                    type: 2,
+                    data: "/approve g1 r1",
+                    permission: { type: 0, specify_user_ids: ["admin"] },
+                    enter: true,
+                    unsupport_tips: "请直接发送 /approve",
+                    modal: { content: "确认通过？", confirm_text: "通过" },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("supports custom endpoints", async () => {    const transport = new FakeTransport([
       { statusCode: 200, jsonData: {}, text: "" },
     ]);

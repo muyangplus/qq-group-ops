@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { loadSettings } from "../src/config.js";
 import { createRuntime } from "../src/runtime.js";
 import { FakeIdentityBindingRepository } from "./helpers/fakeIdentityBindingRepository.js";
@@ -40,6 +41,40 @@ describe("createRuntime", () => {
     expect(result.kind).toBe("command");
     expect(result.ok).toBe(true);
     expect(result.text).toContain("r1");
+  });
+
+  it("forwards rich message options through the instrumentation proxy", async () => {
+    const runtime = createRuntime(loadSettings({ ADMIN_USER_IDS: "admin" }));
+    runtime.identityMap.bindUser("admin", "10001");
+    runtime.identityMap.bindGroup("g1", "654321");
+    runtime.notifications.subscribe("admin", "g1");
+
+    await runtime.router.handle({
+      type: "join_request",
+      groupId: "g1",
+      userId: "u1",
+      requestId: "r1",
+      reason: "想加入",
+    });
+
+    const api = runtime.api as unknown as FakeQQOfficialAPI;
+    expect(api.sentPrivateMessages[0]?.markdown).toContain("新的入群申请");
+    expect(api.sentPrivateMessages[0]?.keyboard).toBeDefined();
+  });
+
+  it("forwards blacklist options through the instrumentation proxy", async () => {
+    const runtime = createRuntime(loadSettings({}));
+    const api = runtime.api as unknown as FakeQQOfficialAPI;
+
+    await runtime.api.removeGroupMember("g1", "u1", {
+      addToMemberBlacklist: true,
+    });
+    await runtime.api.updateMemberBlacklist("g1", "u1", true);
+
+    expect(api.blacklistOperations).toEqual([
+      ["g1", "u1", "add"],
+      ["g1", "u1", "add"],
+    ]);
   });
 
   it("loads persisted bindings into the identity map", async () => {

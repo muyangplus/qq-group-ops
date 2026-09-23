@@ -1,0 +1,155 @@
+import type { KeyboardPayload } from "../adapters/qqOfficial.js";
+
+/**
+ * 入群申请推送卡片。
+ *
+ * 官方「结构化卡片（Ark）」只支持接收、不支持机器人发送；能发送的富消息是
+ * **Markdown + 内嵌按钮**（`msg_type=2` + `keyboard`），所以这里的「卡片」
+ * 就是 Markdown 正文 + 底部两个指令按钮：
+ * - 「同意」→ 发送 `/approve <group_openid> <申请ID>`
+ * - 「拒绝」→ 发送 `/reject <group_openid> <申请ID> 审核未通过`
+ *
+ * 自定义按钮属于官方内邀能力（需要白名单）；未开通时推送服务会自动降级为
+ * 纯 Markdown / 纯文本，不影响审核通知本身。
+ */
+export interface JoinRequestCardInput {
+  groupId: string;
+  /** 已绑定的群号，用于展示；未绑定则为 undefined。 */
+  groupNumber?: string | undefined;
+  requestId: string;
+  /** 申请人 openid。 */
+  userId: string;
+  /** 入群问题/理由原文。 */
+  reason: string;
+  /** 规则引擎给出的审核意见（可选）。 */
+  opinion?: string | undefined;
+  /** 接收者 userId：按钮只允许该用户点击。 */
+  recipientId: string;
+  /** 关闭按钮（例如已知按钮未开通）时只生成 Markdown。 */
+  withButtons?: boolean | undefined;
+}
+
+export interface JoinRequestCard {
+  markdown: string;
+  keyboard?: KeyboardPayload | undefined;
+}
+
+export function buildJoinRequestCard(
+  input: JoinRequestCardInput,
+): JoinRequestCard {
+  const groupLabel = input.groupNumber
+    ? `${input.groupNumber}（${input.groupId}）`
+    : input.groupId;
+  const approveCommand = `/approve ${input.groupId} ${input.requestId}`;
+  const rejectCommand = `/reject ${input.groupId} ${input.requestId} 审核未通过`;
+
+  const lines = [
+    "## 新的入群申请",
+    `**群**：${escapeText(groupLabel)}`,
+    `**申请人**：${escapeText(input.userId)}`,
+    `**回答**：${escapeText(input.reason) || "（未填写）"}`,
+  ];
+  if (input.opinion) {
+    lines.push("", ...toQuote(input.opinion));
+  }
+  lines.push(
+    "",
+    `请审核：点击下方按钮，或发送 \`${approveCommand}\` / \`${rejectCommand}\``,
+  );
+
+  const markdown = lines.join("\n");
+  if (input.withButtons === false) {
+    return { markdown };
+  }
+
+  return {
+    markdown,
+    keyboard: {
+      content: {
+        rows: [
+          {
+            buttons: [
+              {
+                id: "approve",
+                label: "同意",
+                visitedLabel: "已同意",
+                style: 1,
+                action: {
+                  type: 2,
+                  data: approveCommand,
+                  permission: { type: 0, specifyUserIds: [input.recipientId] },
+                  enter: true,
+                  reply: false,
+                  unsupportTips: "当前 QQ 版本不支持按钮，请直接发送 /approve 指令",
+                  modal: {
+                    content: "确认通过该入群申请？",
+                    confirmText: "通过",
+                    cancelText: "取消",
+                  },
+                },
+              },
+              {
+                id: "reject",
+                label: "拒绝",
+                visitedLabel: "已拒绝",
+                style: 3,
+                action: {
+                  type: 2,
+                  data: rejectCommand,
+                  permission: { type: 0, specifyUserIds: [input.recipientId] },
+                  enter: true,
+                  reply: false,
+                  unsupportTips: "当前 QQ 版本不支持按钮，请直接发送 /reject 指令",
+                  modal: {
+                    content: "确认拒绝该入群申请？",
+                    confirmText: "拒绝",
+                    cancelText: "取消",
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    },
+  };
+}
+
+/** 按钮不可用时的纯文本降级内容（包含同样的指令）。 */
+export function renderJoinRequestCardText(input: JoinRequestCardInput): string {
+  const groupLabel = input.groupNumber
+    ? `${input.groupNumber}（${input.groupId}）`
+    : input.groupId;
+  const lines = [
+    "【新的入群申请】",
+    `群：${groupLabel}`,
+    `申请人：${input.userId}`,
+    `回答：${singleLine(input.reason) || "（未填写）"}`,
+  ];
+  if (input.opinion) {
+    lines.push("", ...input.opinion.split("\n"));
+  }
+  lines.push(
+    "",
+    `同意：/approve ${input.groupId} ${input.requestId}`,
+    `拒绝：/reject ${input.groupId} ${input.requestId} [原因]`,
+  );
+  return lines.join("\n");
+}
+
+/** Markdown 转义：去掉会破坏排版的字符，并压成单行。 */
+function escapeText(text: string): string {
+  return singleLine(text)
+    .replace(/[\\`*_~#>]/gu, (char) => `\\${char}`)
+    .slice(0, 200);
+}
+
+function singleLine(text: string): string {
+  return text.replace(/\s+/gu, " ").trim();
+}
+
+function toQuote(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => `> ${line.trim()}`.trimEnd());
+}

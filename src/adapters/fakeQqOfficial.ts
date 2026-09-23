@@ -4,6 +4,7 @@ import type {
   ApproveJoinRequestOptions,
   QQOfficialAPI,
   RemoveGroupMemberOptions,
+  RichMessageOptions,
 } from "./qqOfficial.js";
 
 export class FakeQQOfficialAPI implements QQOfficialAPI {
@@ -27,6 +28,12 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
   public failJoinRequestApprovals = false;
   /** 置为 true 后 getJoinRequests 抛出错误，便于测试同步失败。 */
   public failJoinRequestList = false;
+  /** 置为 true 后所有单聊消息抛出错误，便于测试推送失败。 */
+  public failPrivateMessages = false;
+  /** 置为 true 后 Markdown 单聊消息抛出错误（纯文本仍可发送），便于测试降级。 */
+  public failPrivateRichMessages = false;
+  /** 置为 true 后带按钮的 Markdown 单聊消息抛出错误，便于测试「按钮未开通」降级。 */
+  public failPrivateKeyboardMessages = false;
 
   public async getAccessToken(): Promise<string> {
     return "fake-token";
@@ -40,9 +47,16 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
     groupId: string,
     content: string,
     msgId?: string,
+    options?: RichMessageOptions,
   ): Promise<Record<string, unknown>> {
     const messageId = randomUUID();
-    this.sentMessages.push({ groupId, content, msgId, messageId });
+    this.sentMessages.push({
+      groupId,
+      content,
+      msgId,
+      messageId,
+      ...richFields(options),
+    });
     return { id: messageId };
   }
 
@@ -50,9 +64,25 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
     userOpenid: string,
     content: string,
     msgId?: string,
+    options?: RichMessageOptions,
   ): Promise<Record<string, unknown>> {
+    if (options?.markdown && options.keyboard && this.failPrivateKeyboardMessages) {
+      throw new Error("fake keyboard message failure");
+    }
+    if (options?.markdown && this.failPrivateRichMessages) {
+      throw new Error("fake rich message failure");
+    }
+    if (this.failPrivateMessages) {
+      throw new Error("fake private message failure");
+    }
     const messageId = randomUUID();
-    this.sentPrivateMessages.push({ userOpenid, content, msgId, messageId });
+    this.sentPrivateMessages.push({
+      userOpenid,
+      content,
+      msgId,
+      messageId,
+      ...richFields(options),
+    });
     return { id: messageId };
   }
 
@@ -132,4 +162,15 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
     this.joinRequests.set(requestId, request);
     return request;
   }
+}
+
+/** 只把实际存在的富消息字段写进记录，避免测试里出现 `undefined` 键。 */
+function richFields(options: RichMessageOptions | undefined): Record<string, unknown> {
+  if (!options?.markdown) {
+    return {};
+  }
+  return {
+    markdown: options.markdown,
+    ...(options.keyboard ? { keyboard: options.keyboard } : {}),
+  };
 }

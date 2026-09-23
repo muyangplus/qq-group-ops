@@ -30,6 +30,12 @@ import {
 } from "./db/joinRequestRepository.js";
 import { migrate } from "./db/migrate.js";
 import {
+  SqlNotificationDeliveryRepository,
+  SqlNotificationSubscriptionRepository,
+  type NotificationDeliveryRepository,
+  type NotificationSubscriptionRepository,
+} from "./db/notificationRepository.js";
+import {
   SqlPermissionRepository,
   type PermissionRepository,
 } from "./db/permissionRepository.js";
@@ -53,6 +59,8 @@ export interface Persistence {
   groupMessageModes: GroupMessageModeRepository;
   permissions: PermissionRepository;
   activities: ActivityRepository;
+  notificationSubscriptions: NotificationSubscriptionRepository;
+  notificationDeliveries: NotificationDeliveryRepository;
   close(): Promise<void>;
 }
 
@@ -145,6 +153,8 @@ interface RepositorySet {
   groupMessageModes: GroupMessageModeRepository;
   permissions: PermissionRepository;
   activities: ActivityRepository;
+  notificationSubscriptions: NotificationSubscriptionRepository;
+  notificationDeliveries: NotificationDeliveryRepository;
 }
 
 function createRepositories(db: Queryable): RepositorySet {
@@ -157,6 +167,8 @@ function createRepositories(db: Queryable): RepositorySet {
     groupMessageModes: new SqlGroupMessageModeRepository(db),
     permissions: new SqlPermissionRepository(db),
     activities: new SqlActivityRepository(db),
+    notificationSubscriptions: new SqlNotificationSubscriptionRepository(db),
+    notificationDeliveries: new SqlNotificationDeliveryRepository(db),
   };
 }
 

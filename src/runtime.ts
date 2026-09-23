@@ -21,6 +21,10 @@ import type { GroupSettingsRepository } from "./db/groupSettingsRepository.js";
 import type { GroupMessageModeRepository } from "./db/groupMessageModeRepository.js";
 import type { IdentityBindingRepository } from "./db/identityBindingRepository.js";
 import type { JoinRequestRepository } from "./db/joinRequestRepository.js";
+import type {
+  NotificationDeliveryRepository,
+  NotificationSubscriptionRepository,
+} from "./db/notificationRepository.js";
 import type { PermissionRepository } from "./db/permissionRepository.js";
 import { WriteQueue } from "./db/writeQueue.js";
 import { ActivityService } from "./services/activity.js";
@@ -38,6 +42,7 @@ import { JoinRuleEvaluator } from "./services/joinRules.js";
 import { MemberRoster } from "./services/memberRoster.js";
 import { MessageGuardService } from "./services/messageGuard.js";
 import { RuleEngine } from "./services/moderation.js";
+import { NotificationService } from "./services/notifications.js";
 import { PermissionService } from "./services/permissions.js";
 
 export interface Runtime {
@@ -51,6 +56,7 @@ export interface Runtime {
   permissions: PermissionService;
   activity: ActivityService;
   exportService: ExportService;
+  notifications: NotificationService;
   writeQueue: WriteQueue;
   router: EventRouter;
   /** 从数据库载入全部持久化状态；未配置数据库时为空操作。 */
@@ -68,6 +74,8 @@ export interface RuntimeRepositories {
   groupMessageModes?: GroupMessageModeRepository;
   permissions?: PermissionRepository;
   activities?: ActivityRepository;
+  notificationSubscriptions?: NotificationSubscriptionRepository;
+  notificationDeliveries?: NotificationDeliveryRepository;
 }
 
 export interface RuntimeDependencies {
@@ -119,6 +127,14 @@ export function createRuntime(
     joinRules,
   );
   const joinSync = new JoinRequestSyncService(api, joinAudit);
+  const notifications = new NotificationService(api, permissions, {
+    subscriptions: repositories.notificationSubscriptions,
+    deliveries: repositories.notificationDeliveries,
+    queue: writeQueue,
+    identityMap,
+    configStore,
+    joinRules,
+  });
   const adminCommands = new AdminCommandService({
     permissions,
     joinAudit,
@@ -129,6 +145,7 @@ export function createRuntime(
     joinRules,
     groupMessageMode,
     identityMap,
+    notifications,
   });
   const load = async (): Promise<void> => {
     await identityMap.reload();
@@ -138,6 +155,7 @@ export function createRuntime(
     await permissions.load();
     await groupMessageMode.load();
     await activity.load();
+    await notifications.load();
     // 班级库缺失时不抛错：班级类规则会自动退化为人工审核
     joinRules.setRoster(await MemberRoster.load(settings.classIndexFile));
     await writeQueue.flush();
@@ -153,8 +171,15 @@ export function createRuntime(
     permissions,
     activity,
     exportService,
+    notifications,
     writeQueue,
-    router: new EventRouter(messageGuard, joinAudit, adminCommands, joinApproval),
+    router: new EventRouter(
+      messageGuard,
+      joinAudit,
+      adminCommands,
+      joinApproval,
+      notifications,
+    ),
     load,
     flush: () => writeQueue.flush(),
   };

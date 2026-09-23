@@ -63,6 +63,14 @@ export const KeywordPunish = {
 } as const;
 export type KeywordPunish = (typeof KeywordPunish)[keyof typeof KeywordPunish];
 
+/** 入群申请推送的投递状态。 */
+export const NotificationDeliveryStatus = {
+  Sent: "sent",
+  Failed: "failed",
+} as const;
+export type NotificationDeliveryStatus =
+  (typeof NotificationDeliveryStatus)[keyof typeof NotificationDeliveryStatus];
+
 /** 入群申请的处理方式。 */
 export const JoinDecisionMode = {
   /** 全部人工审核（默认）。 */

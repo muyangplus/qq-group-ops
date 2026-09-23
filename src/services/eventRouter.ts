@@ -5,6 +5,7 @@ import type { AdminCommandService } from "./adminCommands.js";
 import type { JoinApprovalService } from "./joinApproval.js";
 import type { JoinAuditService } from "./joinAudit.js";
 import type { MessageGuardService } from "./messageGuard.js";
+import type { NotificationService } from "./notifications.js";
 
 const log = getLogger("event-router");
 
@@ -59,6 +60,7 @@ export class EventRouter {
     private readonly joinAudit: JoinAuditService,
     private readonly adminCommands: AdminCommandService,
     private readonly joinApproval?: JoinApprovalService,
+    private readonly notifications?: NotificationService,
   ) {}
 
   public async handle(event: QQEvent): Promise<EventRouterResult> {
@@ -98,16 +100,36 @@ export class EventRouter {
       }
       case "join_request": {
         try {
-          this.joinAudit.submit(
-            event.groupId,
-            event.userId,
-            event.reason ?? "",
-            event.requestId,
-          );
+          // 事件可能重投：已经记录过的申请不再重复写入，但仍可补一次推送（投递表去重）。
+          if (!this.joinAudit.has(event.requestId)) {
+            this.joinAudit.submit(
+              event.groupId,
+              event.userId,
+              event.reason ?? "",
+              event.requestId,
+            );
+          }
           const outcome = await this.joinApproval?.applyJoinRules(
             event.groupId,
             event.requestId,
           );
+          // 只有仍需人工处理的申请才推送，自动通过/拒绝不需要审核员操作。
+          if (!outcome || outcome.action === "manual") {
+            await this.notifications
+              ?.notifyJoinRequest({
+                groupId: event.groupId,
+                requestId: event.requestId,
+                userId: event.userId,
+                reason: event.reason ?? "",
+              })
+              .catch((error: unknown) => {
+                log.warn("join request notification failed", {
+                  groupId: event.groupId,
+                  requestId: event.requestId,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              });
+          }
           return {
             kind: "join_request",
             ok: true,

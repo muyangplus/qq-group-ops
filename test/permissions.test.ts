@@ -30,6 +30,14 @@ describe("PermissionService", () => {
     expect(service.canApproveJoin("mod1", "g1")).toBe(false);
   });
 
+  it("lists only groups where the user can approve join requests", () => {
+    expect(service.listReviewableGroups("ga1")).toEqual(["g1"]);
+    expect(service.listReviewableGroups("mod1")).toEqual([]);
+    expect(service.listReviewableGroups("member")).toEqual([]);
+    // 全局超管对任何群都能审批，但只会列出已授权过的群
+    expect(service.listReviewableGroups("root")).toEqual(["g1"]);
+  });
+
   it("denies management to members", () => {
     expect(service.canManageRules("member", "g1")).toBe(false);
     expect(service.canExportData("member", "g1")).toBe(false);

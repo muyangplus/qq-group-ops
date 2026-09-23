@@ -11,6 +11,10 @@ import { JoinAuditService } from "../src/services/joinAudit.js";
 import { JoinRuleEvaluator } from "../src/services/joinRules.js";
 import { MemberRoster } from "../src/services/memberRoster.js";
 import { JoinRequestSyncService } from "../src/services/joinAuditSync.js";
+import {
+  NOTIFY_SCOPE_ALL,
+  NotificationService,
+} from "../src/services/notifications.js";
 import { PermissionService } from "../src/services/permissions.js";
 import { FakeIdentityBindingRepository } from "./helpers/fakeIdentityBindingRepository.js";
 
@@ -23,6 +27,7 @@ describe("AdminCommandService", async () => {
   let api: FakeQQOfficialAPI;
   let joinApproval: JoinApprovalService;
   let joinSync: JoinRequestSyncService;
+  let notifications: NotificationService;
   let service: AdminCommandService;
 
   beforeEach(() => {
@@ -48,6 +53,10 @@ describe("AdminCommandService", async () => {
     identityMap.bindUser("u3", "10005");
     identityMap.bindUser("u4", "10006");
     identityMap.bindGroup("g1", "654321");
+    notifications = new NotificationService(api, permissions, {
+      identityMap,
+      configStore,
+    });
     service = new AdminCommandService({
       permissions,
       joinAudit,
@@ -56,6 +65,7 @@ describe("AdminCommandService", async () => {
       joinSync,
       auditLog,
       identityMap,
+      notifications,
     });
   });
 
@@ -889,5 +899,84 @@ describe("AdminCommandService", async () => {
 
     expect(result.ok).toBe(false);
     expect(result.text).toContain("同步失败");
+  });
+
+  it("subscribes and unsubscribes join request push from a group", async () => {
+    const on = await service.handle("g1", "admin", "/notify on");
+    expect(on.ok).toBe(true);
+    expect(on.text).toContain("已开启");
+    expect(notifications.isSubscribed("admin", "g1")).toBe(true);
+
+    const status = await service.handle("g1", "admin", "/notify");
+    expect(status.text).toContain("群 654321（g1）：已开启");
+
+    const off = await service.handle("g1", "admin", "/notify off");
+    expect(off.text).toContain("已关闭");
+    expect(notifications.isSubscribed("admin", "g1")).toBe(false);
+  });
+
+  it("treats /notify on in private as all reviewable groups", async () => {
+    const result = await service.handle(undefined, "admin", "/notify on");
+    expect(result.ok).toBe(true);
+    expect(notifications.isSubscribed("admin", NOTIFY_SCOPE_ALL)).toBe(true);
+  });
+
+  it("supports subscribing to a specific group in private", async () => {
+    const result = await service.handle(undefined, "admin", "/notify 654321 on");
+    expect(result.ok).toBe(true);
+    expect(notifications.isSubscribed("admin", "g1")).toBe(true);
+  });
+
+  it("refuses push subscriptions from users who cannot approve", async () => {
+    const moderator = await service.handle("g1", "mod", "/notify on");
+    expect(moderator.ok).toBe(false);
+    expect(moderator.text).toContain("权限不足");
+
+    const stranger = await service.handle(undefined, "member", "/notify all on");
+    expect(stranger.ok).toBe(false);
+    expect(stranger.text).toContain("权限不足");
+    expect(notifications.listScopes("mod")).toEqual([]);
+  });
+
+  it("refuses subscribing to a group where the user has no role", async () => {
+    identityMap.bindGroup("g2", "777777");
+    const result = await service.handle(undefined, "admin", "/notify 777777 on");
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("权限不足");
+  });
+
+  it("lists the push subscription status without leaking other groups", async () => {
+    await service.handle("g1", "admin", "/notify on");
+    const result = await service.handle(undefined, "admin", "/notify");
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("可审批的群：654321（g1）");
+    expect(result.text).toContain("用法：");
+  });
+
+  it("sends a push test card", async () => {
+    await service.handle("g1", "admin", "/notify on");
+    const result = await service.handle("g1", "admin", "/notify test");
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("已发送推送测试卡片");
+    expect(api.sentPrivateMessages[0]?.userOpenid).toBe("admin");
+    expect(api.sentPrivateMessages[0]?.markdown).toContain("推送测试");
+  });
+
+  it("mentions /notify in the admin help and help topic", async () => {
+    const help = await service.handle("g1", "admin", "/help");
+    expect(help.text).toContain("/notify");
+
+    const topic = await service.handle("g1", "admin", "/help notify");
+    expect(topic.ok).toBe(true);
+    expect(topic.text).toContain("入群申请推送");
+    expect(topic.text).toContain("/notify all on|off");
+  });
+
+  it("hides /notify help from users who cannot approve", async () => {
+    const topic = await service.handle("g1", "mod", "/help notify");
+    expect(topic.ok).toBe(false);
+    expect(topic.text).toContain("权限不足");
   });
 });

@@ -1,4 +1,5 @@
 import { JoinDecisionMode } from "../core/enums.js";
+import type { EffectiveGroupConfig } from "./groupConfig.js";
 import type { MemberRoster } from "./memberRoster.js";
 
 export { JoinDecisionMode };
@@ -222,4 +223,24 @@ function truncate(text: string, max: number): string {
     return trimmed;
   }
   return `${trimmed.slice(0, max)}…`;
+}
+
+/**
+ * 用群配置的入群规则字段评估一次申请。
+ *
+ * `/pending` 审核意见与推送卡片共用这段映射，避免两处参数写歪。
+ */
+export function evaluateConfiguredJoinRules(
+  evaluator: JoinRuleEvaluator,
+  config: EffectiveGroupConfig,
+  answer: string,
+  opinionEnabled = true,
+): JoinEvaluation {
+  return evaluator.evaluate(answer, {
+    mode: config.joinDecision,
+    requireClass: config.joinRequireClass,
+    requireName: config.joinRequireName,
+    answerPattern: config.joinAnswerPattern,
+    opinionEnabled,
+  });
 }
