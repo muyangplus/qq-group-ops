@@ -7,6 +7,7 @@ import {
   type GroupConfigOverride,
   type GroupConfigStore,
 } from "./groupConfig.js";
+import { findHelpTopic, type HelpTopic } from "./helpTopics.js";
 import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
 import type { IdentityMapService } from "./identityMap.js";
 import type { JoinApprovalService } from "./joinApproval.js";
@@ -94,7 +95,7 @@ export class AdminCommandService {
     switch (command) {
       case "help":
       case "帮助":
-        return { ok: true, text: this.buildHelp(groupId, userId) };
+        return this.handleHelp(groupId, userId, parts);
       case "myperm":
       case "我的权限":
         return this.handleMyPermission(groupId, userId);
@@ -332,10 +333,71 @@ export class AdminCommandService {
     return this.identityMap.resolveGroupId(trimmed);
   }
 
+  /**
+   * `/help` 列出有权限执行的指令；`/help <主题>` 展示该指令的详细用法。
+   *
+   * 主题详情同样做权限过滤：无权限时只提示所需权限，不展示具体命令，
+   * 与「/help 只显示有权限执行的指令」保持一致。
+   */
+  private handleHelp(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): CommandResult {
+    const query = parts[1];
+    if (!query) {
+      return { ok: true, text: this.buildHelp(groupId, userId) };
+    }
+
+    const topic = findHelpTopic(query);
+    if (!topic) {
+      return {
+        ok: false,
+        text:
+          `未找到「${query}」的帮助。\n` +
+          `用法：/help <指令>，例如 /help rules、/help bind、/help perm\n\n` +
+          this.buildHelp(groupId, userId),
+      };
+    }
+
+    const context = {
+      permissions: this.permissions,
+      configStore: this.configStore,
+      identityMap: this.identityMap,
+      groupId,
+      userId,
+    };
+    if (!topic.allows(context)) {
+      return {
+        ok: false,
+        text:
+          `权限不足：/${topic.name} 需要${topic.requirement}。\n` +
+          `权限由全局超级管理员通过 /perm 配置。`,
+      };
+    }
+
+    return { ok: true, text: this.renderHelpTopic(topic, context) };
+  }
+
+  private renderHelpTopic(
+    topic: HelpTopic,
+    context: Parameters<HelpTopic["body"]>[0],
+  ): string {
+    return [
+      `/${topic.name} — ${topic.title}`,
+      `所需权限：${topic.requirement}`,
+      "",
+      ...topic.body(context),
+      "",
+      "相关：/help 查看全部可用指令",
+    ].join("\n");
+  }
+
   private buildHelp(groupId: string | undefined, userId: string): string {
     const lines: string[] = [
       "可用指令：",
       "/help - 显示帮助",
+      "/help <指令> - 查看某个指令的详细用法，例如 /help rules、/help bind、/help perm",
       "/bind qq <QQ号> - 绑定自己的 QQ 号",
     ];
     const isSuper = this.permissions.isSuperAdmin(userId);

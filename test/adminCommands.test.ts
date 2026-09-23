@@ -94,6 +94,67 @@ describe("AdminCommandService", async () => {
     expect(result.text).not.toContain("/myperm");
   });
 
+  it("shows the detailed help for a topic", async () => {
+    const result = await service.handle("g1", "admin", "/help rules");
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("/rules — 群规则配置");
+    expect(result.text).toContain("所需权限：");
+    expect(result.text).toContain("/rules set keywords 广告,刷屏,加群");
+    expect(result.text).toContain("/rules set autoApprove on|off");
+    expect(result.text).toContain("/rules set all <字段> <值>");
+    // 群内会附带当前生效值
+    expect(result.text).toContain("当前生效值");
+    expect(result.text).toContain("关键词：广告");
+  });
+
+  it("supports topic aliases and leading slash", async () => {
+    const alias = await service.handle("g1", "admin", "/help 规则");
+    expect(alias.ok).toBe(true);
+    expect(alias.text).toContain("/rules — 群规则配置");
+
+    const withSlash = await service.handle("g1", "admin", "/help /rules");
+    expect(withSlash.ok).toBe(true);
+    expect(withSlash.text).toContain("/rules set keywords");
+  });
+
+  it("hides topic details the user cannot execute", async () => {
+    const result = await service.handle("g1", "member", "/help rules");
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("权限不足");
+    expect(result.text).toContain("需要");
+    expect(result.text).not.toContain("/rules set keywords");
+  });
+
+  it("denies platform level topics to group roles", async () => {
+    const rulesAdmin = await service.handle("g1", "admin", "/help perm");
+    expect(rulesAdmin.ok).toBe(false);
+    expect(rulesAdmin.text).toContain("仅全局超级管理员");
+
+    const perm = await service.handle("g1", "root", "/help perm");
+    expect(perm.ok).toBe(true);
+    expect(perm.text).toContain("/perm grant gsuper");
+  });
+
+  it("allows binding help without permission and shows binding status", async () => {
+    const result = await service.handle("g1", "unbound", "/help bind");
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("/bind qq <QQ号>");
+    expect(result.text).toContain("尚未绑定");
+    expect(result.text).toContain("本群 g1 ↔ 群号 654321");
+  });
+
+  it("suggests topics for an unknown help argument", async () => {
+    const result = await service.handle("g1", "admin", "/help nope");
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("未找到「nope」的帮助");
+    expect(result.text).toContain("/help <指令>");
+    expect(result.text).toContain("可用指令：");
+  });
+
   it("rejects unknown commands", async () => {
     const result = await service.handle("g1", "member", "/unknown");
     expect(result.ok).toBe(false);

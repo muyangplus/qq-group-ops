@@ -6,6 +6,12 @@
 
 ### 新增
 
+- **指令帮助主题**：`/help <指令>` 展示单个指令的详细用法，例如 `/help rules`、`/help bind`、`/help perm`。
+  - 支持中文别名与带前导斜杠（`/help 规则`、`/help /rules`），未知主题会提示用法并回退到指令列表；
+  - 主题详情也做权限过滤：无权限时只提示所需权限，不展示执行不了的命令；
+  - `/help rules` 在群内会附带该群**当前生效值**（关键词、开关、警告文案、禁言时长）；
+  - `/help bind` 会显示你当前的绑定状态；
+  - 主题定义抽到 `src/services/helpTopics.ts`，共 13 个主题，便于扩展与测试。
 - **权限模型拆分**：新增「本群超级管理员」（`/perm grant gsuper`，别名 `groupsuper` / `群超管` / `本群超管` / `群超级管理员`）。
   - 只在该群内等价于 `super_admin`（可审批、改规则、查审计、导出），拿不到 `/perm`、`/rules all`、`/bind user|groupid`、`/whois` 等平台级能力；
   - 每个群的角色单独配置，`/perm list` 与 `/myperm` 分别展示全局/本群超管；

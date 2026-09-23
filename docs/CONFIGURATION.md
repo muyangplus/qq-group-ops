@@ -120,7 +120,7 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 说明：
 
 - `/myperm`：所有用户可查询自己的权限（会分别显示全局/本群超级管理员）。
-- `/help`：只显示当前用户有权限执行的指令。
+- `/help`：只显示当前用户有权限执行的指令；`/help <指令>` 查看某个指令的详细用法（如 `/help rules`、`/help bind`、`/help perm`），主题详情同样做权限过滤。
 - `/perm`：仅**全局**超级管理员可用。
 - `super`：全局超级管理员，拥有平台级能力（`/perm`、`/rules all`、`/bind user`、`/bind groupid`、`/whois`）。
 - `gsuper`（别名 `groupsuper` / `群超管` / `本群超管` / `群超级管理员`）：**本群超级管理员**，只在该群内等价于 `super_admin`，可以审批、改规则、查审计、导出；**拿不到任何跨群或平台级能力**。
