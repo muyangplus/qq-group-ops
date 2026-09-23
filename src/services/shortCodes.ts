@@ -13,9 +13,25 @@ export type ShortCodeKind = (typeof SHORT_CODE_KINDS)[number];
 
 export const SHORT_CODE_LENGTH = 6;
 export const SHORT_CODE_PREFIX = "#";
-const ALPHABET =
+export const ALPHABET_62 =
   "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 const MAX_ATTEMPTS = 20;
+
+/** 生成一个随机 Base62 短码（不含前缀）。 */
+export function randomBase62(
+  length: number,
+  randomInt: (max: number) => number = (max) => randomIntCrypto(max),
+): string {
+  let code = "";
+  for (let index = 0; index < length; index += 1) {
+    code += ALPHABET_62[randomInt(ALPHABET_62.length)];
+  }
+  return code;
+}
+
+function randomIntCrypto(max: number): number {
+  return randomInt(max);
+}
 
 export interface ShortCodeOptions {
   length?: number;
@@ -130,10 +146,7 @@ export class ShortCodeService {
 
   private generate(): string {
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-      let candidate = "";
-      for (let index = 0; index < this.length; index += 1) {
-        candidate += ALPHABET[this.random(ALPHABET.length)];
-      }
+      const candidate = randomBase62(this.length, this.random);
       if (!this.byCode.has(candidate.toLowerCase())) {
         return candidate;
       }

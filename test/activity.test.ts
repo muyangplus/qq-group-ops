@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+﻿import { describe, expect, it, beforeEach } from "vitest";
 
 import { ActivityStatus } from "../src/core/enums.js";
 import { ActivityService } from "../src/services/activity.js";
@@ -33,7 +33,7 @@ describe("ActivityService", () => {
   it("requires open activity", () => {
     service.createActivity({ groupId: "g1", title: "周末活动", createdBy: "admin", activityId: "a1" });
     expect(() => service.register({ activityId: "a1", userId: "u1" })).toThrow(
-      /not open/u,
+      /活动未开放报名/u,
     );
   });
 
@@ -42,7 +42,7 @@ describe("ActivityService", () => {
     service.openActivity("a1");
     service.register({ activityId: "a1", userId: "u1" });
     expect(() => service.register({ activityId: "a1", userId: "u2" })).toThrow(
-      /full/u,
+      /名额已满/u,
     );
   });
 
@@ -51,7 +51,7 @@ describe("ActivityService", () => {
     service.openActivity("a1");
     service.register({ activityId: "a1", userId: "u1" });
     expect(() => service.register({ activityId: "a1", userId: "u1" })).toThrow(
-      /duplicate/u,
+      /已经报名/u,
     );
   });
 
@@ -67,7 +67,7 @@ describe("ActivityService", () => {
     service.createActivity({ groupId: "g1", title: "活动", createdBy: "admin", activityId: "a1" });
     service.cancelActivity("a1");
     expect(() => service.register({ activityId: "a1", userId: "u1" })).toThrow(
-      /not open/u,
+      /活动未开放报名/u,
     );
   });
 
@@ -75,5 +75,84 @@ describe("ActivityService", () => {
     service.createActivity({ groupId: "g1", title: "活动1", createdBy: "admin", activityId: "a1" });
     service.createActivity({ groupId: "g2", title: "活动2", createdBy: "admin", activityId: "a2" });
     expect(service.listActivities("g1").map((activity) => activity.activityId)).toEqual(["a1"]);
+  });
+
+  it("generates a short code and resolves it (with # and any case)", () => {
+    const activity = service.createActivity({
+      groupId: "g1",
+      title: "活动",
+      createdBy: "admin",
+      activityId: "a1",
+      code: "M7K2Q9",
+    });
+    expect(activity.code).toBe("M7K2Q9");
+    expect(service.findByCode("#M7K2Q9")?.activityId).toBe("a1");
+    expect(service.findByCode("m7k2q9")?.activityId).toBe("a1");
+    expect(service.findByCode("ZZZZZZ")).toBeUndefined();
+  });
+
+  it("updates links and restrictions", () => {
+    service.createActivity({ groupId: "g1", title: "活动", createdBy: "admin", activityId: "a1" });
+    const updated = service.updateActivity("a1", {
+      links: [{ label: "报名链接", url: "https://example.com" }],
+      allowYears: ["22", "23"],
+      denyColleges: ["环境科学与工程学院"],
+      capacity: 30,
+    });
+    expect(updated.links[0]?.url).toBe("https://example.com");
+    expect(updated.allowYears).toEqual(["22", "23"]);
+    expect(updated.denyColleges).toEqual(["环境科学与工程学院"]);
+    expect(updated.capacity).toBe(30);
+  });
+
+  it("enforces allow/deny rules for colleges and years", () => {
+    service.createActivity({
+      groupId: "g1",
+      title: "限定活动",
+      createdBy: "admin",
+      activityId: "a1",
+      allowYears: ["23"],
+      denyColleges: ["化学与生命科学学院"],
+    });
+    const activity = service.getActivity("a1");
+    const profile = {
+      userId: "u1",
+      name: "小明",
+      studentId: "23123456789",
+      className: "材化2211",
+      college: "化学与生命科学学院",
+      year: "2023",
+    };
+
+    // 黑名单优先
+    expect(() => service.checkEligibility(activity, profile)).toThrow(
+      /不接受/u,
+    );
+
+    // 学院不在黑名单但不是白名单年级
+    const otherCollege = { ...profile, college: "环境科学与工程学院" };
+    expect(() => service.checkEligibility(activity, otherCollege)).not.toThrow();
+
+    const wrongYear = { ...otherCollege, studentId: "22123456789", year: "2022" };
+    expect(() => service.checkEligibility(activity, wrongYear)).toThrow(/仅限/u);
+  });
+
+  it("matches allowed colleges by partial name", () => {
+    const activity = service.createActivity({
+      groupId: "g1",
+      title: "活动",
+      createdBy: "admin",
+      activityId: "a1",
+      allowColleges: ["环境"],
+    });
+    const profile = {
+      userId: "u1",
+      name: "小明",
+      studentId: "24123456789",
+      className: "环工2414",
+      college: "环境科学与工程学院",
+      year: "2024",
+    };
+    expect(() => service.checkEligibility(activity, profile)).not.toThrow();
   });
 });

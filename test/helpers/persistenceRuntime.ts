@@ -1,5 +1,6 @@
 import { loadSettings } from "../../src/config.js";
 import { SqlActivityRepository } from "../../src/db/activityRepository.js";
+import { SqlActivityDetailsRepository } from "../../src/db/activityDetailsRepository.js";
 import { SqlAuditRepository } from "../../src/db/auditRepository.js";
 import { SqlGroupConfigRepository } from "../../src/db/groupConfigRepository.js";
 import { SqlGroupSettingsRepository } from "../../src/db/groupSettingsRepository.js";
@@ -12,6 +13,7 @@ import {
 } from "../../src/db/notificationRepository.js";
 import { SqlPermissionRepository } from "../../src/db/permissionRepository.js";
 import { SqlShortCodeRepository } from "../../src/db/shortCodeRepository.js";
+import { SqlUserProfileRepository } from "../../src/db/userProfileRepository.js";
 import type { Queryable } from "../../src/db/queryable.js";
 import { createRuntime, type Runtime } from "../../src/runtime.js";
 
@@ -30,11 +32,13 @@ export function createPersistentRuntime(
       groupMessageModes: new SqlGroupMessageModeRepository(queryable),
       permissions: new SqlPermissionRepository(queryable),
       activities: new SqlActivityRepository(queryable),
+      activityDetails: new SqlActivityDetailsRepository(queryable),
       notificationSubscriptions:
         new SqlNotificationSubscriptionRepository(queryable),
       notificationDeliveries:
         new SqlNotificationDeliveryRepository(queryable),
       shortCodes: new SqlShortCodeRepository(queryable),
+      userProfiles: new SqlUserProfileRepository(queryable),
     },
   });
 }

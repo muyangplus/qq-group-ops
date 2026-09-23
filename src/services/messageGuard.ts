@@ -18,6 +18,7 @@ import { AuditLogStore } from "./audit.js";
 import type { EffectiveGroupConfig } from "./groupConfig.js";
 import { GroupConfigStore } from "./groupConfig.js";
 import { RuleEngine } from "./moderation.js";
+import type { PermissionService } from "./permissions.js";
 
 const log = getLogger("message-guard");
 
@@ -44,6 +45,8 @@ export class MessageGuardService {
     private readonly rules: RuleEngine,
     private readonly configStore: GroupConfigStore,
     auditLog: AuditLog = new AuditLogStore(),
+    /** 注入后：审核员及以上（canReviewContent）的消息豁免关键词判断。 */
+    private readonly permissions?: PermissionService,
   ) {
     this.auditLog = auditLog;
   }
@@ -69,6 +72,16 @@ export class MessageGuardService {
     if (!config.enabled || !config.wordFilterEnabled) {
       log.debug("skipped", { groupId: message.groupId, reason: "disabled" });
       return this.result(message, ModerationAction.Allow, [], false, "disabled");
+    }
+
+    // 审核员及以上豁免关键词判断：不警告、不撤回、不处罚，也不写审计，只记 debug
+    if (this.permissions?.canReviewContent(message.userId, message.groupId)) {
+      log.debug("moderation exempt", {
+        groupId: message.groupId,
+        userId: message.userId,
+        level: this.permissions.levelFor(message.userId, message.groupId),
+      });
+      return this.result(message, ModerationAction.Allow, [], false, "exempt");
     }
 
     const engine = this.engineFor(config);

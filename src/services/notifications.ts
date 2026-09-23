@@ -19,6 +19,7 @@ import {
   type JoinRequestCardInput,
   type JoinRequestDecision,
 } from "./joinRequestCard.js";
+import { RichMessageSender } from "./richMessages.js";
 import {
   evaluateConfiguredJoinRules,
   type JoinRuleEvaluator,
@@ -66,6 +67,8 @@ export interface NotificationServiceOptions {
   /** 用于在卡片里附带审核意见。 */
   configStore?: GroupConfigStore | undefined;
   joinRules?: JoinRuleEvaluator | undefined;
+  /** 自定义富消息发送器；缺省时用 api 现建一个。 */
+  sender?: RichMessageSender | undefined;
   now?: (() => Date) | undefined;
 }
 
@@ -89,8 +92,8 @@ export class NotificationService {
   private readonly configStore: GroupConfigStore | undefined;
   private readonly joinRules: JoinRuleEvaluator | undefined;
   private readonly now: () => Date;
-  /** 自定义按钮是官方内邀能力：一旦发送失败就不再重试，避免每条推送都白打一次。 */
-  private keyboardDisabled = false;
+  /** 富消息发送器（Markdown + 按钮 + 三级降级），与活动卡片共用。 */
+  private readonly sender: RichMessageSender;
 
   public constructor(
     private readonly api: QQOfficialAPI,
@@ -108,10 +111,11 @@ export class NotificationService {
     this.configStore = options.configStore;
     this.joinRules = options.joinRules;
     this.now = options.now ?? (() => utcNow());
+    this.sender = options.sender ?? new RichMessageSender(api);
   }
 
   public get keyboardAvailable(): boolean {
-    return !this.keyboardDisabled;
+    return this.sender.keyboardAvailable;
   }
 
   public async load(): Promise<void> {
@@ -232,7 +236,7 @@ export class NotificationService {
         ...(push.decision !== undefined ? { decision: push.decision } : {}),
         opinion,
         recipientId: userId,
-        withButtons: !this.keyboardDisabled,
+        withButtons: this.sender.keyboardAvailable,
       };
       const delivery = this.deliveries.get(
         deliveryKey({ groupId: push.groupId, requestId: push.requestId, userId }),
@@ -299,7 +303,7 @@ export class NotificationService {
       applicantLabel: this.display?.user(userId) ?? userId,
       reason: "推送测试",
       recipientId: userId,
-      withButtons: !this.keyboardDisabled,
+      withButtons: this.sender.keyboardAvailable,
     };
     const card: JoinRequestCard = {
       markdown,
@@ -376,9 +380,8 @@ export class NotificationService {
   }
 
   /**
-   * 三级投递：Markdown + 按钮 → Markdown → 纯文本。
+   * 三级投递（委托给 RichMessageSender）：Markdown + 按钮 → Markdown → 纯文本。
    *
-   * 按钮未开通时第一次就会失败，之后机器人级别记住该状态，不再重复尝试；
    * 任何一次成功都算投递成功，detail 里记录降级原因。
    */
   private async deliver(
@@ -387,63 +390,27 @@ export class NotificationService {
     preset?: JoinRequestCard,
   ): Promise<{ status: NotificationDeliveryStatus; detail: string }> {
     const card = preset ?? buildJoinRequestCard(input);
-    const attempts: Array<{ label: string; run: () => Promise<unknown> }> = [];
-    if (card.keyboard) {
-      attempts.push({
-        label: "markdown+keyboard",
-        run: () =>
-          this.api.sendPrivateMessage(userId, "", undefined, {
-            markdown: card.markdown,
-            keyboard: card.keyboard,
-          }),
+    const result = await this.sender.sendToUser(userId, {
+      markdown: card.markdown,
+      ...(card.keyboard ? { keyboard: card.keyboard } : {}),
+      text: renderJoinRequestCardText(input),
+    });
+    if (result.ok) {
+      log.debug("notification delivered", {
+        userId,
+        groupId: input.groupId,
+        requestId: input.requestId,
+        mode: result.mode,
       });
+      return { status: NotificationDeliveryStatus.Sent, detail: result.detail };
     }
-    attempts.push({
-      label: "markdown",
-      run: () =>
-        this.api.sendPrivateMessage(userId, "", undefined, {
-          markdown: card.markdown,
-        }),
+    log.warn("notification delivery failed", {
+      userId,
+      groupId: input.groupId,
+      requestId: input.requestId,
+      error: result.detail,
     });
-    attempts.push({
-      label: "text",
-      run: () =>
-        this.api.sendPrivateMessage(userId, renderJoinRequestCardText(input)),
-    });
-
-    let lastError = "";
-    for (const attempt of attempts) {
-      try {
-        await attempt.run();
-        const detail =
-          attempt.label === "markdown+keyboard" ? "" : `${attempt.label}_fallback`;
-        log.debug("notification delivered", {
-          userId,
-          groupId: input.groupId,
-          requestId: input.requestId,
-          mode: attempt.label,
-        });
-        return { status: NotificationDeliveryStatus.Sent, detail };
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-        if (attempt.label === "markdown+keyboard" && !this.keyboardDisabled) {
-          this.keyboardDisabled = true;
-          log.warn(
-            "custom keyboard rejected by platform, falling back to markdown/text",
-            { userId, error: lastError },
-          );
-        } else {
-          log.warn("notification attempt failed", {
-            userId,
-            groupId: input.groupId,
-            requestId: input.requestId,
-            mode: attempt.label,
-            error: lastError,
-          });
-        }
-      }
-    }
-    return { status: NotificationDeliveryStatus.Failed, detail: lastError };
+    return { status: NotificationDeliveryStatus.Failed, detail: result.detail };
   }
 
   private recordDelivery(delivery: NotificationDelivery): void {

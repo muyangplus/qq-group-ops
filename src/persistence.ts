@@ -1,6 +1,10 @@
 import type { Settings } from "./config.js";
 import { getLogger } from "./core/logger.js";
 import {
+  SqlActivityDetailsRepository,
+  type ActivityDetailsRepository,
+} from "./db/activityDetailsRepository.js";
+import {
   SqlActivityRepository,
   type ActivityRepository,
 } from "./db/activityRepository.js";
@@ -45,6 +49,10 @@ import {
   SqlShortCodeRepository,
   type ShortCodeRepository,
 } from "./db/shortCodeRepository.js";
+import {
+  SqlUserProfileRepository,
+  type UserProfileRepository,
+} from "./db/userProfileRepository.js";
 import { openSqliteDatabase } from "./db/sqliteDatabase.js";
 import { SqliteQueryable } from "./db/sqliteQueryable.js";
 
@@ -66,6 +74,8 @@ export interface Persistence {
   notificationSubscriptions: NotificationSubscriptionRepository;
   notificationDeliveries: NotificationDeliveryRepository;
   shortCodes: ShortCodeRepository;
+  userProfiles: UserProfileRepository;
+  activityDetails: ActivityDetailsRepository;
   close(): Promise<void>;
 }
 
@@ -161,6 +171,8 @@ interface RepositorySet {
   notificationSubscriptions: NotificationSubscriptionRepository;
   notificationDeliveries: NotificationDeliveryRepository;
   shortCodes: ShortCodeRepository;
+  userProfiles: UserProfileRepository;
+  activityDetails: ActivityDetailsRepository;
 }
 
 function createRepositories(db: Queryable): RepositorySet {
@@ -173,9 +185,11 @@ function createRepositories(db: Queryable): RepositorySet {
     groupMessageModes: new SqlGroupMessageModeRepository(db),
     permissions: new SqlPermissionRepository(db),
     activities: new SqlActivityRepository(db),
+    activityDetails: new SqlActivityDetailsRepository(db),
     notificationSubscriptions: new SqlNotificationSubscriptionRepository(db),
     notificationDeliveries: new SqlNotificationDeliveryRepository(db),
     shortCodes: new SqlShortCodeRepository(db),
+    userProfiles: new SqlUserProfileRepository(db),
   };
 }
 

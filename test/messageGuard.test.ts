@@ -7,6 +7,7 @@ import { AuditLogStore } from "../src/services/audit.js";
 import { GroupConfigStore } from "../src/services/groupConfig.js";
 import { MessageGuardService } from "../src/services/messageGuard.js";
 import { RuleEngine } from "../src/services/moderation.js";
+import { PermissionService } from "../src/services/permissions.js";
 
 describe("MessageGuardService", () => {
   let api: FakeQQOfficialAPI;
@@ -34,6 +35,38 @@ describe("MessageGuardService", () => {
     expect(result.executed).toBe(false);
     expect(api.sentMessages).toEqual([]);
     expect(auditLog.all()).toEqual([]);
+  });
+
+  it("exempts moderators and above from keyword checks", async () => {
+    const permissions = new PermissionService({
+      superAdminIds: new Set(["root"]),
+      groupAdminIds: new Map([["g1", new Set(["admin"])]]),
+      moderatorIds: new Map([["g1", new Set(["mod"])]]),
+    });
+    const rules = new RuleEngine([
+      { ruleId: "warn", pattern: "广告", action: ModerationAction.Warn },
+    ]);
+    const scoped = new MessageGuardService(
+      api,
+      rules,
+      configStore,
+      auditLog,
+      permissions,
+    );
+
+    const moderator = await scoped.handleMessage(
+      newIncomingMessage("g1", "mod", "m1", "这是广告"),
+    );
+    expect(moderator.action).toBe(ModerationAction.Allow);
+    expect(moderator.detail).toBe("exempt");
+    expect(api.sentMessages).toEqual([]);
+    expect(auditLog.all()).toEqual([]);
+
+    // 普通成员仍然会被警告
+    const member = await scoped.handleMessage(
+      newIncomingMessage("g1", "member", "m2", "这是广告"),
+    );
+    expect(member.action).toBe(ModerationAction.Warn);
   });
 
   it("warns and writes audit log", async () => {

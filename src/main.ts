@@ -40,9 +40,11 @@ async function main(): Promise<void> {
             groupMessageModes: persistence.groupMessageModes,
             permissions: persistence.permissions,
             activities: persistence.activities,
+            activityDetails: persistence.activityDetails,
             notificationSubscriptions: persistence.notificationSubscriptions,
             notificationDeliveries: persistence.notificationDeliveries,
             shortCodes: persistence.shortCodes,
+            userProfiles: persistence.userProfiles,
           },
         }
       : {},

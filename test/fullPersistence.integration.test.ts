@@ -62,6 +62,27 @@ for (const driver of TEST_DATABASES) {
           userId: "u1",
           reason: "想加入",
         });
+        first.userProfiles.set("u1", "name", "小明");
+        first.userProfiles.set("u1", "studentId", "22123456789");
+        first.userProfiles.set("u1", "college", "化学与生命科学学院");
+        first.activity.createActivity({
+          groupId: "g1",
+          title: "迎新晚会",
+          createdBy: "admin",
+          activityId: "a2",
+          code: "ACT777",
+          links: [{ label: "报名入口", url: "https://example.com/signup" }],
+          allowYears: ["22"],
+          denyColleges: ["化学与生命科学学院"],
+          capacity: 10,
+        });
+        first.activity.openActivity("a2");
+        first.activity.register({
+          activityId: "a2",
+          userId: "u1",
+          displayName: "小明",
+          registrationId: "reg2",
+        });
 
         await first.flush();
 
@@ -71,6 +92,31 @@ for (const driver of TEST_DATABASES) {
         expect(restarted.notifications.listScopes("admin")).toEqual([
           "__all__",
           "g1",
+        ]);
+        // 个人资料与活动扩展字段（短码/链接/限制）都会恢复
+        expect(restarted.userProfiles.get("u1")).toMatchObject({
+          name: "小明",
+          studentId: "22123456789",
+          college: "化学与生命科学学院",
+          year: "2022",
+        });
+        const restoredActivity = restarted.activity.findByCode("#ACT777");
+        expect(restoredActivity).toMatchObject({
+          activityId: "a2",
+          title: "迎新晚会",
+          allowYears: ["22"],
+          denyColleges: ["化学与生命科学学院"],
+          capacity: 10,
+        });
+        expect(restoredActivity?.links).toEqual([
+          { label: "报名入口", url: "https://example.com/signup" },
+        ]);
+        expect(restarted.activity.listRegistrations("a2")).toEqual([
+          expect.objectContaining({
+            registrationId: "reg2",
+            userId: "u1",
+            displayName: "小明",
+          }),
         ]);
         // 投递记录也会恢复：同一申请不会重复推送
         const pushAgain = await restarted.notifications.notifyJoinRequest({

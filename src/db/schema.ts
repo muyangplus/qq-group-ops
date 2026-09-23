@@ -94,6 +94,16 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
 CREATE INDEX IF NOT EXISTS notification_deliveries_created_idx
   ON notification_deliveries (created_at);
 
+CREATE TABLE IF NOT EXISTS user_profiles (
+  user_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  student_id TEXT NOT NULL DEFAULT '',
+  class_name TEXT NOT NULL DEFAULT '',
+  college TEXT NOT NULL DEFAULT '',
+  year TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS short_codes (
   code TEXT PRIMARY KEY,
   kind TEXT NOT NULL CHECK (kind IN ('user', 'group', 'join_request')),
@@ -135,4 +145,16 @@ CREATE TABLE IF NOT EXISTS activity_registrations (
 
 CREATE INDEX IF NOT EXISTS activity_registrations_activity_idx
   ON activity_registrations (activity_id, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS activity_details (
+  activity_id TEXT PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  group_number TEXT NOT NULL DEFAULT '',
+  links TEXT NOT NULL DEFAULT '[]',
+  allow_colleges TEXT NOT NULL DEFAULT '[]',
+  deny_colleges TEXT NOT NULL DEFAULT '[]',
+  allow_years TEXT NOT NULL DEFAULT '[]',
+  deny_years TEXT NOT NULL DEFAULT '[]',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 `.trim();

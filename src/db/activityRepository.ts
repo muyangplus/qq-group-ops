@@ -91,11 +91,19 @@ export class SqlActivityRepository implements ActivityRepository {
     const result = await this.db.query<ActivityRow>(SELECT_ACTIVITIES_SQL);
     return result.rows.map((row) => ({
       activityId: row.activity_id,
+      // 扩展字段（短码/链接/报名限制）由 activity_details 表合并进来
+      code: "",
       groupId: row.group_id,
+      groupNumber: "",
       title: row.title,
       createdBy: row.created_by,
       description: row.description,
+      links: [],
       ...(row.capacity !== null ? { capacity: row.capacity } : {}),
+      allowColleges: [],
+      denyColleges: [],
+      allowYears: [],
+      denyYears: [],
       status: row.status as ActivityStatus,
       createdAt: toDate(row.created_at),
     }));

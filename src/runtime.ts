@@ -15,6 +15,7 @@ import {
 } from "./core/instrumentation.js";
 import { getLogger } from "./core/logger.js";
 import type { ActivityRepository } from "./db/activityRepository.js";
+import type { ActivityDetailsRepository } from "./db/activityDetailsRepository.js";
 import type { AuditRepository } from "./db/auditRepository.js";
 import type { GroupConfigRepository } from "./db/groupConfigRepository.js";
 import type { GroupSettingsRepository } from "./db/groupSettingsRepository.js";
@@ -27,8 +28,10 @@ import type {
 } from "./db/notificationRepository.js";
 import type { PermissionRepository } from "./db/permissionRepository.js";
 import type { ShortCodeRepository } from "./db/shortCodeRepository.js";
+import type { UserProfileRepository } from "./db/userProfileRepository.js";
 import { WriteQueue } from "./db/writeQueue.js";
 import { ActivityService } from "./services/activity.js";
+import { ActivityCardService } from "./services/activityCards.js";
 import { AdminCommandService } from "./services/adminCommands.js";
 import { AuditLogStore } from "./services/audit.js";
 import { DisplayNameService } from "./services/displayNames.js";
@@ -46,7 +49,9 @@ import { MessageGuardService } from "./services/messageGuard.js";
 import { RuleEngine } from "./services/moderation.js";
 import { NotificationService } from "./services/notifications.js";
 import { PermissionService } from "./services/permissions.js";
+import { RichMessageSender } from "./services/richMessages.js";
 import { ShortCodeService } from "./services/shortCodes.js";
+import { UserProfileService } from "./services/userProfiles.js";
 
 export interface Runtime {
   mode: "official" | "fake";
@@ -58,6 +63,8 @@ export interface Runtime {
   identityMap: IdentityMapService;
   permissions: PermissionService;
   activity: ActivityService;
+  activityCards: ActivityCardService;
+  userProfiles: UserProfileService;
   exportService: ExportService;
   notifications: NotificationService;
   shortCodes: ShortCodeService;
@@ -79,9 +86,11 @@ export interface RuntimeRepositories {
   groupMessageModes?: GroupMessageModeRepository;
   permissions?: PermissionRepository;
   activities?: ActivityRepository;
+  activityDetails?: ActivityDetailsRepository;
   notificationSubscriptions?: NotificationSubscriptionRepository;
   notificationDeliveries?: NotificationDeliveryRepository;
   shortCodes?: ShortCodeRepository;
+  userProfiles?: UserProfileRepository;
 }
 
 export interface RuntimeDependencies {
@@ -119,7 +128,13 @@ export function createRuntime(
     repositories.permissions,
     writeQueue,
   );
-  const activity = new ActivityService(repositories.activities, writeQueue);
+  const activity = new ActivityService(
+    repositories.activities,
+    writeQueue,
+    repositories.activityDetails,
+  );
+  const activityCards = new ActivityCardService(new RichMessageSender(api), display);
+  const userProfiles = new UserProfileService(repositories.userProfiles, writeQueue);
   const exportService = new ExportService(permissions, auditLog);
   const joinRules = new JoinRuleEvaluator();
   const messageGuard = new MessageGuardService(
@@ -127,6 +142,7 @@ export function createRuntime(
     new RuleEngine(),
     configStore,
     auditLog,
+    permissions,
   );
   const joinApproval = new JoinApprovalService(
     api,
@@ -143,6 +159,7 @@ export function createRuntime(
     display,
     configStore,
     joinRules,
+    sender: new RichMessageSender(api),
   });
   const adminCommands = new AdminCommandService({
     permissions,
@@ -155,6 +172,9 @@ export function createRuntime(
     groupMessageMode,
     identityMap,
     display,
+    userProfiles,
+    activity,
+    activityCards,
     notifications,
   });
   const load = async (): Promise<void> => {
@@ -167,8 +187,11 @@ export function createRuntime(
     await activity.load();
     await notifications.load();
     await shortCodes.load();
+    await userProfiles.load();
     // 班级库缺失时不抛错：班级类规则会自动退化为人工审核
-    joinRules.setRoster(await MemberRoster.load(settings.classIndexFile));
+    const roster = await MemberRoster.load(settings.classIndexFile);
+    joinRules.setRoster(roster);
+    userProfiles.setRoster(roster);
     await writeQueue.flush();
   };
   return {
@@ -181,6 +204,8 @@ export function createRuntime(
     identityMap,
     permissions,
     activity,
+    activityCards,
+    userProfiles,
     exportService,
     notifications,
     shortCodes,

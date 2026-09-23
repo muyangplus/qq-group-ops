@@ -12,11 +12,18 @@ describe("SqlActivityRepository", () => {
 
     await repository.saveActivity({
       activityId: "a1",
+      code: "ABC123",
       groupId: "g1",
+      groupNumber: "",
       title: "周末活动",
       createdBy: "admin",
       description: "",
+      links: [],
       capacity: 2,
+      allowColleges: [],
+      denyColleges: [],
+      allowYears: [],
+      denyYears: [],
       status: "draft",
       createdAt,
     });
@@ -55,10 +62,17 @@ describe("SqlActivityRepository", () => {
     await expect(repository.findActivities()).resolves.toEqual([
       {
         activityId: "a1",
+        code: "",
         groupId: "g1",
+        groupNumber: "",
         title: "周末活动",
         createdBy: "admin",
         description: "",
+        links: [],
+        allowColleges: [],
+        denyColleges: [],
+        allowYears: [],
+        denyYears: [],
         status: "open",
         createdAt: new Date("2026-01-01T00:00:00.000Z"),
       },

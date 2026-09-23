@@ -6,6 +6,14 @@ import {
 } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import type { AuditLog } from "./audit.js";
+import type { ActivityCardService } from "./activityCards.js";
+import { code as activityCode } from "./activityCards.js";
+import { ActivityRuleError } from "./activity.js";
+import type {
+  Activity,
+  ActivityLink,
+  ActivityService,
+} from "./activity.js";
 import type { DisplayNameService } from "./displayNames.js";
 import {
   DEFAULT_GROUP_ID,
@@ -22,6 +30,12 @@ import type { JoinAuditService, JoinRequest } from "./joinAudit.js";
 import type { JoinRequestSyncService } from "./joinAuditSync.js";
 import { NOTIFY_SCOPE_ALL, type NotificationService } from "./notifications.js";
 import type { PermissionService } from "./permissions.js";
+import {
+  normalizeYear,
+  UserProfileError,
+  type UserProfileField,
+  type UserProfileService,
+} from "./userProfiles.js";
 
 const log = getLogger("admin-commands");
 
@@ -43,6 +57,12 @@ export interface AdminCommandServiceOptions {
   identityMap?: IdentityMapService | undefined;
   /** 展示名解析（群号/QQ号/短码）；缺省时回退到绑定号或内部 id（测试用）。 */
   display?: DisplayNameService | undefined;
+  /** 个人资料（班级/学院/姓名/学号）。 */
+  userProfiles?: UserProfileService | undefined;
+  /** 活动发布/报名/管理。 */
+  activity?: ActivityService | undefined;
+  /** 活动卡片渲染与发送。 */
+  activityCards?: ActivityCardService | undefined;
   /** 入群申请推送（`/notify`）。 */
   notifications?: NotificationService | undefined;
 }
@@ -58,6 +78,9 @@ export class AdminCommandService {
   private readonly groupMessageMode: GroupMessageModeRegistry | undefined;
   private readonly identityMap: IdentityMapService | undefined;
   private readonly display: DisplayNameService | undefined;
+  private readonly userProfiles: UserProfileService | undefined;
+  private readonly activity: ActivityService | undefined;
+  private readonly activityCards: ActivityCardService | undefined;
   private readonly notifications: NotificationService | undefined;
 
   public constructor(options: AdminCommandServiceOptions) {
@@ -71,6 +94,9 @@ export class AdminCommandService {
     this.groupMessageMode = options.groupMessageMode;
     this.identityMap = options.identityMap;
     this.display = options.display;
+    this.userProfiles = options.userProfiles;
+    this.activity = options.activity;
+    this.activityCards = options.activityCards;
     this.notifications = options.notifications;
   }
 
@@ -87,6 +113,8 @@ export class AdminCommandService {
     log.debug("command", { groupId, userId, command });
 
     const bindingExempt = new Set(["help", "帮助", "bind", "绑定"]);
+    // 个人资料与群绑定无关：只需要绑定自己的 QQ 号
+    const groupBindingExempt = new Set([...bindingExempt, "profile", "资料"]);
     if (
       !bindingExempt.has(command) &&
       this.identityMap &&
@@ -101,7 +129,7 @@ export class AdminCommandService {
 
     if (
       groupId &&
-      !bindingExempt.has(command) &&
+      !groupBindingExempt.has(command) &&
       this.identityMap &&
       !this.identityMap.getGroupNumber(groupId)
     ) {
@@ -139,6 +167,12 @@ export class AdminCommandService {
       case "推送":
       case "订阅":
         return this.handleNotify(groupId, userId, parts);
+      case "profile":
+      case "资料":
+        return this.handleProfile(userId, parts);
+      case "activity":
+      case "活动":
+        return this.handleActivity(groupId, userId, parts);
       case "approve":
       case "通过":
         return this.handleApprove(groupId, userId, parts);
@@ -556,6 +590,8 @@ export class AdminCommandService {
     }
 
     lines.push("/myperm - 查看自己的权限");
+    lines.push("/profile - 配置个人资料（班级/学院/姓名/学号）");
+    lines.push("/activity - 活动列表；/activity join <#活动短码> 报名");
     const canModerate =
       groupId !== undefined
         ? this.permissions.canReviewContent(userId, groupId)
@@ -989,6 +1025,511 @@ export class AdminCommandService {
           });
         });
     }
+  }
+
+  // ------------------------------------------------------------- /profile
+
+  private handleProfile(userId: string, parts: readonly string[]): CommandResult {
+    const profiles = this.userProfiles;
+    if (!profiles) {
+      return { ok: false, text: "个人资料服务未启用。" };
+    }
+    const action = normalize(parts[1]);
+    if (!action) {
+      return { ok: true, text: this.formatProfile(userId) };
+    }
+    if (action === "set" || action === "设置") {
+      const field = PROFILE_FIELD_ALIASES[normalize(parts[2])];
+      const value = parts.slice(3).join(" ").trim();
+      if (!field || value.length === 0) {
+        return { ok: false, text: PROFILE_USAGE };
+      }
+      if (CLEAR_WORDS.has(value.toLowerCase())) {
+        profiles.clear(userId, field);
+        return {
+          ok: true,
+          text: `已清除：${PROFILE_FIELD_LABELS[field]}\n\n${this.formatProfile(userId)}`,
+        };
+      }
+      try {
+        profiles.set(userId, field, value);
+      } catch (error) {
+        return { ok: false, text: `设置失败：${formatError(error)}` };
+      }
+      return {
+        ok: true,
+        text: `已更新：${PROFILE_FIELD_LABELS[field]}\n\n${this.formatProfile(userId)}`,
+      };
+    }
+    if (action === "clear" || action === "清除" || action === "重置") {
+      profiles.clear(userId);
+      return { ok: true, text: "已清空个人资料。" };
+    }
+    return { ok: false, text: PROFILE_USAGE };
+  }
+
+  private formatProfile(userId: string): string {
+    const profile = this.userProfiles?.get(userId);
+    const userLabel = this.displayUser(userId);
+    if (!profile) {
+      return `个人资料（${userLabel}）：尚未填写\n\n${PROFILE_USAGE}`;
+    }
+    return [
+      `个人资料（${userLabel}）：`,
+      `姓名：${profile.name || "（未填）"}`,
+      `学号：${profile.studentId || "（未填）"}${
+        profile.studentId && profile.year ? `（${profile.year} 级）` : ""
+      }`,
+      `班级：${profile.className || "（未填）"}`,
+      `学院：${profile.college || "（未填）"}`,
+      "",
+      PROFILE_USAGE,
+    ].join("\n");
+  }
+
+  // ------------------------------------------------------------ /activity
+
+  private async handleActivity(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): Promise<CommandResult> {
+    const activities = this.activity;
+    if (!activities) {
+      return { ok: false, text: "活动模块未启用。" };
+    }
+    const action = normalize(parts[1]);
+    if (!action || action === "list" || action === "列表" || action === "查看") {
+      const targetGroupId =
+        this.resolveTargetGroupId(groupId, parts[2] ?? parts[1]) ?? groupId;
+      if (!targetGroupId) {
+        return {
+          ok: false,
+          text: "用法：/activity（群内查看本群活动），或 /activity list <群号|#群短码>",
+        };
+      }
+      return { ok: true, text: this.formatActivityList(targetGroupId) };
+    }
+    if (parts[1]?.startsWith("#")) {
+      return this.handleActivityInfo(userId, parts[1]);
+    }
+    switch (action) {
+      case "create":
+      case "创建":
+      case "新建":
+        return this.handleActivityCreate(groupId, userId, parts);
+      case "set":
+      case "设置":
+      case "配置":
+        return this.handleActivitySet(userId, parts);
+      case "open":
+      case "开始":
+      case "发布":
+        return this.handleActivityOpen(userId, parts);
+      case "close":
+      case "关闭":
+        return this.handleActivityStatus(userId, parts, "close");
+      case "cancel":
+      case "取消活动":
+        return this.handleActivityStatus(userId, parts, "cancel");
+      case "join":
+      case "报名":
+        return this.handleActivityJoin(userId, parts);
+      case "quit":
+      case "取消报名":
+        return this.handleActivityQuit(userId, parts);
+      case "info":
+      case "详情":
+        return this.handleActivityInfo(userId, parts[2]);
+      case "signups":
+      case "名单":
+        return this.handleActivitySignups(userId, parts);
+      default:
+        return { ok: false, text: ACTIVITY_USAGE };
+    }
+  }
+
+  private requireActivity(
+    code: string | undefined,
+  ): { ok: true; activity: Activity } | { ok: false; text: string } {
+    if (!code) {
+      return { ok: false, text: ACTIVITY_USAGE };
+    }
+    try {
+      return { ok: true, activity: this.activity!.requireByCode(code) };
+    } catch (error) {
+      return { ok: false, text: `活动不存在：${code}` };
+    }
+  }
+
+  private canManageActivity(userId: string, activity: Activity): boolean {
+    return (
+      this.permissions.isSuperAdmin(userId) ||
+      activity.createdBy === userId ||
+      this.permissions.canApproveJoin(userId, activity.groupId)
+    );
+  }
+
+  private handleActivityCreate(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): CommandResult {
+    let targetGroupId = groupId;
+    let titleParts = parts.slice(2);
+    if (!targetGroupId) {
+      const fromInput = this.resolveTargetGroupId(undefined, parts[2]);
+      if (fromInput && parts.length > 3) {
+        targetGroupId = fromInput;
+        titleParts = parts.slice(3);
+      }
+    }
+    if (!targetGroupId) {
+      return {
+        ok: false,
+        text: "用法：群内 /activity create <标题>；私信 /activity create <群号|#群短码> <标题>",
+      };
+    }
+    if (!this.permissions.canApproveJoin(userId, targetGroupId)) {
+      return { ok: false, text: "权限不足：发布活动需要群管理员或以上权限。" };
+    }
+    const title = titleParts.join(" ").trim();
+    if (title.length === 0) {
+      return { ok: false, text: "请提供活动标题：/activity create <标题>" };
+    }
+    try {
+      const activity = this.activity!.createActivity({
+        groupId: targetGroupId,
+        title,
+        createdBy: userId,
+        groupNumber: this.identityMap?.getGroupNumber(targetGroupId) ?? "",
+      });
+      return {
+        ok: true,
+        text:
+          `已创建活动（草稿）：${activity.title}\n` +
+          `活动短码：${activityCode(activity)}\n\n` +
+          `接下来：/activity set ${activityCode(activity)} capacity 50、link https://...、allowYears 22,23、denyColleges ...；\n` +
+          `配好后用 /activity open ${activityCode(activity)} 开放报名并发送卡片。`,
+      };
+    } catch (error) {
+      return { ok: false, text: `创建失败：${formatError(error)}` };
+    }
+  }
+
+  private handleActivitySet(userId: string, parts: readonly string[]): CommandResult {
+    const found = this.requireActivity(parts[2]);
+    if (!found.ok) {
+      return found;
+    }
+    const { activity } = found;
+    if (!this.canManageActivity(userId, activity)) {
+      return { ok: false, text: "权限不足：只有群管理员或活动发布者可以修改活动。" };
+    }
+    const field = normalize(parts[3]);
+    const value = parts.slice(4).join(" ").trim();
+    if (!field || value.length === 0) {
+      return { ok: false, text: ACTIVITY_SET_USAGE };
+    }
+    const cleared = CLEAR_WORDS.has(value.toLowerCase());
+    try {
+      switch (field) {
+        case "title":
+        case "标题":
+          this.activity!.updateActivity(activity.activityId, { title: value });
+          break;
+        case "desc":
+        case "description":
+        case "描述":
+          this.activity!.updateActivity(activity.activityId, {
+            description: cleared ? "" : value,
+          });
+          break;
+        case "capacity":
+        case "名额":
+          this.activity!.updateActivity(activity.activityId, {
+            capacity: cleared ? undefined : parsePositiveInt(field, value),
+          });
+          break;
+        case "group":
+        case "群号":
+          this.activity!.updateActivity(activity.activityId, {
+            groupNumber: cleared ? "" : value,
+          });
+          break;
+        case "link":
+        case "链接":
+          this.activity!.updateActivity(activity.activityId, {
+            links: cleared ? [] : [...activity.links, parseLink(value)],
+          });
+          break;
+        case "links":
+        case "链接列表":
+          this.activity!.updateActivity(activity.activityId, {
+            links: cleared ? [] : parseLinks(value),
+          });
+          break;
+        case "allowcolleges":
+        case "允许学院":
+          this.activity!.updateActivity(activity.activityId, {
+            allowColleges: cleared ? [] : parseList(value),
+          });
+          break;
+        case "denycolleges":
+        case "禁止学院":
+        case "不允许学院":
+          this.activity!.updateActivity(activity.activityId, {
+            denyColleges: cleared ? [] : parseList(value),
+          });
+          break;
+        case "allowyears":
+        case "允许年级":
+          this.activity!.updateActivity(activity.activityId, {
+            allowYears: cleared ? [] : parseYearList(value),
+          });
+          break;
+        case "denyyears":
+        case "禁止年级":
+        case "不允许年级":
+          this.activity!.updateActivity(activity.activityId, {
+            denyYears: cleared ? [] : parseYearList(value),
+          });
+          break;
+        default:
+          return { ok: false, text: ACTIVITY_SET_USAGE };
+      }
+    } catch (error) {
+      return { ok: false, text: `设置失败：${formatError(error)}` };
+    }
+    const updated = this.activity!.requireByCode(activity.code);
+    return {
+      ok: true,
+      text: `已更新活动 ${activityCode(updated)}。\n\n${this.formatActivityInfo(updated)}`,
+    };
+  }
+
+  private async handleActivityOpen(
+    userId: string,
+    parts: readonly string[],
+  ): Promise<CommandResult> {
+    const found = this.requireActivity(parts[2]);
+    if (!found.ok) {
+      return found;
+    }
+    const { activity } = found;
+    if (!this.canManageActivity(userId, activity)) {
+      return { ok: false, text: "权限不足：只有群管理员或活动发布者可以开放活动。" };
+    }
+    const opened = this.activity!.openActivity(activity.activityId);
+    const registrations = this.activity!.listRegistrations(opened.activityId);
+    const result = await this.activityCards?.publish({
+      activity: opened,
+      registrations,
+      groupLabel: this.displayGroup(opened.groupId),
+    });
+    const lines = [`活动已开放报名：${opened.title}（${activityCode(opened)}）`];
+    if (result && !result.ok) {
+      lines.push(`卡片发送失败：${result.detail}`);
+      lines.push(`可以手动把活动发到群里：/activity info ${activityCode(opened)}`);
+    } else if (result?.detail) {
+      lines.push(`卡片已发送（降级为 ${result.detail}）。`);
+    } else if (result) {
+      lines.push("活动卡片已发送到群里。");
+    }
+    return { ok: true, text: lines.join("\n") };
+  }
+
+  private handleActivityStatus(
+    userId: string,
+    parts: readonly string[],
+    mode: "close" | "cancel",
+  ): CommandResult {
+    const found = this.requireActivity(parts[2]);
+    if (!found.ok) {
+      return found;
+    }
+    const { activity } = found;
+    if (!this.canManageActivity(userId, activity)) {
+      return { ok: false, text: "权限不足：只有群管理员或活动发布者可以操作活动。" };
+    }
+    const updated =
+      mode === "close"
+        ? this.activity!.closeActivity(activity.activityId)
+        : this.activity!.cancelActivity(activity.activityId);
+    return {
+      ok: true,
+      text:
+        mode === "close"
+          ? `已关闭活动：${updated.title}（停止报名）`
+          : `已取消活动：${updated.title}`,
+    };
+  }
+
+  private handleActivityJoin(
+    userId: string,
+    parts: readonly string[],
+  ): CommandResult {
+    const found = this.requireActivity(parts[2]);
+    if (!found.ok) {
+      return found;
+    }
+    const { activity } = found;
+    const profiles = this.userProfiles;
+    if (!profiles) {
+      return { ok: false, text: "个人资料服务未启用，无法校验报名资格。" };
+    }
+    let profile;
+    try {
+      profile = profiles.requireComplete(userId);
+      this.activity!.checkEligibility(activity, profile);
+    } catch (error) {
+      if (error instanceof UserProfileError || error instanceof ActivityRuleError) {
+        return { ok: false, text: error.message };
+      }
+      throw error;
+    }
+    try {
+      const registration = this.activity!.register({
+        activityId: activity.activityId,
+        userId,
+        displayName: profile.name,
+        note: parts.slice(3).join(" ").trim(),
+      });
+      const total = this.activity!.listRegistrations(activity.activityId).length;
+      return {
+        ok: true,
+        text:
+          `报名成功：${activity.title}\n` +
+          `姓名：${registration.displayName} · 学号：${profile.studentId} · 班级：${profile.className} · 学院：${profile.college}\n` +
+          `当前报名人数：${total}${activity.capacity ? ` / ${activity.capacity}` : ""}\n` +
+          `取消报名：/activity quit ${activityCode(activity)}`,
+      };
+    } catch (error) {
+      if (error instanceof ActivityRuleError) {
+        return { ok: false, text: error.message };
+      }
+      return { ok: false, text: `报名失败：${formatError(error)}` };
+    }
+  }
+
+  private handleActivityQuit(
+    userId: string,
+    parts: readonly string[],
+  ): CommandResult {
+    const found = this.requireActivity(parts[2]);
+    if (!found.ok) {
+      return found;
+    }
+    const { activity } = found;
+    const registration = this.activity!.findRegistration(
+      activity.activityId,
+      userId,
+    );
+    if (!registration) {
+      return { ok: false, text: "你还没有报名这个活动。" };
+    }
+    this.activity!.cancelRegistration(registration.registrationId, userId);
+    return {
+      ok: true,
+      text: `已取消报名：${activity.title}（${activityCode(activity)}）`,
+    };
+  }
+
+  private handleActivityInfo(
+    userId: string,
+    code: string | undefined,
+  ): CommandResult {
+    const found = this.requireActivity(code);
+    if (!found.ok) {
+      return found;
+    }
+    return { ok: true, text: this.formatActivityInfo(found.activity) };
+  }
+
+  private handleActivitySignups(
+    userId: string,
+    parts: readonly string[],
+  ): CommandResult {
+    const found = this.requireActivity(parts[2]);
+    if (!found.ok) {
+      return found;
+    }
+    const { activity } = found;
+    if (!this.canManageActivity(userId, activity)) {
+      return { ok: false, text: "权限不足：只有群管理员或活动发布者可以查看报名名单。" };
+    }
+    const registrations = this.activity!.listRegistrations(activity.activityId);
+    if (registrations.length === 0) {
+      return { ok: true, text: `${activity.title} 目前还没有人报名。` };
+    }
+    const lines = [
+      `${activity.title} 报名名单（${registrations.length}${
+        activity.capacity ? ` / ${activity.capacity}` : ""
+      }）：`,
+    ];
+    registrations.forEach((registration, index) => {
+      const profile = this.userProfiles?.get(registration.userId);
+      const detail = profile
+        ? [profile.studentId, profile.className, profile.college]
+            .filter((item) => item.length > 0)
+            .join(" · ")
+        : "";
+      const note = registration.note ? ` 备注：${registration.note}` : "";
+      lines.push(
+        `${index + 1}. ${registration.displayName || this.displayUser(registration.userId)}${
+          detail ? `（${detail}）` : ""
+        }${note}`,
+      );
+    });
+    return { ok: true, text: lines.join("\n") };
+  }
+
+  private formatActivityList(groupId: string): string {
+    const activities = this.activity!.listActivities(groupId);
+    if (activities.length === 0) {
+      return `群 ${this.displayGroup(groupId)} 还没有活动。\n\n${ACTIVITY_USAGE}`;
+    }
+    const lines = [`群 ${this.displayGroup(groupId)} 的活动：`];
+    for (const activity of activities) {
+      const count = this.activity!.listRegistrations(activity.activityId).length;
+      lines.push(
+        `- ${activityCode(activity)} ${activity.title} [${activity.status}] 报名 ${count}${
+          activity.capacity ? `/${activity.capacity}` : ""
+        }`,
+      );
+    }
+    lines.push("", `查看详情：/activity info <活动短码>`);
+    return lines.join("\n");
+  }
+
+  private formatActivityInfo(activity: Activity): string {
+    const registrations = this.activity!.listRegistrations(activity.activityId);
+    const rules: string[] = [];
+    if (activity.allowColleges.length > 0) {
+      rules.push(`仅限学院：${activity.allowColleges.join("、")}`);
+    }
+    if (activity.allowYears.length > 0) {
+      rules.push(`仅限年级：${activity.allowYears.join("、")}`);
+    }
+    if (activity.denyColleges.length > 0) {
+      rules.push(`不接受学院：${activity.denyColleges.join("、")}`);
+    }
+    if (activity.denyYears.length > 0) {
+      rules.push(`不接受年级：${activity.denyYears.join("、")}`);
+    }
+    return [
+      `活动 ${activityCode(activity)}：${activity.title}`,
+      `状态：${activity.status}`,
+      `群：${activity.groupNumber || this.displayGroup(activity.groupId)}`,
+      ...(activity.description ? [`简介：${activity.description}`] : []),
+      `报名人数：${registrations.length}${activity.capacity ? ` / ${activity.capacity}` : ""}`,
+      ...rules,
+      ...activity.links.map((link) => `链接：${link.label} ${link.url}`),
+      "",
+      `报名：/activity join ${activityCode(activity)}`,
+      `取消报名：/activity quit ${activityCode(activity)}`,
+      `管理：/activity set ${activityCode(activity)} <字段> <值>`,
+    ].join("\n");
   }
 
   private handlePending(
@@ -1445,6 +1986,112 @@ function isToggleOn(value: string): boolean {
 
 function isAllScope(value: string | undefined): boolean {
   return NOTIFY_ALL_WORDS.has(normalize(value));
+}
+
+/** `/profile set` 的字段别名。 */
+const PROFILE_FIELD_ALIASES: Record<string, UserProfileField> = {
+  name: "name",
+  姓名: "name",
+  名字: "name",
+  id: "studentId",
+  studentid: "studentId",
+  学号: "studentId",
+  class: "className",
+  classname: "className",
+  班级: "className",
+  college: "college",
+  学院: "college",
+  year: "year",
+  年级: "year",
+};
+
+/** 回执里显示的中文字段名。 */
+const PROFILE_FIELD_LABELS: Record<UserProfileField, string> = {
+  name: "姓名",
+  studentId: "学号",
+  className: "班级",
+  college: "学院",
+  year: "年级",
+};
+
+const PROFILE_USAGE = [
+  "用法：",
+  "  /profile                                 查看个人资料",
+  "  /profile set name <姓名>                  姓名",
+  "  /profile set id <11位学号>                学号（前两位决定年级：22-26）",
+  "  /profile set class <班级>                 班级（必须在班级库里，自动带出学院）",
+  "  /profile set college <学院>               学院（可手动覆盖）",
+  "  /profile set year <年级>                  年级（可手动覆盖，如 2022 或 22）",
+  "  /profile set <字段> clear                 清除单个字段",
+  "  /profile clear                            清空整份资料",
+].join("\n");
+
+const ACTIVITY_USAGE = [
+  "用法：",
+  "  /activity                                查看本群活动列表",
+  "  /activity list <群号|#群短码>             查看指定群活动",
+  "  /activity create <标题>                   创建活动（群管理员+；私信需先写群号）",
+  "  /activity set <#活动短码> <字段> <值>       配置（标题/简介/名额/群号/链接/学院/年级限制）",
+  "  /activity open <#活动短码>                 开放报名并把卡片发到群里",
+  "  /activity close|/activity cancel <#活动短码>  关闭 / 取消活动",
+  "  /activity join <#活动短码> [备注]           报名（需 /profile 完整）",
+  "  /activity quit <#活动短码>                 取消报名",
+  "  /activity info <#活动短码>                 活动详情",
+  "  /activity signups <#活动短码>              报名名单（群管理员/发布者）",
+].join("\n");
+
+const ACTIVITY_SET_USAGE = [
+  "用法：/activity set <#活动短码> <字段> <值>",
+  "字段（大小写不敏感，clear 清空）：",
+  "  title <标题>                              活动标题",
+  "  desc <简介>                               活动简介",
+  "  capacity <人数>                            名额上限",
+  "  group <群号>                               展示用活动群号",
+  "  link <url> / link <说明=url>               追加一个链接（可多次）",
+  "  links clear                               清空链接",
+  "  allowColleges / denyColleges <学院列表>     学院白名单 / 黑名单",
+  "  allowYears / denyYears <年级列表>           年级白名单 / 黑名单（22/23/…）",
+].join("\n");
+
+/** 逗号/顿号/空格分隔的列表。 */
+function parseList(value: string): string[] {
+  return value
+    .split(/[,，、\s]+/u)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+/** 年级列表：22 / 2022 都接受，统一存 2 位。 */
+function parseYearList(value: string): string[] {
+  return parseList(value).map((item) => normalizeYear(item).slice(2));
+}
+
+/** `<说明=url>` 或纯 url。 */
+function parseLink(value: string): ActivityLink {
+  const index = value.indexOf("=");
+  if (index > 0 && !value.slice(0, index).includes(":")) {
+    const label = value.slice(0, index).trim();
+    const url = value.slice(index + 1).trim();
+    if (label.length > 0 && /^https?:\/\//u.test(url)) {
+      return { label, url };
+    }
+  }
+  if (!/^https?:\/\//u.test(value)) {
+    throw new Error("链接必须以 http:// 或 https:// 开头");
+  }
+  return { label: "活动链接", url: value };
+}
+
+function parseLinks(value: string): ActivityLink[] {
+  return parseList(value).map((item) => parseLink(item));
+}
+
+function parsePositiveInt(field: string, value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${field} 需要正整数`);
+  }
+  return parsed;
 }
 
 /** `/rules all`、`/rules 全局`、`/rules set default ...` 都指向全局规则。 */
