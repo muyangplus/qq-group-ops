@@ -14,6 +14,10 @@ pnpm typecheck && pnpm test && pnpm build
 pnpm dev
 ```
 
+`pnpm test` 中的 `test/acceptance.test.ts` 已用真实 SQLite 文件 + 官方 API 测试替身自动跑通
+B/C/D/G 组的核心链路（审批闭环、关键词警告与审计、按群隔离、重启恢复、动态 `/help`），
+因此人工验收只需聚焦**依赖真实 QQ 平台**的部分（真的进群、真的禁言/踢人、真实事件推送）。
+
 启动后应看到（`logs/qq-group-ops.log` 或控制台）：
 
 - `bot cache status { tokenCached, gatewayUrlCached, cacheFile }`
