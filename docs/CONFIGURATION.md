@@ -247,7 +247,7 @@ CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json CLASS_INDE
 
 - 推送时机：只推送**仍需人工处理**的申请（`manual` / 规则无法判定）；自动通过/拒绝的不推送；
 - 接收者：订阅了该群（或全部群）**且**在当前群有审批权限的人；订阅持久化在 `notification_subscriptions`；
-- 卡片：Markdown 正文 + 「同意 / 拒绝」指令按钮；按钮未开通（官方内邀）会自动降级为纯 Markdown → 纯文本；
+- 卡片：Markdown 正文（群号、申请人、回答、申请 ID、审核意见）+ 「同意 / 拒绝」指令按钮，第二行是两个红色预设拒因（回答错误 / 班级姓名），点击即把固定文案作为拒绝理由提交；按钮未开通（官方内邀）会自动降级为纯 Markdown → 纯文本（正文里会列出全部指令与预设拒因）；
 - 去重：同一 (群, 申请, 人) 只推一次，投递记录在 `notification_deliveries`，重启后不重复；
 - 推送是**主动消息**：用户可在 QQ 客户端关闭「允许主动发送」，失败只记日志，不影响 `/pending`。
 

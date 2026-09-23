@@ -398,7 +398,8 @@
   - 新增 `src/services/notifications.ts`、`src/services/joinRequestCard.ts`、`src/db/notificationRepository.ts` 与两张表；
   - `QQOfficialAPI.sendGroupMessage/sendPrivateMessage` 新增可选 `RichMessageOptions`（Markdown + keyboard），并新增按钮/弹窗类型定义；
   - **修复 `instrumentQQOfficialAPI` 之前丢弃可选参数的缺陷**：`sendGroupMessage` / `sendPrivateMessage` 现在透传富消息 options，`removeGroupMember` 透传 `addToMemberBlacklist`，并补上 `updateMemberBlacklist` 调试包装（此前 `kick_blacklist` 经运行时装配后会退化成普通移出）；
-  - `/notify` 加入 `/help` 与 `/help notify` 主题；`RetentionService` 增加推送投递清理。
+  - `/notify` 加入 `/help` 与 `/help notify` 主题；`RetentionService` 增加推送投递清理；
+  - 卡片按钮第一行是「同意 / 拒绝」，第二行是**预设拒因**（红色，官方样式 `3` 白底红字）：`拒绝：回答错误` → `请正确回答问题。`，`拒绝：班级姓名` → `请回答正确的班级姓名（如：环工2214小明）。`；点击后把固定文案作为官方 `reject_reason` 提交，按钮不可用时同样的指令会写进正文。
 
 ## ADR-0035：规则配置必须全部可持久化，并由测试守住这条不变量
 

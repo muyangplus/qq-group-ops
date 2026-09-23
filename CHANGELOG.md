@@ -43,6 +43,10 @@
   - 只推送仍需人工处理的申请；同一 (群, 申请, 人) 只推一次；
   - 新增 `notification_subscriptions`（订阅）与 `notification_deliveries`（投递去重）两张表，均随数据保留策略清理；
   - `instrumentQQOfficialAPI` 修复为透传富消息 `options`、`removeGroupMember` 的 `addToMemberBlacklist`，并补上 `updateMemberBlacklist` 的调试包装。
+- **推送卡片增加预设拒绝原因**：拒绝按钮统一红色（官方样式 `3` 白底红字），第二行新增两个一键拒因：
+  - 「拒绝：回答错误」→ `/reject <group> <id> 请正确回答问题。`
+  - 「拒绝：班级姓名」→ `/reject <group> <id> 请回答正确的班级姓名（如：环工2214小明）。`
+  - 卡片正文简化为「请审核：点击下方按钮。」并额外展示**申请 ID**（有按钮时不再堆完整指令）；按钮不可用时正文会列出全部指令与预设拒因。
 
 ### 已知限制
 
