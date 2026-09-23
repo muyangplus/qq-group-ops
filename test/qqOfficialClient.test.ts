@@ -1,5 +1,12 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import {
+  FileBotCacheStore,
+  MemoryBotCacheStore,
+} from "../src/adapters/botCache.js";
 import {
   DEFAULT_ENDPOINTS,
   QQOfficialAPIError,
@@ -10,6 +17,7 @@ import type {
   HttpResponse,
   JsonValue,
 } from "../src/adapters/qqOfficial.js";
+import { SendThrottle } from "../src/adapters/sendThrottle.js";
 
 interface CallRecord {
   method: string;
@@ -202,5 +210,274 @@ describe("QQOfficialClient", () => {
     ]);
     const client = new QQOfficialClient("app", "secret", { transport });
     await expect(client.getAccessToken()).resolves.toBe("tok");
+  });
+});
+
+describe("QQOfficialClient caching and rate limiting", () => {
+  it("reuses a cached access token without calling the token endpoint", async () => {
+    const store = new MemoryBotCacheStore();
+    await store.save({
+      appId: "app",
+      accessToken: "cached-token",
+      accessTokenExpiresAt: Date.now() + 3_600_000,
+    });
+    const transport = new FakeTransport([
+      { statusCode: 200, jsonData: {}, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      transport,
+      cacheStore: store,
+    });
+
+    await client.recallGroupMessage("g1", "m1");
+
+    expect(transport.calls).toHaveLength(1);
+    expect(transport.calls[0]?.headers.Authorization).toBe("QQBot cached-token");
+  });
+
+  it("persists a freshly fetched access token", async () => {
+    const store = new MemoryBotCacheStore();
+    const transport = new FakeTransport([
+      {
+        statusCode: 200,
+        jsonData: { access_token: "tok", expires_in: 7_200 },
+        text: "",
+      },
+      { statusCode: 200, jsonData: {}, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      transport,
+      cacheStore: store,
+    });
+
+    await client.recallGroupMessage("g1", "m1");
+
+    const cached = await store.load("app");
+    expect(cached?.accessToken).toBe("tok");
+    expect(cached?.accessTokenExpiresAt).toBeGreaterThan(Date.now() + 3_000_000);
+  });
+
+  it("refreshes an expired cached token", async () => {
+    const store = new MemoryBotCacheStore();
+    await store.save({
+      appId: "app",
+      accessToken: "stale",
+      accessTokenExpiresAt: Date.now() - 1_000,
+    });
+    const transport = new FakeTransport([
+      {
+        statusCode: 200,
+        jsonData: { access_token: "fresh", expires_in: 7_200 },
+        text: "",
+      },
+      { statusCode: 200, jsonData: {}, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      transport,
+      cacheStore: store,
+    });
+
+    await client.recallGroupMessage("g1", "m1");
+
+    expect(transport.calls[0]?.url).toContain("getAppAccessToken");
+    expect(transport.calls[1]?.headers.Authorization).toBe("QQBot fresh");
+  });
+
+  it("deduplicates concurrent token requests", async () => {
+    const transport = new FakeTransport([
+      {
+        statusCode: 200,
+        jsonData: { access_token: "tok", expires_in: 7_200 },
+        text: "",
+      },
+    ]);
+    const client = new QQOfficialClient("app", "secret", { transport });
+
+    await Promise.all([client.getAccessToken(), client.getAccessToken()]);
+
+    expect(transport.calls).toHaveLength(1);
+  });
+
+  it("caches the gateway url in memory", async () => {
+    const transport = new FakeTransport([
+      { statusCode: 200, jsonData: { url: "wss://gw" }, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+    });
+
+    await expect(client.getGatewayUrl()).resolves.toBe("wss://gw");
+    await expect(client.getGatewayUrl()).resolves.toBe("wss://gw");
+    expect(transport.calls).toHaveLength(1);
+  });
+
+  it("restores the gateway url from the persistent cache", async () => {
+    const store = new MemoryBotCacheStore();
+    await store.save({ appId: "app", gatewayUrl: "wss://cached" });
+    const transport = new FakeTransport();
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+      cacheStore: store,
+    });
+
+    await expect(client.getGatewayUrl()).resolves.toBe("wss://cached");
+    expect(transport.calls).toHaveLength(0);
+    await expect(client.cacheStatus()).resolves.toEqual({
+      tokenCached: false,
+      gatewayUrlCached: true,
+    });
+  });
+
+  it("enters cooldown after a gateway rate limit and stops calling the API", async () => {
+    const transport = new FakeTransport([
+      {
+        statusCode: 400,
+        jsonData: { err_code: 100017, message: "接口调用超过频率限制" },
+        text: "",
+      },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+      rateLimitCooldownMs: 60_000,
+    });
+
+    const error = (await client.getGatewayUrl().catch((caught: unknown) => caught)) as
+      | QQOfficialAPIError
+      | undefined;
+
+    expect(error).toBeInstanceOf(QQOfficialAPIError);
+    expect(error?.errorCode).toBe(100017);
+    expect(error?.isRateLimited).toBe(true);
+
+    await expect(client.getGatewayUrl()).rejects.toThrow(/cooling down/u);
+    expect(transport.calls).toHaveLength(1);
+  });
+
+  it("recognizes nested string error codes as rate limits", async () => {
+    const transport = new FakeTransport([
+      {
+        statusCode: 400,
+        jsonData: { data: { err_code: "40023001" } },
+        text: "",
+      },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+    });
+
+    const error = (await client
+      .recallGroupMessage("g1", "m1")
+      .catch((caught: unknown) => caught)) as QQOfficialAPIError | undefined;
+
+    expect(error?.errorCode).toBe(40023001);
+    expect(error?.isRateLimited).toBe(true);
+  });
+
+  it("refreshes the token once when the server rejects it", async () => {
+    const transport = new FakeTransport([
+      {
+        statusCode: 200,
+        jsonData: { access_token: "tok1", expires_in: 7_200 },
+        text: "",
+      },
+      { statusCode: 401, jsonData: { message: "token expired" }, text: "" },
+      {
+        statusCode: 200,
+        jsonData: { access_token: "tok2", expires_in: 7_200 },
+        text: "",
+      },
+      { statusCode: 200, jsonData: {}, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", { transport });
+
+    await client.recallGroupMessage("g1", "m1");
+
+    expect(transport.calls).toHaveLength(4);
+    expect(transport.calls[1]?.headers.Authorization).toBe("QQBot tok1");
+    expect(transport.calls[3]?.headers.Authorization).toBe("QQBot tok2");
+  });
+
+  it("retries sends on rate limit errors", async () => {
+    const store = new MemoryBotCacheStore();
+    await store.save({
+      appId: "app",
+      accessToken: "tok",
+      accessTokenExpiresAt: Date.now() + 3_600_000,
+    });
+    const transport = new FakeTransport([
+      { statusCode: 400, jsonData: { err_code: 22009 }, text: "" },
+      { statusCode: 200, jsonData: { id: "mid" }, text: "" },
+    ]);
+    const sleeps: number[] = [];
+    const client = new QQOfficialClient("app", "secret", {
+      transport,
+      cacheStore: store,
+      sendThrottle: new SendThrottle({
+        minIntervalMs: 0,
+        maxAttempts: 2,
+        rateLimitDelayMs: 3_000,
+        jitterRatio: 0,
+        now: () => 0,
+        random: () => 0.5,
+        sleep: async (ms) => {
+          sleeps.push(ms);
+        },
+      }),
+    });
+
+    await expect(client.sendGroupMessage("g1", "hello", "m1")).resolves.toEqual({
+      id: "mid",
+    });
+    expect(transport.calls).toHaveLength(2);
+    expect(sleeps).toEqual([3_000]);
+  });
+
+  it("survives a process restart without refetching the token or gateway url", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qq-bot-cache-"));
+    try {
+      const file = join(dir, "cache.json");
+
+      const firstTransport = new FakeTransport([
+        {
+          statusCode: 200,
+          jsonData: { access_token: "tok", expires_in: 7_200 },
+          text: "",
+        },
+        { statusCode: 200, jsonData: { url: "wss://gw" }, text: "" },
+        { statusCode: 200, jsonData: {}, text: "" },
+      ]);
+      const first = new QQOfficialClient("app", "secret", {
+        transport: firstTransport,
+        cacheStore: new FileBotCacheStore(file),
+      });
+      await first.getGatewayUrl();
+      await first.recallGroupMessage("g1", "m1");
+      expect(firstTransport.calls.map((call) => call.url)).toEqual([
+        "https://bots.qq.com/app/getAppAccessToken",
+        "https://api.sgroup.qq.com/gateway",
+        "https://api.sgroup.qq.com/v2/groups/g1/messages/m1",
+      ]);
+
+      // 第二次构造模拟进程重启：不应再请求 token 与 /gateway
+      const secondTransport = new FakeTransport([
+        { statusCode: 200, jsonData: {}, text: "" },
+      ]);
+      const second = new QQOfficialClient("app", "secret", {
+        transport: secondTransport,
+        cacheStore: new FileBotCacheStore(file),
+      });
+
+      await expect(second.getGatewayUrl()).resolves.toBe("wss://gw");
+      await second.recallGroupMessage("g1", "m1");
+
+      expect(secondTransport.calls).toHaveLength(1);
+      expect(secondTransport.calls[0]?.headers.Authorization).toBe("QQBot tok");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

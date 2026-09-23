@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { QQOfficialEventMapper } from "../src/adapters/qqOfficialEventMapper.js";
-import { QQOfficialGateway } from "../src/adapters/qqOfficialGateway.js";
+import {
+  DEFAULT_RECONNECT_POLICY,
+  QQOfficialGateway,
+} from "../src/adapters/qqOfficialGateway.js";
+import { QQOfficialAPIError } from "../src/adapters/qqOfficialError.js";
 import type { Scheduler } from "../src/adapters/reconnectingWebSocketGateway.js";
 import type {
   WebSocketEventName,
@@ -239,5 +243,158 @@ describe("QQOfficialGateway", () => {
       ["g1", false],
     ]);
     await gateway.stop();
+  });
+});
+
+function tick(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+describe("QQOfficialGateway reconnection", () => {
+  it("reconnects after a disconnect with exponential backoff", async () => {
+    const sockets: FakeSocket[] = [];
+    const scheduler = new FakeScheduler();
+    const gateway = new QQOfficialGateway({
+      api: new FakeQQOfficialAPI(),
+      createSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      mapper: new QQOfficialEventMapper(),
+      scheduler,
+      random: () => 0.5,
+      reconnect: { jitterRatio: 0 },
+    });
+
+    await gateway.start(() => undefined);
+    expect(sockets).toHaveLength(1);
+
+    sockets[0]?.emit("open");
+    expect(gateway.isRunning).toBe(true);
+    sockets[0]?.emit("close");
+    expect(gateway.isRunning).toBe(false);
+    expect(scheduler.callbacks[0]?.delayMs).toBe(1_000);
+
+    scheduler.runNext();
+    await tick();
+    expect(sockets).toHaveLength(2);
+
+    // 第二次断开时退避更久
+    sockets[1]?.emit("close");
+    expect(scheduler.callbacks[0]?.delayMs).toBe(1_800);
+
+    await gateway.stop();
+  });
+
+  it("uses the long cooldown when a reconnect is rate limited", async () => {
+    const api = new FakeQQOfficialAPI();
+    const sockets: FakeSocket[] = [];
+    const scheduler = new FakeScheduler();
+    const gateway = new QQOfficialGateway({
+      api,
+      createSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      mapper: new QQOfficialEventMapper(),
+      scheduler,
+      random: () => 0.5,
+      reconnect: { jitterRatio: 0 },
+    });
+
+    await gateway.start(() => undefined);
+    sockets[0]?.emit("open");
+    sockets[0]?.emit("close");
+    expect(scheduler.callbacks[0]?.delayMs).toBe(1_000);
+
+    const spy = vi
+      .spyOn(api, "getGatewayUrl")
+      .mockRejectedValue(
+        new QQOfficialAPIError(400, "接口调用超过频率限制", { err_code: 100017 }),
+      );
+    scheduler.runNext();
+    await tick();
+
+    expect(spy).toHaveBeenCalled();
+    expect(scheduler.callbacks[0]?.delayMs).toBe(
+      DEFAULT_RECONNECT_POLICY.rateLimitDelayMs,
+    );
+
+    spy.mockRestore();
+    await gateway.stop();
+  });
+
+  it("propagates the first connection failure so config problems fail fast", async () => {
+    const api = new FakeQQOfficialAPI();
+    vi.spyOn(api, "getGatewayUrl").mockRejectedValue(new Error("bad credentials"));
+    const gateway = new QQOfficialGateway({
+      api,
+      createSocket: () => new FakeSocket(),
+      mapper: new QQOfficialEventMapper(),
+      scheduler: new FakeScheduler(),
+    });
+
+    await expect(gateway.start(() => undefined)).rejects.toThrow(
+      /bad credentials/u,
+    );
+  });
+
+  it("invalidates the cached gateway url after repeated failures without open", async () => {
+    const api = new FakeQQOfficialAPI();
+    const invalidate = vi.fn(async () => undefined);
+    const apiWithInvalidation = Object.assign(api, {
+      invalidateGatewayUrl: invalidate,
+    });
+    const sockets: FakeSocket[] = [];
+    const scheduler = new FakeScheduler();
+    const gateway = new QQOfficialGateway({
+      api: apiWithInvalidation,
+      createSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      mapper: new QQOfficialEventMapper(),
+      scheduler,
+      random: () => 0.5,
+      reconnect: { jitterRatio: 0, invalidateGatewayAfterFailures: 2 },
+    });
+
+    await gateway.start(() => undefined);
+    sockets[0]?.emit("open");
+    vi.spyOn(api, "getGatewayUrl").mockRejectedValue(new Error("network down"));
+
+    sockets[0]?.emit("close");
+    scheduler.runNext();
+    await tick();
+
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    await gateway.stop();
+  });
+
+  it("cancels scheduled reconnects on stop", async () => {
+    const sockets: FakeSocket[] = [];
+    const scheduler = new FakeScheduler();
+    const gateway = new QQOfficialGateway({
+      api: new FakeQQOfficialAPI(),
+      createSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      mapper: new QQOfficialEventMapper(),
+      scheduler,
+      random: () => 0.5,
+    });
+
+    await gateway.start(() => undefined);
+    sockets[0]?.emit("open");
+    sockets[0]?.emit("close");
+    expect(scheduler.callbacks).toHaveLength(1);
+
+    await gateway.stop();
+    expect(scheduler.callbacks).toHaveLength(0);
   });
 });

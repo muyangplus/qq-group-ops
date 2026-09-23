@@ -198,4 +198,23 @@
   - `pg` 只在 PostgreSQL 模式下动态导入；
   - SQLite 是单写入者模型，适合单进程部署；多实例或高并发场景请使用 PostgreSQL。
 
+## ADR-0023：限流防护与 access token / 网关地址缓存
+
+- 状态：已采纳
+- 背景：实际运行中出现 `400 接口调用超过频率限制`（`err_code` 100017 / 40023001）。日志显示每次进程启动都会重新请求 `/gateway` 和 access token，而 `tsx watch` 重启会在数秒内连续触发，直接打满官方严格限频的 `/gateway`。
+- 决策：
+  1. **access token 持久化缓存**：`QQOfficialClient` 优先复用内存 token，其次读取磁盘缓存（`QQ_BOT_CACHE_FILE`，默认 `data/qq-bot-cache.json`），仅在缺失或临近过期（默认提前 60 秒）时才重新获取；并发请求用同一个 in-flight Promise 去重。
+  2. **网关地址缓存**：`/gateway` 返回的地址同样缓存到内存与磁盘；重连默认完全不请求 `/gateway`。
+  3. **限流识别与冷却**：`QQOfficialAPIError` 解析 `err_code` / `code`（含 `data` 嵌套与字符串形式）与 `retry-after`，覆盖 100017 / 40023001 / 22009 和 HTTP 429；`/gateway` 命中限流后进入固定冷却（默认 60 秒），冷却期内直接失败而不发请求。
+  4. **重连退避**：`QQOfficialGateway` 支持自动重连，采用指数退避 + 抖动（1s 起，上限 60s），命中限流时改用长冷却（默认 120s）；只有「从未成功 open 过且连续失败达到阈值」才会丢弃缓存的网关地址，避免抖动引发 `/gateway` 风暴。
+  5. **出站消息节流**：`SendThrottle` 把所有消息发送串行化并强制最小间隔（默认 400ms），命中 22009 后按固定冷却重试（默认 5 秒，最多 3 次）。
+  6. **401 自动刷新**：服务端返回 401 时，若 token 不是由 `QQ_BOT_TOKEN` 显式指定，则作废缓存并刷新后重试一次。
+- 理由：官方 `/gateway` 限频极严格（实测约每个窗口 2 次），重连风暴是不可恢复的死循环；缓存 + 退避 + 冷却能从根上避免。token 有效期约 2 小时，持久化后重启不再重复换取。
+- 影响：
+  - 新增 `src/core/retry.ts`、`src/adapters/botCache.ts`、`src/adapters/sendThrottle.ts`、`src/adapters/qqOfficialError.ts`；
+  - 新增环境变量 `QQ_BOT_CACHE_FILE`（留空 = 仅内存缓存）；缓存文件含 access token，属于机密文件，已加入 `.gitignore`；
+  - `QQOfficialClientOptions` 新增 `cacheStore` / `clock` / `tokenRefreshMarginMs` / `rateLimitCooldownMs` / `sendThrottle`；
+  - `QQOfficialGateway` 新增 `reconnect` / `random` / `onReconnect` 选项；
+  - 配置了 `QQ_BOT_TOKEN` 时以人工配置为准，不自动刷新（需运维自行更新）。
+
 

@@ -1,6 +1,10 @@
 import { FetchTransport } from "./adapters/fetchTransport.js";
 import { FakeQQOfficialAPI } from "./adapters/fakeQqOfficial.js";
 import {
+  FileBotCacheStore,
+  type BotCacheStore,
+} from "./adapters/botCache.js";
+import {
   QQOfficialClient,
   type QQOfficialAPI,
 } from "./adapters/qqOfficial.js";
@@ -137,10 +141,17 @@ export function createRuntime(
 
 function createApi(settings: Settings): QQOfficialAPI {
   if (settings.qqBotAppId && settings.qqBotClientSecret) {
+    const cacheStore = createBotCacheStore(settings);
     return new QQOfficialClient(settings.qqBotAppId, settings.qqBotClientSecret, {
       token: settings.qqBotToken,
       transport: instrumentTransport(new FetchTransport(), getLogger("runtime")),
+      ...(cacheStore ? { cacheStore } : {}),
     });
   }
   return new FakeQQOfficialAPI();
+}
+
+function createBotCacheStore(settings: Settings): BotCacheStore | undefined {
+  const file = settings.qqBotCacheFile.trim();
+  return file.length > 0 ? new FileBotCacheStore(file) : undefined;
 }

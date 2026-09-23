@@ -1,13 +1,18 @@
 import { NativeWebSocketFactory } from "./adapters/nativeWebSocketFactory.js";
 import { QQOfficialEventMapper } from "./adapters/qqOfficialEventMapper.js";
 import { QQOfficialGateway } from "./adapters/qqOfficialGateway.js";
+import { isRateLimitedError } from "./adapters/qqOfficial.js";
 import { hasQqCredentials, loadSettings } from "./config.js";
 import { instrumentEventGateway } from "./core/instrumentation.js";
 import { closeLogging, configureLogging, getLogger } from "./core/logger.js";
+import { retryWithBackoff } from "./core/retry.js";
 import { loadEnvFile } from "./env.js";
 import { attachGateway } from "./gatewayRunner.js";
 import { connectPersistence } from "./persistence.js";
 import { createRuntime } from "./runtime.js";
+
+/** 启动阶段命中限流时的固定冷却时间。 */
+const RATE_LIMIT_STARTUP_COOLDOWN_MS = 60_000;
 
 async function main(): Promise<void> {
   loadEnvFile();
@@ -74,6 +79,14 @@ async function main(): Promise<void> {
       onError: (error) => {
         log.error("gateway error", { error: formatError(error) });
       },
+      onReconnect: (info) => {
+        log.warn("gateway reconnect scheduled", {
+          attempt: info.attempt,
+          delayMs: info.delayMs,
+          reason: info.reason,
+          rateLimited: info.rateLimited,
+        });
+      },
       onGroupMessageMode: (groupId, enabled) => {
         runtime.groupMessageMode.setEnabled(groupId, enabled);
         void runtime.flush();
@@ -83,7 +96,41 @@ async function main(): Promise<void> {
     log,
   );
 
-  await attachGateway(runtime, gateway);
+  const cacheStatus = await runtime.api.cacheStatus?.();
+  log.info("bot cache status", {
+    ...cacheStatus,
+    cacheFile: settings.qqBotCacheFile || "（仅内存）",
+  });
+
+  try {
+    await retryWithBackoff(() => attachGateway(runtime, gateway), {
+      maxAttempts: 3,
+      initialDelayMs: 2_000,
+      maxDelayMs: 15_000,
+      label: "gateway-start",
+      // 命中限流时不要按指数退避硬打，改用较长的固定冷却。
+      delayFor: (error) =>
+        isRateLimitedError(error) ? RATE_LIMIT_STARTUP_COOLDOWN_MS : undefined,
+      onRetry: (info) => {
+        log.warn("gateway start failed, retrying", {
+          attempt: info.attempt,
+          delayMs: info.delayMs,
+          rateLimited: isRateLimitedError(info.error),
+          error: formatError(info.error),
+        });
+      },
+    });
+  } catch (error) {
+    if (isRateLimitedError(error)) {
+      throw new Error(
+        "QQ 开放平台接口触发频率限制，已多次重试仍失败。\n" +
+          "请等待 1-2 分钟后重新启动；access token 与网关地址已缓存，" +
+          "下次启动不会再请求 /gateway。",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
   log.info("official WebSocket gateway started");
 
   const shutdown = async (): Promise<void> => {

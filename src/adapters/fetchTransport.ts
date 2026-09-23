@@ -25,6 +25,10 @@ export class FetchTransport implements AsyncTransport {
       init.body = JSON.stringify(json);
     }
     const response = await this.fetchImpl(url, init);
+    const responseHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      responseHeaders[key.toLowerCase()] = value;
+    });
     let jsonData: unknown = null;
     try {
       jsonData = await response.json();
@@ -35,6 +39,7 @@ export class FetchTransport implements AsyncTransport {
       statusCode: response.status,
       jsonData,
       text: jsonData === null ? await response.text() : "",
+      headers: responseHeaders,
     };
   }
 

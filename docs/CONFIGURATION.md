@@ -17,8 +17,45 @@ cp .env.example .env
 |---|---|---|
 | `QQ_BOT_APP_ID` | 是 | QQ 开放平台机器人 AppID |
 | `QQ_BOT_CLIENT_SECRET` | 是 | 机器人 Client Secret |
-| `QQ_BOT_TOKEN` | 否 | 已有 access token；留空时由客户端自动获取 |
+| `QQ_BOT_TOKEN` | 否 | 已有人工 token；填写后不再自动获取与刷新 |
 | `QQ_BOT_SANDBOX` | 否 | 是否使用沙箱环境，默认 `false` |
+| `QQ_BOT_CACHE_FILE` | 否 | access token 与网关地址缓存文件，默认 `data/qq-bot-cache.json`；留空则只用内存缓存 |
+
+## 限流与重连
+
+官方 `/gateway` 接口限频非常严格（实测约每个时间窗口 2 次），access token 与消息发送也有频控。项目内置以下保护：
+
+**access token**
+- 内存缓存 → 磁盘缓存（`QQ_BOT_CACHE_FILE`）→ 真正请求，默认提前 60 秒视为过期才刷新；
+- 并发获取会复用同一个请求；
+- 服务端返回 401 时自动作废缓存并刷新重试一次（`QQ_BOT_TOKEN` 显式指定时不自动刷新）。
+
+**网关地址**
+- `/gateway` 返回的地址会缓存到内存与磁盘，重连时直接复用，不再请求接口；
+- 只有在「从未成功连接且连续失败达到阈值」时才会丢弃缓存重新获取；
+- 命中限流后进入 60 秒冷却，冷却期内不再发请求。
+
+**重连**
+- 自动重连采用指数退避 + 抖动：1s 起，1.8 倍增长，上限 60s；
+- 命中限流时改用 120s 长冷却；
+- `onReconnect` 会写日志：`gateway reconnect scheduled { attempt, delayMs, reason, rateLimited }`。
+
+**出站消息**
+- 所有出站消息串行发送并强制最小间隔 400ms；
+- 命中 22009（消息频率限制）后按 5 秒冷却重试，最多 3 次；
+- 被动回复配额：单聊同一 `msg_id` 最多 5 次，群聊被动回复有效期 5 分钟，超时后需改用主动消息能力。
+
+排查命令：
+
+```bash
+# 看是否在反复请求 /gateway（正常情况下只有首次启动出现）
+rg '"url":"https://api.sgroup.qq.com/gateway"' logs/qq-group-ops.log
+
+# 看限流冷却与重连调度
+rg 'cooling down|scheduling reconnect|rate limited' logs/qq-group-ops.log
+```
+
+如果确实被限流，先停止进程等待 1-2 分钟；缓存生效后下次启动不会再请求 `/gateway`。
 
 ## 机器人自检
 

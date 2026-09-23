@@ -9,6 +9,7 @@ describe("FetchTransport", () => {
       calls.push({ input, init });
       return {
         status: 200,
+        headers: new Headers({ "Retry-After": "2" }),
         json: async () => ({ ok: true }),
         text: async () => "",
       } as Response;
@@ -24,6 +25,7 @@ describe("FetchTransport", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.jsonData).toEqual({ ok: true });
+    expect(response.headers?.["retry-after"]).toBe("2");
     expect(calls[0]?.init?.body).toBe(JSON.stringify({ a: 1 }));
     expect(calls[0]?.init?.signal).toBeInstanceOf(AbortSignal);
   });

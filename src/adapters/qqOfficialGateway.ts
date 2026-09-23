@@ -1,5 +1,6 @@
 import type { EventGateway, EventHandler } from "./eventGateway.js";
 import type { QQOfficialAPI } from "./qqOfficial.js";
+import { isRateLimitedError } from "./qqOfficial.js";
 import type { OfficialEventMapper } from "./qqOfficialEventMapper.js";
 import type { WebSocketLike } from "./webSocketGateway.js";
 import {
@@ -13,6 +14,37 @@ export const GROUP_AND_C2C_EVENT = 1 << 25;
 
 const log = getLogger("qq-official-gateway");
 
+export interface QQOfficialGatewayReconnectPolicy {
+  enabled: boolean;
+  maxAttempts: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+  factor: number;
+  jitterRatio: number;
+  /** 命中限流时使用的固定冷却时间。 */
+  rateLimitDelayMs: number;
+  /** 连续失败多少次后认为缓存的网关地址已失效（仅在没有成功 open 过时计数）。 */
+  invalidateGatewayAfterFailures: number;
+}
+
+export const DEFAULT_RECONNECT_POLICY: QQOfficialGatewayReconnectPolicy = {
+  enabled: true,
+  maxAttempts: 50,
+  initialDelayMs: 1_000,
+  maxDelayMs: 60_000,
+  factor: 1.8,
+  jitterRatio: 0.2,
+  rateLimitDelayMs: 120_000,
+  invalidateGatewayAfterFailures: 5,
+};
+
+export interface ReconnectInfo {
+  attempt: number;
+  delayMs: number;
+  reason: string;
+  rateLimited: boolean;
+}
+
 export interface QQOfficialGatewayOptions {
   api: QQOfficialAPI;
   createSocket: (url: string) => WebSocketLike;
@@ -21,9 +53,12 @@ export interface QQOfficialGatewayOptions {
   shard?: [number, number];
   properties?: Record<string, string>;
   scheduler?: Scheduler;
+  reconnect?: Partial<QQOfficialGatewayReconnectPolicy>;
+  random?: () => number;
   onHello?: (heartbeatIntervalMs: number) => void;
   onReady?: (sessionId: string) => void;
   onError?: (error: unknown) => void;
+  onReconnect?: (info: ReconnectInfo) => void;
   onGroupMessageMode?: (groupId: string, enabled: boolean) => void;
 }
 
@@ -32,15 +67,22 @@ export class QQOfficialGateway implements EventGateway {
   private readonly shard: [number, number];
   private readonly properties: Record<string, string>;
   private readonly scheduler: Scheduler;
+  private readonly reconnect: QQOfficialGatewayReconnectPolicy;
+  private readonly random: () => number;
   private handler: EventHandler | undefined;
   private socket: WebSocketLike | undefined;
   private token = "";
   private heartbeatIntervalMs = 0;
   private heartbeatTimer: unknown;
+  private reconnectTimer: unknown;
   private lastSequence: number | null = null;
   private sessionId: string | undefined;
   private stopped = false;
   private running = false;
+  private attempts = 0;
+  private reconnecting = false;
+  private failuresSinceOpen = 0;
+  private gatewayUrlInvalidated = false;
 
   public constructor(private readonly options: QQOfficialGatewayOptions) {
     this.intents =
@@ -52,6 +94,8 @@ export class QQOfficialGateway implements EventGateway {
       $device: "qq-group-ops",
     };
     this.scheduler = options.scheduler ?? new SystemScheduler();
+    this.reconnect = { ...DEFAULT_RECONNECT_POLICY, ...(options.reconnect ?? {}) };
+    this.random = options.random ?? Math.random;
   }
 
   public get isRunning(): boolean {
@@ -62,9 +106,29 @@ export class QQOfficialGateway implements EventGateway {
     return this.sessionId;
   }
 
+  /** 首次连接失败会抛出，便于启动阶段快速暴露配置问题。 */
   public async start(handler: EventHandler): Promise<void> {
     this.handler = handler;
     this.stopped = false;
+    this.attempts = 0;
+    this.failuresSinceOpen = 0;
+    this.gatewayUrlInvalidated = false;
+    await this.connectOnce();
+  }
+
+  public async stop(): Promise<void> {
+    log.info("stopping");
+    this.stopped = true;
+    this.clearHeartbeat();
+    this.clearReconnectTimer();
+    this.reconnecting = false;
+    this.socket?.close();
+    this.socket = undefined;
+    this.handler = undefined;
+    this.running = false;
+  }
+
+  private async connectOnce(): Promise<void> {
     const gatewayUrl = await this.options.api.getGatewayUrl();
     this.token = await this.options.api.getAccessToken();
     log.debug("connecting", { gatewayUrl });
@@ -72,32 +136,140 @@ export class QQOfficialGateway implements EventGateway {
     this.socket = socket;
     socket.on("open", () => {
       this.running = true;
+      this.failuresSinceOpen = 0;
       log.debug("socket open");
     });
     socket.on("message", (payload) => {
       void this.handleMessage(payload);
     });
     socket.on("close", () => {
-      this.running = false;
-      this.clearHeartbeat();
-      log.warn("socket closed");
+      this.handleDisconnect("close");
     });
     socket.on("error", (error) => {
-      this.running = false;
-      this.clearHeartbeat();
       log.error("socket error", { error: formatError(error) });
       this.options.onError?.(error);
+      this.handleDisconnect("error");
     });
   }
 
-  public async stop(): Promise<void> {
-    log.info("stopping");
-    this.stopped = true;
-    this.clearHeartbeat();
-    this.socket?.close();
-    this.socket = undefined;
-    this.handler = undefined;
+  private handleDisconnect(reason: "close" | "error"): void {
+    const wasRunning = this.running;
     this.running = false;
+    this.clearHeartbeat();
+    if (this.stopped) {
+      return;
+    }
+    this.failuresSinceOpen += 1;
+    log.warn("socket disconnected", {
+      reason,
+      wasRunning,
+      failures: this.failuresSinceOpen,
+    });
+    if (!this.reconnect.enabled || this.reconnecting) {
+      return;
+    }
+    this.reconnecting = true;
+    this.scheduleReconnect(reason, false);
+  }
+
+  private scheduleReconnect(reason: string, rateLimited: boolean): void {
+    if (this.stopped) {
+      this.reconnecting = false;
+      return;
+    }
+    if (this.attempts >= this.reconnect.maxAttempts) {
+      log.error("reconnect attempts exhausted, giving up", {
+        attempts: this.attempts,
+      });
+      this.reconnecting = false;
+      this.stopped = true;
+      return;
+    }
+    this.attempts += 1;
+    const delayMs = this.backoffDelay(rateLimited);
+    log.info("scheduling reconnect", {
+      attempt: this.attempts,
+      delayMs,
+      rateLimited,
+      reason,
+    });
+    this.options.onReconnect?.({
+      attempt: this.attempts,
+      delayMs,
+      reason,
+      rateLimited,
+    });
+    this.reconnectTimer = this.scheduler.setTimeout(() => {
+      this.reconnectTimer = undefined;
+      void this.runReconnect();
+    }, delayMs);
+  }
+
+  private async runReconnect(): Promise<void> {
+    if (this.stopped || !this.handler) {
+      this.reconnecting = false;
+      return;
+    }
+    try {
+      await this.connectOnce();
+      this.reconnecting = false;
+    } catch (error) {
+      const rateLimited = isRateLimitedError(error);
+      this.failuresSinceOpen += 1;
+      log.error("reconnect failed", {
+        attempt: this.attempts,
+        rateLimited,
+        error: formatError(error),
+      });
+      this.options.onError?.(error);
+      await this.maybeInvalidateGatewayUrl();
+      if (rateLimited) {
+        log.warn("gateway rate limited, using long cooldown", {
+          cooldownMs: this.reconnect.rateLimitDelayMs,
+        });
+      }
+      this.scheduleReconnect("retry", rateLimited);
+    }
+  }
+
+  /**
+   * 只有在「从未成功 open 过」且连续失败达到阈值时，才丢弃缓存的网关地址。
+   * 这样既能在地址确实失效时恢复，又不会因为偶发网络抖动反复打 `/gateway`。
+   */
+  private async maybeInvalidateGatewayUrl(): Promise<void> {
+    if (
+      this.gatewayUrlInvalidated ||
+      this.failuresSinceOpen < this.reconnect.invalidateGatewayAfterFailures
+    ) {
+      return;
+    }
+    this.gatewayUrlInvalidated = true;
+    log.warn("invalidating cached gateway url after repeated failures", {
+      failures: this.failuresSinceOpen,
+    });
+    await this.options.api.invalidateGatewayUrl?.().catch((error: unknown) => {
+      log.warn("failed to invalidate gateway url", { error: formatError(error) });
+    });
+  }
+
+  private backoffDelay(rateLimited: boolean): number {
+    if (rateLimited) {
+      return this.reconnect.rateLimitDelayMs;
+    }
+    const raw = Math.min(
+      this.reconnect.maxDelayMs,
+      this.reconnect.initialDelayMs *
+        this.reconnect.factor ** Math.max(0, this.attempts - 1),
+    );
+    const jitter = raw * this.reconnect.jitterRatio * (this.random() * 2 - 1);
+    return Math.max(0, Math.round(raw + jitter));
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer !== undefined) {
+      this.scheduler.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
   }
 
   private async handleMessage(payload: unknown): Promise<void> {
@@ -139,6 +311,7 @@ export class QQOfficialGateway implements EventGateway {
       typeof data.session_id === "string"
     ) {
       this.sessionId = data.session_id;
+      this.attempts = 0;
       log.info("ready", { hasSession: Boolean(this.sessionId) });
       this.options.onReady?.(this.sessionId);
     }

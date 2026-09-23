@@ -22,6 +22,8 @@ backups/
 *.db
 *.db-wal
 *.db-shm
+qq-bot-cache.json
+qq-bot-cache.json.tmp
 
 # IDE / OS
 .idea/
