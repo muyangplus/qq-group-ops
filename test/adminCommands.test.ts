@@ -514,6 +514,22 @@ describe("AdminCommandService", async () => {
     );
   });
 
+  it("clears global keywords with /rules set all keywords clear", async () => {
+    await service.handle("g1", "root", "/rules set all keywords 全局词");
+    expect(configStore.default.keywords).toEqual(["全局词"]);
+    expect(configStore.get("g-other").keywords).toEqual(["全局词"]);
+
+    const cleared = await service.handle(
+      "g1",
+      "root",
+      "/rules set all keywords clear",
+    );
+
+    expect(cleared.ok).toBe(true);
+    expect(configStore.default.keywords).toEqual([]);
+    expect(configStore.get("g-other").keywords).toEqual([]);
+  });
+
   it("rejects invalid /rules set values", async () => {
     const toggle = await service.handle("g1", "admin", "/rules set autoApprove maybe");
     expect(toggle.ok).toBe(false);
