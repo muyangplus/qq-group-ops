@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { ActivityStatus } from "../core/enums.js";
 import { utcNow } from "../core/models.js";
+import type { ActivityRepository } from "../db/activityRepository.js";
+import { WriteQueue } from "../db/writeQueue.js";
 
 export interface Activity {
   activityId: string;
@@ -44,6 +46,39 @@ export interface RegisterActivityInput {
 export class ActivityService {
   private readonly activities = new Map<string, Activity>();
   private readonly registrations = new Map<string, ActivityRegistration>();
+  private readonly repository: ActivityRepository | undefined;
+  private readonly queue: WriteQueue | undefined;
+
+  public constructor(repository?: ActivityRepository, queue?: WriteQueue) {
+    this.repository = repository;
+    this.queue = repository ? (queue ?? new WriteQueue()) : undefined;
+  }
+
+  public get persistent(): boolean {
+    return this.repository !== undefined;
+  }
+
+  public async load(): Promise<void> {
+    if (!this.repository) {
+      return;
+    }
+    const [activities, registrations] = await Promise.all([
+      this.repository.findActivities(),
+      this.repository.findRegistrations(),
+    ]);
+    this.activities.clear();
+    this.registrations.clear();
+    for (const activity of activities) {
+      this.activities.set(activity.activityId, activity);
+    }
+    for (const registration of registrations) {
+      this.registrations.set(registration.registrationId, registration);
+    }
+  }
+
+  public async flush(): Promise<void> {
+    await this.queue?.flush();
+  }
 
   public createActivity(input: CreateActivityInput): Activity {
     if (input.title.trim().length === 0) {
@@ -67,6 +102,7 @@ export class ActivityService {
       createdAt: utcNow(),
     };
     this.activities.set(activityId, activity);
+    this.persistActivity(activity);
     return { ...activity };
   }
 
@@ -123,6 +159,12 @@ export class ActivityService {
       createdAt: utcNow(),
     };
     this.registrations.set(registrationId, registration);
+    const repository = this.repository;
+    if (repository) {
+      this.queue?.enqueue("activity.registration.save", () =>
+        repository.saveRegistration(registration),
+      );
+    }
     return { ...registration };
   }
 
@@ -145,6 +187,12 @@ export class ActivityService {
       throw new Error("cannot cancel another user's registration");
     }
     this.registrations.delete(registrationId);
+    const repository = this.repository;
+    if (repository) {
+      this.queue?.enqueue("activity.registration.delete", () =>
+        repository.deleteRegistration(registrationId),
+      );
+    }
     return { ...registration };
   }
 
@@ -152,6 +200,14 @@ export class ActivityService {
     const activity = this.getActivity(activityId);
     const updated: Activity = { ...activity, status };
     this.activities.set(activityId, updated);
+    this.persistActivity(updated);
     return { ...updated };
+  }
+
+  private persistActivity(activity: Activity): void {
+    const repository = this.repository;
+    if (repository) {
+      this.queue?.enqueue("activity.save", () => repository.saveActivity(activity));
+    }
   }
 }

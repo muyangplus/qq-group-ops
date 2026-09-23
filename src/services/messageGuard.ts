@@ -13,7 +13,7 @@ import type {
 } from "../core/models.js";
 import { utcNow } from "../core/models.js";
 import type { AuditLog } from "./audit.js";
-import { InMemoryAuditLog } from "./audit.js";
+import { AuditLogStore } from "./audit.js";
 import type { EffectiveGroupConfig } from "./groupConfig.js";
 import { GroupConfigStore } from "./groupConfig.js";
 import { RuleEngine } from "./moderation.js";
@@ -37,7 +37,7 @@ export class MessageGuardService {
     private readonly api: QQOfficialAPI,
     private readonly rules: RuleEngine,
     private readonly configStore: GroupConfigStore,
-    auditLog: AuditLog = new InMemoryAuditLog(),
+    auditLog: AuditLog = new AuditLogStore(),
   ) {
     this.auditLog = auditLog;
   }

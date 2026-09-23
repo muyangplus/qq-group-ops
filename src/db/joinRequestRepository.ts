@@ -6,6 +6,7 @@ export interface JoinRequestRepository {
   upsert(request: JoinRequest): Promise<void>;
   findPending(groupId: string): Promise<JoinRequest[]>;
   findById(requestId: string): Promise<JoinRequest | null>;
+  findAll(): Promise<JoinRequest[]>;
   updateStatus(
     requestId: string,
     status: JoinRequestStatus,
@@ -48,6 +49,13 @@ FROM join_requests
 WHERE request_id = $1
 `.trim();
 
+const SELECT_ALL_SQL = `
+SELECT request_id, group_id, user_id, reason, status,
+       created_at, reviewed_at, reviewer_id
+FROM join_requests
+ORDER BY created_at ASC
+`.trim();
+
 const UPDATE_STATUS_SQL = `
 UPDATE join_requests
 SET status = $2,
@@ -86,6 +94,11 @@ export class PostgresJoinRequestRepository implements JoinRequestRepository {
     const result = await this.db.query<JoinRequestRow>(SELECT_BY_ID_SQL, [requestId]);
     const row = result.rows[0];
     return row ? rowToJoinRequest(row) : null;
+  }
+
+  public async findAll(): Promise<JoinRequest[]> {
+    const result = await this.db.query<JoinRequestRow>(SELECT_ALL_SQL);
+    return result.rows.map(rowToJoinRequest);
   }
 
   public async updateStatus(

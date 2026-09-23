@@ -3,7 +3,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { ModerationAction } from "../src/core/enums.js";
 import { AdminCommandService } from "../src/services/adminCommands.js";
-import { InMemoryAuditLog } from "../src/services/audit.js";
+import { AuditLogStore } from "../src/services/audit.js";
 import { EventRouter } from "../src/services/eventRouter.js";
 import { GroupConfigStore } from "../src/services/groupConfig.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
@@ -18,7 +18,7 @@ describe("EventRouter", () => {
 
   beforeEach(() => {
     api = new FakeQQOfficialAPI();
-    const auditLog = new InMemoryAuditLog();
+    const auditLog = new AuditLogStore();
     joinAudit = new JoinAuditService(auditLog);
     const permissions = new PermissionService({
       groupAdminIds: new Map([["g1", new Set(["admin"])]]),

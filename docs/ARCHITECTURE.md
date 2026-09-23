@@ -48,10 +48,14 @@ TypeScript 核心服务
   ├── db/pgQueryable.ts          PostgreSQL 连接池适配
   ├── db/migrate.ts              数据库迁移入口
   ├── db/schema.ts               PostgreSQL schema
+  ├── db/writeQueue.ts           顺序写穿透队列
   ├── db/auditRepository.ts      审计仓储
   ├── db/joinRequestRepository.ts 入群申请仓储
   ├── db/groupConfigRepository.ts 群配置仓储
   ├── db/identityBindingRepository.ts 绑定关系仓储
+  ├── db/permissionRepository.ts 权限仓储
+  ├── db/groupMessageModeRepository.ts 全量消息模式仓储
+  ├── db/activityRepository.ts   活动与报名仓储
   └── persistence.ts             数据库连接、迁移与仓储装配
       │
       ▼
@@ -65,12 +69,12 @@ Web 管理 API + 管理后台（Phase 2）
 | `src/adapters/` | 官方 API 鉴权、HTTP 调用、错误映射、事件网关、测试替身 |
 | `src/core/` | 领域模型、枚举、通用类型、日志与接口调试包装 |
 | `src/services/` | 规则引擎、审核流程、审计、权限、活动报名、信息导出、命令 |
-| `src/db/` | PostgreSQL schema、查询抽象与仓储 |
+| `src/db/` | PostgreSQL schema、查询抽象、写穿透队列与仓储 |
 | `src/persistence.ts` | 数据库连接、迁移与仓储装配 |
 | `src/config.ts` | 环境变量加载与校验 |
 | `src/core/logger.ts` | 结构化日志：控制台 + 文件 |
 | `src/core/instrumentation.ts` | 官方 API、HTTP、数据库、事件网关的调试包装 |
-| `src/runtime.ts` | 运行时装配：按配置选择真实/测试 API 并连接服务，可注入数据库仓储 |
+| `src/runtime.ts` | 运行时装配：按配置选择真实/测试 API、注入仓储、提供 `load()` / `flush()` |
 | `src/dev.ts` | 开发入口，默认启用 debug 日志 |
 | `src/main.ts` | 生产入口 |
 | `test/` | Vitest 单元测试与集成测试 |
@@ -95,7 +99,8 @@ Web 管理 API + 管理后台（Phase 2）
 
 - 需要保存多群配置、审核记录、操作日志和统计结果。
 - PostgreSQL 支持 JSON、索引和事务，适合审计场景。
-- 开发环境可先用内存实现，生产使用 PostgreSQL。
+- 开发环境可先用内存实现（不配置 `DATABASE_URL`），生产使用 PostgreSQL。
+- 持久化采用「内存缓存 + 写穿透」：读路径同步走内存，写路径进入 `WriteQueue` 顺序落库，启动时全量载入。
 
 ### 4. 为什么默认不保存消息原文？
 

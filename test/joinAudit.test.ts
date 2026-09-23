@@ -1,15 +1,15 @@
 import { describe, expect, it, beforeEach } from "vitest";
 
 import { AuditStatus, JoinRequestStatus } from "../src/core/enums.js";
-import { InMemoryAuditLog } from "../src/services/audit.js";
+import { AuditLogStore } from "../src/services/audit.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
 
 describe("JoinAuditService", () => {
-  let auditLog: InMemoryAuditLog;
+  let auditLog: AuditLogStore;
   let service: JoinAuditService;
 
   beforeEach(() => {
-    auditLog = new InMemoryAuditLog();
+    auditLog = new AuditLogStore();
     service = new JoinAuditService(auditLog);
   });
 

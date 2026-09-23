@@ -29,6 +29,10 @@ describe("PostgresAuditRepository", () => {
     expect(SCHEMA_SQL).toContain("join_requests");
     expect(SCHEMA_SQL).toContain("group_configs");
     expect(SCHEMA_SQL).toContain("group_keywords");
+    expect(SCHEMA_SQL).toContain("permission_grants");
+    expect(SCHEMA_SQL).toContain("group_message_modes");
+    expect(SCHEMA_SQL).toContain("activities");
+    expect(SCHEMA_SQL).toContain("activity_registrations");
   });
 
   it("inserts audit records", async () => {
@@ -85,6 +89,37 @@ describe("PostgresAuditRepository", () => {
         action: "approve_join_request",
         status: "approved",
         reason: "ok",
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      },
+    ]);
+  });
+
+  it("loads every record for startup hydration", async () => {
+    const db = new FakeQueryable([
+      {
+        record_id: "rec1",
+        group_id: "g1",
+        actor_id: "admin",
+        target_user_id: null,
+        action: "manual",
+        status: "executed",
+        reason: "",
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    const repository = new PostgresAuditRepository(db);
+
+    const records = await repository.findAll();
+
+    expect(db.calls[0]?.text).toContain("FROM audit_records");
+    expect(records).toEqual([
+      {
+        recordId: "rec1",
+        groupId: "g1",
+        actorId: "admin",
+        action: "manual",
+        status: "executed",
+        reason: "",
         createdAt: new Date("2026-01-01T00:00:00.000Z"),
       },
     ]);

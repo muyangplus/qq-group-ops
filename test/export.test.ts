@@ -3,18 +3,18 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { AuditStatus } from "../src/core/enums.js";
 import { utcNow } from "../src/core/models.js";
 import type { Activity, ActivityRegistration } from "../src/services/activity.js";
-import { InMemoryAuditLog } from "../src/services/audit.js";
+import { AuditLogStore } from "../src/services/audit.js";
 import { ExportService, maskIdentifier } from "../src/services/export.js";
 import { PermissionService } from "../src/services/permissions.js";
 
 describe("ExportService", () => {
-  let auditLog: InMemoryAuditLog;
+  let auditLog: AuditLogStore;
   let service: ExportService;
   let activity: Activity;
   let registrations: ActivityRegistration[];
 
   beforeEach(() => {
-    auditLog = new InMemoryAuditLog();
+    auditLog = new AuditLogStore();
     const permissions = new PermissionService({
       superAdminIds: new Set(["root"]),
       groupAdminIds: new Map([["g1", new Set(["admin"])]]),

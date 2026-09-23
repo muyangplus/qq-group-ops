@@ -7,6 +7,7 @@ export interface GroupConfigRepository {
   deleteOverride(groupId: string): Promise<void>;
   loadKeywords(groupId: string): Promise<string[]>;
   replaceKeywords(groupId: string, keywords: readonly string[]): Promise<void>;
+  findAll(): Promise<GroupConfigOverride[]>;
 }
 
 interface GroupConfigRow {
@@ -27,6 +28,20 @@ SELECT group_id, enabled, join_audit_enabled, auto_approve_join,
        mute_duration_seconds, warning_message
 FROM group_configs
 WHERE group_id = $1
+`.trim();
+
+const SELECT_ALL_SQL = `
+SELECT group_id, enabled, join_audit_enabled, auto_approve_join,
+       word_filter_enabled, export_enabled, raw_message_retention_days,
+       mute_duration_seconds, warning_message
+FROM group_configs
+ORDER BY group_id ASC
+`.trim();
+
+const SELECT_ALL_KEYWORDS_SQL = `
+SELECT group_id, keyword
+FROM group_keywords
+ORDER BY group_id ASC, keyword ASC
 `.trim();
 
 const UPSERT_SQL = `
@@ -104,6 +119,25 @@ export class PostgresGroupConfigRepository implements GroupConfigRepository {
     for (const keyword of keywords) {
       await this.db.query(INSERT_KEYWORD_SQL, [groupId, keyword]);
     }
+  }
+
+  public async findAll(): Promise<GroupConfigOverride[]> {
+    const overrides = await this.db.query<GroupConfigRow>(SELECT_ALL_SQL);
+    const keywords = await this.db.query<{ group_id: string; keyword: string }>(
+      SELECT_ALL_KEYWORDS_SQL,
+    );
+    const keywordsByGroup = new Map<string, string[]>();
+    for (const row of keywords.rows) {
+      const list = keywordsByGroup.get(row.group_id) ?? [];
+      list.push(row.keyword);
+      keywordsByGroup.set(row.group_id, list);
+    }
+    return overrides.rows.map((row) => ({
+      ...rowToOverride(row),
+      ...(keywordsByGroup.has(row.group_id)
+        ? { keywords: keywordsByGroup.get(row.group_id) ?? [] }
+        : {}),
+    }));
   }
 }
 

@@ -1,3 +1,6 @@
+import type { GroupConfigRepository } from "../db/groupConfigRepository.js";
+import { WriteQueue } from "../db/writeQueue.js";
+
 export interface GroupConfig {
   groupId: string;
   enabled?: boolean;
@@ -53,13 +56,43 @@ const DEFAULT_CONFIG: EffectiveGroupConfig = {
 export class GroupConfigStore {
   private readonly defaultConfig: EffectiveGroupConfig;
   private readonly overrides = new Map<string, GroupConfigOverride>();
+  private readonly repository: GroupConfigRepository | undefined;
+  private readonly queue: WriteQueue | undefined;
 
-  public constructor(defaultConfig: GroupConfig = { groupId: "__default__" }) {
+  public constructor(
+    defaultConfig: GroupConfig = { groupId: "__default__" },
+    repository?: GroupConfigRepository,
+    queue?: WriteQueue,
+  ) {
     this.defaultConfig = {
       ...DEFAULT_CONFIG,
       ...defaultConfig,
       groupId: "__default__",
+      keywords: normalizeKeywords(
+        defaultConfig.keywords ?? DEFAULT_CONFIG.keywords,
+      ),
     };
+    this.repository = repository;
+    this.queue = repository ? (queue ?? new WriteQueue()) : undefined;
+  }
+
+  public get persistent(): boolean {
+    return this.repository !== undefined;
+  }
+
+  public async load(): Promise<void> {
+    if (!this.repository) {
+      return;
+    }
+    const overrides = await this.repository.findAll();
+    this.overrides.clear();
+    for (const override of overrides) {
+      this.overrides.set(override.groupId, normalizeOverride(override));
+    }
+  }
+
+  public async flush(): Promise<void> {
+    await this.queue?.flush();
   }
 
   public get default(): EffectiveGroupConfig {
@@ -91,14 +124,53 @@ export class GroupConfigStore {
     if (override.groupId === "__default__") {
       throw new Error("cannot override the default group id");
     }
-    this.overrides.set(override.groupId, { ...override });
+    const normalized = normalizeOverride(override);
+    this.overrides.set(override.groupId, normalized);
+    const repository = this.repository;
+    if (repository) {
+      this.queue?.enqueue("group-config.save", () =>
+        repository.saveOverride(normalized),
+      );
+      if (normalized.keywords !== undefined) {
+        const keywords = [...normalized.keywords];
+        this.queue?.enqueue("group-config.keywords", () =>
+          repository.replaceKeywords(override.groupId, keywords),
+        );
+      }
+    }
   }
 
   public removeOverride(groupId: string): void {
     this.overrides.delete(groupId);
+    const repository = this.repository;
+    if (repository) {
+      this.queue?.enqueue("group-config.delete", () => repository.deleteOverride(groupId));
+      this.queue?.enqueue("group-config.keywords", () =>
+        repository.replaceKeywords(groupId, []),
+      );
+    }
   }
 
   public listOverrides(): GroupConfigOverride[] {
     return [...this.overrides.values()].map((override) => ({ ...override }));
   }
+}
+
+/** 关键词去重、去空白并排序，保证内存态与数据库载入态顺序一致。 */
+function normalizeKeywords(keywords: readonly string[]): string[] {
+  const unique = new Set<string>();
+  for (const keyword of keywords) {
+    const trimmed = keyword.trim();
+    if (trimmed.length > 0) {
+      unique.add(trimmed);
+    }
+  }
+  return [...unique].sort();
+}
+
+function normalizeOverride(override: GroupConfigOverride): GroupConfigOverride {
+  if (override.keywords === undefined) {
+    return { ...override };
+  }
+  return { ...override, keywords: normalizeKeywords(override.keywords) };
 }

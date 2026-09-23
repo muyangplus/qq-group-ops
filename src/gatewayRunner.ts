@@ -10,6 +10,8 @@ export async function attachGateway(
 ): Promise<void> {
   await gateway.start(async (event) => {
     const result = await runtime.router.handle(event);
+    // 回复用户前先确保本次事件产生的状态变更已落库。
+    await runtime.flush();
     if (
       (result.kind === "command" || result.kind === "private_message") &&
       result.text

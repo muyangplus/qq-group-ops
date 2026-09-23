@@ -48,7 +48,7 @@ describe("createRuntime", () => {
     await repository.bind("group", "g1", "654321");
 
     const runtime = createRuntime(loadSettings({ ADMIN_USER_IDS: "admin" }), {
-      identityBindings: repository,
+      repositories: { identityBindings: repository },
     });
     await runtime.identityMap.reload();
 
@@ -60,7 +60,7 @@ describe("createRuntime", () => {
   it("persists bindings made through the router and restores them after restart", async () => {
     const repository = new FakeIdentityBindingRepository();
     const first = createRuntime(loadSettings({}), {
-      identityBindings: repository,
+      repositories: { identityBindings: repository },
     });
 
     const bind = await first.router.handle({
@@ -75,7 +75,7 @@ describe("createRuntime", () => {
     ]);
 
     const restarted = createRuntime(loadSettings({}), {
-      identityBindings: repository,
+      repositories: { identityBindings: repository },
     });
     await restarted.identityMap.reload();
     const query = await restarted.router.handle({

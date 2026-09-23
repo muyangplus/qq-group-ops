@@ -89,4 +89,35 @@ describe("PostgresJoinRequestRepository", () => {
     const repository = new PostgresJoinRequestRepository(db);
     await expect(repository.findById("missing")).resolves.toBeNull();
   });
+
+  it("loads every request for startup hydration", async () => {
+    const db = new FakeQueryable([
+      [
+        {
+          request_id: "r1",
+          group_id: "g1",
+          user_id: "u1",
+          reason: "想加入",
+          status: "approved",
+          created_at: "2026-01-01T00:00:00.000Z",
+          reviewed_at: "2026-01-02T00:00:00.000Z",
+          reviewer_id: "admin",
+        },
+      ],
+    ]);
+    const repository = new PostgresJoinRequestRepository(db);
+
+    await expect(repository.findAll()).resolves.toEqual([
+      {
+        requestId: "r1",
+        groupId: "g1",
+        userId: "u1",
+        reason: "想加入",
+        status: "approved",
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        reviewedAt: new Date("2026-01-02T00:00:00.000Z"),
+        reviewerId: "admin",
+      },
+    ]);
+  });
 });

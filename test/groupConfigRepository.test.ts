@@ -74,4 +74,43 @@ describe("PostgresGroupConfigRepository", () => {
     expect(db.calls[0]?.text).toContain("DELETE FROM group_configs");
     expect(db.calls[0]?.values).toEqual(["g1"]);
   });
+
+  it("loads every override together with its keywords", async () => {
+    const db = new FakeQueryable([
+      [
+        {
+          group_id: "g1",
+          enabled: true,
+          join_audit_enabled: null,
+          auto_approve_join: null,
+          word_filter_enabled: null,
+          export_enabled: null,
+          raw_message_retention_days: null,
+          mute_duration_seconds: null,
+          warning_message: null,
+        },
+        {
+          group_id: "g2",
+          enabled: null,
+          join_audit_enabled: null,
+          auto_approve_join: true,
+          word_filter_enabled: null,
+          export_enabled: null,
+          raw_message_retention_days: null,
+          mute_duration_seconds: null,
+          warning_message: null,
+        },
+      ],
+      [
+        { group_id: "g1", keyword: "广告" },
+        { group_id: "g1", keyword: "刷屏" },
+      ],
+    ]);
+    const repository = new PostgresGroupConfigRepository(db);
+
+    await expect(repository.findAll()).resolves.toEqual([
+      { groupId: "g1", enabled: true, keywords: ["广告", "刷屏"] },
+      { groupId: "g2", autoApproveJoin: true },
+    ]);
+  });
 });

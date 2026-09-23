@@ -1,20 +1,15 @@
-import { newDb } from "pg-mem";
 import { describe, expect, it } from "vitest";
 
 import { loadSettings } from "../src/config.js";
 import { PostgresIdentityBindingRepository } from "../src/db/identityBindingRepository.js";
 import { migrate } from "../src/db/migrate.js";
-import { PgQueryable } from "../src/db/pgQueryable.js";
+import type { PgQueryable } from "../src/db/pgQueryable.js";
 import { createRuntime } from "../src/runtime.js";
 import { IdentityMapService } from "../src/services/identityMap.js";
+import { createPgMemQueryable } from "./helpers/pgMem.js";
 
 function createQueryable(): PgQueryable {
-  const db = newDb();
-  const pg = db.adapters.createPg();
-  const pool = new pg.Pool() as unknown as ConstructorParameters<
-    typeof PgQueryable
-  >[0];
-  return new PgQueryable(pool);
+  return createPgMemQueryable();
 }
 
 describe("identity bindings against a real SQL engine (pg-mem)", () => {
@@ -102,7 +97,7 @@ describe("identity bindings against a real SQL engine (pg-mem)", () => {
     const repository = new PostgresIdentityBindingRepository(queryable);
 
     const first = createRuntime(loadSettings({}), {
-      identityBindings: repository,
+      repositories: { identityBindings: repository },
     });
     const bind = await first.router.handle({
       type: "private_message",
@@ -114,7 +109,7 @@ describe("identity bindings against a real SQL engine (pg-mem)", () => {
     expect(bind.text).toContain("已保存到数据库");
 
     const restarted = createRuntime(loadSettings({}), {
-      identityBindings: repository,
+      repositories: { identityBindings: repository },
     });
     await restarted.identityMap.reload();
 

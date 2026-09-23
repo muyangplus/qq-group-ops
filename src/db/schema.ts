@@ -57,4 +57,46 @@ CREATE TABLE IF NOT EXISTS identity_bindings (
 
 CREATE UNIQUE INDEX IF NOT EXISTS identity_bindings_kind_external_idx
   ON identity_bindings (kind, external_id);
+
+CREATE TABLE IF NOT EXISTS permission_grants (
+  scope TEXT NOT NULL CHECK (scope IN ('super_admin', 'group_admin', 'moderator')),
+  group_id TEXT NOT NULL DEFAULT '',
+  user_id TEXT NOT NULL,
+  granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (scope, group_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS group_message_modes (
+  group_id TEXT PRIMARY KEY,
+  mode TEXT NOT NULL CHECK (mode IN ('all', 'at_only')),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS activities (
+  activity_id TEXT PRIMARY KEY,
+  group_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  capacity INTEGER,
+  status TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS activities_group_id_idx
+  ON activities (group_id, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS activity_registrations (
+  registration_id TEXT PRIMARY KEY,
+  activity_id TEXT NOT NULL REFERENCES activities (activity_id) ON DELETE CASCADE,
+  group_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  display_name TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (activity_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS activity_registrations_activity_idx
+  ON activity_registrations (activity_id, created_at ASC);
 `.trim();

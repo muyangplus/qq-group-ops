@@ -6,7 +6,7 @@ import type { AuditRecord } from "../core/models.js";
 import { utcNow } from "../core/models.js";
 import type { Activity, ActivityRegistration } from "./activity.js";
 import type { AuditLog } from "./audit.js";
-import { InMemoryAuditLog } from "./audit.js";
+import { AuditLogStore } from "./audit.js";
 import type { PermissionService } from "./permissions.js";
 
 const log = getLogger("export");
@@ -26,7 +26,7 @@ export class ExportService {
 
   public constructor(
     private readonly permissions: PermissionService,
-    auditLog: AuditLog = new InMemoryAuditLog(),
+    auditLog: AuditLog = new AuditLogStore(),
   ) {
     this.auditLog = auditLog;
   }

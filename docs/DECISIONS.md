@@ -98,7 +98,7 @@
 - 背景：用户需要查询自己的权限，超级管理员需要动态调整管理员和审核员。
 - 决策：`PermissionService` 改为运行时可变；新增 `/myperm` 查询指令和 `/perm` 超管配置指令；`ADMIN_USER_IDS` 作为初始超级管理员种子。
 - 理由：不依赖数据库即可完成权限管理和验证；结构清晰，便于后续接入 PostgreSQL 仓储。
-- 影响：当前权限变更保存在内存中，进程重启后恢复为 `ADMIN_USER_IDS`；后续需要增加 `PermissionRepository` 做持久化。
+- 影响：未配置数据库时权限变更保存在内存中，进程重启后恢复为 `ADMIN_USER_IDS`；配置数据库后由 ADR-0021 持久化。
 
 ## ADR-0014：权限配置使用官方 userId
 
@@ -162,5 +162,23 @@
 - 背景：`/bind` 维护的 OpenID ↔ QQ号/群号映射原本只存在内存中，进程重启后丢失，用户需要反复重新绑定。
 - 决策：新增 `identity_bindings` 表与 `PostgresIdentityBindingRepository`；`IdentityMapService` 改为「内存缓存 + 写穿透」，启动时 `reload()` 载入全部绑定，写入失败时回滚内存并返回错误；`DATABASE_URL` 未配置时退化为纯内存模式并输出警告，已配置但连接失败则启动失败（避免静默降级）。
 - 理由：读取路径保持同步，不阻塞事件处理；写路径显式 `await`，保证用户看到“已绑定”时数据确已落库；表结构使用 `(kind, official_id)` 主键和 `(kind, external_id)` 唯一索引，保证一一映射。
-- 影响：`AdminCommandService.handle` 变为 `async`；`/bind` 成功回复会追加“（已保存到数据库）”；权限配置（`/perm`）仍为内存态，后续需要同样的仓储化。
+- 影响：`AdminCommandService.handle` 变为 `async`；`/bind` 成功回复会追加“（已保存到数据库）”；其余状态由 ADR-0021 统一持久化。
+
+## ADR-0021：全部状态写穿透持久化
+
+- 状态：已采纳
+- 背景：除绑定关系外，权限配置、审计日志、入群申请、群配置、全量消息模式、活动报名此前都只存在内存中，重启即丢失。
+- 决策：新增统一 `WriteQueue`（顺序写穿透队列），所有持久化服务采用「内存为准 + 写穿透」：
+  - 启动时 `runtime.load()` 从数据库全量载入到内存缓存；
+  - 同步 API 保持不变（读走内存），写操作同步更新内存并进入 `WriteQueue` 串行落库；
+  - `gatewayRunner` 在处理完每个事件、回复用户前 `await runtime.flush()`；进程退出（SIGINT/SIGTERM）前同样 flush；
+  - 单个写入失败只记录错误日志并计数，不会中断后续写入；
+  - `ADMIN_USER_IDS` 只在数据库中不存在任何超级管理员时作为种子写入，之后以数据库为准。
+- 理由：不改变各服务已有的同步 API 与测试边界，同时保证「回复用户前已落库」；`WriteQueue` 是单一可复用组件，所有服务共享同一实例。
+- 影响：
+  - 新增表：`permission_grants`、`group_message_modes`、`activities`、`activity_registrations`；
+  - 新增仓储：`PermissionRepository`、`GroupMessageModeRepository`、`ActivityRepository`，并为审计 / 入群申请 / 群配置仓储补充 `findAll()`；
+  - 启动时会把审计、入群申请等数据全量载入内存，超大历史数据需要配合保留策略（见 `DATA-COMPLIANCE.md`）；
+  - 未配置 `DATABASE_URL` 时全部退化为内存模式并输出警告。
+
 

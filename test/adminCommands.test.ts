@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 
 import { JoinRequestStatus } from "../src/core/enums.js";
 import { AdminCommandService } from "../src/services/adminCommands.js";
-import { InMemoryAuditLog } from "../src/services/audit.js";
+import { AuditLogStore } from "../src/services/audit.js";
 import { GroupConfigStore } from "../src/services/groupConfig.js";
 import { IdentityMapService } from "../src/services/identityMap.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
@@ -10,7 +10,7 @@ import { PermissionService } from "../src/services/permissions.js";
 import { FakeIdentityBindingRepository } from "./helpers/fakeIdentityBindingRepository.js";
 
 describe("AdminCommandService", async () => {
-  let auditLog: InMemoryAuditLog;
+  let auditLog: AuditLogStore;
   let joinAudit: JoinAuditService;
   let configStore: GroupConfigStore;
   let identityMap: IdentityMapService;
@@ -18,7 +18,7 @@ describe("AdminCommandService", async () => {
   let service: AdminCommandService;
 
   beforeEach(() => {
-    auditLog = new InMemoryAuditLog();
+    auditLog = new AuditLogStore();
     permissions = new PermissionService({
       superAdminIds: new Set(["root"]),
       groupAdminIds: new Map([["g1", new Set(["admin"])]]),

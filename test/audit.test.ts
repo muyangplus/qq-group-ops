@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { AuditStatus } from "../src/core/enums.js";
 import { utcNow } from "../src/core/models.js";
-import { InMemoryAuditLog } from "../src/services/audit.js";
+import { AuditLogStore } from "../src/services/audit.js";
 
-describe("InMemoryAuditLog", () => {
+describe("AuditLogStore", () => {
   it("appends and finds records by group", () => {
-    const log = new InMemoryAuditLog();
+    const log = new AuditLogStore();
     const record = {
       recordId: "1",
       groupId: "g1",

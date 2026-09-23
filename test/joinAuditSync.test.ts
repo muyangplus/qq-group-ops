@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from "vitest";
 
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
-import { InMemoryAuditLog } from "../src/services/audit.js";
+import { AuditLogStore } from "../src/services/audit.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
 import { JoinRequestSyncService } from "../src/services/joinAuditSync.js";
 
@@ -12,7 +12,7 @@ describe("JoinRequestSyncService", () => {
 
   beforeEach(() => {
     api = new FakeQQOfficialAPI();
-    joinAudit = new JoinAuditService(new InMemoryAuditLog());
+    joinAudit = new JoinAuditService(new AuditLogStore());
     service = new JoinRequestSyncService(api, joinAudit);
   });
 

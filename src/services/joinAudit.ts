@@ -7,8 +7,10 @@ import {
 import { getLogger } from "../core/logger.js";
 import type { AuditRecord } from "../core/models.js";
 import { utcNow } from "../core/models.js";
+import type { JoinRequestRepository } from "../db/joinRequestRepository.js";
+import { WriteQueue } from "../db/writeQueue.js";
 import type { AuditLog } from "./audit.js";
-import { InMemoryAuditLog } from "./audit.js";
+import { AuditLogStore } from "./audit.js";
 
 const log = getLogger("join-audit");
 
@@ -25,10 +27,36 @@ export interface JoinRequest {
 
 export class JoinAuditService {
   private readonly requests = new Map<string, JoinRequest>();
-  private readonly auditLog: AuditLog;
+  private readonly repository: JoinRequestRepository | undefined;
+  private readonly queue: WriteQueue | undefined;
 
-  public constructor(auditLog: AuditLog = new InMemoryAuditLog()) {
-    this.auditLog = auditLog;
+  public constructor(
+    private readonly auditLog: AuditLog = new AuditLogStore(),
+    repository?: JoinRequestRepository,
+    queue?: WriteQueue,
+  ) {
+    this.repository = repository;
+    this.queue = repository ? (queue ?? new WriteQueue()) : undefined;
+  }
+
+  public get persistent(): boolean {
+    return this.repository !== undefined;
+  }
+
+  public async load(): Promise<void> {
+    if (!this.repository) {
+      return;
+    }
+    const requests = await this.repository.findAll();
+    this.requests.clear();
+    for (const request of requests) {
+      this.requests.set(request.requestId, request);
+    }
+  }
+
+  public async flush(): Promise<void> {
+    await this.queue?.flush();
+    await this.auditLog.flush?.();
   }
 
   public submit(
@@ -49,6 +77,10 @@ export class JoinAuditService {
       createdAt: utcNow(),
     };
     this.requests.set(requestId, request);
+    const repository = this.repository;
+    if (repository) {
+      this.queue?.enqueue("join-request.submit", () => repository.upsert(request));
+    }
     log.debug("submitted", { requestId, groupId, userId });
     return { ...request };
   }
@@ -108,6 +140,19 @@ export class JoinAuditService {
       reviewedAt: utcNow(),
     };
     this.requests.set(requestId, updated);
+    const repository = this.repository;
+    if (repository) {
+      const reviewedAt = updated.reviewedAt ?? utcNow();
+      this.queue?.enqueue("join-request.review", () =>
+        repository.updateStatus(
+          requestId,
+          status,
+          reviewerId,
+          reviewedAt,
+          reason,
+        ),
+      );
+    }
     const record: AuditRecord = {
       recordId: randomUUID(),
       groupId: request.groupId,

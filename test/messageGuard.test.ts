@@ -3,20 +3,20 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { AuditStatus, ModerationAction } from "../src/core/enums.js";
 import { newIncomingMessage } from "../src/core/models.js";
-import { InMemoryAuditLog } from "../src/services/audit.js";
+import { AuditLogStore } from "../src/services/audit.js";
 import { GroupConfigStore } from "../src/services/groupConfig.js";
 import { MessageGuardService } from "../src/services/messageGuard.js";
 import { RuleEngine } from "../src/services/moderation.js";
 
 describe("MessageGuardService", () => {
   let api: FakeQQOfficialAPI;
-  let auditLog: InMemoryAuditLog;
+  let auditLog: AuditLogStore;
   let configStore: GroupConfigStore;
   let service: MessageGuardService;
 
   beforeEach(() => {
     api = new FakeQQOfficialAPI();
-    auditLog = new InMemoryAuditLog();
+    auditLog = new AuditLogStore();
     configStore = new GroupConfigStore({ groupId: "__default__" });
     const rules = new RuleEngine([
       { ruleId: "warn", pattern: "广告", action: ModerationAction.Warn, reason: "发现广告" },

@@ -5,6 +5,7 @@ import type { Queryable } from "./queryable.js";
 export interface AuditRepository {
   append(record: AuditRecord): Promise<void>;
   findByGroup(groupId: string): Promise<AuditRecord[]>;
+  findAll(): Promise<AuditRecord[]>;
 }
 
 interface AuditRow {
@@ -33,6 +34,13 @@ WHERE group_id = $1
 ORDER BY created_at DESC
 `.trim();
 
+const SELECT_ALL_SQL = `
+SELECT record_id, group_id, actor_id, target_user_id,
+       action, status, reason, created_at
+FROM audit_records
+ORDER BY created_at ASC
+`.trim();
+
 export class PostgresAuditRepository implements AuditRepository {
   public constructor(private readonly db: Queryable) {}
 
@@ -51,6 +59,11 @@ export class PostgresAuditRepository implements AuditRepository {
 
   public async findByGroup(groupId: string): Promise<AuditRecord[]> {
     const result = await this.db.query<AuditRow>(SELECT_BY_GROUP_SQL, [groupId]);
+    return result.rows.map(rowToAuditRecord);
+  }
+
+  public async findAll(): Promise<AuditRecord[]> {
+    const result = await this.db.query<AuditRow>(SELECT_ALL_SQL);
     return result.rows.map(rowToAuditRecord);
   }
 }

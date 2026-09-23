@@ -23,10 +23,22 @@ async function main(): Promise<void> {
   const persistence = await connectPersistence(settings);
   const runtime = createRuntime(
     settings,
-    persistence ? { identityBindings: persistence.identityBindings } : {},
+    persistence
+      ? {
+          repositories: {
+            audit: persistence.audit,
+            joinRequests: persistence.joinRequests,
+            groupConfigs: persistence.groupConfigs,
+            identityBindings: persistence.identityBindings,
+            groupMessageModes: persistence.groupMessageModes,
+            permissions: persistence.permissions,
+            activities: persistence.activities,
+          },
+        }
+      : {},
   );
   if (persistence) {
-    await runtime.identityMap.reload();
+    await runtime.load();
   }
 
   log.info("qq-group-ops Node.js runtime");
@@ -42,6 +54,7 @@ async function main(): Promise<void> {
 
   if (runtime.mode === "fake") {
     log.warn("fake mode: official WebSocket gateway not started");
+    await runtime.flush();
     await persistence?.close();
     await closeLogging();
     return;
@@ -63,6 +76,7 @@ async function main(): Promise<void> {
       },
       onGroupMessageMode: (groupId, enabled) => {
         runtime.groupMessageMode.setEnabled(groupId, enabled);
+        void runtime.flush();
         log.info("group full-message mode changed", { groupId, enabled });
       },
     }),
@@ -74,6 +88,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (): Promise<void> => {
     await gateway.stop();
+    await runtime.flush();
     await persistence?.close();
     await closeLogging();
     process.exit(0);

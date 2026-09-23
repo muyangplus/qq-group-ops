@@ -83,7 +83,9 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 - `super`：全局超级管理员。
 - `admin`：当前群的群管理员。
 - `mod`：当前群的审核员。
-- 当前权限配置保存在内存中，重启后恢复为 `ADMIN_USER_IDS` 的初始值；PostgreSQL 持久化待实现。
+- 当前权限配置会持久化到 PostgreSQL（配置了 `DATABASE_URL` 时）。
+- `ADMIN_USER_IDS` 只在数据库里不存在任何超级管理员时作为初始种子写入；之后以数据库为准。
+  这意味着把某人从 `ADMIN_USER_IDS` 删除并不会撤销其权限，需要用 `/perm revoke super` 显式撤销。
 
 ### 私信指令
 
@@ -161,14 +163,23 @@ pnpm db:up
 pnpm dev
 ```
 
-启动时会自动执行 `src/db/schema.ts` 中的迁移，当前持久化的表：
+启动时会自动执行 `src/db/schema.ts` 中的迁移。配置 `DATABASE_URL` 后，以下状态都会持久化并在启动时载入：
 
-- `identity_bindings`：OpenID ↔ QQ号 / 群号 绑定（已接入运行时）
-- `audit_records`：审计记录
-- `join_requests`：入群申请
-- `group_configs` / `group_keywords`：群配置
+| 表 | 内容 | 服务 |
+|---|---|---|
+| `identity_bindings` | OpenID ↔ QQ号 / 群号 | `IdentityMapService` |
+| `permission_grants` | 超管 / 群管理员 / 审核员授权 | `PermissionService` |
+| `audit_records` | 审计记录 | `AuditLogStore` |
+| `join_requests` | 入群申请与审批结果 | `JoinAuditService` |
+| `group_configs` / `group_keywords` | 群配置与关键词 | `GroupConfigStore` |
+| `group_message_modes` | 全量消息模式诊断 | `GroupMessageModeRegistry` |
+| `activities` / `activity_registrations` | 活动与报名 | `ActivityService` |
 
-其中审计、入群申请、群配置仓储已经实现，但服务层仍在内存中运行，持久化接线会在后续阶段完成。
+写入策略：
+
+- 读走内存，写操作同步更新内存并进入顺序写穿透队列（`WriteQueue`），由运行时在**回复用户前**和**进程退出前** `flush()` 到数据库；
+- 单个写入失败只记录错误日志并计数，不会中断后续写入；
+- 启动时会把审计记录、入群申请全量载入内存，请结合 `AUDIT_LOG_RETENTION_DAYS` 等保留策略控制历史数据规模。
 
 ## 日志
 
