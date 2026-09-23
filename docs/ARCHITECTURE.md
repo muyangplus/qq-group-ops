@@ -37,6 +37,8 @@ TypeScript 核心服务
   ├── services/joinApproval.ts   入群审批（先官方接口后本地状态）
   ├── services/joinRules.ts      入群规则引擎（班级+姓名解析、决策模式、审核意见）
   ├── services/memberRoster.ts   班级/专业索引加载与姓名抽取
+  ├── services/joinRequestCard.ts 入群申请推送卡片（Markdown + 指令按钮）
+  ├── services/notifications.ts  入群申请推送（订阅、权限过滤、三级降级、投递去重）
   ├── services/adminCommands.ts  管理员命令（含 /rules set、/audit、/sync）
   ├── services/groupConfig.ts    多群配置
   ├── services/activity.ts       活动报名

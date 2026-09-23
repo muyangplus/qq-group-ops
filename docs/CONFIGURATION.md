@@ -137,7 +137,7 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 | 能力 | 全局超管 | 本群超管 | 群管理员 | 审核员 | 成员 |
 |---|---|---|---|---|---|
 | `/perm`、`/rules all`、`/bind user\|groupid`、`/whois` | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `/approve`、`/reject`、`/rules set`、`/bind group` | ✅ | ✅（本群） | ✅（本群） | ❌ | ❌ |
+| `/approve`、`/reject`、`/rules set`、`/bind group`、`/notify` | ✅ | ✅（本群） | ✅（本群） | ❌ | ❌ |
 | `/pending`、`/sync`、`/audit`、`/test`、`/rules`、`/status` | ✅ | ✅（本群） | ✅（本群） | ✅（本群） | ❌ |
 | `/myperm`、`/help` | ✅ | ✅ | ✅ | ✅ | ✅ |
 
@@ -217,6 +217,24 @@ CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json CLASS_INDE
 
 自动决策遵循「先官方、后本地」：官方审批接口调用失败时申请保持待审批状态。
 
+### 入群申请推送（`/notify`）
+
+能审批入群申请的人（群管理员 / 本群超管 / 全局超管）可以订阅私聊推送：
+
+```text
+/notify                               # 查看当前订阅
+/notify on|off                        # 群内=本群；私信=你担任群管理员的全部群
+/notify all on|off                    # 全部群
+/notify <group_openid|群号> on|off     # 指定群
+/notify test                          # 给自己发一张测试卡片
+```
+
+- 推送时机：只推送**仍需人工处理**的申请（`manual` / 规则无法判定）；自动通过/拒绝的不推送；
+- 接收者：订阅了该群（或全部群）**且**在当前群有审批权限的人；订阅持久化在 `notification_subscriptions`；
+- 卡片：Markdown 正文 + 「同意 / 拒绝」指令按钮；按钮未开通（官方内邀）会自动降级为纯 Markdown → 纯文本；
+- 去重：同一 (群, 申请, 人) 只推一次，投递记录在 `notification_deliveries`，重启后不重复；
+- 推送是**主动消息**：用户可在 QQ 客户端关闭「允许主动发送」，失败只记日志，不影响 `/pending`。
+
 ### 全局规则（`all`）
 
 超管可以把任一字段配置成全局默认，语法是 `/rules set all <字段> <值>`；未单独覆盖该字段的群会继承，已覆盖的群以自己的配置为准（**按字段继承**）。
@@ -267,6 +285,8 @@ CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json CLASS_INDE
 /reject <group_openid|群号> <申请ID> [原因]
 /rules <group_openid|群号>
 /rules set <group_openid|群号> <字段> <值>
+/notify [group_openid|群号|all] on|off
+/notify test
 /audit <group_openid|群号> [数量]
 /status <group_openid|群号>
 /perm grant gsuper <group_openid|群号> <userId|QQ号>
@@ -353,6 +373,8 @@ pnpm db:up     # docker compose --profile postgres up -d db
 | `join_requests` | 入群申请与审批结果 | `JoinAuditService` |
 | `group_configs` / `group_keywords` | 群配置与关键词 | `GroupConfigStore` |
 | `group_settings` | 群扩展配置（命中动作、入群审核规则等，键值对） | `GroupConfigStore` |
+| `notification_subscriptions` | 入群申请推送订阅（`__all__` 或 group_openid） | `NotificationService` |
+| `notification_deliveries` | 推送投递记录（去重与排查） | `NotificationService` |
 | `group_message_modes` | 全量消息模式诊断 | `GroupMessageModeRegistry` |
 | `activities` / `activity_registrations` | 活动与报名 | `ActivityService` |
 

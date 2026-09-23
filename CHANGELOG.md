@@ -11,7 +11,7 @@
   - 主题详情也做权限过滤：无权限时只提示所需权限，不展示执行不了的命令；
   - `/help rules` 在群内会附带该群**当前生效值**（关键词、开关、警告文案、禁言时长）；
   - `/help bind` 会显示你当前的绑定状态；
-  - 主题定义抽到 `src/services/helpTopics.ts`，共 13 个主题，便于扩展与测试。
+  - 主题定义抽到 `src/services/helpTopics.ts`（当前 14 个主题），便于扩展与测试。
 - **权限模型拆分**：新增「本群超级管理员」（`/perm grant gsuper`，别名 `groupsuper` / `群超管` / `本群超管` / `群超级管理员`）。
   - 只在该群内等价于 `super_admin`（可审批、改规则、查审计、导出），拿不到 `/perm`、`/rules all`、`/bind user|groupid`、`/whois` 等平台级能力；
   - 每个群的角色单独配置，`/perm list` 与 `/myperm` 分别展示全局/本群超管；
@@ -36,6 +36,13 @@
 - **群扩展配置持久化**：新增 `group_settings` 键值表（`group_id` + `setting_key` + `setting_value`），承载 `keywordRecall` / `keywordPunish` / `joinDecision` / `joinRequireClass` / `joinRequireName` / `joinAnswerPattern` / `joinReviewOpinion`。
   - 与 `group_configs` 的列式字段分开存：新增扩展字段只需写键值表，**无需 ALTER TABLE**；SQLite 与 PostgreSQL 通用；
   - `GroupConfigStore.persistGroupOverride` 只在该群的 SQL 列字段变化时更新 `group_configs`，扩展字段单独写 `group_settings`。
+- **入群申请推送（卡片 + 快捷同意/拒绝）**：`/notify` 让能审批的人在私聊里接收待审批申请。
+  - `/notify on|off`（群内=本群、私信=全部群）、`/notify all on|off`、`/notify <group_openid|群号> on|off`、`/notify test`；
+  - 推送内容为 **Markdown 消息 + 内嵌指令按钮**（官方结构化卡片只收不发）；「同意 / 拒绝」按钮等于发送 `/approve`、`/reject` 指令并带二次确认，权限校验与手动输入完全一致；
+  - 自定义按钮是官方**内邀白名单**能力：首次被拒后自动降级为纯 Markdown，再失败降级为纯文本（仍带完整指令）；
+  - 只推送仍需人工处理的申请；同一 (群, 申请, 人) 只推一次；
+  - 新增 `notification_subscriptions`（订阅）与 `notification_deliveries`（投递去重）两张表，均随数据保留策略清理；
+  - `instrumentQQOfficialAPI` 修复为透传富消息 `options`、`removeGroupMember` 的 `addToMemberBlacklist`，并补上 `updateMemberBlacklist` 的调试包装。
 
 ### 已知限制
 

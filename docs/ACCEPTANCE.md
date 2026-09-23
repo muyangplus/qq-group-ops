@@ -60,6 +60,11 @@ B/C/D/G 组的核心链路（审批闭环、关键词警告/处罚与审计、�
 | C7 | 班级+姓名规则 | 先 `pnpm class:index`，再 `/rules set joinRequireClass on`、`/rules set joinRequireName on`、`/rules set joinDecision approve_on_match`、`/rules set joinReviewOpinion on`；用正确回答与错误回答各申请一次 | 正确 → 自动通过；错误 → 保持待审批，`/pending` 显示识别到的班级/姓名与「建议：人工审核」 |
 | C8 | 规则不误放行 | 删除/改名 `data/class-index.json`，或把 `joinAnswerPattern` 设成无效正则（应被拒绝保存），再触发一次申请 | 规则无法判定时一律转人工，日志有 `configIssue`，绝不会自动通过 |
 | C9 | 决策模式 | 分别试 `reject_on_match` 与 `reject_on_mismatch` | 命中/未命中按表格语义自动拒绝，且 `/audit` 里 reason 为截断后的审核意见 |
+| C10 | 订阅推送 | 群管理员在群里 `/notify on` | 回复「已开启」；`/notify` 显示「群 654321：已开启」；重启后 `/notify` 仍是已开启 |
+| C11 | 收到卡片 | 用小号再申请一次入群 | 私聊收到 Markdown 卡片：群号、申请人、回答、审核意见，底部有「同意 / 拒绝」按钮 |
+| C12 | 按钮审批 | 点「同意」并在二次确认里确认 | 自动发送 `/approve <group> <申请ID>`，申请通过；`/audit` 出现 `approve_join_request` |
+| C13 | 按钮未开通时降级 | 若应用没有自定义按钮白名单 | 仍能收到纯 Markdown（或纯文本）推送，内容带完整指令；日志出现键盘降级告警，审批流程不受影响 |
+| C14 | 主动消息失败可见 | 在 QQ 客户端关闭「允许主动发送」后再申请一次 | 推送失败只记日志与投递状态，申请仍在 `/pending`；`/notify test` 返回失败提示 |
 
 > C3 依赖官方 `approval_join_request` 接口与机器人权限；若返回 `11253` 或权限错误，请确认机器人在该群的管理员身份与开放平台权限。
 
@@ -125,6 +130,7 @@ D 关键词审核：通过 / 未通过    备注：
 E 非 @ 指令：通过 / 未通过     备注：
 F 禁言/踢人：通过 / 未通过     备注：
 G 持久化：通过 / 未通过        备注：
+H 入群申请推送：通过 / 未通过  备注：
 ```
 
 ## 8. 失败排查速查
@@ -146,6 +152,9 @@ rg 'approveJoinRequest|approved join request|auto approved' logs/qq-group-ops.lo
 # 审核命中
 rg 'rule matched|moderation:' logs/qq-group-ops.log
 
+# 入群申请推送（订阅、降级、失败）
+rg 'notification (subscribed|delivered)|join request push|custom keyboard rejected|notification attempt failed' logs/qq-group-ops.log
+
 # 持久化写入失败
 rg 'persistence write failed' logs/qq-group-ops.log
 ```
@@ -156,4 +165,5 @@ rg 'persistence write failed' logs/qq-group-ops.log
 - **400 频率限制**：等待 1–2 分钟；确认 `QQ_BOT_CACHE_FILE` 生效，重启复用 token 与网关地址。
 - **审批后没进群**：查看是否返回 `审批失败`；确认机器人在群内是管理员、开放平台侧有相应权限。
 - **踢人失败 11253**：该接口仅白名单机器人可用，需要向平台申请。
+- **收不到入群推送**：确认 `/notify` 已开启、你在这个群有审批权限、已 `/bind qq`；若是主动消息被关闭或按钮未开通，看日志里的降级/失败记录，`/notify test` 可自检。
 - **数据没保存**：确认 `DATABASE_URL` 不是 `memory`，并检查 `persistence write failed` 日志。

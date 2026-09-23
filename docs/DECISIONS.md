@@ -376,6 +376,30 @@
 - 理由：项目定位是「仅用 QQ 官方 API」，为了一个非核心功能引入非官方实现会破坏可维护性与合规性；人工改名一次的成本远低于维护第三方协议栈。
 - 影响：文档（README / CONFIGURATION / CHANGELOG）明确写出该限制与替代做法，避免使用者误以为配置后会自动改名片。
 
+## ADR-0034：入群申请推送用「Markdown + 指令按钮」，订阅粒度到群，接收人按审批权限过滤
+
+- 状态：已采纳
+- 背景：需求是「审核员可订阅全部/某群的入群申请推送，有申请就推给所有审核员，推送用卡片并带快捷同意/拒绝按钮」。核实官方文档后确认：
+  1. **结构化卡片（Ark）只能收、不能由机器人发送**（消息类型支持表：单聊/群聊「结构化卡片 发 ❌」）；
+  2. 机器人能发的富消息是 `msg_type=0` 文本、`2` Markdown、`7` 富媒体；
+  3. **自定义 Markdown 已对所有机器人开放**（2026-04-23 起，单聊/群聊无需申请模板）；**自定义按钮 `keyboard.content` 是内邀开通能力**，按钮模板也需要申请；
+  4. 单聊主动消息受频控（未认证 5 qps & 30 qpm、单关系 20 qpm、每用户每天 1000 条），且用户可在 QQ 客户端关闭「允许主动发送」，关闭后主动消息必失败。
+- 决策：
+  1. **卡片实现为 Markdown + 内嵌键盘**：正文用 `markdown.content`，底部 `keyboard.content.rows` 放「同意 / 拒绝」按钮；
+  2. 按钮用**指令按钮**（`action.type=2`）：点击即发送 `/approve <group_openid> <申请ID>` / `/reject <group_openid> <申请ID> 审核未通过`，并配 `modal` 二次确认、`permission.type=0 + specify_user_ids` 限定接收人。这样按钮与手动输入走**同一套指令与权限校验**，不新增回调面、也不可能绕过权限；
+  3. **三级降级**：Markdown+按钮 → Markdown → 纯文本（都带完整指令）。按钮被平台拒绝后机器人级记住该状态，后续不再重试按钮，避免每条推送白打一次；
+  4. **订阅只允许两种粒度**：`__all__`（我担任群管理员的全部群）与单个 `group_openid`，存 `notification_subscriptions`；
+  5. **接收人 = 订阅了该群 + 当前群有 `canApproveJoin` 权限**；订阅时校验一次、推送时再校验一次，越权订阅不会泄漏申请内容；按用户既有决策，审核员（moderator）不获得入群审批权限，因此订阅时会提示权限不足；
+  6. **只推送转人工的申请**（`applyJoinRules` 返回 `manual`），自动通过/拒绝不打扰；
+  7. **投递去重持久化**：新增 `notification_deliveries`，主键 `(group_id, request_id, user_id)`；同一申请对同一人只推一次，事件重投、`/sync` 补齐、进程重启都不会重复推送；投递记录随 `AUDIT_LOG_RETENTION_DAYS` 清理；
+  8. 推送失败只记日志与投递状态（`sent` / `failed` + detail），不抛错、不影响申请本身；`/notify test` 提供自检入口。
+- 理由：Armor 式「卡片」在官方能力里只有 Markdown+键盘这一条路可走；指令按钮复用既有命令体系，是最小惊讶、最少新代码、最安全的方案；三级降级保证没开通按钮白名单的部署也能用；去重表避免主动消息配额被浪费。
+- 影响：
+  - 新增 `src/services/notifications.ts`、`src/services/joinRequestCard.ts`、`src/db/notificationRepository.ts` 与两张表；
+  - `QQOfficialAPI.sendGroupMessage/sendPrivateMessage` 新增可选 `RichMessageOptions`（Markdown + keyboard），并新增按钮/弹窗类型定义；
+  - **修复 `instrumentQQOfficialAPI` 之前丢弃可选参数的缺陷**：`sendGroupMessage` / `sendPrivateMessage` 现在透传富消息 options，`removeGroupMember` 透传 `addToMemberBlacklist`，并补上 `updateMemberBlacklist` 调试包装（此前 `kick_blacklist` 经运行时装配后会退化成普通移出）；
+  - `/notify` 加入 `/help` 与 `/help notify` 主题；`RetentionService` 增加推送投递清理。
+
 
 
 
