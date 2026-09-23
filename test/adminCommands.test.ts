@@ -394,6 +394,63 @@ describe("AdminCommandService", async () => {
     expect(config.warningMessage).toBe("请勿刷屏");
   });
 
+  // README「配置群规则（完整示例）」里的私信流程与报错文案由该用例锁定
+  it("supports the documented private rule flow with a bound group number", async () => {
+    const keywords = await service.handle(
+      undefined,
+      "root",
+      "/rules set 654321 keywords 广告,刷屏",
+    );
+    expect(keywords.ok).toBe(true);
+    expect(configStore.get("g1").keywords).toEqual(["刷屏", "广告"]);
+
+    const warning = await service.handle(
+      undefined,
+      "root",
+      "/rules set 654321 warning 本群禁止广告与刷屏，请撤回并阅读群规。",
+    );
+    expect(warning.ok).toBe(true);
+    expect(configStore.get("g1").warningMessage).toBe(
+      "本群禁止广告与刷屏，请撤回并阅读群规。",
+    );
+
+    const view = await service.handle(undefined, "root", "/rules 654321");
+    expect(view.ok).toBe(true);
+    expect(view.text).toContain("本群禁止广告与刷屏");
+    expect(view.text).toContain("刷屏");
+    expect(view.text).toContain("禁言时长");
+
+    const unknown = await service.handle(
+      undefined,
+      "root",
+      "/rules set 654321 unknown 1",
+    );
+    expect(unknown.ok).toBe(false);
+    expect(unknown.text).toContain("未知字段");
+
+    const badToggle = await service.handle(
+      undefined,
+      "root",
+      "/rules set 654321 autoApprove maybe",
+    );
+    expect(badToggle.ok).toBe(false);
+    expect(badToggle.text).toContain("需要 on 或 off");
+
+    const badDuration = await service.handle(
+      undefined,
+      "root",
+      "/rules set 654321 muteDuration abc",
+    );
+    expect(badDuration.ok).toBe(false);
+    expect(badDuration.text).toContain("禁言时长需要非负整数（秒）");
+  });
+
+  it("caps muteDuration at 30 days", async () => {
+    await service.handle("g1", "admin", "/rules set muteDuration 99999999999");
+
+    expect(configStore.get("g1").muteDurationSeconds).toBe(30 * 24 * 60 * 60);
+  });
+
   it("rejects invalid /rules set values", async () => {
     const toggle = await service.handle("g1", "admin", "/rules set autoApprove maybe");
     expect(toggle.ok).toBe(false);

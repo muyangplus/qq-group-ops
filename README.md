@@ -9,7 +9,7 @@
 - 技术路线：**仅使用 QQ 官方开放平台 API**，不使用 OneBot、NapCat、Lagrange 等个人号协议端。
 - 已实现：配置、结构化调试日志（控制台 + 文件 + auto 彩色）、领域模型、规则引擎、审计日志、权限模型、权限自助查询、超管权限配置、OpenID ↔ QQ号/群号映射、全状态持久化（SQLite 默认 / PostgreSQL 可选：绑定关系、权限、审计、入群申请、群配置、全量消息模式、活动报名）、数据保留清理（审计与已审批申请，启动 + 每 24 小时）、动态权限帮助、私信指令、全量消息模式诊断、多群配置、入群审核状态机、入群审批调用官方接口（含自动通过）、官方申请同步（`/sync`）、群配置关键词驱动的消息审核、`/rules set` 群规则配置、`/audit` 审计查询、官方禁言/踢人接口（请求体已按官方文档核对）、事件路由、事件网关抽象、官方 WebSocket 协议网关（自动重连 + Resume 会话恢复 + 心跳 ACK 超时检测 + 指数退避 + 限流冷却）、官方事件映射器、原生 WebSocket 工厂、access token 与网关地址持久化缓存、出站消息节流与 22009 重试、被动回复配额拦截、401 自动刷新、事件与回复失败容错、`/test` 自检指令、运行时装配、数据库 schema/迁移/方言适配与全部仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
 - 待实现：真实环境联调、Web 管理后台、内容安全与 AI 辅助。
-- 测试：Vitest，共 306 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
+- 测试：Vitest，共 308 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
 
 ## 技术栈
 
@@ -112,6 +112,188 @@ pnpm start       # 运行编译后的入口
 ```
 
 默认使用 SQLite，启动会自动建表并载入全部持久化状态。想切到 PostgreSQL 时，在 `.env` 里设置 `DATABASE_URL=postgres://...` 并执行 `pnpm db:up`；`DATABASE_URL=memory` 则是纯内存模式（重启即丢）。
+
+## 配置群规则（完整示例）
+
+群规则决定机器人在这个群里做什么：关键词过滤、命中后的警告文案、是否审核入群、是否自动通过。规则保存在数据库里（SQLite / PostgreSQL），重启不丢；修改后立即生效，不需要重启机器人。
+
+### 权限与前置条件
+
+| 操作 | 指令 | 需要权限 |
+|---|---|---|
+| 查看规则 | `/rules` | 审核员（moderate）及以上 |
+| 修改规则 | `/rules set ...` | 群管理员（admin）及以上 |
+
+前置条件（强制绑定，见 [配置说明](docs/CONFIGURATION.md)）：
+
+- 使用者先绑定自己的 QQ 号：`/bind qq <QQ号>`
+- 在群内执行群指令前，本群要先绑定群号（由群管理员执行）：`/bind group <群号>`
+- 私信中操作某个群时，需要把该群已绑定的**群号**或 `group_openid` 写在指令里
+
+### 1. 查看当前规则
+
+群内：
+
+```text
+/rules
+```
+
+私信（指定群）：
+
+```text
+/rules 654321
+/rules 0123456789ABCDEF0123456789ABCDEF
+```
+
+返回示例：
+
+```text
+群 0123456789ABCDEF0123456789ABCDEF 规则配置：
+启用：true
+关键词过滤：true
+关键词：（未配置）
+入群审核：true
+自动通过：false
+导出功能：false
+警告文案：请遵守群规，不要发送违规内容。
+禁言时长：600 秒
+```
+
+### 2. 配置关键词（最常用）
+
+群内：
+
+```text
+/rules set keywords 广告,刷屏,加群
+/rules set keywords 广告 刷屏 加群
+/rules set keywords 广告、刷屏、加群
+/rules set keywords clear
+```
+
+私信（带群号，`<group_openid|群号>` 二者皆可）：
+
+```text
+/rules set 654321 keywords 广告,刷屏
+/rules set 0123456789ABCDEF0123456789ABCDEF keywords 广告,刷屏
+```
+
+说明：
+
+- 分隔符支持英文逗号 `,`、中文逗号 `，`、顿号 `、` 和空格，可混用；
+- 关键词会**去重、去空白并按字典序保存**，所以 `/rules` 里显示的顺序可能和输入顺序不同；
+- 命中任一关键词即触发**警告**：发送下面的「警告文案」，并写一条审计记录（`/audit` 可查）；
+- `clear`（也接受 `清空`、`默认`、`reset`）表示清空关键词；
+- 修改立即生效。
+
+### 3. 自定义警告文案
+
+```text
+/rules set warning 本群禁止广告，请撤回并阅读群规。
+/rules set warning clear
+```
+
+`clear` 会把文案恢复为默认值 `请遵守群规，不要发送违规内容。`
+
+### 4. 开关类配置
+
+```text
+/rules set wordFilter off       # 关闭关键词过滤（关键词会保留，方便随时开回）
+/rules set joinAudit off        # 关闭入群审核开关（见下方说明）
+/rules set autoApprove on       # 新入群申请自动通过
+/rules set export on            # 导出功能开关
+/rules set enabled off          # 关闭本群机器人
+```
+
+开关取值：`on` / `off`，同时接受 `true`/`false`、`1`/`0`、`yes`/`no`、`开`/`关`、`启用`/`关闭`、`是`/`否`。
+
+各开关的实际作用：
+
+| 开关 | 作用 |
+|---|---|
+| `wordFilter` | 关键词过滤总开关；关闭后命中也不再警告，但关键词配置保留 |
+| `enabled` | 本群总开关；关闭后停止关键词审核与自动通过（管理指令仍可用） |
+| `joinAudit` | 目前只作为「自动通过」的前置条件；不会禁用 `/pending`、`/sync`、`/approve` |
+| `autoApprove` | 需要 `enabled` 与 `joinAudit` 同时开启才会自动通过新申请 |
+| `export` | 目前仅存储与展示，导出能力的鉴权以权限模型为准 |
+
+### 5. 禁言时长
+
+```text
+/rules set muteDuration 600
+```
+
+单位是秒，取值必须是非负整数，上限 30 天（`2592000` 秒，超出会被截断）。
+
+> 当前版本关键词命中的动作固定为「警告」，禁言/踢人动作需要在 `src/services/moderation.ts` 的规则引擎中配置动作后才会用到这个时长，因此 `muteDuration` 属于预留配置。
+
+### 6. 一次性配好（推荐流程）
+
+群内依次执行：
+
+```text
+/bind qq 123456789
+/rules set keywords 广告,刷屏,加群,代刷
+/rules set warning 本群禁止广告与刷屏，请撤回并阅读群规。
+/rules set wordFilter on
+/rules set joinAudit on
+/rules set autoApprove off
+/rules set muteDuration 600
+/rules
+```
+
+私信等价写法（群管理指令需要带群号）：
+
+```text
+/bind qq 123456789
+/rules set 654321 keywords 广告,刷屏,加群,代刷
+/rules set 654321 warning 本群禁止广告与刷屏，请撤回并阅读群规。
+/rules set 654321 wordFilter on
+/rules set 654321 joinAudit on
+/rules set 654321 autoApprove off
+/rules set 654321 muteDuration 600
+/rules 654321
+```
+
+后续调整只发需要改的那一条即可（每次 `set` 只更新指定字段，不会重置其他字段）：
+
+```text
+/rules set keywords 广告,刷屏,加群,代刷,外挂
+/rules set autoApprove on
+```
+
+### 7. 验证是否生效
+
+1. 在群里发一条包含关键词的消息，机器人应回复你配置的警告文案；
+2. `/audit` 查看最近记录，应出现 `moderation:warn`，reason 为 `命中关键词：<关键词>`；
+3. `/status` 查看该群运行状态（启用、过滤、全量消息模式等）。
+
+### 8. 字段速查表
+
+| 字段 | 别名 | 取值 | 说明 |
+|---|---|---|---|
+| `keywords` | `keyword`、`关键词` | 关键词列表；`clear` 清空 | 命中即警告 |
+| `warning` | `warningMessage`、`警告` | 任意文案；`clear` 恢复默认 | 命中后发送的文案 |
+| `muteDuration` | `mute`、`禁言时长` | 非负整数秒，≤ `2592000` | 预留：禁言动作使用的时长 |
+| `wordFilter` | `关键词过滤` | on / off | 关键词过滤总开关 |
+| `joinAudit` | `入群审核` | on / off | 自动通过的前置开关 |
+| `autoApprove` | `自动通过` | on / off | 新入群申请自动通过 |
+| `export` | `导出` | on / off | 导出开关（当前仅存储展示） |
+| `enabled` | `启用` | on / off | 本群机器人总开关 |
+
+### 9. 常见报错
+
+| 提示 | 原因与处理 |
+|---|---|
+| `权限不足：需要群管理员或以上权限。` | `/rules set` 需要群管理员或超管；`/rules` 只需审核员及以上 |
+| `请先绑定 QQ 号：/bind qq <QQ号>` | 先绑定自己的 QQ 号 |
+| `请先绑定本群：/bind group <群号>` | 群管理员先在群里绑定群号 |
+| `设置失败：未知字段：xxx` | 字段名写错，对照上面的速查表 |
+| `设置失败：xxx 需要 on 或 off` | 开关只能填 on/off 及其同义写法 |
+| `设置失败：禁言时长需要非负整数（秒）` | `muteDuration` 只能填数字 |
+| `私信中设置规则需要提供已绑定的 group_openid 或群号。` | 私信里必须写群号或 `group_openid`，且该群已绑定 |
+| 配了关键词但没反应 | 检查 `/rules` 里 `启用` 与 `关键词过滤` 是否为 `true`；非 @ 的普通消息还需要群管理员在机器人资料页开启「接收所有消息」 |
+
+更多细节见 [配置说明](docs/CONFIGURATION.md) 与 [真实环境验收清单](docs/ACCEPTANCE.md)。
 
 ## 项目结构
 
