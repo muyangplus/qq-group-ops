@@ -124,6 +124,52 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 - `ADMIN_USER_IDS` 只在数据库里不存在任何超级管理员时作为初始种子写入；之后以数据库为准。
   这意味着把某人从 `ADMIN_USER_IDS` 删除并不会撤销其权限，需要用 `/perm revoke super` 显式撤销。
 
+## 群规则与内容审核
+
+群管理员在群内（或私信中带群号）配置规则：
+
+```text
+/rules                                             # 查看当前群规则
+/rules set keywords 广告,刷屏,加群                  # 设置关键词（逗号、顿号或空格分隔）
+/rules set keywords clear                          # 清空关键词
+/rules set warning 本群禁止广告，请撤回。           # 自定义警告文案
+/rules set warning clear                           # 恢复默认警告文案
+/rules set muteDuration 600                        # 禁言时长（秒），供禁言动作使用
+/rules set wordFilter on|off                       # 关键词过滤总开关
+/rules set joinAudit on|off                        # 入群审核开关
+/rules set autoApprove on|off                      # 自动通过入群申请
+/rules set export on|off                           # 导出功能开关
+/rules set enabled on|off                          # 机器人本群总开关
+```
+
+私信中使用时需要在 `set` 后加群号：
+
+```text
+/rules set <group_openid|群号> keywords 广告,刷屏
+```
+
+审核行为：
+
+- 群配置里的关键词会真正参与消息审核；命中后默认动作是**警告**（发送该群的警告文案并写入审计）。
+- 关键词按群隔离，修改后立即生效（规则引擎按群缓存，关键词变化时自动失效）。
+- 关键词会去重、去空白并按字典序保存，保证重启前后顺序一致。
+- 入群申请审批：
+
+```text
+/pending [group_openid|群号]               # 查看本地待审批队列
+/sync [group_openid|群号]                  # 从官方接口补齐待审批申请（按群 30 秒节流）
+/approve [group_openid|群号] <申请ID>       # 通过（会调用官方审批接口）
+/reject [group_openid|群号] <申请ID> [原因]  # 拒绝（会调用官方审批接口）
+```
+
+审批顺序是「先调用官方接口，成功后再更新本地状态」；官方调用失败时申请保持待审批并返回错误。
+
+审计查询（审核员及以上）：
+
+```text
+/audit [group_openid|群号] [数量]   # 默认 10 条，最多 50 条
+```
+
 ### 私信指令
 
 私信支持以下指令：
@@ -137,9 +183,12 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 
 ```text
 /pending <group_openid|群号>
+/sync <group_openid|群号>
 /approve <group_openid|群号> <申请ID>
 /reject <group_openid|群号> <申请ID> [原因]
 /rules <group_openid|群号>
+/rules set <group_openid|群号> <字段> <值>
+/audit <group_openid|群号> [数量]
 /status <group_openid|群号>
 /perm grant admin <group_openid|群号> <userId|QQ号>
 /perm grant mod <group_openid|群号> <userId|QQ号>

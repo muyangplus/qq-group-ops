@@ -33,8 +33,9 @@ TypeScript 核心服务
   ├── services/messageGuard.ts   消息审核执行
   ├── services/eventRouter.ts    事件路由
   ├── services/joinAudit.ts      入群审核状态机
-  ├── services/joinAuditSync.ts  官方申请同步
-  ├── services/adminCommands.ts  管理员命令
+  ├── services/joinAuditSync.ts  官方申请同步（按群节流）
+  ├── services/joinApproval.ts   入群审批（先官方接口后本地状态）
+  ├── services/adminCommands.ts  管理员命令（含 /rules set、/audit、/sync）
   ├── services/groupConfig.ts    多群配置
   ├── services/activity.ts       活动报名
   ├── services/export.ts         信息导出
@@ -118,5 +119,6 @@ Web 管理 API + 管理后台（Phase 2）
 - 官方 API 的频率、配额和可管理群数量。
 - 个人开发者账号的群聊权限范围。
 - `restrict_chat_setting` 和 `batch_remove_members` 的请求体结构。
+- `approval_join_request` 的请求体与 `join_request_list` 返回字段（审批闭环依赖它）。
 
 这些风险在开发过程中持续跟踪，未确认前不写入“必然支持”的实现承诺。

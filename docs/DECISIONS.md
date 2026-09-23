@@ -217,4 +217,23 @@
   - `QQOfficialGateway` 新增 `reconnect` / `random` / `onReconnect` 选项；
   - 配置了 `QQ_BOT_TOKEN` 时以人工配置为准，不自动刷新（需运维自行更新）。
 
+## ADR-0024：打通审批闭环与群配置驱动的审核
+
+- 状态：已采纳
+- 背景：阶段 A 排查发现四处「代码已实现但没有接线」：`/approve`、`/reject` 只改本地状态不调用官方审批接口；`JoinRequestSyncService` 从未被实例化；`MessageGuardService` 用空规则引擎导致关键词过滤实际是空转；群规则只能读不能写、审计日志无法查询。
+- 决策：
+  1. **审批先官方后本地**：新增 `JoinApprovalService`，先调用官方 `approval_join_request`，成功后再更新本地状态与审计；官方失败时本地保持 `pending`，避免「机器人说已通过、群里其实没通过」。
+  2. **自动通过**：`autoApproveJoin` 生效，入群事件到达时由 `EventRouter` 调用官方接口自动审批，失败只记日志并留在待审批队列。
+  3. **群配置关键词驱动审核**：`MessageGuardService` 按群把 `config.keywords` 转成规则（`RuleEngine.fromKeywords`），与静态规则合并后使用；按群缓存引擎，关键词变化时自动失效。关键词命中默认动作为警告，文案取该群 `warningMessage`。
+  4. **`/rules set`**：支持 `keywords|warning|muteDuration|wordFilter|joinAudit|autoApprove|export|enabled`；`GroupConfigStore.setOverride` 改为**合并**局部覆盖，避免设置一个字段把其他字段重置。
+  5. **`/audit [数量]`**：审核员及以上可按群查看最近审计记录。
+  6. **`/sync`**：审核员及以上可从官方接口补齐待审批申请，按群节流（默认 30 秒），并给出冷却提示。
+- 理由：审批闭环是 MVP 的退出条件；关键词过滤是内容审核的核心能力，空转等于没有审核；群配置已经持久化，缺少写入口就无法真正使用。
+- 影响：
+  - `AdminCommandService` 改为接收 options 对象（参数已达 7 个），并新增 `joinSync` 依赖；
+  - 新增 `src/services/joinApproval.ts`，`joinAuditSync.ts` 增加节流与统计；
+  - `/help` 对群管理员展示 `/rules set`，对审核员展示 `/audit`、`/sync`；
+  - 官方 `approval_join_request` 的请求体仍需在真实群验证（见「待验证的架构风险」）。
+
+
 
