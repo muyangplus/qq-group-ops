@@ -80,6 +80,24 @@ describe("join request card", () => {
     ]);
   });
 
+  it("shows the applicant nickname and the admin Q&A question", () => {
+    const card = buildJoinRequestCard({
+      ...input,
+      applicantName: "小明",
+      questions: ["请回答班级+姓名", "你的专业"],
+    });
+    expect(card.markdown).toContain("**申请人**：u1（小明）");
+    expect(card.markdown).toContain("**入群问题**：请回答班级+姓名 / 你的专业");
+
+    const text = renderJoinRequestCardText({
+      ...input,
+      applicantName: "小明",
+      questions: ["请回答班级+姓名"],
+    });
+    expect(text).toContain("申请人：u1（小明）");
+    expect(text).toContain("入群问题：请回答班级+姓名");
+  });
+
   it("includes the rule-engine opinion as a quote", () => {
     const card = buildJoinRequestCard({
       ...input,

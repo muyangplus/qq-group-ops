@@ -23,8 +23,12 @@ export interface JoinRequestCardInput {
   requestId: string;
   /** 申请人 openid。 */
   userId: string;
+  /** 申请人昵称（官方 `username`），可选。 */
+  applicantName?: string | undefined;
   /** 入群问题/理由原文。 */
   reason: string;
+  /** 管理员问答的题目（`admin_review_qa`），仅用于展示。 */
+  questions?: readonly string[] | undefined;
   /** 规则引擎给出的审核意见（可选）。 */
   opinion?: string | undefined;
   /** 接收者 userId：按钮只允许该用户点击。 */
@@ -68,10 +72,19 @@ export function buildJoinRequestCard(
   const rejectCommandFor = (reason: string): string =>
     `/reject ${input.groupId} ${input.requestId} ${reason}`;
 
+  const applicantLabel = `${escapeText(input.userId)}${
+    input.applicantName ? `（${escapeText(input.applicantName)}）` : ""
+  }`;
+  const questions = (input.questions ?? []).filter(
+    (question) => question.trim().length > 0,
+  );
   const lines = [
     "## 新的入群申请",
     `**群**：${escapeText(groupLabel)}`,
-    `**申请人**：${escapeText(input.userId)}`,
+    `**申请人**：${applicantLabel}`,
+    ...(questions.length > 0
+      ? [`**入群问题**：${escapeText(questions.join(" / "))}`]
+      : []),
     `**回答**：${escapeText(input.reason) || "（未填写）"}`,
     `**申请ID**：${escapeText(input.requestId)}`,
   ];
@@ -170,8 +183,13 @@ export function renderJoinRequestCardText(input: JoinRequestCardInput): string {
   const lines = [
     "【新的入群申请】",
     `群：${groupLabel}`,
-    `申请人：${input.userId}`,
+    `申请人：${input.userId}${
+      input.applicantName ? `（${singleLine(input.applicantName)}）` : ""
+    }`,
     `申请ID：${input.requestId}`,
+    ...(input.questions && input.questions.length > 0
+      ? [`入群问题：${input.questions.map(singleLine).join(" / ")}`]
+      : []),
     `回答：${singleLine(input.reason) || "（未填写）"}`,
   ];
   if (input.opinion) {

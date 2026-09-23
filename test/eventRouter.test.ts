@@ -69,7 +69,11 @@ describe("EventRouter", () => {
       groupId: "g1",
       userId: "u1",
       requestId: "r1",
-      reason: "想加入",
+      reason: "环工2214 小明",
+      applicantName: "小明",
+      verifyMethod: "admin_review_qa",
+      applySource: "self_apply",
+      questions: ["请回答班级+姓名"],
     });
 
     expect(result.detail).toBe("queued");
@@ -77,6 +81,9 @@ describe("EventRouter", () => {
     const message = api.sentPrivateMessages[0]!;
     expect(message.userOpenid).toBe("admin");
     expect(message.markdown).toContain("新的入群申请");
+    expect(message.markdown).toContain("**回答**：环工2214 小明");
+    expect(message.markdown).toContain("**申请人**：u1（小明）");
+    expect(message.markdown).toContain("**入群问题**：请回答班级+姓名");
     const buttons = (
       message.keyboard as {
         content: { rows: Array<{ buttons: Array<{ action: { data: string } }> }> };

@@ -23,6 +23,14 @@ export interface JoinRequestEvent {
   userId: string;
   requestId: string;
   reason?: string;
+  /** 申请人昵称（官方 `username`）。 */
+  applicantName?: string;
+  /** 入群验证方式：`verify_message` / `admin_review_qa`。 */
+  verifyMethod?: string;
+  /** 申请来源：`self_apply` / `invited`。 */
+  applySource?: string;
+  /** 管理员问答的题目（`admin_review_qa` 时携带）。 */
+  questions?: readonly string[];
 }
 
 export interface PrivateMessageEvent {
@@ -100,6 +108,14 @@ export class EventRouter {
       }
       case "join_request": {
         try {
+          log.debug("join request received", {
+            groupId: event.groupId,
+            requestId: event.requestId,
+            hasReason: Boolean(event.reason),
+            reasonLength: event.reason?.length ?? 0,
+            verifyMethod: event.verifyMethod,
+            applySource: event.applySource,
+          });
           // 事件可能重投：已经记录过的申请不再重复写入，但仍可补一次推送（投递表去重）。
           if (!this.joinAudit.has(event.requestId)) {
             this.joinAudit.submit(
@@ -121,6 +137,12 @@ export class EventRouter {
                 requestId: event.requestId,
                 userId: event.userId,
                 reason: event.reason ?? "",
+                ...(event.applicantName !== undefined
+                  ? { applicantName: event.applicantName }
+                  : {}),
+                ...(event.questions !== undefined
+                  ? { questions: event.questions }
+                  : {}),
               })
               .catch((error: unknown) => {
                 log.warn("join request notification failed", {

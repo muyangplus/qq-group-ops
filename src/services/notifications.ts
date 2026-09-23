@@ -33,6 +33,10 @@ export interface JoinRequestPush {
   requestId: string;
   userId: string;
   reason: string;
+  /** 申请人昵称（官方 `username`）。 */
+  applicantName?: string | undefined;
+  /** 管理员问答的题目，仅用于展示。 */
+  questions?: readonly string[] | undefined;
 }
 
 export interface NotificationPushResult {
@@ -202,6 +206,10 @@ export class NotificationService {
         requestId: push.requestId,
         userId: push.userId,
         reason: push.reason,
+        ...(push.applicantName !== undefined
+          ? { applicantName: push.applicantName }
+          : {}),
+        ...(push.questions !== undefined ? { questions: push.questions } : {}),
         opinion,
         recipientId: userId,
         withButtons: !this.keyboardDisabled,
