@@ -94,6 +94,14 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
 CREATE INDEX IF NOT EXISTS notification_deliveries_created_idx
   ON notification_deliveries (created_at);
 
+CREATE TABLE IF NOT EXISTS short_codes (
+  code TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('user', 'group', 'join_request')),
+  target_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (kind, target_id)
+);
+
 CREATE TABLE IF NOT EXISTS group_message_modes (
   group_id TEXT PRIMARY KEY,
   mode TEXT NOT NULL CHECK (mode IN ('all', 'at_only')),

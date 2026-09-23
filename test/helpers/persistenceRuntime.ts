@@ -11,6 +11,7 @@ import {
   SqlNotificationSubscriptionRepository,
 } from "../../src/db/notificationRepository.js";
 import { SqlPermissionRepository } from "../../src/db/permissionRepository.js";
+import { SqlShortCodeRepository } from "../../src/db/shortCodeRepository.js";
 import type { Queryable } from "../../src/db/queryable.js";
 import { createRuntime, type Runtime } from "../../src/runtime.js";
 
@@ -33,6 +34,7 @@ export function createPersistentRuntime(
         new SqlNotificationSubscriptionRepository(queryable),
       notificationDeliveries:
         new SqlNotificationDeliveryRepository(queryable),
+      shortCodes: new SqlShortCodeRepository(queryable),
     },
   });
 }

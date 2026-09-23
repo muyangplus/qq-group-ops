@@ -28,18 +28,8 @@ describe("IdentityMapService", () => {
     const map = new IdentityMapService();
     expect(map.resolveUserId("unknown")).toBeUndefined();
     expect(map.resolveGroupId("unknown")).toBeUndefined();
-  });
-
-  it("displays the bound QQ number / group number instead of the openid", async () => {
-    const map = new IdentityMapService();
-    await map.bindUser("openid-user", "123456");
-    await map.bindGroup("openid-group", "654321");
-
-    expect(map.displayUser("openid-user")).toBe("123456");
-    expect(map.displayGroup("openid-group")).toBe("654321");
-    // 未绑定时回退到 openid
-    expect(map.displayUser("stranger")).toBe("stranger");
-    expect(map.displayGroup("unknown-group")).toBe("unknown-group");
+    expect(map.getQq("unknown")).toBeUndefined();
+    expect(map.getGroupNumber("unknown")).toBeUndefined();
   });
 
   it("rebinds an official id and releases the previous external id", () => {

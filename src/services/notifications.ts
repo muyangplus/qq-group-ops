@@ -10,12 +10,14 @@ import type {
 } from "../db/notificationRepository.js";
 import { WriteQueue } from "../db/writeQueue.js";
 import type { GroupConfigStore } from "./groupConfig.js";
+import type { DisplayNameService } from "./displayNames.js";
 import type { IdentityMapService } from "./identityMap.js";
 import {
   buildJoinRequestCard,
   renderJoinRequestCardText,
   type JoinRequestCard,
   type JoinRequestCardInput,
+  type JoinRequestDecision,
 } from "./joinRequestCard.js";
 import {
   evaluateConfiguredJoinRules,
@@ -37,6 +39,8 @@ export interface JoinRequestPush {
   applicantName?: string | undefined;
   /** 管理员问答的题目，仅用于展示。 */
   questions?: readonly string[] | undefined;
+  /** 处理结果：默认 `manual`（待审核，带按钮）；自动处理时只通知结果。 */
+  decision?: JoinRequestDecision | undefined;
 }
 
 export interface NotificationPushResult {
@@ -57,6 +61,8 @@ export interface NotificationServiceOptions {
   deliveries?: NotificationDeliveryRepository | undefined;
   queue?: WriteQueue | undefined;
   identityMap?: IdentityMapService | undefined;
+  /** 展示名解析（群号/QQ号/短码）；缺省时回退到绑定号或内部 id。 */
+  display?: DisplayNameService | undefined;
   /** 用于在卡片里附带审核意见。 */
   configStore?: GroupConfigStore | undefined;
   joinRules?: JoinRuleEvaluator | undefined;
@@ -79,6 +85,7 @@ export class NotificationService {
   private readonly deliveryRepository: NotificationDeliveryRepository | undefined;
   private readonly queue: WriteQueue | undefined;
   private readonly identityMap: IdentityMapService | undefined;
+  private readonly display: DisplayNameService | undefined;
   private readonly configStore: GroupConfigStore | undefined;
   private readonly joinRules: JoinRuleEvaluator | undefined;
   private readonly now: () => Date;
@@ -97,6 +104,7 @@ export class NotificationService {
         ? (options.queue ?? new WriteQueue())
         : undefined;
     this.identityMap = options.identityMap;
+    this.display = options.display;
     this.configStore = options.configStore;
     this.joinRules = options.joinRules;
     this.now = options.now ?? (() => utcNow());
@@ -199,19 +207,29 @@ export class NotificationService {
     }
 
     const opinion = this.opinionFor(push.groupId, push.reason);
-    const applicantQq = this.identityMap?.getQq(push.userId);
+    // 展示名：优先 DisplayNameService（群号/QQ号/短码），否则回退到绑定号或内部 id
+    const groupLabel =
+      this.display?.group(push.groupId) ??
+      this.identityMap?.getGroupNumber(push.groupId) ??
+      push.groupId;
+    const applicantLabel =
+      this.display?.user(push.userId) ??
+      this.identityMap?.getQq(push.userId) ??
+      push.userId;
+    const requestLabel = this.display?.request(push.requestId) ?? push.requestId;
     for (const userId of recipients) {
       const input: JoinRequestCardInput = {
         groupId: push.groupId,
-        groupNumber: this.identityMap?.getGroupNumber(push.groupId),
-        requestId: push.requestId,
+        groupLabel,
+        requestId: requestLabel,
         userId: push.userId,
-        ...(applicantQq !== undefined ? { applicantQq } : {}),
+        applicantLabel,
         reason: push.reason,
         ...(push.applicantName !== undefined
           ? { applicantName: push.applicantName }
           : {}),
         ...(push.questions !== undefined ? { questions: push.questions } : {}),
+        ...(push.decision !== undefined ? { decision: push.decision } : {}),
         opinion,
         recipientId: userId,
         withButtons: !this.keyboardDisabled,
@@ -261,8 +279,10 @@ export class NotificationService {
         text: "你还没有可审批的群，无法发送测试卡片（入群审批需要群管理员或以上权限）。",
       };
     }
-    const groupNumber = this.identityMap?.getGroupNumber(groupId);
-    const groupLabel = groupNumber ?? groupId;
+    const groupLabel =
+      this.display?.group(groupId) ??
+      this.identityMap?.getGroupNumber(groupId) ??
+      groupId;
     const markdown = [
       "## 推送测试",
       "能看到这张卡片说明入群申请推送通道正常。",
@@ -273,9 +293,10 @@ export class NotificationService {
     ].join("\n");
     const input: JoinRequestCardInput = {
       groupId,
-      groupNumber,
+      groupLabel,
       requestId: "TEST",
       userId,
+      applicantLabel: this.display?.user(userId) ?? userId,
       reason: "推送测试",
       recipientId: userId,
       withButtons: !this.keyboardDisabled,

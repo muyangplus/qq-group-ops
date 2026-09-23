@@ -18,13 +18,18 @@ import type {
  */
 export interface JoinRequestCardInput {
   groupId: string;
-  /** 已绑定的群号，用于展示；未绑定则为 undefined。 */
+  /** 已绑定群号（旧字段，等价于 groupLabel）。 */
   groupNumber?: string | undefined;
+  /** 群展示名：群号或短码 `#XXXXXX`；由 DisplayNameService 生成。 */
+  groupLabel?: string | undefined;
+  /** 申请单号：短码 `#XXXXXX`（生产环境）或完整 join_request_id（兼容）。 */
   requestId: string;
-  /** 申请人 openid。 */
+  /** 申请人 openid（仅在没有任何展示名时兜底，生产环境不会用到）。 */
   userId: string;
-  /** 申请人已绑定的 QQ 号；有则优先展示，不再显示 openid。 */
+  /** 申请人已绑定的 QQ 号（旧字段，等价于 applicantLabel）。 */
   applicantQq?: string | undefined;
+  /** 申请人展示名：QQ号或短码 `#XXXXXX`。 */
+  applicantLabel?: string | undefined;
   /** 申请人昵称（官方 `username`），可选。 */
   applicantName?: string | undefined;
   /** 入群问题/理由原文。 */
@@ -33,11 +38,23 @@ export interface JoinRequestCardInput {
   questions?: readonly string[] | undefined;
   /** 规则引擎给出的审核意见（可选）。 */
   opinion?: string | undefined;
+  /**
+   * 处理结果：`manual` = 待人工审核（默认，带审批按钮）；
+   * `auto_approved` / `auto_rejected` = 机器人已自动处理，只通知结果、不给按钮。
+   */
+  decision?: JoinRequestDecision | undefined;
   /** 接收者 userId：按钮只允许该用户点击。 */
   recipientId: string;
   /** 关闭按钮（例如已知按钮未开通）时只生成 Markdown。 */
   withButtons?: boolean | undefined;
 }
+
+export type JoinRequestDecision = "manual" | "auto_approved" | "auto_rejected";
+
+const AUTO_DECISION_LABELS: Record<"auto_approved" | "auto_rejected", string> = {
+  auto_approved: "已自动通过（按入群规则）",
+  auto_rejected: "已自动拒绝（按入群规则）",
+};
 
 export interface JoinRequestCard {
   markdown: string;
@@ -66,17 +83,17 @@ const DEFAULT_REJECT_REASON = "审核未通过";
 export function buildJoinRequestCard(
   input: JoinRequestCardInput,
 ): JoinRequestCard {
-  // 展示用：绑定过的群/用户只显示群号/QQ号，未绑定才回退到内部 openid
-  const groupLabel = input.groupNumber ?? input.groupId;
-  const applicantId = input.applicantQq ?? input.userId;
-  // 按钮/指令参数用官方 id（最稳妥）；可见文本用解析后的群号
-  const approveCommand = `/approve ${input.groupId} ${input.requestId}`;
-  const rejectCommand = `/reject ${input.groupId} ${input.requestId} ${DEFAULT_REJECT_REASON}`;
+  // 展示用：优先用 DisplayNameService 给的展示名（群号/QQ号/短码）
+  const groupLabel = input.groupLabel ?? input.groupNumber ?? input.groupId;
+  const applicantId = input.applicantLabel ?? input.applicantQq ?? input.userId;
+  // 指令只用申请短码：短码唯一，处理时会自动定位所属群（群号/短码也可作为可选参数）
+  const approveCommand = `/approve ${input.requestId}`;
   const rejectCommandFor = (reason: string): string =>
-    `/reject ${input.groupId} ${input.requestId} ${reason}`;
-  const approveText = `/approve ${groupLabel} ${input.requestId}`;
-  const rejectTextFor = (reason: string): string =>
-    `/reject ${groupLabel} ${input.requestId} ${reason}`;
+    `/reject ${input.requestId} ${reason}`;
+  const autoDecision =
+    input.decision === "auto_approved" || input.decision === "auto_rejected"
+      ? AUTO_DECISION_LABELS[input.decision]
+      : undefined;
 
   const applicantLabel = `${escapeText(applicantId)}${
     input.applicantName ? `（${escapeText(input.applicantName)}）` : ""
@@ -93,9 +110,16 @@ export function buildJoinRequestCard(
       : []),
     `**回答**：${escapeText(input.reason) || "（未填写）"}`,
     `**申请ID**：${escapeText(input.requestId)}`,
+    ...(autoDecision ? [`**处理结果**：${autoDecision}`] : []),
   ];
   if (input.opinion) {
     lines.push("", ...toQuote(input.opinion));
+  }
+
+  if (autoDecision) {
+    // 机器人已经处理完了：只通知结果，不给按钮
+    lines.push("", "该申请已由机器人自动处理，无需操作。");
+    return { markdown: lines.join("\n") };
   }
 
   if (input.withButtons === false) {
@@ -103,10 +127,10 @@ export function buildJoinRequestCard(
     lines.push(
       "",
       "请审核（按钮不可用，可直接发送指令）：",
-      `同意：${approveText}`,
-      `拒绝：${rejectTextFor("[原因]")}`,
+      `同意：${approveCommand}`,
+      `拒绝：${rejectCommandFor("[原因]")}`,
       ...JOIN_REJECT_PRESETS.map(
-        (preset) => `${preset.label}：${rejectTextFor(preset.reason)}`,
+        (preset) => `${preset.label}：${rejectCommandFor(preset.reason)}`,
       ),
     );
     return { markdown: lines.join("\n") };
@@ -181,10 +205,15 @@ export function buildJoinRequestCard(
 
 /** 按钮不可用时的纯文本降级内容（包含同样的指令与预设拒因）。 */
 export function renderJoinRequestCardText(input: JoinRequestCardInput): string {
-  const groupLabel = input.groupNumber ?? input.groupId;
-  const applicantId = input.applicantQq ?? input.userId;
+  const groupLabel = input.groupLabel ?? input.groupNumber ?? input.groupId;
+  const applicantId = input.applicantLabel ?? input.applicantQq ?? input.userId;
+  const approveCommand = `/approve ${input.requestId}`;
   const rejectTextFor = (reason: string): string =>
-    `/reject ${groupLabel} ${input.requestId} ${reason}`;
+    `/reject ${input.requestId} ${reason}`;
+  const autoDecision =
+    input.decision === "auto_approved" || input.decision === "auto_rejected"
+      ? AUTO_DECISION_LABELS[input.decision]
+      : undefined;
   const lines = [
     "【新的入群申请】",
     `群：${groupLabel}`,
@@ -196,13 +225,18 @@ export function renderJoinRequestCardText(input: JoinRequestCardInput): string {
       ? [`入群问题：${input.questions.map(singleLine).join(" / ")}`]
       : []),
     `回答：${singleLine(input.reason) || "（未填写）"}`,
+    ...(autoDecision ? [`处理结果：${autoDecision}`] : []),
   ];
   if (input.opinion) {
     lines.push("", ...input.opinion.split("\n"));
   }
+  if (autoDecision) {
+    lines.push("", "该申请已由机器人自动处理，无需操作。");
+    return lines.join("\n");
+  }
   lines.push(
     "",
-    `同意：/approve ${groupLabel} ${input.requestId}`,
+    `同意：${approveCommand}`,
     `拒绝：${rejectTextFor("[原因]")}`,
     ...JOIN_REJECT_PRESETS.map(
       (preset) => `${preset.label}：${rejectTextFor(preset.reason)}`,

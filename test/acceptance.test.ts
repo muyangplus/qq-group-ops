@@ -50,7 +50,11 @@ describe("acceptance dry run (sqlite)", () => {
           };
         }
       ).content.rows[0]!.buttons;
-      expect(buttons[0]!.action.data).toBe("/approve g1 r1");
+      expect(buttons[0]!.action.data).toMatch(
+        /^\/approve #[0-9A-Za-z]{6}$/u,
+      );
+      expect(card.markdown).toMatch(/#[0-9A-Za-z]{6}/u);
+      expect(card.markdown).not.toContain("applicant-openid");
 
       // 点击按钮等价于在私聊里发送该指令
       const approve = await runtime.router.handle({
@@ -106,23 +110,54 @@ describe("acceptance dry run (sqlite)", () => {
         userId: "root",
         text: "/pending",
       });
-      expect(pending.text).toContain("r1");
+      // /pending 只展示短码；用短码审批（同时验证旧的完整 id 仍然兼容）
+      expect(pending.text).toMatch(/#[0-9A-Za-z]{6}/u);
+      expect(pending.text).not.toContain("r1");
+      const shortCode = /#[0-9A-Za-z]{6}/u.exec(pending.text)?.[0];
+      expect(shortCode).toBeDefined();
 
+      const approveByCode = await runtime.router.handle({
+        type: "admin_command",
+        groupId: "g1",
+        userId: "root",
+        text: `/approve ${shortCode}`,
+      });
+      expect(approveByCode.ok).toBe(true);
+      expect(approveByCode.text).toContain(shortCode ?? "");
+      expect(runtime.joinAudit.get("r1").status).toBe(
+        JoinRequestStatus.Approved,
+      );
+
+      // 兼容：直接传完整 join_request_id 也能审批（第二个申请）
+      await runtime.router.handle({
+        type: "join_request",
+        groupId: "g1",
+        userId: "applicant-2",
+        requestId: "r2",
+        reason: "想加入",
+      });
       const approve = await runtime.router.handle({
         type: "admin_command",
         groupId: "g1",
         userId: "root",
-        text: "/approve r1",
+        text: "/approve r2",
       });
-
       expect(approve.ok).toBe(true);
-      expect(runtime.joinAudit.get("r1").status).toBe(JoinRequestStatus.Approved);
+      expect(runtime.joinAudit.get("r2").status).toBe(
+        JoinRequestStatus.Approved,
+      );
       expect(api.joinRequestReviews).toEqual([
         {
           groupId: "g1",
           memberOpenid: "applicant-openid",
           op: "approve",
           joinRequestId: "r1",
+        },
+        {
+          groupId: "g1",
+          memberOpenid: "applicant-2",
+          op: "approve",
+          joinRequestId: "r2",
         },
       ]);
     } finally {

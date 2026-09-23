@@ -33,6 +33,8 @@ export interface GroupConfig {
   joinAnswerPattern?: string;
   /** 需要人工审核时是否给出审核意见。 */
   joinReviewOpinion?: boolean;
+  /** 机器人自动通过/拒绝的申请是否也推送给审核员（默认只推需要人工处理的）。 */
+  notifyAutoApproved?: boolean;
 }
 
 export interface EffectiveGroupConfig {
@@ -53,6 +55,7 @@ export interface EffectiveGroupConfig {
   joinRequireName: boolean;
   joinAnswerPattern: string;
   joinReviewOpinion: boolean;
+  notifyAutoApproved: boolean;
 }
 
 export type GroupConfigOverride = GroupConfig;
@@ -82,6 +85,7 @@ export const SETTING_FIELDS = [
   "joinRequireName",
   "joinAnswerPattern",
   "joinReviewOpinion",
+  "notifyAutoApproved",
 ] as const satisfies readonly (keyof GroupConfigOverride)[];
 
 export type GroupSettingKey = (typeof SETTING_FIELDS)[number];
@@ -117,6 +121,7 @@ const DEFAULT_CONFIG: EffectiveGroupConfig = {
   joinRequireName: false,
   joinAnswerPattern: "",
   joinReviewOpinion: true,
+  notifyAutoApproved: false,
 };
 
 export class GroupConfigStore {
@@ -232,6 +237,8 @@ export class GroupConfigStore {
         override.joinAnswerPattern ?? this.defaultConfig.joinAnswerPattern,
       joinReviewOpinion:
         override.joinReviewOpinion ?? this.defaultConfig.joinReviewOpinion,
+      notifyAutoApproved:
+        override.notifyAutoApproved ?? this.defaultConfig.notifyAutoApproved,
     };
   }
 
@@ -419,6 +426,8 @@ function mergeIntoDefault(
     joinRequireName: override.joinRequireName ?? base.joinRequireName,
     joinAnswerPattern: override.joinAnswerPattern ?? base.joinAnswerPattern,
     joinReviewOpinion: override.joinReviewOpinion ?? base.joinReviewOpinion,
+    notifyAutoApproved:
+      override.notifyAutoApproved ?? base.notifyAutoApproved,
   };
 }
 
@@ -464,7 +473,8 @@ function applySettingField(
     case "keywordRecall":
     case "joinRequireClass":
     case "joinRequireName":
-    case "joinReviewOpinion": {
+    case "joinReviewOpinion":
+    case "notifyAutoApproved": {
       if (typeof value !== "boolean") {
         return false;
       }

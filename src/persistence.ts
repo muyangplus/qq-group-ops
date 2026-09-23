@@ -41,6 +41,10 @@ import {
 } from "./db/permissionRepository.js";
 import { PgQueryable, type PgPoolLike } from "./db/pgQueryable.js";
 import type { Queryable } from "./db/queryable.js";
+import {
+  SqlShortCodeRepository,
+  type ShortCodeRepository,
+} from "./db/shortCodeRepository.js";
 import { openSqliteDatabase } from "./db/sqliteDatabase.js";
 import { SqliteQueryable } from "./db/sqliteQueryable.js";
 
@@ -61,6 +65,7 @@ export interface Persistence {
   activities: ActivityRepository;
   notificationSubscriptions: NotificationSubscriptionRepository;
   notificationDeliveries: NotificationDeliveryRepository;
+  shortCodes: ShortCodeRepository;
   close(): Promise<void>;
 }
 
@@ -155,6 +160,7 @@ interface RepositorySet {
   activities: ActivityRepository;
   notificationSubscriptions: NotificationSubscriptionRepository;
   notificationDeliveries: NotificationDeliveryRepository;
+  shortCodes: ShortCodeRepository;
 }
 
 function createRepositories(db: Queryable): RepositorySet {
@@ -169,6 +175,7 @@ function createRepositories(db: Queryable): RepositorySet {
     activities: new SqlActivityRepository(db),
     notificationSubscriptions: new SqlNotificationSubscriptionRepository(db),
     notificationDeliveries: new SqlNotificationDeliveryRepository(db),
+    shortCodes: new SqlShortCodeRepository(db),
   };
 }
 

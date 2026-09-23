@@ -26,10 +26,12 @@ import type {
   NotificationSubscriptionRepository,
 } from "./db/notificationRepository.js";
 import type { PermissionRepository } from "./db/permissionRepository.js";
+import type { ShortCodeRepository } from "./db/shortCodeRepository.js";
 import { WriteQueue } from "./db/writeQueue.js";
 import { ActivityService } from "./services/activity.js";
 import { AdminCommandService } from "./services/adminCommands.js";
 import { AuditLogStore } from "./services/audit.js";
+import { DisplayNameService } from "./services/displayNames.js";
 import { EventRouter } from "./services/eventRouter.js";
 import { ExportService } from "./services/export.js";
 import { GroupConfigStore, DEFAULT_GROUP_ID } from "./services/groupConfig.js";
@@ -44,6 +46,7 @@ import { MessageGuardService } from "./services/messageGuard.js";
 import { RuleEngine } from "./services/moderation.js";
 import { NotificationService } from "./services/notifications.js";
 import { PermissionService } from "./services/permissions.js";
+import { ShortCodeService } from "./services/shortCodes.js";
 
 export interface Runtime {
   mode: "official" | "fake";
@@ -57,6 +60,8 @@ export interface Runtime {
   activity: ActivityService;
   exportService: ExportService;
   notifications: NotificationService;
+  shortCodes: ShortCodeService;
+  display: DisplayNameService;
   writeQueue: WriteQueue;
   router: EventRouter;
   /** 从数据库载入全部持久化状态；未配置数据库时为空操作。 */
@@ -76,6 +81,7 @@ export interface RuntimeRepositories {
   activities?: ActivityRepository;
   notificationSubscriptions?: NotificationSubscriptionRepository;
   notificationDeliveries?: NotificationDeliveryRepository;
+  shortCodes?: ShortCodeRepository;
 }
 
 export interface RuntimeDependencies {
@@ -106,6 +112,8 @@ export function createRuntime(
     writeQueue,
   );
   const identityMap = new IdentityMapService(repositories.identityBindings);
+  const shortCodes = new ShortCodeService(repositories.shortCodes, writeQueue);
+  const display = new DisplayNameService(identityMap, shortCodes);
   const permissions = new PermissionService(
     { superAdminIds: new Set(settings.adminUserIds) },
     repositories.permissions,
@@ -132,6 +140,7 @@ export function createRuntime(
     deliveries: repositories.notificationDeliveries,
     queue: writeQueue,
     identityMap,
+    display,
     configStore,
     joinRules,
   });
@@ -145,6 +154,7 @@ export function createRuntime(
     joinRules,
     groupMessageMode,
     identityMap,
+    display,
     notifications,
   });
   const load = async (): Promise<void> => {
@@ -156,6 +166,7 @@ export function createRuntime(
     await groupMessageMode.load();
     await activity.load();
     await notifications.load();
+    await shortCodes.load();
     // 班级库缺失时不抛错：班级类规则会自动退化为人工审核
     joinRules.setRoster(await MemberRoster.load(settings.classIndexFile));
     await writeQueue.flush();
@@ -172,6 +183,8 @@ export function createRuntime(
     activity,
     exportService,
     notifications,
+    shortCodes,
+    display,
     writeQueue,
     router: new EventRouter(
       messageGuard,

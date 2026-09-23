@@ -4,6 +4,7 @@ import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { JoinRequestStatus } from "../src/core/enums.js";
 import { AdminCommandService } from "../src/services/adminCommands.js";
 import { AuditLogStore } from "../src/services/audit.js";
+import { DisplayNameService } from "../src/services/displayNames.js";
 import { GroupConfigStore } from "../src/services/groupConfig.js";
 import { IdentityMapService } from "../src/services/identityMap.js";
 import { JoinApprovalService } from "../src/services/joinApproval.js";
@@ -16,6 +17,7 @@ import {
   NotificationService,
 } from "../src/services/notifications.js";
 import { PermissionService } from "../src/services/permissions.js";
+import { ShortCodeService } from "../src/services/shortCodes.js";
 import { FakeIdentityBindingRepository } from "./helpers/fakeIdentityBindingRepository.js";
 
 describe("AdminCommandService", async () => {
@@ -29,6 +31,30 @@ describe("AdminCommandService", async () => {
   let joinSync: JoinRequestSyncService;
   let notifications: NotificationService;
   let service: AdminCommandService;
+  let shortCodes: ShortCodeService;
+
+  /** 带短码展示的服务：生产装配路径（DisplayNameService）的最小替身。 */
+  function withShortCodes(): AdminCommandService {
+    shortCodes = new ShortCodeService();
+    return new AdminCommandService({
+      permissions,
+      joinAudit,
+      configStore,
+      joinApproval,
+      joinSync,
+      auditLog,
+      identityMap,
+      notifications,
+      display: new DisplayNameService(identityMap, shortCodes),
+    });
+  }
+
+  function scopedShortCodeLabel(
+    kind: "user" | "group" | "join_request",
+    targetId: string,
+  ): string {
+    return shortCodes.label(kind, targetId);
+  }
 
   beforeEach(() => {
     auditLog = new AuditLogStore();
@@ -352,7 +378,7 @@ describe("AdminCommandService", async () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.text).toContain("需要提供 group_openid");
+    expect(result.text).toContain("需要提供群号");
   });
 
   it("configures keyword recall and punishment", async () => {
@@ -490,7 +516,7 @@ describe("AdminCommandService", async () => {
   it("requires group_openid for group commands in private", async () => {
     const missing = await service.handle(undefined, "root", "/pending");
     expect(missing.ok).toBe(false);
-    expect(missing.text).toContain("group_openid");
+    expect(missing.text).toContain("群号");
 
     const withGroup = await service.handle(undefined, "root", "/pending g1");
     expect(withGroup.ok).toBe(true);
@@ -1026,6 +1052,73 @@ describe("AdminCommandService", async () => {
   it("keeps asking for a group id when /rules is used in private without super admin", async () => {
     const result = await service.handle(undefined, "admin", "/rules");
     expect(result.ok).toBe(false);
-    expect(result.text).toContain("group_openid");
+    expect(result.text).toContain("#群短码");
+  });
+
+  it("persists the auto-decision notification switch", async () => {
+    const result = await service.handle(
+      "g1",
+      "admin",
+      "/rules set notifyAutoApproved on",
+    );
+    expect(result.ok).toBe(true);
+    expect(configStore.get("g1").notifyAutoApproved).toBe(true);
+    expect(result.text).toContain("自动处理也通知：true");
+
+    const off = await service.handle(
+      "g1",
+      "admin",
+      "/rules set 通知自动通过 off",
+    );
+    expect(off.ok).toBe(true);
+    expect(configStore.get("g1").notifyAutoApproved).toBe(false);
+  });
+
+  it("uses short codes for join requests and approves by short code", async () => {
+    const scoped = withShortCodes();
+    joinAudit.submit("g1", "u1", "想加入", "r1");
+
+    const pending = await scoped.handle("g1", "admin", "/pending");
+    const code = /#[0-9A-Za-z]{6}/u.exec(pending.text)?.[0];
+    expect(code).toBeDefined();
+    // 不再暴露长申请 id / 内部 user id
+    expect(pending.text).not.toContain("r1");
+    expect(pending.text).not.toContain("u1");
+
+    const approve = await scoped.handle("g1", "admin", `/approve ${code}`);
+    expect(approve.ok).toBe(true);
+    expect(approve.text).toContain(code ?? "");
+    expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Approved);
+  });
+
+  it("only lets /whois reveal the real system id behind a short code", async () => {
+    const scoped = withShortCodes();
+    joinAudit.submit("g1", "u1", "想加入", "r1");
+    const pending = await scoped.handle("g1", "admin", "/pending");
+    const code = /#[0-9A-Za-z]{6}/u.exec(pending.text)?.[0] ?? "";
+
+    const denied = await scoped.handle("g1", "admin", `/whois ${code}`);
+    expect(denied.ok).toBe(false);
+    expect(denied.text).toContain("权限不足");
+
+    const result = await scoped.handle("g1", "root", `/whois ${code}`);
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("类型：入群申请");
+    expect(result.text).toContain("真实申请 ID：r1");
+  });
+
+  it("resolves #group and #user short codes in commands", async () => {
+    const scoped = withShortCodes();
+    identityMap.bindGroup("g2", "777777");
+    const groupCode = scopedShortCodeLabel("group", "g2");
+
+    // 私信里用群短码查看状态（root 是超管）
+    const status = await scoped.handle(
+      undefined,
+      "root",
+      `/status ${groupCode}`,
+    );
+    expect(status.ok).toBe(true);
+    expect(status.text).toContain("群 777777 状态：");
   });
 });

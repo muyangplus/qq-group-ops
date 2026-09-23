@@ -92,6 +92,7 @@ describe("rule configuration persistence", () => {
       ["joinRequireName", "on"],
       ["joinAnswerPattern", "^材化\\d{4}$"],
       ["joinReviewOpinion", "off"],
+      ["notifyAutoApproved", "on"],
     ];
 
     for (const [field, value] of settings) {
@@ -120,6 +121,7 @@ describe("rule configuration persistence", () => {
     expect(config.joinRequireName).toBe(true);
     expect(config.joinAnswerPattern).toBe("^材化\\d{4}$");
     expect(config.joinReviewOpinion).toBe(false);
+    expect(config.notifyAutoApproved).toBe(true);
   });
 
   it("persists global rules and keeps per-field inheritance after reload", async () => {

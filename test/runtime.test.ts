@@ -40,7 +40,10 @@ describe("createRuntime", () => {
     });
     expect(result.kind).toBe("command");
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("r1");
+    // 申请只显示短码；未绑定申请人也显示短码，不再暴露内部 id
+    expect(result.text).toMatch(/#[0-9A-Za-z]{6}/u);
+    expect(result.text).not.toContain("r1");
+    expect(result.text).not.toContain("u1");
   });
 
   it("forwards rich message options through the instrumentation proxy", async () => {

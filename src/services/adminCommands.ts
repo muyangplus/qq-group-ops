@@ -6,6 +6,7 @@ import {
 } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import type { AuditLog } from "./audit.js";
+import type { DisplayNameService } from "./displayNames.js";
 import {
   DEFAULT_GROUP_ID,
   type EffectiveGroupConfig,
@@ -40,6 +41,8 @@ export interface AdminCommandServiceOptions {
   joinRules?: JoinRuleEvaluator | undefined;
   groupMessageMode?: GroupMessageModeRegistry | undefined;
   identityMap?: IdentityMapService | undefined;
+  /** 展示名解析（群号/QQ号/短码）；缺省时回退到绑定号或内部 id（测试用）。 */
+  display?: DisplayNameService | undefined;
   /** 入群申请推送（`/notify`）。 */
   notifications?: NotificationService | undefined;
 }
@@ -54,6 +57,7 @@ export class AdminCommandService {
   private readonly joinRules: JoinRuleEvaluator | undefined;
   private readonly groupMessageMode: GroupMessageModeRegistry | undefined;
   private readonly identityMap: IdentityMapService | undefined;
+  private readonly display: DisplayNameService | undefined;
   private readonly notifications: NotificationService | undefined;
 
   public constructor(options: AdminCommandServiceOptions) {
@@ -66,6 +70,7 @@ export class AdminCommandService {
     this.joinRules = options.joinRules;
     this.groupMessageMode = options.groupMessageMode;
     this.identityMap = options.identityMap;
+    this.display = options.display;
     this.notifications = options.notifications;
   }
 
@@ -305,33 +310,115 @@ export class AdminCommandService {
     if (!input) {
       return {
         ok: false,
-        text: "用法：/whois <QQ号|userId|群号|group_openid>",
+        text: "用法：/whois <QQ号|userId|群号|group_openid|#短码>",
       };
     }
+
+    // `#短码`：唯一允许查看真实系统 id 的入口
+    const code = this.display?.resolveCode(input);
+    if (code) {
+      const label = `#${code.code}`;
+      if (code.kind === "join_request") {
+        return {
+          ok: true,
+          text: `类型：入群申请\n短码：${label}\n真实申请 ID：${code.targetId}`,
+        };
+      }
+      if (code.kind === "user") {
+        const qq = this.identityMap.getQq(code.targetId);
+        return {
+          ok: true,
+          text:
+            `类型：用户\n短码：${label}\n真实 userId：${code.targetId}\n` +
+            `QQ：${qq ?? "（未绑定）"}`,
+        };
+      }
+      const groupNumber = this.identityMap.getGroupNumber(code.targetId);
+      return {
+        ok: true,
+        text:
+          `类型：群\n短码：${label}\n真实 group_openid：${code.targetId}\n` +
+          `群号：${groupNumber ?? "（未绑定）"}`,
+      };
+    }
+
     const resolvedUserId = this.identityMap.resolveUserId(input);
     if (resolvedUserId) {
       const qq = this.identityMap.getQq(resolvedUserId) ?? "（未绑定）";
+      const shortCode = this.display
+        ? `\n短码：${this.display.user(resolvedUserId)}`
+        : "";
       return {
         ok: true,
-        text: `类型：用户\nuserId：${resolvedUserId}\nQQ：${qq}`,
+        text: `类型：用户\nuserId：${resolvedUserId}\nQQ：${qq}${shortCode}`,
       };
     }
     const resolvedGroupId = this.identityMap.resolveGroupId(input);
     if (resolvedGroupId) {
       const groupNumber =
         this.identityMap.getGroupNumber(resolvedGroupId) ?? "（未绑定）";
+      const shortCode = this.display
+        ? `\n短码：${this.display.group(resolvedGroupId)}`
+        : "";
       return {
         ok: true,
-        text: `类型：群\n群 ID：${resolvedGroupId}\n群号：${groupNumber}`,
+        text: `类型：群\n群 ID：${resolvedGroupId}\n群号：${groupNumber}${shortCode}`,
       };
     }
     return { ok: false, text: "未找到映射。" };
+  }
+
+  /**
+   * 解析审批目标（`/approve`、`/reject` 共用）：
+   *
+   * - 群内：`/approve <申请>`；
+   * - 私信带群：`/approve <群号|#群短码> <申请>`；
+   * - 私信不带群：`/approve <申请>`，从本地申请记录反查所属群（短码唯一即可定位）。
+   */
+  private resolveReviewTarget(
+    groupId: string | undefined,
+    parts: readonly string[],
+  ): {
+    targetGroupId: string | undefined;
+    requestId: string | undefined;
+    reasonParts: readonly string[];
+  } {
+    if (groupId) {
+      return {
+        targetGroupId: groupId,
+        requestId: this.resolveRequestId(parts[1]),
+        reasonParts: parts.slice(2),
+      };
+    }
+    const groupFromFirst = this.resolveTargetGroupId(undefined, parts[1]);
+    if (groupFromFirst) {
+      return {
+        targetGroupId: groupFromFirst,
+        requestId: this.resolveRequestId(parts[2]),
+        reasonParts: parts.slice(3),
+      };
+    }
+    const requestId = this.resolveRequestId(parts[1]);
+    let targetGroupId: string | undefined;
+    if (requestId) {
+      try {
+        targetGroupId = this.joinAudit.get(requestId).groupId;
+      } catch {
+        targetGroupId = undefined;
+      }
+    }
+    return { targetGroupId, requestId, reasonParts: parts.slice(2) };
   }
 
   private resolveUserId(input: string | undefined): string | undefined {
     const trimmed = input?.trim();
     if (!trimmed) {
       return undefined;
+    }
+    // `#短码` 优先；否则按 QQ号/openid 解析
+    const fromCode = this.display?.resolveUser(trimmed);
+    if (fromCode) {
+      return fromCode;
     }
     return this.identityMap?.resolveUserId(trimmed) ?? trimmed;
   }
@@ -347,10 +434,23 @@ export class AdminCommandService {
     if (!trimmed) {
       return undefined;
     }
+    const fromCode = this.display?.resolveGroup(trimmed);
+    if (fromCode) {
+      return fromCode;
+    }
     if (!this.identityMap) {
       return trimmed;
     }
     return this.identityMap.resolveGroupId(trimmed);
+  }
+
+  /** 申请参数：`#短码`（推荐）或完整 join_request_id。 */
+  private resolveRequestId(input: string | undefined): string | undefined {
+    const trimmed = input?.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    return this.display?.resolveRequest(trimmed) ?? trimmed;
   }
 
   /**
@@ -466,29 +566,29 @@ export class AdminCommandService {
         : this.permissions.hasAnyGroupRole(userId, PermissionLevel.GroupAdmin);
 
     if (canModerate) {
-      lines.push("/pending [group_openid|群号] - 查看待审批入群申请");
-      lines.push("/sync [group_openid|群号] - 从官方接口同步待审批申请");
-      lines.push("/rules [group_openid|群号] - 查看群规则配置");
-      lines.push("/audit [group_openid|群号] [数量] - 查看最近审计记录");
-      lines.push("/status [group_openid|群号] - 查看群运行状态");
+      lines.push("/pending [#群短码|群号] - 查看待审批入群申请");
+      lines.push("/sync [#群短码|群号] - 从官方接口同步待审批申请");
+      lines.push("/rules [#群短码|群号] - 查看群规则配置");
+      lines.push("/audit [#群短码|群号] [数量] - 查看最近审计记录");
+      lines.push("/status [#群短码|群号] - 查看群运行状态");
       lines.push("/test - 测试机器人是否正常响应");
     }
     if (canAdmin) {
-      lines.push("/approve [group_openid|群号] <申请ID> - 通过入群申请");
-      lines.push("/reject [group_openid|群号] <申请ID> [原因] - 拒绝入群申请");
+      lines.push("/approve [#群短码|群号] <申请ID> - 通过入群申请");
+      lines.push("/reject [#群短码|群号] <申请ID> [原因] - 拒绝入群申请");
       lines.push("/notify - 配置入群申请推送（卡片 + 快捷同意/拒绝按钮）");
       lines.push("/rules set <字段> <值> - 修改群规则（关键词、警告文案等）");
     }
     if (isSuper) {
-      lines.push("/perm list [group_openid|群号] - 查看权限配置");
+      lines.push("/perm list [#群短码|群号] - 查看权限配置");
       lines.push("/perm grant super <userId|QQ号> - 授予全局超管");
       lines.push("/perm revoke super <userId|QQ号> - 撤销全局超管");
-      lines.push("/perm grant gsuper [group_openid|群号] <userId|QQ号> - 授予本群超管");
-      lines.push("/perm revoke gsuper [group_openid|群号] <userId|QQ号> - 撤销本群超管");
-      lines.push("/perm grant admin [group_openid|群号] <userId|QQ号> - 授予群管理员");
-      lines.push("/perm revoke admin [group_openid|群号] <userId|QQ号> - 撤销群管理员");
-      lines.push("/perm grant mod [group_openid|群号] <userId|QQ号> - 授予审核员");
-      lines.push("/perm revoke mod [group_openid|群号] <userId|QQ号> - 撤销审核员");
+      lines.push("/perm grant gsuper [#群短码|群号] <userId|QQ号> - 授予本群超管");
+      lines.push("/perm revoke gsuper [#群短码|群号] <userId|QQ号> - 撤销本群超管");
+      lines.push("/perm grant admin [#群短码|群号] <userId|QQ号> - 授予群管理员");
+      lines.push("/perm revoke admin [#群短码|群号] <userId|QQ号> - 撤销群管理员");
+      lines.push("/perm grant mod [#群短码|群号] <userId|QQ号> - 授予审核员");
+      lines.push("/perm revoke mod [#群短码|群号] <userId|QQ号> - 撤销审核员");
       lines.push("/rules all - 查看全局默认规则");
       lines.push("/rules set all <字段> <值> - 修改全局默认规则");
     }
@@ -565,7 +665,7 @@ export class AdminCommandService {
     if (!isSuperRole && !targetGroupId) {
       return {
         ok: false,
-        text: "私信中配置群角色需要提供 group_openid 或已绑定的群号。",
+        text: "私信中配置群角色需要提供群号或 #群短码。",
       };
     }
 
@@ -690,7 +790,7 @@ export class AdminCommandService {
     if (!targetGroupId) {
       return {
         ok: false,
-        text: "该指令需要在群内使用，或在私信中提供 group_openid。用法：/sync [group_openid|群号]",
+        text: "该指令需要在群内使用，或在私信中提供群号 / #群短码。用法：/sync [#群短码|群号]",
       };
     }
     if (!this.permissions.canReviewContent(userId, targetGroupId)) {
@@ -714,7 +814,9 @@ export class AdminCommandService {
     const lines = [`已同步官方待审批申请，当前待审批 ${pending.length} 条：`];
     for (const request of pending.slice(0, 5)) {
       const reason = request.reason ? ` 理由：${request.reason}` : "";
-      lines.push(`- ${request.requestId} 用户：${this.displayUser(request.userId)}${reason}`);
+      lines.push(
+        `- ${this.displayRequest(request.requestId)} 用户：${this.displayUser(request.userId)}${reason}`,
+      );
     }
     if (pending.length > 5) {
       lines.push(`（仅显示前 5 条，使用 /pending 查看全部）`);
@@ -834,14 +936,29 @@ export class AdminCommandService {
     return this.displayGroup(groupId);
   }
 
-  /** 展示用：已绑定 QQ 号时只显示 QQ 号，否则回退到 openid。 */
+  /**
+   * 展示用户：QQ号 或随机短码 `#XXXXXX`。
+   *
+   * 没有注入 DisplayNameService 时（部分单测）回退为「绑定 QQ号 → QQ号，否则原样 id」。
+   */
   private displayUser(officialId: string): string {
-    return this.identityMap?.displayUser(officialId) ?? officialId;
+    if (this.display) {
+      return this.display.user(officialId);
+    }
+    return this.identityMap?.getQq(officialId) ?? officialId;
   }
 
-  /** 展示用：已绑定群号时只显示群号，否则回退到 group_openid。 */
+  /** 展示群：群号 或随机短码 `#XXXXXX`。 */
   private displayGroup(groupId: string): string {
-    return this.identityMap?.displayGroup(groupId) ?? groupId;
+    if (this.display) {
+      return this.display.group(groupId);
+    }
+    return this.identityMap?.getGroupNumber(groupId) ?? groupId;
+  }
+
+  /** 展示申请：短码 `#XXXXXX`（替代又长又难读的 join_request_id）。 */
+  private displayRequest(requestId: string): string {
+    return this.display?.request(requestId) ?? requestId;
   }
 
   private displayUsers(ids: readonly string[]): string {
@@ -883,7 +1000,7 @@ export class AdminCommandService {
     if (!targetGroupId) {
       return {
         ok: false,
-        text: "该指令需要在群内使用，或在私信中提供 group_openid。用法：/pending <group_openid>",
+        text: "该指令需要在群内使用，或在私信中提供群号 / #群短码。用法：/pending <群号|#群短码>",
       };
     }
     if (!this.permissions.canReviewContent(userId, targetGroupId)) {
@@ -900,7 +1017,7 @@ export class AdminCommandService {
     pending.forEach((request, index) => {
       const reason = request.reason ? ` 理由：${request.reason}` : "";
       lines.push(
-        `${index + 1}. ${request.requestId} 用户：${this.displayUser(request.userId)}${reason}`,
+        `${index + 1}. ${this.displayRequest(request.requestId)} 用户：${this.displayUser(request.userId)}${reason}`,
       );
       if (withOpinion) {
         const evaluation = this.joinRules?.evaluate(request.reason, {
@@ -923,12 +1040,16 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): Promise<CommandResult> {
-    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
-    const requestId = groupId ? parts[1]?.trim() : parts[2]?.trim();
+    const resolved = this.resolveReviewTarget(groupId, parts);
+    const { targetGroupId, requestId } = resolved;
     if (!targetGroupId || !requestId) {
       return {
         ok: false,
-        text: "用法：/approve [group_openid] <申请ID>",
+        text:
+          "用法：\n" +
+          "  /approve <#申请短码>                         群内审批本群\n" +
+          "  /approve <群号|#群短码> <#申请短码>            私信中审批指定群\n" +
+          "  /approve <#申请短码>                         私信中也可以（自动定位该申请所属群）",
       };
     }
     if (!this.permissions.canApproveJoin(userId, targetGroupId)) {
@@ -945,7 +1066,10 @@ export class AdminCommandService {
       return { ok: false, text: `审批失败：${formatError(error)}` };
     }
     log.info("approved join request", { requestId, userId });
-    return { ok: true, text: `已通过入群申请 ${requestId}。` };
+    return {
+      ok: true,
+      text: `已通过入群申请 ${this.displayRequest(requestId)}。`,
+    };
   }
 
   private async handleReject(
@@ -953,20 +1077,24 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): Promise<CommandResult> {
-    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
-    const requestId = groupId ? parts[1]?.trim() : parts[2]?.trim();
+    const { targetGroupId, requestId, reasonParts } = this.resolveReviewTarget(
+      groupId,
+      parts,
+    );
     if (!targetGroupId || !requestId) {
       return {
         ok: false,
-        text: "用法：/reject [group_openid] <申请ID> [原因]",
+        text:
+          "用法：\n" +
+          "  /reject <#申请短码> [原因]                    群内审批本群\n" +
+          "  /reject <群号|#群短码> <#申请短码> [原因]      私信中审批指定群\n" +
+          "  /reject <#申请短码> [原因]                    私信中也可以（自动定位该申请所属群）",
       };
     }
     if (!this.permissions.canApproveJoin(userId, targetGroupId)) {
       return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
     }
-    const reason = groupId
-      ? parts.slice(2).join(" ").trim()
-      : parts.slice(3).join(" ").trim();
+    const reason = reasonParts.join(" ").trim();
     try {
       const request = this.joinAudit.get(requestId);
       if (request.groupId !== targetGroupId) {
@@ -982,7 +1110,10 @@ export class AdminCommandService {
       userId,
       hasReason: reason.length > 0,
     });
-    return { ok: true, text: `已拒绝入群申请 ${requestId}。` };
+    return {
+      ok: true,
+      text: `已拒绝入群申请 ${this.displayRequest(requestId)}。`,
+    };
   }
 
   private async handleRules(
@@ -1006,7 +1137,7 @@ export class AdminCommandService {
       }
       return {
         ok: false,
-        text: "该指令需要在群内使用，或在私信中提供 group_openid。用法：/rules <group_openid>",
+        text: "该指令需要在群内使用，或在私信中提供群号 / #群短码。用法：/rules <群号|#群短码>",
       };
     }
     if (!this.permissions.canReviewContent(userId, targetGroupId)) {
@@ -1040,7 +1171,7 @@ export class AdminCommandService {
     if (!targetGroupId) {
       return {
         ok: false,
-        text: "私信中设置规则需要提供已绑定的 group_openid 或群号。用法：/rules set <group_openid> <字段> <值>",
+        text: "私信中设置规则需要提供已绑定的群号或 #群短码。用法：/rules set <群号|#群短码> <字段> <值>",
       };
     }
     if (!this.permissions.canManageRules(userId, targetGroupId)) {
@@ -1123,7 +1254,7 @@ export class AdminCommandService {
     if (!targetGroupId) {
       return {
         ok: false,
-        text: "该指令需要在群内使用，或在私信中提供 group_openid。用法：/audit [数量]",
+        text: "该指令需要在群内使用，或在私信中提供群号 / #群短码。用法：/audit [数量]",
       };
     }
     if (!this.permissions.canReviewContent(userId, targetGroupId)) {
@@ -1161,7 +1292,7 @@ export class AdminCommandService {
     if (!targetGroupId) {
       return {
         ok: false,
-        text: "该指令需要在群内使用，或在私信中提供 group_openid。用法：/status <group_openid>",
+        text: "该指令需要在群内使用，或在私信中提供群号 / #群短码。用法：/status <群号|#群短码>",
       };
     }
     if (!this.permissions.canReviewContent(userId, targetGroupId)) {
@@ -1241,6 +1372,7 @@ const RULE_FIELDS_HELP = [
   "  joinRequireName on|off                入群答案必须包含姓名",
   "  joinAnswerPattern <正则> / clear      入群答案必须匹配的额外正则",
   "  joinReviewOpinion on|off              人工审核时是否给出审核意见",
+  "  notifyAutoApproved on|off             机器人自动通过/拒绝的申请是否也推送给审核员",
 ];
 
 const RULES_SET_USAGE = [
@@ -1273,11 +1405,11 @@ const GROUP_SUPER_ROLES = new Set([
 ]);
 const PERM_USAGE = [
   "用法：",
-  "/perm list [group_openid|群号]",
+  "/perm list [#群短码|群号]",
   "/perm grant|revoke super <userId|QQ号> - 全局超级管理员",
-  "/perm grant|revoke gsuper [group_openid|群号] <userId|QQ号> - 本群超级管理员",
-  "/perm grant|revoke admin [group_openid|群号] <userId|QQ号> - 群管理员",
-  "/perm grant|revoke mod [group_openid|群号] <userId|QQ号> - 审核员",
+  "/perm grant|revoke gsuper [#群短码|群号] <userId|QQ号> - 本群超级管理员",
+  "/perm grant|revoke admin [#群短码|群号] <userId|QQ号> - 群管理员",
+  "/perm grant|revoke mod [#群短码|群号] <userId|QQ号> - 审核员",
 ].join("\n");
 const TOGGLE_ON = new Set(["on", "true", "1", "yes", "y", "开", "启用", "是"]);
 const TOGGLE_OFF = new Set(["off", "false", "0", "no", "n", "关", "关闭", "否"]);
@@ -1296,7 +1428,7 @@ const NOTIFY_USAGE = [
   "  /notify                              查看当前推送订阅",
   "  /notify on|off                       群内=本群；私信=你担任群管理员的全部群",
   "  /notify all on|off                   全部群（群内/私信均可）",
-  "  /notify <group_openid|群号> on|off    指定群",
+  "  /notify <群号|group_openid|#群短码> on|off    指定群",
   "  /notify test                         给自己发一张推送测试卡片",
 ].join("\n");
 const NOTIFY_PERMISSION_DENIED =
@@ -1340,6 +1472,7 @@ function formatEffectiveConfig(
     }`,
     `审核意见：${config.joinReviewOpinion}`,
     `自动通过：${config.autoApproveJoin}`,
+    `自动处理也通知：${config.notifyAutoApproved}`,
     `导出功能：${config.exportEnabled}`,
     `警告文案：${config.warningMessage}`,
     `禁言时长：${config.muteDurationSeconds} 秒`,
@@ -1425,6 +1558,11 @@ function parseRuleSetting(
     case "joinreviewopinion":
     case "审核意见":
       return { groupId, joinReviewOpinion: parseToggle(field, value) };
+    case "notifyautoapproved":
+    case "autonotify":
+    case "通知自动通过":
+    case "通知自动处理":
+      return { groupId, notifyAutoApproved: parseToggle(field, value) };
     default:
       throw new Error(`未知字段：${field}`);
   }

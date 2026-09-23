@@ -4,10 +4,22 @@ import { newIncomingMessage } from "../core/models.js";
 import type { AdminCommandService } from "./adminCommands.js";
 import type { JoinApprovalService } from "./joinApproval.js";
 import type { JoinAuditService } from "./joinAudit.js";
+import type { JoinRequestDecision } from "./joinRequestCard.js";
 import type { MessageGuardService } from "./messageGuard.js";
 import type { NotificationService } from "./notifications.js";
 
 const log = getLogger("event-router");
+
+/** 审批动作 → 卡片上的处理结果标记。 */
+function decisionOf(action: "approve" | "reject" | "manual"): JoinRequestDecision {
+  if (action === "approve") {
+    return "auto_approved";
+  }
+  if (action === "reject") {
+    return "auto_rejected";
+  }
+  return "manual";
+}
 
 export interface GroupMessageEvent {
   type: "group_message";
@@ -129,14 +141,19 @@ export class EventRouter {
             event.groupId,
             event.requestId,
           );
-          // 只有仍需人工处理的申请才推送，自动通过/拒绝不需要审核员操作。
-          if (!outcome || outcome.action === "manual") {
+          // 需要人工处理的一定推送；机器人自动处理的结果只在 notifyAutoApproved 开启时通知
+          const shouldNotify = !outcome || outcome.notify;
+          if (shouldNotify) {
+            const decision: JoinRequestDecision = outcome
+              ? decisionOf(outcome.action)
+              : "manual";
             await this.notifications
               ?.notifyJoinRequest({
                 groupId: event.groupId,
                 requestId: event.requestId,
                 userId: event.userId,
                 reason: event.reason ?? "",
+                decision,
                 ...(event.applicantName !== undefined
                   ? { applicantName: event.applicantName }
                   : {}),

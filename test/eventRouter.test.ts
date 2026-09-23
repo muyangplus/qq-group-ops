@@ -89,8 +89,8 @@ describe("EventRouter", () => {
         content: { rows: Array<{ buttons: Array<{ action: { data: string } }> }> };
       }
     ).content.rows[0]!.buttons;
-    expect(buttons[0]!.action.data).toBe("/approve g1 r1");
-    expect(buttons[1]!.action.data).toContain("/reject g1 r1");
+    expect(buttons[0]!.action.data).toBe("/approve r1");
+    expect(buttons[1]!.action.data).toContain("/reject r1");
   });
 
   it("does not push join requests that are decided automatically", async () => {
@@ -107,6 +107,31 @@ describe("EventRouter", () => {
 
     expect(result.detail).toBe("auto_approved");
     expect(api.sentPrivateMessages).toEqual([]);
+  });
+
+  it("pushes an informational card for auto decisions when notifyAutoApproved is on", async () => {
+    configStore.setOverride({
+      groupId: "g1",
+      autoApproveJoin: true,
+      notifyAutoApproved: true,
+    });
+    notifications.subscribe("admin", "g1");
+
+    const result = await router.handle({
+      type: "join_request",
+      groupId: "g1",
+      userId: "u1",
+      requestId: "r1",
+      reason: "想加入",
+    });
+
+    expect(result.detail).toBe("auto_approved");
+    expect(api.sentPrivateMessages).toHaveLength(1);
+    const message = api.sentPrivateMessages[0]!;
+    expect(message.markdown).toContain("**处理结果**：已自动通过（按入群规则）");
+    expect(message.markdown).toContain("无需操作");
+    // 已自动处理：不给审批按钮
+    expect(message.keyboard).toBeUndefined();
   });
 
   it("handles duplicate join request events without throwing or pushing twice", async () => {

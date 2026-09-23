@@ -108,4 +108,29 @@ describe("JoinApprovalService", () => {
     });
     expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Pending);
   });
+
+  it("only notifies auto decisions when notifyAutoApproved is on", async () => {
+    joinAudit.submit("g1", "u1", "想加入", "r1");
+    configStore.setOverride({ groupId: "g1", autoApproveJoin: true });
+
+    // 默认：自动通过不通知审核员
+    const silent = await service.applyJoinRules("g1", "r1");
+    expect(silent).toMatchObject({ action: "approve", notify: false });
+
+    // 开启后：自动通过也通知
+    joinAudit.submit("g1", "u2", "想加入", "r2");
+    configStore.setOverride({ groupId: "g1", notifyAutoApproved: true });
+    const notified = await service.applyJoinRules("g1", "r2");
+    expect(notified).toMatchObject({ action: "approve", notify: true });
+
+    // 需要人工处理时永远通知
+    joinAudit.submit("g1", "u3", "想加入", "r3");
+    configStore.setOverride({
+      groupId: "g1",
+      autoApproveJoin: false,
+      joinDecision: "manual",
+    });
+    const manual = await service.applyJoinRules("g1", "r3");
+    expect(manual).toMatchObject({ action: "manual", notify: true });
+  });
 });

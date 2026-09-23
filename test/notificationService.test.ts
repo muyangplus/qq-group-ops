@@ -131,8 +131,8 @@ describe("NotificationService", () => {
         content: { rows: Array<{ buttons: Array<{ action: { data: string; permission: unknown } }> }> };
       }
     ).content.rows[0]!.buttons;
-    expect(buttons[0]!.action.data).toBe("/approve g1 r1");
-    expect(buttons[1]!.action.data).toBe("/reject g1 r1 审核未通过");
+    expect(buttons[0]!.action.data).toBe("/approve r1");
+    expect(buttons[1]!.action.data).toBe("/reject r1 审核未通过");
     expect(buttons[0]!.action.permission).toEqual({
       type: 0,
       specifyUserIds: ["admin"],
@@ -231,7 +231,7 @@ describe("NotificationService", () => {
     expect(api.sentPrivateMessages[0]?.markdown).toBeUndefined();
     expect(api.sentPrivateMessages[0]?.content).toContain("【新的入群申请】");
     expect(api.sentPrivateMessages[0]?.content).toContain(
-      "同意：/approve 654321 r1",
+      "同意：/approve r1",
     );
   });
 
