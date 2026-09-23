@@ -10,6 +10,7 @@ import { loadEnvFile } from "./env.js";
 import { attachGateway } from "./gatewayRunner.js";
 import { connectPersistence } from "./persistence.js";
 import { createRuntime } from "./runtime.js";
+import { RetentionService } from "./services/retention.js";
 
 /** 启动阶段命中限流时的固定冷却时间。 */
 const RATE_LIMIT_STARTUP_COOLDOWN_MS = 60_000;
@@ -46,6 +47,11 @@ async function main(): Promise<void> {
     await runtime.load();
   }
 
+  const retention = new RetentionService(runtime.auditLog, runtime.joinAudit, {
+    auditLogRetentionDays: settings.auditLogRetentionDays,
+    joinRequestRetentionDays: settings.auditLogRetentionDays,
+  });
+
   log.info("qq-group-ops Node.js runtime");
   log.info("configuration loaded", {
     qqCredentialsConfigured: hasQqCredentials(settings),
@@ -64,6 +70,9 @@ async function main(): Promise<void> {
     await closeLogging();
     return;
   }
+
+  await retention.runOnce();
+  retention.start();
 
   const gateway = instrumentEventGateway(
     new QQOfficialGateway({
@@ -134,6 +143,7 @@ async function main(): Promise<void> {
   log.info("official WebSocket gateway started");
 
   const shutdown = async (): Promise<void> => {
+    retention.stop();
     await gateway.stop();
     await runtime.flush();
     await persistence?.close();

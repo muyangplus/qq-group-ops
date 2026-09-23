@@ -314,8 +314,17 @@ pnpm db:up     # docker compose --profile postgres up -d db
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `RAW_MESSAGE_RETENTION_DAYS` | 否 | 消息原文保留天数；`0` 表示不保存 |
-| `AUDIT_LOG_RETENTION_DAYS` | 否 | 审计日志保留天数，默认 `180` |
+| `RAW_MESSAGE_RETENTION_DAYS` | 否 | 消息原文保留天数；`0` 表示不保存（见下方说明） |
+| `AUDIT_LOG_RETENTION_DAYS` | 否 | 审计记录保留天数，默认 `180`；`0` 表示不清理 |
+
+清理行为（`RetentionService`）：
+
+- 启动时执行一次，之后每 24 小时执行一次；
+- 删除早于 `AUDIT_LOG_RETENTION_DAYS` 的审计记录；
+- 删除早于同一保留期、且**已审批**的入群申请；待审批申请永不清理；
+- 清理同时作用于内存缓存与数据库，避免启动全量载入导致内存无限增长。
+
+`RAW_MESSAGE_RETENTION_DAYS` 目前是「无数据可清理」的状态：项目默认不保存消息原文，只保存审核结果与规则命中信息。保留该变量是为了后续需要短期留存原文时使用。
 
 合规建议见 [DATA-COMPLIANCE.md](DATA-COMPLIANCE.md)。
 

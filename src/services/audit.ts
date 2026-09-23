@@ -58,4 +58,20 @@ export class AuditLogStore implements AuditLog {
   public all(): AuditRecord[] {
     return [...this.records];
   }
+
+  /** 删除早于 cutoff 的记录（内存 + 数据库），返回删除条数。 */
+  public async pruneOlderThan(cutoff: Date): Promise<number> {
+    const kept = this.records.filter((record) => record.createdAt >= cutoff);
+    const removed = this.records.length - kept.length;
+    if (removed === 0) {
+      return 0;
+    }
+    this.records.length = 0;
+    this.records.push(...kept);
+    const repository = this.repository;
+    if (repository) {
+      this.queue?.enqueue("audit.prune", () => repository.deleteOlderThan(cutoff));
+    }
+    return removed;
+  }
 }

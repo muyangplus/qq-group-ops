@@ -124,4 +124,15 @@ describe("SqlAuditRepository", () => {
       },
     ]);
   });
+
+  it("deletes records older than the retention cutoff", async () => {
+    const db = new FakeQueryable();
+    const repository = new SqlAuditRepository(db);
+    const cutoff = new Date("2026-01-01T00:00:00.000Z");
+
+    await repository.deleteOlderThan(cutoff);
+
+    expect(db.calls[0]?.text).toContain("DELETE FROM audit_records");
+    expect(db.calls[0]?.values).toEqual([cutoff.toISOString()]);
+  });
 });

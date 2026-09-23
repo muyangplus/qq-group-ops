@@ -254,6 +254,24 @@
   - `JoinRequestSyncService` 能解析官方字段，`/sync` 才真正可用（此前字段名不匹配会全部跳过）；
   - `docs/ARCHITECTURE.md` 的风险清单移除已核对项，并新增“踢人需要白名单”的说明。
 
+## ADR-0026：数据保留清理真正生效
+
+- 状态：已采纳
+- 背景：`AUDIT_LOG_RETENTION_DAYS` / `RAW_MESSAGE_RETENTION_DAYS` 此前只是读取并打印，从未执行清理；而持久化采用「启动全量载入内存」，不清理会导致内存随历史数据无限增长，合规文档里的保留承诺也无法兑现。
+- 决策：新增 `RetentionService`：
+  - 启动时执行一次，之后每 24 小时执行一次（可在构造参数中调整）；
+  - 审计记录早于 `AUDIT_LOG_RETENTION_DAYS` 的会被删除；
+  - **已审批**的入群申请同样按该天数清理，**待审批申请永不清理**，避免丢失待处理请求；
+  - 清理同时作用于内存缓存与数据库（内存先行，数据库写入进入 `WriteQueue`）；
+  - `AUDIT_LOG_RETENTION_DAYS <= 0` 表示不清理；
+  - `RAW_MESSAGE_RETENTION_DAYS` 目前没有可清理的数据——项目默认不保存消息原文，日志中会明确说明。
+- 理由：保留策略必须由代码强制执行，否则文档承诺与实现不一致；内存缓存 + 全量载入的模式决定了必须有配套清理。
+- 影响：
+  - 新增 `src/services/retention.ts`、`AuditLogStore.pruneOlderThan`、`JoinAuditService.pruneReviewedOlderThan`；
+  - `AuditRepository` 新增 `deleteOlderThan`，`JoinRequestRepository` 新增 `deleteReviewedOlderThan`；
+  - `main.ts` 在启动时执行一次清理并在退出时停止定时器。
+
+
 
 
 

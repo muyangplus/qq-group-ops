@@ -102,6 +102,32 @@ export class JoinAuditService {
       .map((request) => ({ ...request }));
   }
 
+  /**
+   * 删除早于 cutoff 且已审批的申请（内存 + 数据库），返回删除条数。
+   * 待审批申请永不清理，避免丢失需要处理的请求。
+   */
+  public async pruneReviewedOlderThan(cutoff: Date): Promise<number> {
+    let removed = 0;
+    for (const [requestId, request] of this.requests) {
+      if (
+        request.status !== JoinRequestStatus.Pending &&
+        request.createdAt < cutoff
+      ) {
+        this.requests.delete(requestId);
+        removed += 1;
+      }
+    }
+    if (removed > 0) {
+      const repository = this.repository;
+      if (repository) {
+        this.queue?.enqueue("join-request.prune", () =>
+          repository.deleteReviewedOlderThan(cutoff),
+        );
+      }
+    }
+    return removed;
+  }
+
   public approve(requestId: string, reviewerId: string): JoinRequest {
     return this.review(
       requestId,

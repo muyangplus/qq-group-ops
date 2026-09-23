@@ -1,4 +1,4 @@
-import type { JoinRequestStatus } from "../core/enums.js";
+import { JoinRequestStatus } from "../core/enums.js";
 import type { JoinRequest } from "../services/joinAudit.js";
 import type { Queryable } from "./queryable.js";
 
@@ -7,6 +7,8 @@ export interface JoinRequestRepository {
   findPending(groupId: string): Promise<JoinRequest[]>;
   findById(requestId: string): Promise<JoinRequest | null>;
   findAll(): Promise<JoinRequest[]>;
+  /** 删除早于 cutoff 且已审批（非 pending）的申请，用于数据保留策略。 */
+  deleteReviewedOlderThan(cutoff: Date): Promise<void>;
   updateStatus(
     requestId: string,
     status: JoinRequestStatus,
@@ -56,6 +58,11 @@ FROM join_requests
 ORDER BY created_at ASC
 `.trim();
 
+const DELETE_REVIEWED_OLDER_THAN_SQL = `
+DELETE FROM join_requests
+WHERE status <> $1 AND created_at < $2
+`.trim();
+
 const UPDATE_STATUS_SQL = `
 UPDATE join_requests
 SET status = $2,
@@ -99,6 +106,13 @@ export class SqlJoinRequestRepository implements JoinRequestRepository {
   public async findAll(): Promise<JoinRequest[]> {
     const result = await this.db.query<JoinRequestRow>(SELECT_ALL_SQL);
     return result.rows.map(rowToJoinRequest);
+  }
+
+  public async deleteReviewedOlderThan(cutoff: Date): Promise<void> {
+    await this.db.query(DELETE_REVIEWED_OLDER_THAN_SQL, [
+      JoinRequestStatus.Pending,
+      cutoff.toISOString(),
+    ]);
   }
 
   public async updateStatus(

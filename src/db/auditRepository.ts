@@ -6,6 +6,8 @@ export interface AuditRepository {
   append(record: AuditRecord): Promise<void>;
   findByGroup(groupId: string): Promise<AuditRecord[]>;
   findAll(): Promise<AuditRecord[]>;
+  /** 删除早于 cutoff 的记录，用于数据保留策略。 */
+  deleteOlderThan(cutoff: Date): Promise<void>;
 }
 
 interface AuditRow {
@@ -41,6 +43,11 @@ FROM audit_records
 ORDER BY created_at ASC
 `.trim();
 
+const DELETE_OLDER_THAN_SQL = `
+DELETE FROM audit_records
+WHERE created_at < $1
+`.trim();
+
 export class SqlAuditRepository implements AuditRepository {
   public constructor(private readonly db: Queryable) {}
 
@@ -65,6 +72,10 @@ export class SqlAuditRepository implements AuditRepository {
   public async findAll(): Promise<AuditRecord[]> {
     const result = await this.db.query<AuditRow>(SELECT_ALL_SQL);
     return result.rows.map(rowToAuditRecord);
+  }
+
+  public async deleteOlderThan(cutoff: Date): Promise<void> {
+    await this.db.query(DELETE_OLDER_THAN_SQL, [cutoff.toISOString()]);
   }
 }
 

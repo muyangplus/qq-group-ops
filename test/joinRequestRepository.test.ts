@@ -120,4 +120,15 @@ describe("SqlJoinRequestRepository", () => {
       },
     ]);
   });
+
+  it("deletes reviewed requests older than the retention cutoff", async () => {
+    const db = new FakeQueryable();
+    const repository = new SqlJoinRequestRepository(db);
+    const cutoff = new Date("2026-01-01T00:00:00.000Z");
+
+    await repository.deleteReviewedOlderThan(cutoff);
+
+    expect(db.calls[0]?.text).toContain("DELETE FROM join_requests");
+    expect(db.calls[0]?.values).toEqual(["pending", cutoff.toISOString()]);
+  });
 });
