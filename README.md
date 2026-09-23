@@ -9,7 +9,7 @@
 - 技术路线：**仅使用 QQ 官方开放平台 API**，不使用 OneBot、NapCat、Lagrange 等个人号协议端。
 - 已实现：配置、结构化调试日志（控制台 + 文件 + auto 彩色）、领域模型、规则引擎、审计日志、权限模型、权限自助查询、超管权限配置、OpenID ↔ QQ号/群号映射、全状态持久化（SQLite 默认 / PostgreSQL 可选：绑定关系、权限、审计、入群申请、群配置、全量消息模式、活动报名、推送订阅与投递记录）、数据保留清理（审计、已审批申请与推送投递，启动 + 每 24 小时）、动态权限帮助、私信指令、全量消息模式诊断、多群配置、入群审核状态机、入群审批调用官方接口（含自动通过）、官方申请同步（`/sync`）、关键词命中动作（撤回 / 禁言 / 移出 / 拉黑）、班级库驱动的入群审核规则（班级+姓名+正则、5 档决策模式、审核意见）、入群申请推送（`/notify` 订阅 + Markdown 卡片 + 快捷同意/拒绝按钮）、群配置关键词驱动的消息审核、`/rules set` 群规则配置、`/audit` 审计查询、官方禁言/踢人/黑名单接口（请求体已按官方文档核对）、事件路由、事件网关抽象、官方 WebSocket 协议网关（自动重连 + Resume 会话恢复 + 心跳 ACK 超时检测 + 指数退避 + 限流冷却）、官方事件映射器、原生 WebSocket 工厂、access token 与网关地址持久化缓存、出站消息节流与 22009 重试、被动回复配额拦截、401 自动刷新、事件与回复失败容错、`/test` 自检指令、运行时装配、数据库 schema/迁移/方言适配与全部仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
 - 待实现：真实环境联调、Web 管理后台、内容安全与 AI 辅助。
-- 测试：Vitest，共 411 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
+- 测试：Vitest，共 415 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
 
 ## 技术栈
 
@@ -318,8 +318,8 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 ```text
 ## 新的入群申请
 **群**：654321（0123456789ABCDEF0123456789ABCDEF）
-**申请人**：A1B2C3D4...
-
+**申请人**：A1B2C3D4...（小明）
+**入群问题**：请回答班级+姓名
 **回答**：材化2211 张三
 **申请ID**：r1
 
@@ -332,6 +332,8 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 [ 同意 ] [ 拒绝 ]
 [ 拒绝：回答错误 ] [ 拒绝：班级姓名 ]
 ```
+
+> 「回答」来自官方的入群验证信息：`verify_info.method = verify_message` 时取 `verify_message`；`admin_review_qa`（管理员设置问题）时取 `review_qa_list[].answer`（多个答案用空格拼接），同时展示问题文本与申请人昵称。被邀请入群（`apply_source = invited`）没有验证信息，此时「回答」为空，班级类规则会自动转人工。
 
 「同意 / 拒绝」是**指令按钮**：点击后自动发送 `/approve <group_openid> <申请ID>` / `/reject <group_openid> <申请ID> <原因>`，并带二次确认弹窗。按钮走的是与手动输入**完全相同**的指令与权限校验，不存在绕过。
 
@@ -605,6 +607,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 | 配了关键词但没反应 | 检查 `/rules`（或 `/rules all`）里 `启用` 与 `关键词过滤` 是否为 `true`；非 @ 的普通消息还需要群管理员在机器人资料页开启「接收所有消息」 |
 | 关键词命中了但没被移出/拉黑 | `batch_remove_members` 与黑名单接口仅白名单机器人可用（11253）；机器人需为群管理员。看日志里的 `_failed` 详情，`/audit` 里全部失败会显示 `pending` |
 | 入群申请没有自动通过/拒绝 | 检查 `joinDecision`、`joinRequireClass`/`joinRequireName`/`joinAnswerPattern`，以及 `data/class-index.json` 是否存在；索引缺失或正则无效会强制转人工 |
+| 卡片「回答」显示（未填写） | 该群没有设置入群验证问题，或被邀请入群（`apply_source=invited`）。看日志 `join request has no answer` 里的 `verifyKeys` / `method` / `applySource` 确认官方字段 |
 
 ### 11. 规则持久化（强制不变量）
 

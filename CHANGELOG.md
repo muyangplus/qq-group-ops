@@ -65,6 +65,9 @@
 - **规则持久化不变量**：导出 `PERSISTED_CONFIG_FIELDS` 并新增双向校验测试（`test/groupConfig.test.ts`），确保 `EffectiveGroupConfig` 的每个字段都落在 `SQL_FIELDS` 或 `SETTING_FIELDS` 中，以后新增规则字段漏加入库清单会直接测试失败。
 - 新增 `test/rulesPersistence.test.ts`：逐字段跑 `/rules set`（含全局 `all`），重新装配 `GroupConfigStore` 后校验全部字段从数据库恢复；覆盖「只有扩展字段的群」与「全局规则按字段继承」。
 - 修复入群推送卡片正文被截断（「请审核」之后的指令提示丢失）导致纯 Markdown 卡片看不到 `/approve` 指令的问题。
+- **修复入群申请的「回答」显示为（未填写）**：官方 `GROUP_JOIN_REQUEST` 的入群验证有两种方式，答案字段不同——`verify_info.method = verify_message` 时在 `verify_message`，`admin_review_qa`（管理员设置问题）时在 `verify_info.review_qa_list[].answer`。事件映射器之前只读 `verify_message`，问答式入群一律拿不到答案，卡片显示「回答：（未填写）」、班级+姓名规则也无法识别。现在两种方式都会提取答案（多个答案用空格拼接），并带上官方 `username`（昵称）、`method`、`apply_source` 与问题文本。
+  - 卡片新增「申请人（昵称）」「入群问题」两行；`/pending` 的「理由」就是提取出的答案；
+  - 映射器在拿不到答案时 debug 记录字段结构（`method` / `applySource` / `verifyKeys` / `qaCount`，不打印答案原文），便于字段变更时排查。
 
 ## [0.1.0] - 2026-09-23
 

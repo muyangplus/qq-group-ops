@@ -361,6 +361,7 @@
 - 理由：把「解析」与「决策」分开，解析结果可以同时用于审核意见、审计与未来功能；决策模式用枚举而非布尔组合，语义清晰且可测试；「先官方后本地」与「不确定就转人工」符合审核场景的安全默认。
 - 影响：
   - 事件路由的 `join_request` 结果新增 `auto_approved` / `auto_rejected` / `queued`；
+  - 事件映射器要同时支持两种入群验证方式：`verify_info.method = verify_message`（答案在 `verify_message`）与 `admin_review_qa`（答案在 `review_qa_list[].answer`），并把 `username` / 问题文本透传到推送卡片；
   - `AdminCommandService` 新增 `joinRules` 依赖与 `/rules` 展示、`/pending` 意见渲染；
   - 拒绝理由统一截断到 120 字符（官方限制）。
 
