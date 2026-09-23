@@ -4,15 +4,55 @@ import type { JoinAuditService, JoinRequest } from "./joinAudit.js";
 
 const log = getLogger("join-sync");
 
+/** 两次同步同一群的最小间隔，避免频繁调用官方接口。 */
+export const DEFAULT_SYNC_INTERVAL_MS = 30_000;
+
+export interface JoinRequestSyncOptions {
+  minIntervalMs?: number;
+  clock?: () => number;
+}
+
+/**
+ * 从官方接口拉取待审批入群申请，补齐事件丢失的情况。
+ *
+ * 事件（GROUP_JOIN_REQUEST）正常情况下会实时推送，但机器人离线期间、
+ * 或事件丢失时本地队列会缺失申请；该服务用于按需补齐，并对同一群做节流。
+ */
 export class JoinRequestSyncService {
+  private readonly lastSyncAt = new Map<string, number>();
+  private readonly minIntervalMs: number;
+  private readonly clock: () => number;
+
   public constructor(
     private readonly api: QQOfficialAPI,
     private readonly joinAudit: JoinAuditService,
-  ) {}
+    options: JoinRequestSyncOptions = {},
+  ) {
+    this.minIntervalMs = options.minIntervalMs ?? DEFAULT_SYNC_INTERVAL_MS;
+    this.clock = options.clock ?? Date.now;
+  }
+
+  /** 距离下次允许同步还剩多少毫秒；0 表示可以立即同步。 */
+  public cooldownMs(groupId: string): number {
+    const last = this.lastSyncAt.get(groupId);
+    if (last === undefined) {
+      return 0;
+    }
+    return Math.max(0, this.minIntervalMs - (this.clock() - last));
+  }
 
   public async syncGroup(groupId: string): Promise<JoinRequest[]> {
+    const remaining = this.cooldownMs(groupId);
+    if (remaining > 0) {
+      throw new Error(
+        `同步过于频繁，请 ${Math.ceil(remaining / 1_000)} 秒后再试`,
+      );
+    }
+    this.lastSyncAt.set(groupId, this.clock());
+
     const rawRequests = await this.api.getJoinRequests(groupId);
     log.debug("sync start", { groupId, remoteCount: rawRequests.length });
+    let added = 0;
     for (const item of rawRequests) {
       const requestId = firstString(item, "request_id", "id", "flag");
       const userId = firstString(item, "user_id", "member_openid", "user_openid");
@@ -22,12 +62,13 @@ export class JoinRequestSyncService {
       }
       try {
         this.joinAudit.submit(groupId, userId, reason, requestId);
+        added += 1;
       } catch {
         // 已同步过的申请不重复写入。
       }
     }
     const pending = this.joinAudit.pending(groupId);
-    log.debug("sync done", { groupId, pendingCount: pending.length });
+    log.info("sync done", { groupId, remoteCount: rawRequests.length, added, pending: pending.length });
     return pending;
   }
 }

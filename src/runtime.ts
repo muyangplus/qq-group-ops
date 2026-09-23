@@ -32,6 +32,7 @@ import { GroupMessageModeRegistry } from "./services/groupMessageMode.js";
 import { IdentityMapService } from "./services/identityMap.js";
 import { JoinApprovalService } from "./services/joinApproval.js";
 import { JoinAuditService } from "./services/joinAudit.js";
+import { JoinRequestSyncService } from "./services/joinAuditSync.js";
 import { MessageGuardService } from "./services/messageGuard.js";
 import { RuleEngine } from "./services/moderation.js";
 import { PermissionService } from "./services/permissions.js";
@@ -106,11 +107,13 @@ export function createRuntime(
     auditLog,
   );
   const joinApproval = new JoinApprovalService(api, joinAudit, configStore);
+  const joinSync = new JoinRequestSyncService(api, joinAudit);
   const adminCommands = new AdminCommandService({
     permissions,
     joinAudit,
     configStore,
     joinApproval,
+    joinSync,
     auditLog,
     groupMessageMode,
     identityMap,

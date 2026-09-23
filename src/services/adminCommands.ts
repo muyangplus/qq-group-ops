@@ -6,6 +6,7 @@ import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
 import type { IdentityMapService } from "./identityMap.js";
 import type { JoinApprovalService } from "./joinApproval.js";
 import type { JoinAuditService } from "./joinAudit.js";
+import type { JoinRequestSyncService } from "./joinAuditSync.js";
 import type { PermissionService } from "./permissions.js";
 
 const log = getLogger("admin-commands");
@@ -20,6 +21,7 @@ export interface AdminCommandServiceOptions {
   joinAudit: JoinAuditService;
   configStore: GroupConfigStore;
   joinApproval: JoinApprovalService;
+  joinSync: JoinRequestSyncService;
   auditLog: AuditLog;
   groupMessageMode?: GroupMessageModeRegistry | undefined;
   identityMap?: IdentityMapService | undefined;
@@ -30,6 +32,7 @@ export class AdminCommandService {
   private readonly joinAudit: JoinAuditService;
   private readonly configStore: GroupConfigStore;
   private readonly joinApproval: JoinApprovalService;
+  private readonly joinSync: JoinRequestSyncService;
   private readonly auditLog: AuditLog;
   private readonly groupMessageMode: GroupMessageModeRegistry | undefined;
   private readonly identityMap: IdentityMapService | undefined;
@@ -39,6 +42,7 @@ export class AdminCommandService {
     this.joinAudit = options.joinAudit;
     this.configStore = options.configStore;
     this.joinApproval = options.joinApproval;
+    this.joinSync = options.joinSync;
     this.auditLog = options.auditLog;
     this.groupMessageMode = options.groupMessageMode;
     this.identityMap = options.identityMap;
@@ -101,6 +105,9 @@ export class AdminCommandService {
       case "pending":
       case "待审批":
         return this.handlePending(groupId, userId, parts);
+      case "sync":
+      case "同步":
+        return this.handleSync(groupId, userId, parts);
       case "approve":
       case "通过":
         return this.handleApprove(groupId, userId, parts);
@@ -373,6 +380,7 @@ export class AdminCommandService {
 
     if (canModerate) {
       lines.push("/pending [group_openid|群号] - 查看待审批入群申请");
+      lines.push("/sync [group_openid|群号] - 从官方接口同步待审批申请");
       lines.push("/rules [group_openid|群号] - 查看群规则配置");
       lines.push("/audit [group_openid|群号] [数量] - 查看最近审计记录");
       lines.push("/status [group_openid|群号] - 查看群运行状态");
@@ -560,6 +568,45 @@ export class AdminCommandService {
       return;
     }
     throw new Error(`未知角色：${role}`);
+  }
+
+  private async handleSync(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): Promise<CommandResult> {
+    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
+    if (!targetGroupId) {
+      return {
+        ok: false,
+        text: "该指令需要在群内使用，或在私信中提供 group_openid。用法：/sync [group_openid|群号]",
+      };
+    }
+    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
+      return { ok: false, text: "权限不足：需要审核员或以上权限。" };
+    }
+    let pending;
+    try {
+      pending = await this.joinSync.syncGroup(targetGroupId);
+    } catch (error) {
+      log.warn("join sync failed", {
+        groupId: targetGroupId,
+        error: formatError(error),
+      });
+      return { ok: false, text: `同步失败：${formatError(error)}` };
+    }
+    if (pending.length === 0) {
+      return { ok: true, text: "已同步官方待审批申请：当前没有待审批申请。" };
+    }
+    const lines = [`已同步官方待审批申请，当前待审批 ${pending.length} 条：`];
+    for (const request of pending.slice(0, 5)) {
+      const reason = request.reason ? ` 理由：${request.reason}` : "";
+      lines.push(`- ${request.requestId} 用户：${request.userId}${reason}`);
+    }
+    if (pending.length > 5) {
+      lines.push(`（仅显示前 5 条，使用 /pending 查看全部）`);
+    }
+    return { ok: true, text: lines.join("\n") };
   }
 
   private handlePending(

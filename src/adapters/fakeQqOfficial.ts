@@ -12,6 +12,8 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
   public readonly joinRequestReviews: Array<[string, string, boolean, string]> = [];
   /** 置为 true 后 approveJoinRequest 抛出错误，便于测试失败路径。 */
   public failJoinRequestApprovals = false;
+  /** 置为 true 后 getJoinRequests 抛出错误，便于测试同步失败。 */
+  public failJoinRequestList = false;
 
   public async getAccessToken(): Promise<string> {
     return "fake-token";
@@ -70,6 +72,9 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
   }
 
   public async getJoinRequests(groupId: string): Promise<Record<string, unknown>[]> {
+    if (this.failJoinRequestList) {
+      throw new Error("fake join request list failure");
+    }
     return [...this.joinRequests.values()].filter(
       (request) => request.group_id === groupId,
     );

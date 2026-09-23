@@ -8,6 +8,7 @@ import { GroupConfigStore } from "../src/services/groupConfig.js";
 import { IdentityMapService } from "../src/services/identityMap.js";
 import { JoinApprovalService } from "../src/services/joinApproval.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
+import { JoinRequestSyncService } from "../src/services/joinAuditSync.js";
 import { PermissionService } from "../src/services/permissions.js";
 import { FakeIdentityBindingRepository } from "./helpers/fakeIdentityBindingRepository.js";
 
@@ -19,6 +20,7 @@ describe("AdminCommandService", async () => {
   let permissions: PermissionService;
   let api: FakeQQOfficialAPI;
   let joinApproval: JoinApprovalService;
+  let joinSync: JoinRequestSyncService;
   let service: AdminCommandService;
 
   beforeEach(() => {
@@ -35,6 +37,7 @@ describe("AdminCommandService", async () => {
     });
     api = new FakeQQOfficialAPI();
     joinApproval = new JoinApprovalService(api, joinAudit, configStore);
+    joinSync = new JoinRequestSyncService(api, joinAudit, { minIntervalMs: 0 });
     identityMap = new IdentityMapService();
     identityMap.bindUser("member", "10001");
     identityMap.bindUser("mod", "10002");
@@ -48,6 +51,7 @@ describe("AdminCommandService", async () => {
       joinAudit,
       configStore,
       joinApproval,
+      joinSync,
       auditLog,
       identityMap,
     });
@@ -316,6 +320,7 @@ describe("AdminCommandService", async () => {
       joinAudit,
       configStore,
       joinApproval,
+      joinSync,
       auditLog,
       identityMap: map,
     });
@@ -338,6 +343,7 @@ describe("AdminCommandService", async () => {
       joinAudit,
       configStore,
       joinApproval,
+      joinSync,
       auditLog,
       identityMap: map,
     });
@@ -466,5 +472,31 @@ describe("AdminCommandService", async () => {
 
     expect(result.ok).toBe(false);
     expect(result.text).toContain("权限不足");
+  });
+
+  it("syncs pending join requests from the official API", async () => {
+    api.addJoinRequest("g1", "u1", "想加入", "r1");
+
+    const result = await service.handle("g1", "mod", "/sync");
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("r1");
+    expect(joinAudit.pending("g1")).toHaveLength(1);
+  });
+
+  it("requires moderator permission to sync join requests", async () => {
+    const result = await service.handle("g1", "member", "/sync");
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("权限不足");
+  });
+
+  it("reports sync failures", async () => {
+    api.failJoinRequestList = true;
+
+    const result = await service.handle("g1", "mod", "/sync");
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("同步失败");
   });
 });

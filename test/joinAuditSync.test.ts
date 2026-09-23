@@ -13,7 +13,7 @@ describe("JoinRequestSyncService", () => {
   beforeEach(() => {
     api = new FakeQQOfficialAPI();
     joinAudit = new JoinAuditService(new AuditLogStore());
-    service = new JoinRequestSyncService(api, joinAudit);
+    service = new JoinRequestSyncService(api, joinAudit, { minIntervalMs: 0 });
   });
 
   it("imports pending requests", async () => {
@@ -36,5 +36,21 @@ describe("JoinRequestSyncService", () => {
   it("skips invalid entries", async () => {
     api.joinRequests.set("bad", { request_id: "bad", group_id: "g1" });
     expect(await service.syncGroup("g1")).toEqual([]);
+  });
+
+  it("throttles repeated syncs of the same group", async () => {
+    let now = 1_000;
+    const throttled = new JoinRequestSyncService(api, joinAudit, {
+      minIntervalMs: 30_000,
+      clock: () => now,
+    });
+
+    await throttled.syncGroup("g1");
+    await expect(throttled.syncGroup("g1")).rejects.toThrow(/过于频繁/u);
+    expect(throttled.cooldownMs("g1")).toBe(30_000);
+
+    now += 30_000;
+    expect(throttled.cooldownMs("g1")).toBe(0);
+    await expect(throttled.syncGroup("g1")).resolves.toEqual([]);
   });
 });

@@ -8,6 +8,7 @@ import { EventRouter } from "../src/services/eventRouter.js";
 import { GroupConfigStore } from "../src/services/groupConfig.js";
 import { JoinApprovalService } from "../src/services/joinApproval.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
+import { JoinRequestSyncService } from "../src/services/joinAuditSync.js";
 import { MessageGuardService } from "../src/services/messageGuard.js";
 import { RuleEngine } from "../src/services/moderation.js";
 import { PermissionService } from "../src/services/permissions.js";
@@ -37,11 +38,15 @@ describe("EventRouter", () => {
       auditLog,
     );
     const joinApproval = new JoinApprovalService(api, joinAudit, configStore);
+    const joinSync = new JoinRequestSyncService(api, joinAudit, {
+      minIntervalMs: 0,
+    });
     const adminCommands = new AdminCommandService({
       permissions,
       joinAudit,
       configStore,
       joinApproval,
+      joinSync,
       auditLog,
     });
     router = new EventRouter(messageGuard, joinAudit, adminCommands, joinApproval);
