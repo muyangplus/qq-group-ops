@@ -161,8 +161,10 @@ QQ Group Ops 核心服务
 - [架构设计](docs/ARCHITECTURE.md)
 - [配置模板说明](docs/CONFIGURATION.md)
 - [路线图](docs/ROADMAP.md)
+- [真实环境验收清单](docs/ACCEPTANCE.md)
 - [数据合规建议](docs/DATA-COMPLIANCE.md)
-- [关键决策](docs/DECISIONS.md)
+- [关键决策（ADR）](docs/DECISIONS.md)
+- [变更日志](CHANGELOG.md)
 
 ## 贡献
 

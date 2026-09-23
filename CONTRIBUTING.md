@@ -4,10 +4,10 @@
 
 ## 开发环境
 
-- Node.js 20.11+
+- Node.js 24+（默认数据库使用内置 `node:sqlite`）
 - pnpm
 - Git
-- Docker / Docker Compose（可选）
+- Docker / Docker Compose（可选，仅切换 PostgreSQL 时需要）
 
 ```bash
 corepack enable
@@ -34,7 +34,15 @@ pnpm build       # 编译到 dist/
 - 缩进 2 空格。
 - 优先纯函数和可测试服务，不把业务逻辑写进入口文件。
 - 平台适配层与业务服务层保持分离。
+- 官方接口能力必须先按 [官方文档](https://bot.q.qq.com/wiki/develop/api-v2/) 核对请求体与返回结构，再写实现。
 - 提交前至少运行 `pnpm typecheck && pnpm test`。
+
+## 文档约定
+
+- 关键设计取舍写入 [docs/DECISIONS.md](docs/DECISIONS.md)（ADR 格式）。
+- 新增/变更环境变量同步更新 [docs/CONFIGURATION.md](docs/CONFIGURATION.md)。
+- 用户可见变更记入 [CHANGELOG.md](CHANGELOG.md) 的 `Unreleased`。
+- 真实环境行为变更请同步 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) 的验收步骤。
 
 ## 分支与提交
 
