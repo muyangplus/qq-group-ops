@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import type { QQOfficialAPI } from "./qqOfficial.js";
+import type {
+  ApproveJoinRequestOptions,
+  QQOfficialAPI,
+} from "./qqOfficial.js";
 
 export class FakeQQOfficialAPI implements QQOfficialAPI {
   public readonly sentMessages: Array<Record<string, unknown>> = [];
@@ -9,7 +12,14 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
   public readonly mutedMembers: Array<[string, string, number]> = [];
   public readonly removedMembers: Array<[string, string]> = [];
   public readonly joinRequests = new Map<string, Record<string, unknown>>();
-  public readonly joinRequestReviews: Array<[string, string, boolean, string]> = [];
+  public readonly joinRequestReviews: Array<{
+    groupId: string;
+    memberOpenid: string;
+    op: "approve" | "decline";
+    joinRequestId?: string;
+    reason?: string;
+    addToMemberBlacklist?: boolean;
+  }> = [];
   /** 置为 true 后 approveJoinRequest 抛出错误，便于测试失败路径。 */
   public failJoinRequestApprovals = false;
   /** 置为 true 后 getJoinRequests 抛出错误，便于测试同步失败。 */
@@ -63,12 +73,21 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
     groupId: string,
     memberOpenid: string,
     approve: boolean,
-    reason = "",
+    options: ApproveJoinRequestOptions = {},
   ): Promise<void> {
     if (this.failJoinRequestApprovals) {
       throw new Error("fake approval failure");
     }
-    this.joinRequestReviews.push([groupId, memberOpenid, approve, reason]);
+    this.joinRequestReviews.push({
+      groupId,
+      memberOpenid,
+      op: approve ? "approve" : "decline",
+      ...(options.joinRequestId ? { joinRequestId: options.joinRequestId } : {}),
+      ...(options.reason ? { reason: options.reason } : {}),
+      ...(options.addToMemberBlacklist !== undefined
+        ? { addToMemberBlacklist: options.addToMemberBlacklist }
+        : {}),
+    });
   }
 
   public async getJoinRequests(groupId: string): Promise<Record<string, unknown>[]> {

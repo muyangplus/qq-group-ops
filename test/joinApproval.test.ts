@@ -27,7 +27,9 @@ describe("JoinApprovalService", () => {
 
     const result = await service.approve("g1", "r1", "admin");
 
-    expect(api.joinRequestReviews).toEqual([["g1", "u1", true, ""]]);
+    expect(api.joinRequestReviews).toEqual([
+      { groupId: "g1", memberOpenid: "u1", op: "approve", joinRequestId: "r1" },
+    ]);
     expect(result.status).toBe(JoinRequestStatus.Approved);
     expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Approved);
     expect(auditLog.all().at(-1)?.action).toBe("approve_join_request");
@@ -39,7 +41,13 @@ describe("JoinApprovalService", () => {
     const result = await service.reject("g1", "r1", "admin", "资料不完整");
 
     expect(api.joinRequestReviews).toEqual([
-      ["g1", "u1", false, "资料不完整"],
+      {
+        groupId: "g1",
+        memberOpenid: "u1",
+        op: "decline",
+        joinRequestId: "r1",
+        reason: "资料不完整",
+      },
     ]);
     expect(result.status).toBe(JoinRequestStatus.Rejected);
     expect(auditLog.all().at(-1)?.reason).toBe("资料不完整");
@@ -81,7 +89,7 @@ describe("JoinApprovalService", () => {
     await expect(service.autoApproveIfEnabled("g1", "r1")).resolves.toBe(true);
 
     expect(api.joinRequestReviews).toEqual([
-      ["g1", "u1", true, "自动通过（群配置）"],
+      { groupId: "g1", memberOpenid: "u1", op: "approve", joinRequestId: "r1" },
     ]);
     expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Approved);
     expect(auditLog.all().at(-1)?.actorId).toBe("bot");

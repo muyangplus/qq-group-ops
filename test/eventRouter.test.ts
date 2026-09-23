@@ -93,7 +93,7 @@ describe("EventRouter", () => {
 
     expect(result.detail).toBe("auto_approved");
     expect(api.joinRequestReviews).toEqual([
-      ["g1", "u1", true, "自动通过（群配置）"],
+      { groupId: "g1", memberOpenid: "u1", op: "approve", joinRequestId: "r1" },
     ]);
     expect(joinAudit.get("r1").status).toBe("approved");
   });

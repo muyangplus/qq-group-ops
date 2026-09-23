@@ -54,9 +54,26 @@ export class JoinRequestSyncService {
     log.debug("sync start", { groupId, remoteCount: rawRequests.length });
     let added = 0;
     for (const item of rawRequests) {
-      const requestId = firstString(item, "request_id", "id", "flag");
-      const userId = firstString(item, "user_id", "member_openid", "user_openid");
-      const reason = firstString(item, "reason", "comment") ?? "";
+      const requestId = firstString(
+        item,
+        "join_request_id",
+        "request_id",
+        "id",
+        "flag",
+      );
+      const userId = firstString(
+        item,
+        "member_openid",
+        "user_id",
+        "user_openid",
+      );
+      const reason =
+        firstString(item, "reason", "comment") ??
+        firstString(
+          isRecord(item.verify_info) ? item.verify_info : {},
+          "verify_message",
+        ) ??
+        "";
       if (!requestId || !userId) {
         continue;
       }
@@ -88,4 +105,8 @@ function firstString(
     }
   }
   return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

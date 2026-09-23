@@ -38,6 +38,25 @@ describe("JoinRequestSyncService", () => {
     expect(await service.syncGroup("g1")).toEqual([]);
   });
 
+  it("parses official join request fields", async () => {
+    api.joinRequests.set("official", {
+      group_id: "g1",
+      join_request_id: "r9",
+      member_openid: "m9",
+      verify_info: { verify_message: "我想加入" },
+    });
+
+    const pending = await service.syncGroup("g1");
+
+    expect(pending).toEqual([
+      expect.objectContaining({
+        requestId: "r9",
+        userId: "m9",
+        reason: "我想加入",
+      }),
+    ]);
+  });
+
   it("throttles repeated syncs of the same group", async () => {
     let now = 1_000;
     const throttled = new JoinRequestSyncService(api, joinAudit, {

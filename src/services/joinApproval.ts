@@ -26,7 +26,10 @@ export class JoinApprovalService {
     reason = "",
   ): Promise<JoinRequest> {
     const request = this.requireRequest(groupId, requestId);
-    await this.api.approveJoinRequest(groupId, request.userId, true, reason);
+    await this.api.approveJoinRequest(groupId, request.userId, true, {
+      joinRequestId: requestId,
+      ...(reason ? { reason } : {}),
+    });
     log.info("approved join request", { groupId, requestId, reviewerId });
     return this.joinAudit.approve(requestId, reviewerId);
   }
@@ -38,7 +41,10 @@ export class JoinApprovalService {
     reason = "",
   ): Promise<JoinRequest> {
     const request = this.requireRequest(groupId, requestId);
-    await this.api.approveJoinRequest(groupId, request.userId, false, reason);
+    await this.api.approveJoinRequest(groupId, request.userId, false, {
+      joinRequestId: requestId,
+      ...(reason ? { reason } : {}),
+    });
     log.info("rejected join request", {
       groupId,
       requestId,
@@ -62,12 +68,9 @@ export class JoinApprovalService {
     }
     const request = this.joinAudit.get(requestId);
     try {
-      await this.api.approveJoinRequest(
-        groupId,
-        request.userId,
-        true,
-        "自动通过（群配置）",
-      );
+      await this.api.approveJoinRequest(groupId, request.userId, true, {
+        joinRequestId: requestId,
+      });
     } catch (error) {
       log.error("auto approve failed", {
         groupId,

@@ -120,7 +120,9 @@ describe("AdminCommandService", async () => {
     const result = await service.handle("g1", "admin", "/approve r1");
     expect(result.ok).toBe(true);
     expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Approved);
-    expect(api.joinRequestReviews).toEqual([["g1", "u1", true, ""]]);
+    expect(api.joinRequestReviews).toEqual([
+      { groupId: "g1", memberOpenid: "u1", op: "approve", joinRequestId: "r1" },
+    ]);
   });
 
   it("rejects requests with reason", async () => {
@@ -130,7 +132,13 @@ describe("AdminCommandService", async () => {
     expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Rejected);
     expect(auditLog.all().at(-1)?.reason).toBe("资料不完整");
     expect(api.joinRequestReviews).toEqual([
-      ["g1", "u1", false, "资料不完整"],
+      {
+        groupId: "g1",
+        memberOpenid: "u1",
+        op: "decline",
+        joinRequestId: "r1",
+        reason: "资料不完整",
+      },
     ]);
   });
 

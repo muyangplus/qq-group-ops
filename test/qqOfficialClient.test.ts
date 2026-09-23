@@ -95,7 +95,7 @@ describe("QQOfficialClient", () => {
     expect(transport.calls[0]?.url).toContain("/v2/groups/g1/messages/m1");
   });
 
-  it("approves join requests", async () => {
+  it("approves join requests with the official payload", async () => {
     const transport = new FakeTransport([
       { statusCode: 200, jsonData: {}, text: "" },
     ]);
@@ -104,20 +104,132 @@ describe("QQOfficialClient", () => {
       transport,
     });
 
-    await client.approveJoinRequest("g1", "u1", true, "ok");
+    await client.approveJoinRequest("g1", "u1", true, {
+      joinRequestId: "r1",
+    });
 
     expect(transport.calls[0]?.method).toBe("POST");
     expect(transport.calls[0]?.url).toContain(
       "/v2/groups/g1/approval_join_request/u1",
     );
-    expect(transport.calls[0]?.json).toEqual({ approve: true, reason: "ok" });
+    expect(transport.calls[0]?.json).toEqual({
+      op: "approve",
+      join_request_id: "r1",
+    });
   });
 
-  it("reads join request lists", async () => {
+  it("declines join requests with a reason and blacklist flag", async () => {
+    const transport = new FakeTransport([
+      { statusCode: 200, jsonData: {}, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+    });
+
+    await client.approveJoinRequest("g1", "u1", false, {
+      joinRequestId: "r1",
+      reason: "资料不完整",
+      addToMemberBlacklist: true,
+    });
+
+    expect(transport.calls[0]?.json).toEqual({
+      op: "decline",
+      join_request_id: "r1",
+      reject_reason: "资料不完整",
+      add_to_member_blacklist: true,
+    });
+  });
+
+  it("mutes members with mute_expire_at", async () => {
+    const transport = new FakeTransport([
+      { statusCode: 200, jsonData: {}, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+      clock: () => Date.parse("2026-01-01T00:00:00.000Z"),
+    });
+
+    await client.muteGroupMember("g1", "u1", 600);
+
+    expect(transport.calls[0]?.url).toContain(
+      "/v2/groups/g1/restrict_chat_setting",
+    );
+    expect(transport.calls[0]?.json).toEqual({
+      members: [
+        {
+          op: "add",
+          member_openid: "u1",
+          mute_expire_at: "2026-01-01T00:10:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("unmutes members when the duration is zero", async () => {
+    const transport = new FakeTransport([
+      { statusCode: 200, jsonData: {}, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+    });
+
+    await client.muteGroupMember("g1", "u1", 0);
+
+    expect(transport.calls[0]?.json).toEqual({
+      members: [{ op: "del", member_openid: "u1", mute_expire_at: "" }],
+    });
+  });
+
+  it("caps mute duration at 30 days", async () => {
+    const transport = new FakeTransport([
+      { statusCode: 200, jsonData: {}, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+      clock: () => 0,
+    });
+
+    await client.muteGroupMember("g1", "u1", 999 * 24 * 60 * 60);
+
+    const payload = transport.calls[0]?.json as {
+      members: Array<{ mute_expire_at: string }>;
+    };
+    expect(payload.members[0]?.mute_expire_at).toBe(
+      new Date(30 * 24 * 60 * 60 * 1_000).toISOString(),
+    );
+  });
+
+  it("removes members with member_openids", async () => {
+    const transport = new FakeTransport([
+      { statusCode: 200, jsonData: {}, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+    });
+
+    await client.removeGroupMember("g1", "u1");
+
+    expect(transport.calls[0]?.url).toContain(
+      "/v2/groups/g1/batch_remove_members",
+    );
+    expect(transport.calls[0]?.json).toEqual({ member_openids: ["u1"] });
+  });
+
+  it("reads join request lists with cursor pagination", async () => {
     const transport = new FakeTransport([
       {
         statusCode: 200,
-        jsonData: { data: [{ request_id: "r1" }] },
+        jsonData: { list: [{ join_request_id: "r1" }], next_cursor: "c2" },
+        text: "",
+      },
+      {
+        statusCode: 200,
+        jsonData: { list: [{ join_request_id: "r2" }], next_cursor: "" },
         text: "",
       },
     ]);
@@ -127,8 +239,11 @@ describe("QQOfficialClient", () => {
     });
 
     await expect(client.getJoinRequests("g1")).resolves.toEqual([
-      { request_id: "r1" },
+      { join_request_id: "r1" },
+      { join_request_id: "r2" },
     ]);
+    expect(transport.calls[0]?.url).toContain("/v2/groups/g1/join_request_list");
+    expect(transport.calls[1]?.url).toContain("cursor=c2");
   });
 
   it("raises API errors", async () => {

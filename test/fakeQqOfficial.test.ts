@@ -34,7 +34,11 @@ describe("FakeQQOfficialAPI", () => {
     api.addJoinRequest("g1", "u1", "想加入", "r1");
     const requests = await api.getJoinRequests("g1");
     expect(requests[0]?.request_id).toBe("r1");
-    await api.approveJoinRequest("g1", "u1", true, "ok");
-    expect(api.joinRequestReviews).toEqual([["g1", "u1", true, "ok"]]);
+    await api.approveJoinRequest("g1", "u1", true, {
+      joinRequestId: "r1",
+    });
+    expect(api.joinRequestReviews).toEqual([
+      { groupId: "g1", memberOpenid: "u1", op: "approve", joinRequestId: "r1" },
+    ]);
   });
 });

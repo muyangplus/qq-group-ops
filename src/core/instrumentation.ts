@@ -1,5 +1,6 @@
 import type { EventGateway, EventHandler } from "../adapters/eventGateway.js";
 import type {
+  ApproveJoinRequestOptions,
   AsyncTransport,
   HttpResponse,
   JsonValue,
@@ -90,10 +91,16 @@ export function instrumentQQOfficialAPI(
       groupId: string,
       memberOpenid: string,
       approve: boolean,
-      reason = "",
+      options: ApproveJoinRequestOptions = {},
     ) => {
-      log.debug("approveJoinRequest", { groupId, memberOpenid, approve, reason });
-      await api.approveJoinRequest(groupId, memberOpenid, approve, reason);
+      log.debug("approveJoinRequest", {
+        groupId,
+        memberOpenid,
+        approve,
+        hasReason: Boolean(options.reason),
+        hasJoinRequestId: Boolean(options.joinRequestId),
+      });
+      await api.approveJoinRequest(groupId, memberOpenid, approve, options);
       log.debug("approveJoinRequest ok", { groupId, memberOpenid, approve });
     },
     getJoinRequests: async (groupId: string) => {

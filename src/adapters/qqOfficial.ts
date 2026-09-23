@@ -23,6 +23,15 @@ export type JsonValue =
   | null
   | undefined;
 
+export interface ApproveJoinRequestOptions {
+  /** 拒绝理由（op=decline 时官方支持 reject_reason）。 */
+  reason?: string | undefined;
+  /** 入群申请 ID（join_request_id），官方推荐携带。 */
+  joinRequestId?: string | undefined;
+  /** op=decline 时是否同时加入群黑名单。 */
+  addToMemberBlacklist?: boolean | undefined;
+}
+
 export interface QQOfficialAPI {
   getAccessToken(): Promise<string>;
   getGatewayUrl(): Promise<string>;
@@ -49,7 +58,7 @@ export interface QQOfficialAPI {
     groupId: string,
     memberOpenid: string,
     approve: boolean,
-    reason?: string,
+    options?: ApproveJoinRequestOptions,
   ): Promise<void>;
   getJoinRequests(groupId: string): Promise<Record<string, unknown>[]>;
 }
@@ -100,6 +109,10 @@ export const DEFAULT_ENDPOINTS: QQOfficialEndpoints = {
 export const DEFAULT_TOKEN_REFRESH_MARGIN_MS = 60_000;
 export const DEFAULT_GATEWAY_COOLDOWN_MS = 60_000;
 export const DEFAULT_TOKEN_LIFETIME_SECONDS = 7_200;
+/** 官方限制：单次禁言最长 30 天。 */
+export const MAX_MUTE_DURATION_SECONDS = 30 * 24 * 60 * 60;
+/** 入群申请列表最多翻页次数，避免异常游标导致死循环。 */
+export const MAX_JOIN_REQUEST_PAGES = 5;
 
 export interface QQOfficialClientOptions {
   token?: string;
@@ -316,47 +329,104 @@ export class QQOfficialClient implements QQOfficialAPI {
     );
   }
 
+  /**
+   * 设置群成员禁言（官方 `POST /v2/groups/{group_openid}/restrict_chat_setting`）。
+   *
+   * 请求体：`{ members: [{ op, member_openid, mute_expire_at }] }`，
+   * `op` 取 `add` / `update` / `del`，`mute_expire_at` 为 RFC3339 到期时间；
+   * `durationSeconds <= 0` 时使用 `op=del` + 空字符串表示立即解除禁言。
+   * 官方限制最长 30 天、单次最多 20 个成员，且机器人需为群管理员。
+   */
   public async muteGroupMember(
-    _groupId: string,
-    _userId: string,
-    _durationSeconds: number,
+    groupId: string,
+    userId: string,
+    durationSeconds: number,
   ): Promise<void> {
-    throw new Error(
-      "Verify official restrict_chat_setting request body before enabling",
+    const seconds = Math.min(
+      Math.max(0, Math.floor(durationSeconds)),
+      MAX_MUTE_DURATION_SECONDS,
+    );
+    const member =
+      seconds <= 0
+        ? { op: "del", member_openid: userId, mute_expire_at: "" }
+        : {
+            op: "add",
+            member_openid: userId,
+            mute_expire_at: new Date(
+              this.clock() + seconds * 1_000,
+            ).toISOString(),
+          };
+    await this.request(
+      "POST",
+      fill(this.endpoints.muteGroupMember, { groupId }),
+      { members: [member] },
     );
   }
 
-  public async removeGroupMember(_groupId: string, _userId: string): Promise<void> {
-    throw new Error(
-      "Verify official batch_remove_members request body before enabling",
+  /**
+   * 批量移除群成员（官方 `POST /v2/groups/{group_openid}/batch_remove_members`）。
+   *
+   * 注意：该接口仅白名单机器人可用，未开通时会返回错误码 11253。
+   */
+  public async removeGroupMember(
+    groupId: string,
+    userId: string,
+  ): Promise<void> {
+    await this.request(
+      "POST",
+      fill(this.endpoints.removeGroupMember, { groupId }),
+      { member_openids: [userId] },
     );
   }
 
+  /**
+   * 审批入群申请（官方 `POST /v2/groups/{group_openid}/approval_join_request/{member_openid}`）。
+   *
+   * 请求体：`{ op: "approve" | "decline", join_request_id?, reject_reason?, add_to_member_blacklist? }`。
+   */
   public async approveJoinRequest(
     groupId: string,
     memberOpenid: string,
     approve: boolean,
-    reason = "",
+    options: ApproveJoinRequestOptions = {},
   ): Promise<void> {
+    const payload: Record<string, unknown> = {
+      op: approve ? "approve" : "decline",
+    };
+    if (options.joinRequestId) {
+      payload.join_request_id = options.joinRequestId;
+    }
+    if (!approve && options.reason) {
+      payload.reject_reason = options.reason;
+    }
+    if (options.addToMemberBlacklist !== undefined) {
+      payload.add_to_member_blacklist = options.addToMemberBlacklist;
+    }
     await this.request(
       "POST",
       fill(this.endpoints.approveJoinRequest, { groupId, memberOpenid }),
-      { approve, reason },
+      payload,
     );
   }
 
+  /**
+   * 拉取入群申请列表（官方返回 `{ list, next_cursor }`），自动跟随游标翻页。
+   */
   public async getJoinRequests(groupId: string): Promise<Record<string, unknown>[]> {
-    const response = await this.request(
-      "GET",
-      fill(this.endpoints.joinRequestList, { groupId }),
-    );
-    if (Array.isArray(response.jsonData)) {
-      return response.jsonData.filter(isRecord);
+    const requests: Record<string, unknown>[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_JOIN_REQUEST_PAGES; page += 1) {
+      const path = fill(this.endpoints.joinRequestList, { groupId });
+      const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+      const response = await this.request("GET", `${path}${query}`);
+      const pageResult = extractJoinRequestPage(response.jsonData);
+      requests.push(...pageResult.requests);
+      if (!pageResult.nextCursor) {
+        break;
+      }
+      cursor = pageResult.nextCursor;
     }
-    if (isRecord(response.jsonData) && Array.isArray(response.jsonData.data)) {
-      return response.jsonData.data.filter(isRecord);
-    }
-    return [];
+    return requests;
   }
 
   private async resolveToken(): Promise<string> {
@@ -519,8 +589,7 @@ export class QQOfficialClient implements QQOfficialAPI {
   }
 }
 
-function parseExpiresIn(value: unknown): number {
-  const parsed =
+function parseExpiresIn(value: unknown): number {  const parsed =
     typeof value === "number"
       ? value
       : typeof value === "string"
@@ -531,6 +600,31 @@ function parseExpiresIn(value: unknown): number {
   }
   // 太短会导致频繁刷新，按最小值兜底。
   return Math.max(60, Math.floor(parsed));
+}
+
+export interface JoinRequestPage {
+  requests: Record<string, unknown>[];
+  nextCursor: string | undefined;
+}
+
+/** 兼容 `{ list, next_cursor }`、`{ data }` 与裸数组三种返回形态。 */
+export function extractJoinRequestPage(payload: unknown): JoinRequestPage {
+  if (Array.isArray(payload)) {
+    return { requests: payload.filter(isRecord), nextCursor: undefined };
+  }
+  if (!isRecord(payload)) {
+    return { requests: [], nextCursor: undefined };
+  }
+  const rawList = Array.isArray(payload.list)
+    ? payload.list
+    : Array.isArray(payload.data)
+      ? payload.data
+      : [];
+  const nextCursor =
+    typeof payload.next_cursor === "string" && payload.next_cursor.length > 0
+      ? payload.next_cursor
+      : undefined;
+  return { requests: rawList.filter(isRecord), nextCursor };
 }
 
 function fill(template: string, values: Record<string, string>): string {

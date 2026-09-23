@@ -118,7 +118,12 @@ Web 管理 API + 管理后台（Phase 2）
 - 好友申请 / 群邀请是否有可调用的审批接口。
 - 官方 API 的频率、配额和可管理群数量。
 - 个人开发者账号的群聊权限范围。
-- `restrict_chat_setting` 和 `batch_remove_members` 的请求体结构。
-- `approval_join_request` 的请求体与 `join_request_list` 返回字段（审批闭环依赖它）。
 
-这些风险在开发过程中持续跟踪，未确认前不写入“必然支持”的实现承诺。
+已按官方文档核对（见 ADR-0025）：
+
+- `restrict_chat_setting`：请求体为 `{ members: [{ op, member_openid, mute_expire_at }] }`，限频 60 QPM，最长 30 天。
+- `batch_remove_members`：请求体为 `{ member_openids }`，**仅白名单机器人可用**（错误码 11253）。
+- `approval_join_request`：请求体为 `{ op, join_request_id, reject_reason }`。
+- `join_request_list`：返回 `{ list, next_cursor }`。
+
+这些能力仍需在真实群验证一次端到端行为（权限、配额与实际生效范围）。

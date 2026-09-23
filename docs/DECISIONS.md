@@ -235,5 +235,25 @@
   - `/help` 对群管理员展示 `/rules set`，对审核员展示 `/audit`、`/sync`；
   - 官方 `approval_join_request` 的请求体仍需在真实群验证（见「待验证的架构风险」）。
 
+## ADR-0025：按官方文档核对禁言 / 踢人 / 入群审批请求体
+
+- 状态：已采纳
+- 背景：阶段 B 需要启用此前抛错占位的禁言与踢人能力；同时核对发现阶段 A 实现的入群审批请求体与官方文档不一致（原来发送 `{ approve, reason }`）。
+- 决策：以官方 API 文档（`bot.q.qq.com/wiki/develop/api-v2`）为准重写三个接口：
+  1. **禁言** `POST /v2/groups/{group_openid}/restrict_chat_setting`
+     请求体 `{ members: [{ op, member_openid, mute_expire_at }] }`；`op` 取 `add` / `update` / `del`，`mute_expire_at` 为 RFC3339 到期时间。`durationSeconds <= 0` 时使用 `op=del` + 空字符串立即解除禁言；`mute_expire_at` 由 `clock() + duration` 生成，最长 30 天（超出自动截断）。接口限频 60 QPM，单次最多 20 个成员。
+  2. **踢人** `POST /v2/groups/{group_openid}/batch_remove_members`
+     请求体 `{ member_openids: [...] }`（可选 `add_to_member_blacklist`）。**该接口仅白名单机器人可用**，未开通时返回错误码 11253，需要在文档中明确提示。
+  3. **入群审批** `POST /v2/groups/{group_openid}/approval_join_request/{member_openid}`
+     请求体 `{ op: "approve" | "decline", join_request_id?, reject_reason?, add_to_member_blacklist? }`；拒绝理由字段是 `reject_reason` 而不是 `reason`，且 `join_request_id` 应携带（本地用事件里的 `join_request_id`）。
+  4. **入群申请列表** `GET .../join_request_list` 返回 `{ list, next_cursor }`，客户端改为自动跟随游标翻页（上限 5 页），并兼容 `{ data }` 与裸数组；申请字段为 `join_request_id` / `member_openid` / `verify_info.verify_message`。
+- 理由：官方文档是唯一权威来源；参数名不一致会导致 400，且“审批成功但群里没通过”是最危险的静默失败。
+- 影响：
+  - `QQOfficialAPI.approveJoinRequest` 的第 4 个参数由 `reason?: string` 改为 `options?: ApproveJoinRequestOptions`（`reason` / `joinRequestId` / `addToMemberBlacklist`）；
+  - `muteGroupMember` 与 `removeGroupMember` 不再抛错，消息审核的禁言/踢人动作真正可用；
+  - `JoinRequestSyncService` 能解析官方字段，`/sync` 才真正可用（此前字段名不匹配会全部跳过）；
+  - `docs/ARCHITECTURE.md` 的风险清单移除已核对项，并新增“踢人需要白名单”的说明。
+
+
 
 
