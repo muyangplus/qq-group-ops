@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { QQOfficialAPI } from "../adapters/qqOfficial.js";
 import {
   AuditStatus,
+  KeywordPunish,
   ModerationAction,
 } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
@@ -103,28 +104,98 @@ export class MessageGuardService {
     message: IncomingMessage,
     config: EffectiveGroupConfig,
   ): Promise<[boolean, string]> {
-    log.debug("execute action", { action, groupId: message.groupId });
-    switch (action) {
-      case ModerationAction.Warn:
-        await this.api.sendGroupMessage(message.groupId, config.warningMessage, message.messageId);
-        return [true, "warned"];
-      case ModerationAction.Recall:
-        await this.api.recallGroupMessage(message.groupId, message.messageId);
-        return [true, "recalled"];
-      case ModerationAction.Mute:
-        await this.api.muteGroupMember(
-          message.groupId,
-          message.userId,
-          config.muteDurationSeconds,
-        );
-        return [true, "muted"];
-      case ModerationAction.Kick:
-        await this.api.removeGroupMember(message.groupId, message.userId);
-        return [true, "removed"];
-      case ModerationAction.Review:
-        return [false, "queued_for_review"];
-      case ModerationAction.Allow:
-        return [false, "allow"];
+    if (action === ModerationAction.Review) {
+      return [false, "queued_for_review"];
+    }
+
+    // 群配置可以额外要求撤回，并指定处罚动作；规则自带的动作仍然生效
+    const recall = config.keywordRecall || action === ModerationAction.Recall;
+    const punish =
+      config.keywordPunish !== KeywordPunish.None
+        ? config.keywordPunish
+        : action === ModerationAction.Mute
+          ? KeywordPunish.Mute
+          : action === ModerationAction.Kick
+            ? KeywordPunish.Kick
+            : KeywordPunish.None;
+    const warn =
+      action === ModerationAction.Warn ||
+      recall ||
+      punish !== KeywordPunish.None;
+
+    log.debug("execute action", {
+      action,
+      groupId: message.groupId,
+      recall,
+      punish,
+      warn,
+    });
+
+    const details: string[] = [];
+    if (recall) {
+      details.push(
+        await this.attempt("recall", () =>
+          this.api.recallGroupMessage(message.groupId, message.messageId),
+        ),
+      );
+    }
+    if (punish === KeywordPunish.Mute) {
+      details.push(
+        await this.attempt("mute", () =>
+          this.api.muteGroupMember(
+            message.groupId,
+            message.userId,
+            config.muteDurationSeconds,
+          ),
+        ),
+      );
+    }
+    if (punish === KeywordPunish.Kick) {
+      details.push(
+        await this.attempt("remove", () =>
+          this.api.removeGroupMember(message.groupId, message.userId),
+        ),
+      );
+    }
+    if (punish === KeywordPunish.KickBlacklist) {
+      details.push(
+        await this.attempt("remove+blacklist", () =>
+          this.api.removeGroupMember(message.groupId, message.userId, {
+            addToMemberBlacklist: true,
+          }),
+        ),
+      );
+    }
+    if (warn) {
+      details.push(
+        await this.attempt("warn", () =>
+          this.api.sendGroupMessage(
+            message.groupId,
+            config.warningMessage,
+            message.messageId,
+          ),
+        ),
+      );
+    }
+
+    const executed = details.some((detail) => !detail.endsWith("_failed"));
+    return [executed, details.length > 0 ? details.join("+") : "allow"];
+  }
+
+  /** 单个动作失败不影响其他动作与审计记录，失败信息带 `_failed` 后缀。 */
+  private async attempt(
+    label: string,
+    action: () => Promise<unknown>,
+  ): Promise<string> {
+    try {
+      await action();
+      return label;
+    } catch (error) {
+      log.warn("moderation action failed", {
+        action: label,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return `${label}_failed`;
     }
   }
 

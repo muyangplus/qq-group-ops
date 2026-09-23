@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type {
   ApproveJoinRequestOptions,
   QQOfficialAPI,
+  RemoveGroupMemberOptions,
 } from "./qqOfficial.js";
 
 export class FakeQQOfficialAPI implements QQOfficialAPI {
@@ -11,6 +12,8 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
   public readonly recalledMessages: Array<[string, string]> = [];
   public readonly mutedMembers: Array<[string, string, number]> = [];
   public readonly removedMembers: Array<[string, string]> = [];
+  /** 群黑名单操作记录：[groupId, userId, "add"|"del"]。 */
+  public readonly blacklistOperations: Array<[string, string, "add" | "del"]> = [];
   public readonly joinRequests = new Map<string, Record<string, unknown>>();
   public readonly joinRequestReviews: Array<{
     groupId: string;
@@ -65,8 +68,23 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
     this.mutedMembers.push([groupId, userId, durationSeconds]);
   }
 
-  public async removeGroupMember(groupId: string, userId: string): Promise<void> {
+  public async removeGroupMember(
+    groupId: string,
+    userId: string,
+    options: RemoveGroupMemberOptions = {},
+  ): Promise<void> {
     this.removedMembers.push([groupId, userId]);
+    if (options.addToMemberBlacklist) {
+      this.blacklistOperations.push([groupId, userId, "add"]);
+    }
+  }
+
+  public async updateMemberBlacklist(
+    groupId: string,
+    userId: string,
+    add: boolean,
+  ): Promise<void> {
+    this.blacklistOperations.push([groupId, userId, add ? "add" : "del"]);
   }
 
   public async approveJoinRequest(

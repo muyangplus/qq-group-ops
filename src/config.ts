@@ -1,5 +1,6 @@
 export const DEFAULT_SQLITE_PATH = "data/qq-group-ops.db";
 export const DEFAULT_BOT_CACHE_FILE = "data/qq-bot-cache.json";
+export const DEFAULT_CLASS_INDEX_FILE = "data/class-index.json";
 
 export type DatabaseTarget =
   | { driver: "sqlite"; path: string }
@@ -13,6 +14,8 @@ export interface Settings {
   qqBotSandbox: boolean;
   /** access token / 网关地址缓存文件；空字符串表示只用内存缓存。 */
   qqBotCacheFile: string;
+  /** 班级库索引（由 pnpm class:index 生成）；缺失时班级类入群规则退化为人工审核。 */
+  classIndexFile: string;
   /** 原始 DATABASE_URL，仅用于日志与诊断。 */
   databaseUrl: string;
   /** 解析后的数据库目标；默认 SQLite 文件。 */
@@ -101,6 +104,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     qqBotToken: env.QQ_BOT_TOKEN ?? "",
     qqBotSandbox: asBool(env.QQ_BOT_SANDBOX),
     qqBotCacheFile: env.QQ_BOT_CACHE_FILE ?? DEFAULT_BOT_CACHE_FILE,
+    classIndexFile: env.CLASS_INDEX_FILE ?? DEFAULT_CLASS_INDEX_FILE,
     databaseUrl,
     databaseTarget: resolveDatabaseTarget(env.DATABASE_URL, env.SQLITE_PATH),
     adminUserIds: splitCsv(env.ADMIN_USER_IDS ?? env.ADMIN_QQ_IDS),

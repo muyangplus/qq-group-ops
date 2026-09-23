@@ -104,14 +104,19 @@ export class EventRouter {
             event.reason ?? "",
             event.requestId,
           );
-          const autoApproved = await this.joinApproval?.autoApproveIfEnabled(
+          const outcome = await this.joinApproval?.applyJoinRules(
             event.groupId,
             event.requestId,
           );
           return {
             kind: "join_request",
             ok: true,
-            detail: autoApproved ? "auto_approved" : "queued",
+            detail:
+              outcome?.action === "approve"
+                ? "auto_approved"
+                : outcome?.action === "reject"
+                  ? "auto_rejected"
+                  : "queued",
           };
         } catch (error) {
           return { kind: "join_request", ok: false, detail: String(error) };

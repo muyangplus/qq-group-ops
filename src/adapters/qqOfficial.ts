@@ -24,6 +24,11 @@ export type JsonValue =
   | null
   | undefined;
 
+export interface RemoveGroupMemberOptions {
+  /** 移出的同时加入群黑名单（官方一次调用完成）。 */
+  addToMemberBlacklist?: boolean | undefined;
+}
+
 export interface ApproveJoinRequestOptions {
   /** 拒绝理由（op=decline 时官方支持 reject_reason）。 */
   reason?: string | undefined;
@@ -54,7 +59,17 @@ export interface QQOfficialAPI {
     userId: string,
     durationSeconds: number,
   ): Promise<void>;
-  removeGroupMember(groupId: string, userId: string): Promise<void>;
+  removeGroupMember(
+    groupId: string,
+    userId: string,
+    options?: RemoveGroupMemberOptions,
+  ): Promise<void>;
+  /** 群黑名单操作：add 加入黑名单（要求目标不在群中），del 移出黑名单。 */
+  updateMemberBlacklist(
+    groupId: string,
+    userId: string,
+    add: boolean,
+  ): Promise<void>;
   approveJoinRequest(
     groupId: string,
     memberOpenid: string,
@@ -92,6 +107,7 @@ export interface QQOfficialEndpoints {
   removeGroupMember: string;
   approveJoinRequest: string;
   joinRequestList: string;
+  memberBlacklist: string;
 }
 
 export const DEFAULT_ENDPOINTS: QQOfficialEndpoints = {
@@ -106,6 +122,7 @@ export const DEFAULT_ENDPOINTS: QQOfficialEndpoints = {
   removeGroupMember: "/v2/groups/{groupId}/batch_remove_members",
   approveJoinRequest: "/v2/groups/{groupId}/approval_join_request/{memberOpenid}",
   joinRequestList: "/v2/groups/{groupId}/join_request_list",
+  memberBlacklist: "/v2/groups/{groupId}/member_blacklist",
 };
 
 export const DEFAULT_TOKEN_REFRESH_MARGIN_MS = 60_000;
@@ -413,15 +430,38 @@ export class QQOfficialClient implements QQOfficialAPI {
    * 批量移除群成员（官方 `POST /v2/groups/{group_openid}/batch_remove_members`）。
    *
    * 注意：该接口仅白名单机器人可用，未开通时会返回错误码 11253。
+   * 传入 `addToMemberBlacklist` 可以在同一次调用里完成移出 + 拉黑。
    */
   public async removeGroupMember(
     groupId: string,
     userId: string,
+    options: RemoveGroupMemberOptions = {},
   ): Promise<void> {
+    const payload: Record<string, unknown> = { member_openids: [userId] };
+    if (options.addToMemberBlacklist !== undefined) {
+      payload.add_to_member_blacklist = options.addToMemberBlacklist;
+    }
     await this.request(
       "POST",
       fill(this.endpoints.removeGroupMember, { groupId }),
-      { member_openids: [userId] },
+      payload,
+    );
+  }
+
+  /**
+   * 群黑名单操作（官方 `POST /v2/groups/{group_openid}/member_blacklist`）。
+   *
+   * 官方要求加入黑名单时目标不在群中；该接口同样仅白名单机器人可用。
+   */
+  public async updateMemberBlacklist(
+    groupId: string,
+    userId: string,
+    add: boolean,
+  ): Promise<void> {
+    await this.request(
+      "POST",
+      fill(this.endpoints.memberBlacklist, { groupId }),
+      { op: add ? "add" : "del", member_openids: [userId] },
     );
   }
 

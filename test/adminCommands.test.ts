@@ -8,6 +8,8 @@ import { GroupConfigStore } from "../src/services/groupConfig.js";
 import { IdentityMapService } from "../src/services/identityMap.js";
 import { JoinApprovalService } from "../src/services/joinApproval.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
+import { JoinRuleEvaluator } from "../src/services/joinRules.js";
+import { MemberRoster } from "../src/services/memberRoster.js";
 import { JoinRequestSyncService } from "../src/services/joinAuditSync.js";
 import { PermissionService } from "../src/services/permissions.js";
 import { FakeIdentityBindingRepository } from "./helpers/fakeIdentityBindingRepository.js";
@@ -337,6 +339,132 @@ describe("AdminCommandService", async () => {
 
     expect(result.ok).toBe(false);
     expect(result.text).toContain("需要提供 group_openid");
+  });
+
+  it("configures keyword recall and punishment", async () => {
+    await service.handle("g1", "admin", "/rules set keywordRecall on");
+    await service.handle("g1", "admin", "/rules set keywordPunish kick_blacklist");
+
+    expect(configStore.get("g1").keywordRecall).toBe(true);
+    expect(configStore.get("g1").keywordPunish).toBe("kick_blacklist");
+
+    // 中文别名
+    await service.handle("g1", "admin", "/rules set 处罚 禁言");
+    expect(configStore.get("g1").keywordPunish).toBe("mute");
+
+    await service.handle("g1", "admin", "/rules set 撤回 off");
+    expect(configStore.get("g1").keywordRecall).toBe(false);
+
+    const invalid = await service.handle(
+      "g1",
+      "admin",
+      "/rules set keywordPunish nope",
+    );
+    expect(invalid.ok).toBe(false);
+    expect(invalid.text).toContain("none / mute / kick / kick_blacklist");
+  });
+
+  it("configures join decision and answer requirements", async () => {
+    await service.handle("g1", "admin", "/rules set joinDecision reject_on_mismatch");
+    await service.handle("g1", "admin", "/rules set joinRequireClass on");
+    await service.handle("g1", "admin", "/rules set joinRequireName 是");
+    await service.handle(
+      "g1",
+      "admin",
+      "/rules set joinAnswerPattern ^材化\\d{4}\\s+\\S{2,4}$",
+    );
+    await service.handle("g1", "admin", "/rules set joinReviewOpinion off");
+
+    const config = configStore.get("g1");
+    expect(config.joinDecision).toBe("reject_on_mismatch");
+    expect(config.joinRequireClass).toBe(true);
+    expect(config.joinRequireName).toBe(true);
+    expect(config.joinAnswerPattern).toContain("材化");
+    expect(config.joinReviewOpinion).toBe(false);
+
+    // 中文别名 + clear
+    await service.handle("g1", "admin", "/rules set 入群决策 命中通过");
+    expect(configStore.get("g1").joinDecision).toBe("approve_on_match");
+    await service.handle("g1", "admin", "/rules set 入群正则 clear");
+    expect(configStore.get("g1").joinAnswerPattern).toBe("");
+
+    const invalidDecision = await service.handle(
+      "g1",
+      "admin",
+      "/rules set joinDecision nope",
+    );
+    expect(invalidDecision.ok).toBe(false);
+    expect(invalidDecision.text).toContain("manual / auto_approve");
+
+    const invalidPattern = await service.handle(
+      "g1",
+      "admin",
+      "/rules set joinAnswerPattern ([bad",
+    );
+    expect(invalidPattern.ok).toBe(false);
+    expect(invalidPattern.text).toContain("不合法");
+  });
+
+  it("shows review opinions in /pending when enabled", async () => {
+    const evaluator = new JoinRuleEvaluator(
+      MemberRoster.fromIndex({
+        classes: ["材化2211"],
+        majors: ["材料化学"],
+        classInfo: {
+          材化2211: {
+            major: "材料化学",
+            college: "化学与生命科学学院",
+            year: "2022",
+          },
+        },
+      }),
+    );
+    const localService = new AdminCommandService({
+      permissions,
+      joinAudit,
+      configStore,
+      joinApproval,
+      joinSync,
+      auditLog,
+      joinRules: evaluator,
+    });
+    configStore.setOverride({
+      groupId: "g1",
+      joinDecision: "approve_on_match",
+      joinRequireClass: true,
+      joinRequireName: true,
+      joinReviewOpinion: true,
+    });
+    joinAudit.submit("g1", "u1", "材化2211 张三", "r1");
+
+    const result = await localService.handle("g1", "mod", "/pending");
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("审核意见");
+    expect(result.text).toContain("材化2211");
+    expect(result.text).toContain("姓名 张三");
+    expect(result.text).toContain("建议：通过");
+  });
+
+  it("hides review opinions when the group disables them", async () => {
+    const evaluator = new JoinRuleEvaluator(
+      MemberRoster.fromIndex({ classes: ["材化2211"] }),
+    );
+    const localService = new AdminCommandService({
+      permissions,
+      joinAudit,
+      configStore,
+      joinApproval,
+      joinSync,
+      auditLog,
+      joinRules: evaluator,
+    });
+    configStore.setOverride({ groupId: "g1", joinReviewOpinion: false });
+    joinAudit.submit("g1", "u1", "材化2211 张三", "r1");
+
+    const result = await localService.handle("g1", "mod", "/pending");
+
+    expect(result.text).not.toContain("审核意见");
   });
 
   it("supports private binding commands", async () => {

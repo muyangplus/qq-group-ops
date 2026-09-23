@@ -77,7 +77,9 @@ describe("JoinApprovalService", () => {
   it("does not auto approve unless the group config enables it", async () => {
     joinAudit.submit("g1", "u1", "想加入", "r1");
 
-    await expect(service.autoApproveIfEnabled("g1", "r1")).resolves.toBe(false);
+    const outcome = await service.applyJoinRules("g1", "r1");
+
+    expect(outcome.action).toBe("manual");
     expect(api.joinRequestReviews).toEqual([]);
     expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Pending);
   });
@@ -86,13 +88,14 @@ describe("JoinApprovalService", () => {
     joinAudit.submit("g1", "u1", "想加入", "r1");
     configStore.setOverride({ groupId: "g1", autoApproveJoin: true });
 
-    await expect(service.autoApproveIfEnabled("g1", "r1")).resolves.toBe(true);
+    const outcome = await service.applyJoinRules("g1", "r1");
 
+    expect(outcome.action).toBe("approve");
     expect(api.joinRequestReviews).toEqual([
       { groupId: "g1", memberOpenid: "u1", op: "approve", joinRequestId: "r1" },
     ]);
     expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Approved);
-    expect(auditLog.all().at(-1)?.actorId).toBe("bot");
+    expect(auditLog.all().at(-1)?.actorId).toBe("bot:auto");
   });
 
   it("keeps the request pending when auto approve fails", async () => {
@@ -100,7 +103,9 @@ describe("JoinApprovalService", () => {
     configStore.setOverride({ groupId: "g1", autoApproveJoin: true });
     api.failJoinRequestApprovals = true;
 
-    await expect(service.autoApproveIfEnabled("g1", "r1")).resolves.toBe(false);
+    await expect(service.applyJoinRules("g1", "r1")).resolves.toMatchObject({
+      action: "manual",
+    });
     expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Pending);
   });
 });

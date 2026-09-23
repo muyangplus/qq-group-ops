@@ -51,12 +51,18 @@ function isGroupAdmin(context: HelpContext): boolean {
 function configSummary(config: EffectiveGroupConfig): string[] {
   const keywords =
     config.keywords.length > 0 ? config.keywords.join("、") : "（未配置）";
+  const keywordActions = [
+    config.keywordRecall ? "撤回" : undefined,
+    config.keywordPunish !== "none" ? config.keywordPunish : undefined,
+  ].filter((item): item is string => item !== undefined);
   return [
     "当前生效值：",
     `  启用 ${config.enabled} · 关键词过滤 ${config.wordFilterEnabled} · 入群审核 ${config.joinAuditEnabled} · 自动通过 ${config.autoApproveJoin} · 导出 ${config.exportEnabled}`,
     `  关键词：${keywords}`,
     `  警告文案：${config.warningMessage}`,
     `  禁言时长：${config.muteDurationSeconds} 秒`,
+    `  命中动作：${keywordActions.length > 0 ? `警告 + ${keywordActions.join(" + ")}` : "仅警告"}`,
+    `  入群决策：${config.joinDecision} · 要求班级 ${config.joinRequireClass} · 要求姓名 ${config.joinRequireName} · 审核意见 ${config.joinReviewOpinion}`,
   ];
 }
 
@@ -176,11 +182,24 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
         "  /rules set warning 请勿发广告。       命中后发送的文案",
         "  /rules set warning clear            恢复默认文案",
         "  /rules set wordFilter on|off        关键词过滤总开关",
-        "  /rules set joinAudit on|off         入群审核开关（自动通过的前置条件）",
-        "  /rules set autoApprove on|off       新入群申请自动通过",
+        "  /rules set joinAudit on|off         入群审核开关（自动决策的总开关）",
+        "  /rules set autoApprove on|off       新入群申请全部自动通过（等价 joinDecision auto_approve）",
         "  /rules set muteDuration 600         禁言时长（秒，上限 2592000）",
         "  /rules set export on|off            导出开关（当前仅存储展示）",
         "  /rules set enabled on|off           本群机器人总开关",
+        "",
+        "关键词处罚（命中后除了警告之外的额外动作）：",
+        "  /rules set keywordRecall on|off     是否撤回命中消息",
+        "  /rules set keywordPunish none|mute|kick|kick_blacklist",
+        "      none=只警告  mute=禁言(muteDuration)  kick=移出  kick_blacklist=移出并拉黑",
+        "",
+        "入群审核规则（班级库由 pnpm class:index 生成）：",
+        "  /rules set joinDecision manual|auto_approve|approve_on_match|reject_on_match|reject_on_mismatch",
+        "      自动通过 / 命中规则通过 / 命中规则拒绝 / 未命中拒绝 / 全部人工",
+        "  /rules set joinRequireClass on|off  答案必须包含班级库中的班级",
+        "  /rules set joinRequireName on|off   答案必须包含姓名",
+        "  /rules set joinAnswerPattern <正则> 额外正则要求（clear 清空）",
+        "  /rules set joinReviewOpinion on|off 人工审核时在 /pending 显示审核意见",
         "",
         "私信中修改指定群：",
         "  /rules set <group_openid|群号> <字段> <值>",
@@ -189,7 +208,8 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
         "  /rules set all <字段> <值>           别名 all / global / default / 全局 / 默认",
         "",
         "注意事项：",
-        "  · 关键词命中后固定动作是「警告」：发送该群警告文案并写入审计（用 /audit 查看）",
+        "  · 关键词命中后先发送该群警告文案并写入审计（用 /audit 查看），再用 keywordRecall / keywordPunish 追加撤回与处罚",
+        "  · 撤回/禁言/移出等动作尽力而为：单个失败不影响其他动作，失败详情见日志（带 _failed 后缀），全部失败时 /audit 状态为 pending",
         "  · 每次 set 只更新指定字段，不会重置其他字段",
         "  · 关键词会去重、去空白并按字典序保存",
         "  · 修改立即生效，不需要重启机器人",

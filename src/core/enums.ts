@@ -50,3 +50,31 @@ export const PermissionLevel = {
   SuperAdmin: "super_admin",
 } as const;
 export type PermissionLevel = (typeof PermissionLevel)[keyof typeof PermissionLevel];
+
+/** 关键词命中后的处罚动作。 */
+export const KeywordPunish = {
+  None: "none",
+  /** 禁言 muteDurationSeconds 秒。 */
+  Mute: "mute",
+  /** 移出群。 */
+  Kick: "kick",
+  /** 移出群并加入黑名单（官方一次调用完成，需白名单）。 */
+  KickBlacklist: "kick_blacklist",
+} as const;
+export type KeywordPunish = (typeof KeywordPunish)[keyof typeof KeywordPunish];
+
+/** 入群申请的处理方式。 */
+export const JoinDecisionMode = {
+  /** 全部人工审核（默认）。 */
+  Manual: "manual",
+  /** 自动通过（忽略规则）。 */
+  AutoApprove: "auto_approve",
+  /** 命中规则 → 通过；未命中 → 人工。 */
+  ApproveOnMatch: "approve_on_match",
+  /** 命中规则 → 拒绝；未命中 → 人工。 */
+  RejectOnMatch: "reject_on_match",
+  /** 未命中规则 → 拒绝；命中 → 人工（“必须回答正确”）。 */
+  RejectOnMismatch: "reject_on_mismatch",
+} as const;
+export type JoinDecisionMode =
+  (typeof JoinDecisionMode)[keyof typeof JoinDecisionMode];

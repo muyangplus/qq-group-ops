@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:up": "docker compose --profile postgres up -d db",
+    "class:index": "node scripts/build-class-index.mjs",
     "start": "node dist/main.js"
   },
   "devDependencies": {

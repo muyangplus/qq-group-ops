@@ -1,4 +1,9 @@
 import { PermissionLevel } from "../core/enums.js";
+import {
+  JoinDecisionMode,
+  KeywordPunish,
+  type JoinDecisionMode as JoinDecisionModeType,
+} from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import type { AuditLog } from "./audit.js";
 import {
@@ -8,6 +13,7 @@ import {
   type GroupConfigStore,
 } from "./groupConfig.js";
 import { findHelpTopic, type HelpTopic } from "./helpTopics.js";
+import type { JoinRuleEvaluator } from "./joinRules.js";
 import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
 import type { IdentityMapService } from "./identityMap.js";
 import type { JoinApprovalService } from "./joinApproval.js";
@@ -29,6 +35,8 @@ export interface AdminCommandServiceOptions {
   joinApproval: JoinApprovalService;
   joinSync: JoinRequestSyncService;
   auditLog: AuditLog;
+  /** 入群规则评估器（用于在 /pending 里给出审核意见）。 */
+  joinRules?: JoinRuleEvaluator | undefined;
   groupMessageMode?: GroupMessageModeRegistry | undefined;
   identityMap?: IdentityMapService | undefined;
 }
@@ -40,6 +48,7 @@ export class AdminCommandService {
   private readonly joinApproval: JoinApprovalService;
   private readonly joinSync: JoinRequestSyncService;
   private readonly auditLog: AuditLog;
+  private readonly joinRules: JoinRuleEvaluator | undefined;
   private readonly groupMessageMode: GroupMessageModeRegistry | undefined;
   private readonly identityMap: IdentityMapService | undefined;
 
@@ -50,6 +59,7 @@ export class AdminCommandService {
     this.joinApproval = options.joinApproval;
     this.joinSync = options.joinSync;
     this.auditLog = options.auditLog;
+    this.joinRules = options.joinRules;
     this.groupMessageMode = options.groupMessageMode;
     this.identityMap = options.identityMap;
   }
@@ -714,9 +724,24 @@ export class AdminCommandService {
       return { ok: true, text: "当前没有待审批入群申请。" };
     }
     const lines = ["待审批入群申请："];
+    const config = this.configStore.get(targetGroupId);
+    const withOpinion =
+      config.joinReviewOpinion && this.joinRules !== undefined;
     pending.forEach((request, index) => {
       const reason = request.reason ? ` 理由：${request.reason}` : "";
       lines.push(`${index + 1}. ${request.requestId} 用户：${request.userId}${reason}`);
+      if (withOpinion) {
+        const evaluation = this.joinRules?.evaluate(request.reason, {
+          mode: config.joinDecision,
+          requireClass: config.joinRequireClass,
+          requireName: config.joinRequireName,
+          answerPattern: config.joinAnswerPattern,
+          opinionEnabled: true,
+        });
+        if (evaluation?.opinion) {
+          lines.push(indentBlock(evaluation.opinion, "   "));
+        }
+      }
     });
     return { ok: true, text: lines.join("\n") };
   }
@@ -1005,6 +1030,13 @@ function normalize(value: string | undefined): string {
   return (value ?? "").toLowerCase();
 }
 
+function indentBlock(text: string, prefix: string): string {
+  return text
+    .split("\n")
+    .map((line) => `${prefix}${line}`)
+    .join("\n");
+}
+
 function formatList(values: readonly string[]): string {
   return values.length > 0 ? values.join(", ") : "（空）";
 }
@@ -1026,6 +1058,13 @@ const RULE_FIELDS_HELP = [
   "  autoApprove on|off",
   "  export on|off",
   "  enabled on|off",
+  "  keywordRecall on|off                  命中关键词是否撤回消息",
+  "  keywordPunish none|mute|kick|kick_blacklist   命中关键词的处罚动作",
+  "  joinDecision manual|auto_approve|approve_on_match|reject_on_match|reject_on_mismatch",
+  "  joinRequireClass on|off               入群答案必须包含班级库中的班级",
+  "  joinRequireName on|off                入群答案必须包含姓名",
+  "  joinAnswerPattern <正则> / clear      入群答案必须匹配的额外正则",
+  "  joinReviewOpinion on|off              人工审核时是否给出审核意见",
 ];
 
 const RULES_SET_USAGE = [
@@ -1084,7 +1123,14 @@ function formatEffectiveConfig(
     `启用：${config.enabled}`,
     `关键词过滤：${config.wordFilterEnabled}`,
     `关键词：${keywords}`,
+    `关键词撤回：${config.keywordRecall}`,
+    `命中处罚：${config.keywordPunish}`,
     `入群审核：${config.joinAuditEnabled}`,
+    `入群决策：${config.joinDecision}`,
+    `入群要求：班级 ${config.joinRequireClass} · 姓名 ${config.joinRequireName}${
+      config.joinAnswerPattern ? ` · 正则 /${config.joinAnswerPattern}/` : ""
+    }`,
+    `审核意见：${config.joinReviewOpinion}`,
     `自动通过：${config.autoApproveJoin}`,
     `导出功能：${config.exportEnabled}`,
     `警告文案：${config.warningMessage}`,
@@ -1142,8 +1188,97 @@ function parseRuleSetting(
     case "enabled":
     case "启用":
       return { groupId, enabled: parseToggle(field, value) };
+    case "keywordrecall":
+    case "recall":
+    case "撤回":
+      return { groupId, keywordRecall: parseToggle(field, value) };
+    case "keywordpunish":
+    case "punish":
+    case "处罚":
+      return { groupId, keywordPunish: parseKeywordPunish(value) };
+    case "joindecision":
+    case "入群决策":
+      return { groupId, joinDecision: parseJoinDecision(value) };
+    case "joinrequireclass":
+    case "requireclass":
+    case "要求班级":
+      return { groupId, joinRequireClass: parseToggle(field, value) };
+    case "joinrequirename":
+    case "requirename":
+    case "要求姓名":
+      return { groupId, joinRequireName: parseToggle(field, value) };
+    case "joinanswerpattern":
+    case "answerpattern":
+    case "入群正则":
+      return {
+        groupId,
+        joinAnswerPattern: cleared ? "" : requireValidRegex(value),
+      };
+    case "joinreviewopinion":
+    case "审核意见":
+      return { groupId, joinReviewOpinion: parseToggle(field, value) };
     default:
       throw new Error(`未知字段：${field}`);
+  }
+}
+
+function parseKeywordPunish(value: string): KeywordPunish {
+  const normalized = value.trim().toLowerCase();
+  const aliases: Record<string, KeywordPunish> = {
+    none: KeywordPunish.None,
+    off: KeywordPunish.None,
+    "无": KeywordPunish.None,
+    "不处罚": KeywordPunish.None,
+    mute: KeywordPunish.Mute,
+    "禁言": KeywordPunish.Mute,
+    kick: KeywordPunish.Kick,
+    "踢出": KeywordPunish.Kick,
+    "移出": KeywordPunish.Kick,
+    kick_blacklist: KeywordPunish.KickBlacklist,
+    blacklist: KeywordPunish.KickBlacklist,
+    "踢出并拉黑": KeywordPunish.KickBlacklist,
+    "拉黑": KeywordPunish.KickBlacklist,
+  };
+  const parsed = aliases[normalized];
+  if (!parsed) {
+    throw new Error("处罚动作需要 none / mute / kick / kick_blacklist");
+  }
+  return parsed;
+}
+
+function parseJoinDecision(value: string): JoinDecisionModeType {
+  const normalized = value.trim().toLowerCase();
+  const aliases: Record<string, JoinDecisionMode> = {
+    manual: JoinDecisionMode.Manual,
+    "人工": JoinDecisionMode.Manual,
+    "人工审核": JoinDecisionMode.Manual,
+    auto: JoinDecisionMode.AutoApprove,
+    auto_approve: JoinDecisionMode.AutoApprove,
+    "自动通过": JoinDecisionMode.AutoApprove,
+    approve_on_match: JoinDecisionMode.ApproveOnMatch,
+    "命中通过": JoinDecisionMode.ApproveOnMatch,
+    reject_on_match: JoinDecisionMode.RejectOnMatch,
+    "命中拒绝": JoinDecisionMode.RejectOnMatch,
+    reject_on_mismatch: JoinDecisionMode.RejectOnMismatch,
+    "未命中拒绝": JoinDecisionMode.RejectOnMismatch,
+  };
+  const parsed = aliases[normalized];
+  if (!parsed) {
+    throw new Error(
+      "入群决策需要 manual / auto_approve / approve_on_match / reject_on_match / reject_on_mismatch",
+    );
+  }
+  return parsed;
+}
+
+function requireValidRegex(value: string): string {
+  try {
+    new RegExp(value, "u");
+    return value;
+  } catch (error) {
+    throw new Error(
+      `入群正则不合法：${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

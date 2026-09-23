@@ -17,6 +17,7 @@ import { getLogger } from "./core/logger.js";
 import type { ActivityRepository } from "./db/activityRepository.js";
 import type { AuditRepository } from "./db/auditRepository.js";
 import type { GroupConfigRepository } from "./db/groupConfigRepository.js";
+import type { GroupSettingsRepository } from "./db/groupSettingsRepository.js";
 import type { GroupMessageModeRepository } from "./db/groupMessageModeRepository.js";
 import type { IdentityBindingRepository } from "./db/identityBindingRepository.js";
 import type { JoinRequestRepository } from "./db/joinRequestRepository.js";
@@ -33,6 +34,8 @@ import { IdentityMapService } from "./services/identityMap.js";
 import { JoinApprovalService } from "./services/joinApproval.js";
 import { JoinAuditService } from "./services/joinAudit.js";
 import { JoinRequestSyncService } from "./services/joinAuditSync.js";
+import { JoinRuleEvaluator } from "./services/joinRules.js";
+import { MemberRoster } from "./services/memberRoster.js";
 import { MessageGuardService } from "./services/messageGuard.js";
 import { RuleEngine } from "./services/moderation.js";
 import { PermissionService } from "./services/permissions.js";
@@ -60,6 +63,7 @@ export interface RuntimeRepositories {
   audit?: AuditRepository;
   joinRequests?: JoinRequestRepository;
   groupConfigs?: GroupConfigRepository;
+  groupSettings?: GroupSettingsRepository;
   identityBindings?: IdentityBindingRepository;
   groupMessageModes?: GroupMessageModeRepository;
   permissions?: PermissionRepository;
@@ -87,6 +91,7 @@ export function createRuntime(
     { groupId: DEFAULT_GROUP_ID },
     repositories.groupConfigs,
     writeQueue,
+    repositories.groupSettings,
   );
   const groupMessageMode = new GroupMessageModeRegistry(
     repositories.groupMessageModes,
@@ -100,13 +105,19 @@ export function createRuntime(
   );
   const activity = new ActivityService(repositories.activities, writeQueue);
   const exportService = new ExportService(permissions, auditLog);
+  const joinRules = new JoinRuleEvaluator();
   const messageGuard = new MessageGuardService(
     api,
     new RuleEngine(),
     configStore,
     auditLog,
   );
-  const joinApproval = new JoinApprovalService(api, joinAudit, configStore);
+  const joinApproval = new JoinApprovalService(
+    api,
+    joinAudit,
+    configStore,
+    joinRules,
+  );
   const joinSync = new JoinRequestSyncService(api, joinAudit);
   const adminCommands = new AdminCommandService({
     permissions,
@@ -115,6 +126,7 @@ export function createRuntime(
     joinApproval,
     joinSync,
     auditLog,
+    joinRules,
     groupMessageMode,
     identityMap,
   });
@@ -126,6 +138,8 @@ export function createRuntime(
     await permissions.load();
     await groupMessageMode.load();
     await activity.load();
+    // 班级库缺失时不抛错：班级类规则会自动退化为人工审核
+    joinRules.setRoster(await MemberRoster.load(settings.classIndexFile));
     await writeQueue.flush();
   };
   return {

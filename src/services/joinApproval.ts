@@ -1,7 +1,8 @@
 import type { QQOfficialAPI } from "../adapters/qqOfficial.js";
-import { JoinRequestStatus } from "../core/enums.js";
+import { JoinDecisionMode, JoinRequestStatus } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import type { GroupConfigStore } from "./groupConfig.js";
+import type { JoinRuleEvaluator } from "./joinRules.js";
 import type { JoinAuditService, JoinRequest } from "./joinAudit.js";
 
 const log = getLogger("join-approval");
@@ -17,7 +18,85 @@ export class JoinApprovalService {
     private readonly api: QQOfficialAPI,
     private readonly joinAudit: JoinAuditService,
     private readonly configStore: GroupConfigStore,
+    private readonly joinRules?: JoinRuleEvaluator,
   ) {}
+
+  /**
+   * 按群配置的入群规则自动决策；无法确定时保持人工审核。
+   *
+   * 决策一律「先官方、后本地」：官方接口失败时申请保持待审批。
+   */
+  public async applyJoinRules(
+    groupId: string,
+    requestId: string,
+  ): Promise<{ action: "approve" | "reject" | "manual"; opinion: string }> {
+    const request = this.joinAudit.get(requestId);
+    const config = this.configStore.get(groupId);
+
+    // 群关闭机器人或关闭入群审核时不自动决策
+    if (!config.enabled || !config.joinAuditEnabled) {
+      return { action: "manual", opinion: "" };
+    }
+
+    const mode =
+      config.joinDecision !== JoinDecisionMode.Manual
+        ? config.joinDecision
+        : config.autoApproveJoin
+          ? JoinDecisionMode.AutoApprove
+          : JoinDecisionMode.Manual;
+
+    // 纯自动通过不需要规则评估器；按规则决策则需要
+    if (mode === JoinDecisionMode.Manual) {
+      return { action: "manual", opinion: "" };
+    }
+    if (mode !== JoinDecisionMode.AutoApprove && !this.joinRules) {
+      return { action: "manual", opinion: "" };
+    }
+
+    const evaluation = this.joinRules?.evaluate(request.reason, {
+      mode,
+      requireClass: config.joinRequireClass,
+      requireName: config.joinRequireName,
+      answerPattern: config.joinAnswerPattern,
+      opinionEnabled: config.joinReviewOpinion,
+    }) ?? { action: "approve" as const, matched: true, opinion: "" };
+
+    if (evaluation.action === "manual") {
+      log.info("join request queued for manual review", {
+        groupId,
+        requestId,
+        matched: evaluation.matched,
+      });
+      return { action: "manual", opinion: evaluation.opinion };
+    }
+
+    const reviewerId = "bot:auto";
+    try {
+      if (evaluation.action === "approve") {
+        await this.api.approveJoinRequest(groupId, request.userId, true, {
+          joinRequestId: requestId,
+        });
+        this.joinAudit.approve(requestId, reviewerId);
+        log.info("auto approved join request", { groupId, requestId, mode });
+        return { action: "approve", opinion: evaluation.opinion };
+      }
+      const reason = buildRejectReason(evaluation.opinion);
+      await this.api.approveJoinRequest(groupId, request.userId, false, {
+        joinRequestId: requestId,
+        ...(reason ? { reason } : {}),
+      });
+      this.joinAudit.reject(requestId, reviewerId, reason);
+      log.info("auto rejected join request", { groupId, requestId, mode });
+      return { action: "reject", opinion: evaluation.opinion };
+    } catch (error) {
+      log.error("auto join decision failed, keeping manual review", {
+        groupId,
+        requestId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { action: "manual", opinion: evaluation.opinion };
+    }
+  }
 
   public async approve(
     groupId: string,
@@ -54,36 +133,6 @@ export class JoinApprovalService {
     return this.joinAudit.reject(requestId, reviewerId, reason);
   }
 
-  /**
-   * 群配置开启 autoApproveJoin 时自动通过申请。
-   * 出错只记录日志，不影响入群申请本身进入待审批队列。
-   */
-  public async autoApproveIfEnabled(
-    groupId: string,
-    requestId: string,
-  ): Promise<boolean> {
-    const config = this.configStore.get(groupId);
-    if (!config.enabled || !config.joinAuditEnabled || !config.autoApproveJoin) {
-      return false;
-    }
-    const request = this.joinAudit.get(requestId);
-    try {
-      await this.api.approveJoinRequest(groupId, request.userId, true, {
-        joinRequestId: requestId,
-      });
-    } catch (error) {
-      log.error("auto approve failed", {
-        groupId,
-        requestId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return false;
-    }
-    this.joinAudit.approve(requestId, "bot");
-    log.info("auto approved join request", { groupId, requestId });
-    return true;
-  }
-
   private requireRequest(groupId: string, requestId: string): JoinRequest {
     const request = this.joinAudit.get(requestId);
     if (request.groupId !== groupId) {
@@ -94,4 +143,17 @@ export class JoinApprovalService {
     }
     return request;
   }
+}
+
+/** 自动拒绝时把审核意见作为拒绝理由回传给官方（太长则截断）。 */
+function buildRejectReason(opinion: string): string {
+  const compact = opinion
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join("；");
+  if (compact.length <= 120) {
+    return compact;
+  }
+  return `${compact.slice(0, 120)}…`;
 }

@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
-import { AuditStatus, ModerationAction } from "../src/core/enums.js";
+import { AuditStatus, KeywordPunish, ModerationAction } from "../src/core/enums.js";
 import { newIncomingMessage } from "../src/core/models.js";
 import { AuditLogStore } from "../src/services/audit.js";
 import { GroupConfigStore } from "../src/services/groupConfig.js";
@@ -162,5 +162,90 @@ describe("MessageGuardService keyword rules", () => {
 
     expect(result.action).toBe(ModerationAction.Allow);
     expect(result.detail).toBe("disabled");
+  });
+
+  it("recalls and punishes when the group config asks for it", async () => {
+    configStore.setOverride({
+      groupId: "g1",
+      keywords: ["广告"],
+      keywordRecall: true,
+      keywordPunish: KeywordPunish.Mute,
+      muteDurationSeconds: 120,
+    });
+
+    const result = await service.handleMessage(
+      newIncomingMessage("g1", "u1", "m1", "广告内容"),
+    );
+
+    expect(api.recalledMessages).toEqual([["g1", "m1"]]);
+    expect(api.mutedMembers).toEqual([["g1", "u1", 120]]);
+    expect(api.sentMessages).toHaveLength(1);
+    expect(result.executed).toBe(true);
+    expect(result.detail).toContain("recall");
+    expect(result.detail).toContain("mute");
+    expect(result.detail).toContain("warn");
+  });
+
+  it("supports kick and kick plus blacklist", async () => {
+    configStore.setOverride({
+      groupId: "g1",
+      keywords: ["广告"],
+      keywordPunish: KeywordPunish.Kick,
+    });
+    await service.handleMessage(newIncomingMessage("g1", "u1", "m1", "广告"));
+    expect(api.removedMembers).toEqual([["g1", "u1"]]);
+    expect(api.blacklistOperations).toEqual([]);
+
+    configStore.setOverride({
+      groupId: "g1",
+      keywordPunish: KeywordPunish.KickBlacklist,
+    });
+    await service.handleMessage(newIncomingMessage("g1", "u2", "m2", "广告"));
+    expect(api.removedMembers).toEqual([
+      ["g1", "u1"],
+      ["g1", "u2"],
+    ]);
+    expect(api.blacklistOperations).toEqual([["g1", "u2", "add"]]);
+  });
+
+  it("keeps applying other actions when one of them fails", async () => {
+    configStore.setOverride({
+      groupId: "g1",
+      keywords: ["广告"],
+      keywordRecall: true,
+      keywordPunish: KeywordPunish.Mute,
+    });
+    vi.spyOn(api, "recallGroupMessage").mockRejectedValue(
+      new Error("recall not allowed"),
+    );
+
+    const result = await service.handleMessage(
+      newIncomingMessage("g1", "u1", "m1", "广告"),
+    );
+
+    expect(result.detail).toContain("recall_failed");
+    expect(result.detail).toContain("mute");
+    // 撤回失败但禁言成功，仍算已执行
+    expect(result.executed).toBe(true);
+    expect(api.mutedMembers).toEqual([["g1", "u1", 600]]);
+  });
+
+  it("marks the audit record pending when every action fails", async () => {
+    configStore.setOverride({
+      groupId: "g1",
+      keywords: ["广告"],
+      keywordPunish: KeywordPunish.Kick,
+    });
+    vi.spyOn(api, "removeGroupMember").mockRejectedValue(
+      new Error("11253 应用无接口访问权限"),
+    );
+    vi.spyOn(api, "sendGroupMessage").mockRejectedValue(new Error("no quota"));
+
+    const result = await service.handleMessage(
+      newIncomingMessage("g1", "u1", "m1", "广告"),
+    );
+
+    expect(result.executed).toBe(false);
+    expect(auditLog.all()[0]?.status).toBe(AuditStatus.Pending);
   });
 });

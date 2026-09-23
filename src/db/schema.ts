@@ -46,6 +46,14 @@ CREATE TABLE IF NOT EXISTS group_keywords (
   PRIMARY KEY (group_id, keyword)
 );
 
+CREATE TABLE IF NOT EXISTS group_settings (
+  group_id TEXT NOT NULL,
+  setting_key TEXT NOT NULL,
+  setting_value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (group_id, setting_key)
+);
+
 CREATE TABLE IF NOT EXISTS identity_bindings (
   kind TEXT NOT NULL CHECK (kind IN ('user', 'group')),
   official_id TEXT NOT NULL,

@@ -1,5 +1,12 @@
 import type { GroupConfigRepository } from "../db/groupConfigRepository.js";
+import type { GroupSettingsRepository } from "../db/groupSettingsRepository.js";
 import { WriteQueue } from "../db/writeQueue.js";
+import {
+  JoinDecisionMode,
+  KeywordPunish,
+  type JoinDecisionMode as JoinDecisionModeType,
+  type KeywordPunish as KeywordPunishType,
+} from "../core/enums.js";
 
 export interface GroupConfig {
   groupId: string;
@@ -12,6 +19,20 @@ export interface GroupConfig {
   rawMessageRetentionDays?: number;
   muteDurationSeconds?: number;
   warningMessage?: string;
+  /** 命中关键词是否撤回消息。 */
+  keywordRecall?: boolean;
+  /** 命中关键词后的处罚动作。 */
+  keywordPunish?: KeywordPunishType;
+  /** 入群申请的决策模式。 */
+  joinDecision?: JoinDecisionModeType;
+  /** 入群答案是否必须包含班级库中的班级。 */
+  joinRequireClass?: boolean;
+  /** 入群答案是否必须包含姓名。 */
+  joinRequireName?: boolean;
+  /** 入群答案必须匹配的额外正则。 */
+  joinAnswerPattern?: string;
+  /** 需要人工审核时是否给出审核意见。 */
+  joinReviewOpinion?: boolean;
 }
 
 export interface EffectiveGroupConfig {
@@ -25,23 +46,45 @@ export interface EffectiveGroupConfig {
   rawMessageRetentionDays: number;
   muteDurationSeconds: number;
   warningMessage: string;
+  keywordRecall: boolean;
+  keywordPunish: KeywordPunishType;
+  joinDecision: JoinDecisionModeType;
+  joinRequireClass: boolean;
+  joinRequireName: boolean;
+  joinAnswerPattern: string;
+  joinReviewOpinion: boolean;
 }
 
-export interface GroupConfigOverride {
-  groupId: string;
-  enabled?: boolean;
-  joinAuditEnabled?: boolean;
-  autoApproveJoin?: boolean;
-  keywords?: readonly string[];
-  wordFilterEnabled?: boolean;
-  exportEnabled?: boolean;
-  rawMessageRetentionDays?: number;
-  muteDurationSeconds?: number;
-  warningMessage?: string;
-}
+export type GroupConfigOverride = GroupConfig;
 
 /** 全局默认配置使用的保留 group id。 */
 export const DEFAULT_GROUP_ID = "__default__";
+
+/** 存在 `group_configs` 里的字段（写入时是整行快照）。 */
+const SQL_FIELDS = [
+  "enabled",
+  "joinAuditEnabled",
+  "autoApproveJoin",
+  "keywords",
+  "wordFilterEnabled",
+  "exportEnabled",
+  "rawMessageRetentionDays",
+  "muteDurationSeconds",
+  "warningMessage",
+] as const satisfies readonly (keyof GroupConfigOverride)[];
+
+/** 存在 `group_settings` 键值表里的扩展字段（可以随时新增，不需要迁移）。 */
+export const SETTING_FIELDS = [
+  "keywordRecall",
+  "keywordPunish",
+  "joinDecision",
+  "joinRequireClass",
+  "joinRequireName",
+  "joinAnswerPattern",
+  "joinReviewOpinion",
+] as const satisfies readonly (keyof GroupConfigOverride)[];
+
+export type GroupSettingKey = (typeof SETTING_FIELDS)[number];
 
 const DEFAULT_CONFIG: EffectiveGroupConfig = {
   groupId: DEFAULT_GROUP_ID,
@@ -54,6 +97,13 @@ const DEFAULT_CONFIG: EffectiveGroupConfig = {
   rawMessageRetentionDays: 0,
   muteDurationSeconds: 600,
   warningMessage: "请遵守群规，不要发送违规内容。",
+  keywordRecall: false,
+  keywordPunish: KeywordPunish.None,
+  joinDecision: JoinDecisionMode.Manual,
+  joinRequireClass: false,
+  joinRequireName: false,
+  joinAnswerPattern: "",
+  joinReviewOpinion: true,
 };
 
 export class GroupConfigStore {
@@ -63,12 +113,14 @@ export class GroupConfigStore {
   private defaultConfig: EffectiveGroupConfig;
   private readonly overrides = new Map<string, GroupConfigOverride>();
   private readonly repository: GroupConfigRepository | undefined;
+  private readonly settingsRepository: GroupSettingsRepository | undefined;
   private readonly queue: WriteQueue | undefined;
 
   public constructor(
     defaultConfig: GroupConfig = { groupId: DEFAULT_GROUP_ID },
     repository?: GroupConfigRepository,
     queue?: WriteQueue,
+    settingsRepository?: GroupSettingsRepository,
   ) {
     this.builtinConfig = {
       ...DEFAULT_CONFIG,
@@ -80,34 +132,47 @@ export class GroupConfigStore {
     };
     this.defaultConfig = cloneConfig(this.builtinConfig);
     this.repository = repository;
-    this.queue = repository ? (queue ?? new WriteQueue()) : undefined;
+    this.settingsRepository = settingsRepository;
+    this.queue =
+      repository || settingsRepository ? (queue ?? new WriteQueue()) : undefined;
   }
 
   public get persistent(): boolean {
-    return this.repository !== undefined;
+    return this.repository !== undefined || this.settingsRepository !== undefined;
   }
 
   /**
    * 从数据库载入配置。
    *
-   * `__default__` 行代表全局规则，会合并进全局默认配置；其余行是单群覆盖。
+   * - `group_configs`：`__default__` 行代表全局规则，其余行是单群覆盖；
+   * - `group_settings`：扩展键值，`__default__` 同样代表全局。
    */
   public async load(): Promise<void> {
-    if (!this.repository) {
+    if (!this.repository && !this.settingsRepository) {
       return;
     }
-    const overrides = await this.repository.findAll();
     this.overrides.clear();
     this.defaultConfig = cloneConfig(this.builtinConfig);
-    for (const override of overrides) {
-      if (override.groupId === DEFAULT_GROUP_ID) {
-        this.defaultConfig = mergeIntoDefault(
-          this.defaultConfig,
-          normalizeOverride(override),
-        );
-        continue;
+
+    if (this.repository) {
+      const overrides = await this.repository.findAll();
+      for (const override of overrides) {
+        this.applyLoadedOverride(override);
       }
-      this.overrides.set(override.groupId, normalizeOverride(override));
+    }
+    if (this.settingsRepository) {
+      const settings = await this.settingsRepository.findAll();
+      for (const setting of settings) {
+        const parsed = parseSettingValue(setting.value);
+        if (parsed === undefined) {
+          continue;
+        }
+        const patch: GroupConfigOverride = { groupId: setting.groupId };
+        if (!applySettingField(patch, setting.key, parsed)) {
+          continue;
+        }
+        this.applyLoadedOverride(patch);
+      }
     }
   }
 
@@ -143,6 +208,17 @@ export class GroupConfigStore {
       muteDurationSeconds:
         override.muteDurationSeconds ?? this.defaultConfig.muteDurationSeconds,
       warningMessage: override.warningMessage ?? this.defaultConfig.warningMessage,
+      keywordRecall: override.keywordRecall ?? this.defaultConfig.keywordRecall,
+      keywordPunish: override.keywordPunish ?? this.defaultConfig.keywordPunish,
+      joinDecision: override.joinDecision ?? this.defaultConfig.joinDecision,
+      joinRequireClass:
+        override.joinRequireClass ?? this.defaultConfig.joinRequireClass,
+      joinRequireName:
+        override.joinRequireName ?? this.defaultConfig.joinRequireName,
+      joinAnswerPattern:
+        override.joinAnswerPattern ?? this.defaultConfig.joinAnswerPattern,
+      joinReviewOpinion:
+        override.joinReviewOpinion ?? this.defaultConfig.joinReviewOpinion,
     };
   }
 
@@ -165,21 +241,10 @@ export class GroupConfigStore {
       groupId: override.groupId,
     });
     this.overrides.set(override.groupId, merged);
-    const repository = this.repository;
-    if (repository) {
-      this.queue?.enqueue("group-config.save", () =>
-        repository.saveOverride(merged),
-      );
-      if (override.keywords !== undefined) {
-        const keywords = [...(merged.keywords ?? [])];
-        this.queue?.enqueue("group-config.keywords", () =>
-          repository.replaceKeywords(override.groupId, keywords),
-        );
-      }
-    }
+    this.persistGroupOverride(override.groupId, merged, override);
   }
 
-  /** 全局规则始终持久化完整快照，避免多次局部更新互相覆盖。 */
+  /** 全局规则：整行快照 + 扩展键值。 */
   private setDefaultOverride(override: GroupConfigOverride): void {
     this.defaultConfig = mergeIntoDefault(
       this.defaultConfig,
@@ -198,6 +263,68 @@ export class GroupConfigStore {
         );
       }
     }
+    this.persistSettings(DEFAULT_GROUP_ID, override);
+  }
+
+  /**
+   * 单群持久化。
+   *
+   * 只有本次真的改了 SQL 字段时才写 `group_configs`，否则整行快照会把
+   * 之前设置过的列清成 NULL；扩展字段单独写 `group_settings`。
+   */
+  private persistGroupOverride(
+    groupId: string,
+    merged: GroupConfigOverride,
+    incoming: GroupConfigOverride,
+  ): void {
+    const repository = this.repository;
+    if (repository && hasAnyField(incoming, SQL_FIELDS)) {
+      this.queue?.enqueue("group-config.save", () =>
+        repository.saveOverride(merged),
+      );
+      if (incoming.keywords !== undefined) {
+        const keywords = [...(merged.keywords ?? [])];
+        this.queue?.enqueue("group-config.keywords", () =>
+          repository.replaceKeywords(groupId, keywords),
+        );
+      }
+    }
+    this.persistSettings(groupId, incoming);
+  }
+
+  private persistSettings(groupId: string, incoming: GroupConfigOverride): void {
+    const settingsRepository = this.settingsRepository;
+    if (!settingsRepository) {
+      return;
+    }
+    for (const key of SETTING_FIELDS) {
+      const value = incoming[key];
+      if (value === undefined) {
+        continue;
+      }
+      this.queue?.enqueue("group-config.setting", () =>
+        settingsRepository.save({
+          groupId,
+          key,
+          value: JSON.stringify(value),
+        }),
+      );
+    }
+  }
+
+  private applyLoadedOverride(override: GroupConfigOverride): void {
+    if (override.groupId === DEFAULT_GROUP_ID) {
+      this.defaultConfig = mergeIntoDefault(
+        this.defaultConfig,
+        normalizeOverride(override),
+      );
+      return;
+    }
+    const existing = this.overrides.get(override.groupId);
+    this.overrides.set(
+      override.groupId,
+      normalizeOverride({ ...existing, ...override, groupId: override.groupId }),
+    );
   }
 
   /**
@@ -213,6 +340,12 @@ export class GroupConfigStore {
       this.queue?.enqueue("group-config.delete", () => repository.deleteOverride(groupId));
       this.queue?.enqueue("group-config.keywords", () =>
         repository.replaceKeywords(groupId, []),
+      );
+    }
+    const settingsRepository = this.settingsRepository;
+    if (settingsRepository) {
+      this.queue?.enqueue("group-config.settings.delete", () =>
+        settingsRepository.removeAll(groupId),
       );
     }
   }
@@ -266,10 +399,17 @@ function mergeIntoDefault(
     muteDurationSeconds:
       override.muteDurationSeconds ?? base.muteDurationSeconds,
     warningMessage: override.warningMessage ?? base.warningMessage,
+    keywordRecall: override.keywordRecall ?? base.keywordRecall,
+    keywordPunish: override.keywordPunish ?? base.keywordPunish,
+    joinDecision: override.joinDecision ?? base.joinDecision,
+    joinRequireClass: override.joinRequireClass ?? base.joinRequireClass,
+    joinRequireName: override.joinRequireName ?? base.joinRequireName,
+    joinAnswerPattern: override.joinAnswerPattern ?? base.joinAnswerPattern,
+    joinReviewOpinion: override.joinReviewOpinion ?? base.joinReviewOpinion,
   };
 }
 
-/** 全局规则的持久化快照：所有字段都写全，避免局部更新覆盖历史值。 */
+/** 全局规则的 SQL 持久化快照（扩展字段走 group_settings）。 */
 function defaultSnapshot(config: EffectiveGroupConfig): GroupConfigOverride {
   return {
     groupId: DEFAULT_GROUP_ID,
@@ -283,4 +423,71 @@ function defaultSnapshot(config: EffectiveGroupConfig): GroupConfigOverride {
     muteDurationSeconds: config.muteDurationSeconds,
     warningMessage: config.warningMessage,
   };
+}
+
+function hasAnyField(
+  override: GroupConfigOverride,
+  fields: readonly (keyof GroupConfigOverride)[],
+): boolean {
+  return fields.some((field) => override[field] !== undefined);
+}
+
+function parseSettingValue(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    // 兼容早期直接写入的裸字符串
+    return raw;
+  }
+}
+
+/** 把 `group_settings` 里的一行写成类型安全的覆盖字段。 */
+function applySettingField(
+  target: GroupConfigOverride,
+  key: string,
+  value: unknown,
+): boolean {
+  switch (key) {
+    case "keywordRecall":
+    case "joinRequireClass":
+    case "joinRequireName":
+    case "joinReviewOpinion": {
+      if (typeof value !== "boolean") {
+        return false;
+      }
+      target[key] = value;
+      return true;
+    }
+    case "keywordPunish": {
+      if (!isKeywordPunish(value)) {
+        return false;
+      }
+      target.keywordPunish = value;
+      return true;
+    }
+    case "joinDecision": {
+      if (!isJoinDecisionMode(value)) {
+        return false;
+      }
+      target.joinDecision = value;
+      return true;
+    }
+    case "joinAnswerPattern": {
+      if (typeof value !== "string") {
+        return false;
+      }
+      target.joinAnswerPattern = value;
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+function isKeywordPunish(value: unknown): value is KeywordPunishType {
+  return (Object.values(KeywordPunish) as unknown[]).includes(value);
+}
+
+function isJoinDecisionMode(value: unknown): value is JoinDecisionModeType {
+  return (Object.values(JoinDecisionMode) as unknown[]).includes(value);
 }
