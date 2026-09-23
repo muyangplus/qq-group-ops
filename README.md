@@ -7,22 +7,22 @@
 - 当前阶段：**Node.js / TypeScript 重写完成，官方 WebSocket 网关已鉴权成功，MVP 核心进行中**
 - 已验证：官方 WebSocket 网关已收到 `Hello` 并完成 `READY` 鉴权。
 - 技术路线：**仅使用 QQ 官方开放平台 API**，不使用 OneBot、NapCat、Lagrange 等个人号协议端。
-- 已实现：配置、结构化调试日志（控制台 + 文件 + auto 彩色）、领域模型、规则引擎、审计日志、权限模型、权限自助查询、超管权限配置、OpenID ↔ QQ号/群号映射、全状态 PostgreSQL 持久化（绑定关系、权限、审计、入群申请、群配置、全量消息模式、活动报名）、动态权限帮助、私信指令、全量消息模式诊断、多群配置、入群审核状态机、入群申请同步、消息审核执行、事件路由、事件网关抽象、官方 WebSocket 协议网关、官方事件映射器、自动重连网关、原生 WebSocket 工厂、`/test` 自检指令、运行时装配、PostgreSQL schema/迁移/连接池适配与全部仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
+- 已实现：配置、结构化调试日志（控制台 + 文件 + auto 彩色）、领域模型、规则引擎、审计日志、权限模型、权限自助查询、超管权限配置、OpenID ↔ QQ号/群号映射、全状态持久化（SQLite 默认 / PostgreSQL 可选：绑定关系、权限、审计、入群申请、群配置、全量消息模式、活动报名）、动态权限帮助、私信指令、全量消息模式诊断、多群配置、入群审核状态机、入群申请同步、消息审核执行、事件路由、事件网关抽象、官方 WebSocket 协议网关、官方事件映射器、自动重连网关、原生 WebSocket 工厂、`/test` 自检指令、运行时装配、数据库 schema/迁移/方言适配与全部仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
 - 待实现：真实环境联调、自动重连与 Resume 恢复、Web 管理后台、内容安全与 AI 辅助。
-- 测试：Vitest，共 194 个测试。
+- 测试：Vitest，共 216 个测试（SQLite 与 PostgreSQL 方言均覆盖）。
 
 ## 技术栈
 
 | 组件 | 选型 |
 |---|---|
-| 运行时 | Node.js 20.11+ |
+| 运行时 | Node.js 24+（内置 `node:sqlite`） |
 | 语言 | TypeScript |
 | 包管理器 | pnpm |
 | 测试 | Vitest |
 | 类型检查 | TypeScript `tsc --noEmit` |
 | 构建 | TypeScript `tsc` |
 | HTTP 客户端 | 原生 `fetch` + 可替换 transport |
-| 数据库 | PostgreSQL 16（绑定、权限、审计、入群申请、群配置、消息模式、活动全部持久化） |
+| 数据库 | SQLite（默认，零配置）／ PostgreSQL 16（可选） |
 | 部署 | Docker Compose |
 | 许可证 | Apache-2.0 |
 
@@ -41,7 +41,7 @@
 - 私信指令支持（群管理指令需提供 `group_openid` 或已绑定群号）
 - `/bind` 绑定 QQ号 / 群号
 - 强制绑定 QQ 号和群号后才能使用（`/help`、`/bind` 除外）
-- 全部运行状态写入 PostgreSQL，进程重启后不丢失
+- 全部运行状态默认持久化到 SQLite 文件，进程重启后不丢失；可切换 PostgreSQL
 - 支持直接用 QQ号 / 群号执行权限和群管理命令
 - `/test` 机器人自检指令
 - 多群统一默认配置 + 单群覆盖
@@ -83,11 +83,10 @@
 corepack enable
 pnpm install
 cp .env.example .env
-# 然后按需填写 .env
-
-# 可选但推荐：启动本地 PostgreSQL 供全部状态持久化
-pnpm db:up
+# 然后按需填写 .env（默认使用 SQLite，无需配置数据库）
 ```
+
+默认数据库是 SQLite 文件 `data/qq-group-ops.db`，启动时自动建表，不需要 Docker 或额外的数据库服务。
 
 如果默认 npm 源不可用，可使用镜像：
 
@@ -105,14 +104,14 @@ pnpm install --registry=https://registry.npmmirror.com
 
 ```bash
 pnpm dev         # 本地开发入口
-pnpm db:up       # 用 Docker Compose 只启动 PostgreSQL
+pnpm db:up       # 可选：用 Docker Compose 启动 PostgreSQL
 pnpm test        # 运行 Vitest
 pnpm typecheck   # TypeScript 类型检查
 pnpm build       # 编译到 dist/
 pnpm start       # 运行编译后的入口
 ```
 
-`DATABASE_URL` 配置后，启动会自动建表并载入全部持久化状态；留空则退化为内存模式，所有状态在进程重启后丢失。
+默认使用 SQLite，启动会自动建表并载入全部持久化状态。想切到 PostgreSQL 时，在 `.env` 里设置 `DATABASE_URL=postgres://...` 并执行 `pnpm db:up`；`DATABASE_URL=memory` 则是纯内存模式（重启即丢）。
 
 ## 项目结构
 
@@ -123,10 +122,10 @@ pnpm start       # 运行编译后的入口
 ├── src/
 │   ├── adapters/            # 官方 API 客户端、fetch transport、测试替身
 │   ├── core/                # 领域模型与枚举
-│   ├── db/                  # PostgreSQL schema、迁移、查询抽象与仓储
+│   ├── db/                  # schema、迁移、SQLite/PostgreSQL 适配、写穿透队列与仓储
 │   ├── services/            # 规则、审核、权限、活动、导出、命令
 │   ├── config.ts            # 环境配置
-│   ├── persistence.ts       # 数据库连接与仓储装配
+│   ├── persistence.ts       # 数据库目标解析、连接与仓储装配
 │   └── main.ts              # 入口
 ├── test/                    # Vitest 测试
 ├── package.json
@@ -153,7 +152,7 @@ QQ Group Ops 核心服务
   ├── 信息导出
   └── 审计日志
       │
-      ├── PostgreSQL
+      ├── 持久化（默认 SQLite，可选 PostgreSQL）
       └── Web 管理 API（Phase 2）
 ```
 

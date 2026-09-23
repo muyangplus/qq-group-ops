@@ -38,7 +38,7 @@ FROM permission_grants
 ORDER BY scope ASC, group_id ASC, user_id ASC
 `.trim();
 
-export class PostgresPermissionRepository implements PermissionRepository {
+export class SqlPermissionRepository implements PermissionRepository {
   public constructor(private readonly db: Queryable) {}
 
   public async save(grant: PermissionGrant): Promise<void> {

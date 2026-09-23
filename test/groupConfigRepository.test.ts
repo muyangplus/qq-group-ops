@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { PostgresGroupConfigRepository } from "../src/db/groupConfigRepository.js";
+import { SqlGroupConfigRepository } from "../src/db/groupConfigRepository.js";
 import { FakeQueryable } from "./helpers/fakeQueryable.js";
 
-describe("PostgresGroupConfigRepository", () => {
+describe("SqlGroupConfigRepository", () => {
   it("saves partial overrides with nulls", async () => {
     const db = new FakeQueryable();
-    const repository = new PostgresGroupConfigRepository(db);
+    const repository = new SqlGroupConfigRepository(db);
 
     await repository.saveOverride({ groupId: "g1", autoApproveJoin: true });
 
@@ -40,7 +40,7 @@ describe("PostgresGroupConfigRepository", () => {
         },
       ],
     ]);
-    const repository = new PostgresGroupConfigRepository(db);
+    const repository = new SqlGroupConfigRepository(db);
 
     await expect(repository.loadOverride("g1")).resolves.toEqual({
       groupId: "g1",
@@ -52,7 +52,7 @@ describe("PostgresGroupConfigRepository", () => {
 
   it("replaces keywords", async () => {
     const db = new FakeQueryable();
-    const repository = new PostgresGroupConfigRepository(db);
+    const repository = new SqlGroupConfigRepository(db);
 
     await repository.replaceKeywords("g1", ["广告", "刷屏"]);
 
@@ -63,13 +63,13 @@ describe("PostgresGroupConfigRepository", () => {
 
   it("loads keywords", async () => {
     const db = new FakeQueryable([[{ keyword: "广告" }, { keyword: "刷屏" }]]);
-    const repository = new PostgresGroupConfigRepository(db);
+    const repository = new SqlGroupConfigRepository(db);
     await expect(repository.loadKeywords("g1")).resolves.toEqual(["广告", "刷屏"]);
   });
 
   it("deletes overrides", async () => {
     const db = new FakeQueryable();
-    const repository = new PostgresGroupConfigRepository(db);
+    const repository = new SqlGroupConfigRepository(db);
     await repository.deleteOverride("g1");
     expect(db.calls[0]?.text).toContain("DELETE FROM group_configs");
     expect(db.calls[0]?.values).toEqual(["g1"]);
@@ -106,7 +106,7 @@ describe("PostgresGroupConfigRepository", () => {
         { group_id: "g1", keyword: "刷屏" },
       ],
     ]);
-    const repository = new PostgresGroupConfigRepository(db);
+    const repository = new SqlGroupConfigRepository(db);
 
     await expect(repository.findAll()).resolves.toEqual([
       { groupId: "g1", enabled: true, keywords: ["广告", "刷屏"] },

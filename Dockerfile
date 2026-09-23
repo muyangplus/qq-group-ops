@@ -1,4 +1,4 @@
-FROM node:22-slim AS build
+FROM node:24-slim AS build
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
@@ -14,7 +14,7 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN pnpm build
 
-FROM node:22-slim AS runtime
+FROM node:24-slim AS runtime
 
 ENV NODE_ENV=production
 WORKDIR /app

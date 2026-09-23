@@ -20,13 +20,13 @@
 - 影响：官方 WebSocket/Webhook 网关需要自行实现或后续接入合适的 Node.js 适配器。
 - 备选：Koishi、Zhin.js 等 Node.js 机器人框架。
 
-## ADR-0003：PostgreSQL 作为生产数据库
+## ADR-0003：数据库选型
 
-- 状态：已采纳
+- 状态：已采纳（ADR-0022 修订）
 - 背景：需要保存多群配置、审核记录、操作日志和统计。
-- 决策：生产使用 PostgreSQL 16；当前测试使用内存实现。
-- 理由：事务、JSON、索引和生态成熟。
-- 影响：部署需要维护数据库；需配置备份和恢复。
+- 决策：默认使用 SQLite（单文件，零配置）；数据量大或多实例部署时切换 PostgreSQL 16。
+- 理由：默认零依赖即可跑起来；PostgreSQL 提供事务、JSON、索引和成熟生态。
+- 影响：两种数据库共用同一套仓储 SQL（见 ADR-0022）；切换数据库不会自动迁移历史数据。
 
 ## ADR-0004：事件接入与官方 REST 调用分层
 
@@ -179,6 +179,23 @@
   - 新增表：`permission_grants`、`group_message_modes`、`activities`、`activity_registrations`；
   - 新增仓储：`PermissionRepository`、`GroupMessageModeRepository`、`ActivityRepository`，并为审计 / 入群申请 / 群配置仓储补充 `findAll()`；
   - 启动时会把审计、入群申请等数据全量载入内存，超大历史数据需要配合保留策略（见 `DATA-COMPLIANCE.md`）；
-  - 未配置 `DATABASE_URL` 时全部退化为内存模式并输出警告。
+  - 具体存储后端由 ADR-0022 决定：默认 SQLite，可切换 PostgreSQL 或纯内存模式。
+
+## ADR-0022：默认数据库使用 SQLite
+
+- 状态：已采纳
+- 背景：PostgreSQL 需要额外部署，默认配置下 `pnpm dev` 无法直接启动；QQ 群管理机器人的状态量（绑定、权限、配置、审核记录）通常很小，单文件数据库足够。
+- 决策：默认使用 Node.js 24 内置的 `node:sqlite`，数据文件默认 `data/qq-group-ops.db`（`SQLITE_PATH` 可覆盖）；`DATABASE_URL` 以 `postgres://` 开头时切换到 PostgreSQL；`DATABASE_URL=memory` 时使用纯内存模式。
+- 理由：零额外依赖、零配置即可持久化；SQLite 同步 API 与写穿透队列天然契合；避免为小规模部署维护数据库服务。
+- 实现：仓储 SQL 统一使用 PostgreSQL 风格（`$1` 占位符、`ON CONFLICT ... DO UPDATE`），由 `SqliteQueryable` 负责方言转换：
+  - `$n` → `?`（支持同一参数重复出现）；
+  - `TIMESTAMPTZ` → `TEXT`、`BOOLEAN` → `INTEGER`、`NOW()` → `CURRENT_TIMESTAMP`、去除 `::type` 显式转换；
+  - 绑定参数时把 `boolean` / `Date` / `undefined` 归一化为 SQLite 可接受的值；
+  - 读取时把 SQLite 的 0/1 还原为 `boolean`。
+- 影响：
+  - `engines.node` 提升到 `>=24.0.0`（`node:sqlite` 无需实验开关的最低版本）；Docker 基础镜像改为 `node:24-slim`；
+  - `node:sqlite` 通过动态导入加载，在更早的 Node.js 上仍可使用 PostgreSQL / 内存模式；
+  - `pg` 只在 PostgreSQL 模式下动态导入；
+  - SQLite 是单写入者模型，适合单进程部署；多实例或高并发场景请使用 PostgreSQL。
 
 

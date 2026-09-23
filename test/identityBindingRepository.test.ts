@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { PostgresIdentityBindingRepository } from "../src/db/identityBindingRepository.js";
+import { SqlIdentityBindingRepository } from "../src/db/identityBindingRepository.js";
 import { FakeQueryable } from "./helpers/fakeQueryable.js";
 
-describe("PostgresIdentityBindingRepository", () => {
+describe("SqlIdentityBindingRepository", () => {
   it("deletes stale bindings before inserting the new mapping", async () => {
     const db = new FakeQueryable();
-    const repository = new PostgresIdentityBindingRepository(db);
+    const repository = new SqlIdentityBindingRepository(db);
 
     await repository.bind("user", "openid-user", "123456");
 
@@ -25,7 +25,7 @@ describe("PostgresIdentityBindingRepository", () => {
         { kind: "group", official_id: "g1", external_id: "654321" },
       ],
     ]);
-    const repository = new PostgresIdentityBindingRepository(db);
+    const repository = new SqlIdentityBindingRepository(db);
 
     await expect(repository.findAll()).resolves.toEqual([
       { kind: "user", officialId: "u1", externalId: "10001" },
@@ -38,7 +38,7 @@ describe("PostgresIdentityBindingRepository", () => {
     const db = new FakeQueryable([
       [{ kind: "channel", official_id: "x", external_id: "y" }],
     ]);
-    const repository = new PostgresIdentityBindingRepository(db);
+    const repository = new SqlIdentityBindingRepository(db);
 
     await expect(repository.findAll()).rejects.toThrow(
       /unknown identity binding kind/u,

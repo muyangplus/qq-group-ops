@@ -136,34 +136,48 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 - 未绑定用户会返回：`请先绑定 QQ 号：/bind qq <QQ号>`。
 - 未绑定群会返回：`请先绑定本群：/bind group <群号>`。
 
-绑定关系通过 `DATABASE_URL` 持久化到 PostgreSQL：
+绑定关系持久化到数据库：
 
-- 配置了 `DATABASE_URL`：启动时自动建表并载入全部绑定，`/bind` 写入数据库，重启后仍然有效；成功回复会带上 `（已保存到数据库）`。
-- 数据库连接或迁移失败：启动直接报错退出，不会静默退化为内存模式。
-- 未配置 `DATABASE_URL`（或设为空）：退化为内存模式并输出警告，重启后绑定会丢失。
+- 默认：SQLite 文件（`data/qq-group-ops.db`），启动时自动建表并载入全部绑定，`/bind` 写入数据库，重启后仍然有效。
+- 数据库打开或迁移失败：启动直接报错退出，不会静默退化为内存模式。
+- `DATABASE_URL=memory`：显式使用纯内存模式，重启后状态会丢失（仅调试用）。
 
 ## 数据库
 
+默认 **SQLite**，不需要任何额外配置：
+
+```bash
+pnpm dev        # 直接可用，数据写入 data/qq-group-ops.db
+```
+
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `DATABASE_URL` | 生产是 | PostgreSQL 连接字符串；留空表示使用内存模式 |
+| `DATABASE_URL` | 否 | 留空 = SQLite；`postgres://…` = PostgreSQL；`sqlite:…` = 指定 SQLite 文件；`memory` / `sqlite::memory:` = 纯内存 |
+| `SQLITE_PATH` | 否 | SQLite 文件路径，默认 `data/qq-group-ops.db` |
 
 示例：
 
 ```env
-DATABASE_URL=postgres://qqbot:change-me@localhost:5432/qq_group_ops
-# docker-compose.yml 的 db 服务密码，需要与 DATABASE_URL 中的密码一致
-POSTGRES_PASSWORD=change-me
+# 默认：SQLite 文件
+SQLITE_PATH=data/qq-group-ops.db
+
+# 可选：切换到 PostgreSQL（本地可先执行 pnpm db:up）
+# DATABASE_URL=postgres://qqbot:change-me@localhost:5432/qq_group_ops
+# POSTGRES_PASSWORD=change-me
+
+# 可选：纯内存模式，重启即丢，仅调试
+# DATABASE_URL=memory
 ```
 
-本地开发可以用 Docker Compose 只启动数据库：
+本地启动 PostgreSQL（可选）：
 
 ```bash
-pnpm db:up
-pnpm dev
+pnpm db:up     # docker compose --profile postgres up -d db
 ```
 
-启动时会自动执行 `src/db/schema.ts` 中的迁移。配置 `DATABASE_URL` 后，以下状态都会持久化并在启动时载入：
+切换数据库不会自动迁移历史数据；SQLite 与 PostgreSQL 的数据文件/库需要各自备份。
+
+启动时会自动执行 `src/db/schema.ts` 中的迁移。以下状态都会持久化并在启动时载入：
 
 | 表 | 内容 | 服务 |
 |---|---|---|
@@ -180,6 +194,15 @@ pnpm dev
 - 读走内存，写操作同步更新内存并进入顺序写穿透队列（`WriteQueue`），由运行时在**回复用户前**和**进程退出前** `flush()` 到数据库；
 - 单个写入失败只记录错误日志并计数，不会中断后续写入；
 - 启动时会把审计记录、入群申请全量载入内存，请结合 `AUDIT_LOG_RETENTION_DAYS` 等保留策略控制历史数据规模。
+
+### 两种数据库的取舍
+
+| | SQLite（默认） | PostgreSQL（可选） |
+|---|---|---|
+| 部署 | 零依赖，单文件 | 需要数据库服务 |
+| 适用 | 单进程、单群或中小规模 | 多实例、高并发、大数据量 |
+| 备份 | 复制 `data/` 目录（建议先停进程） | `pg_dump` |
+| 要求 | Node.js 24+（`node:sqlite`） | 任意受支持 Node.js + `pg` |
 
 ## 日志
 

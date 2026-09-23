@@ -45,9 +45,11 @@ TypeScript 核心服务
   ├── adapters/fetchTransport.ts 原生 fetch 传输
   ├── adapters/fakeQqOfficial.ts 官方 API 测试替身
   ├── db/queryable.ts            数据库查询抽象
+  ├── db/sqliteQueryable.ts      SQLite 适配（占位符与方言转换）
+  ├── db/sqliteDatabase.ts       SQLite 连接与 PRAGMA
   ├── db/pgQueryable.ts          PostgreSQL 连接池适配
   ├── db/migrate.ts              数据库迁移入口
-  ├── db/schema.ts               PostgreSQL schema
+  ├── db/schema.ts               数据库 schema
   ├── db/writeQueue.ts           顺序写穿透队列
   ├── db/auditRepository.ts      审计仓储
   ├── db/joinRequestRepository.ts 入群申请仓储
@@ -69,8 +71,8 @@ Web 管理 API + 管理后台（Phase 2）
 | `src/adapters/` | 官方 API 鉴权、HTTP 调用、错误映射、事件网关、测试替身 |
 | `src/core/` | 领域模型、枚举、通用类型、日志与接口调试包装 |
 | `src/services/` | 规则引擎、审核流程、审计、权限、活动报名、信息导出、命令 |
-| `src/db/` | PostgreSQL schema、查询抽象、写穿透队列与仓储 |
-| `src/persistence.ts` | 数据库连接、迁移与仓储装配 |
+| `src/db/` | 数据库 schema、查询抽象、方言适配、写穿透队列与仓储 |
+| `src/persistence.ts` | 数据库目标解析、连接、迁移与仓储装配 |
 | `src/config.ts` | 环境变量加载与校验 |
 | `src/core/logger.ts` | 结构化日志：控制台 + 文件 |
 | `src/core/instrumentation.ts` | 官方 API、HTTP、数据库、事件网关的调试包装 |
@@ -95,11 +97,11 @@ Web 管理 API + 管理后台（Phase 2）
 - 官方 API 版本变化时，只需修改 client 和 endpoint 配置。
 - 真实请求体必须在官方文档核实和真实环境测试后确认，未确认的部分明确抛出错误。
 
-### 3. 为什么使用 PostgreSQL？
+### 3. 为什么默认 SQLite、同时支持 PostgreSQL？
 
-- 需要保存多群配置、审核记录、操作日志和统计结果。
-- PostgreSQL 支持 JSON、索引和事务，适合审计场景。
-- 开发环境可先用内存实现（不配置 `DATABASE_URL`），生产使用 PostgreSQL。
+- 默认 SQLite（Node.js 24 内置 `node:sqlite`）：零配置、单文件，`pnpm dev` 开箱即用，适合单进程机器人。
+- 可选 PostgreSQL 16：多实例、高并发、大数据量场景使用。
+- 两种数据库共用同一套仓储 SQL：仓储按 PostgreSQL 风格书写（`$1` 占位符、`ON CONFLICT ... DO UPDATE`），由 `SqliteQueryable` 做方言转换，避免维护两套代码。
 - 持久化采用「内存缓存 + 写穿透」：读路径同步走内存，写路径进入 `WriteQueue` 顺序落库，启动时全量载入。
 
 ### 4. 为什么默认不保存消息原文？

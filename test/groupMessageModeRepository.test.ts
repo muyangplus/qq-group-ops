@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { PostgresGroupMessageModeRepository } from "../src/db/groupMessageModeRepository.js";
+import { SqlGroupMessageModeRepository } from "../src/db/groupMessageModeRepository.js";
 import { FakeQueryable } from "./helpers/fakeQueryable.js";
 
-describe("PostgresGroupMessageModeRepository", () => {
+describe("SqlGroupMessageModeRepository", () => {
   it("upserts group message modes", async () => {
     const db = new FakeQueryable();
-    const repository = new PostgresGroupMessageModeRepository(db);
+    const repository = new SqlGroupMessageModeRepository(db);
 
     await repository.save({ groupId: "g1", mode: "all" });
 
@@ -21,7 +21,7 @@ describe("PostgresGroupMessageModeRepository", () => {
         { group_id: "g2", mode: "at_only" },
       ],
     ]);
-    const repository = new PostgresGroupMessageModeRepository(db);
+    const repository = new SqlGroupMessageModeRepository(db);
 
     await expect(repository.findAll()).resolves.toEqual([
       { groupId: "g1", mode: "all" },
@@ -31,7 +31,7 @@ describe("PostgresGroupMessageModeRepository", () => {
 
   it("rejects unknown modes", async () => {
     const db = new FakeQueryable([[{ group_id: "g1", mode: "sometimes" }]]);
-    const repository = new PostgresGroupMessageModeRepository(db);
+    const repository = new SqlGroupMessageModeRepository(db);
     await expect(repository.findAll()).rejects.toThrow(
       /unknown group message mode/u,
     );

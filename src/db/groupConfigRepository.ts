@@ -12,11 +12,11 @@ export interface GroupConfigRepository {
 
 interface GroupConfigRow {
   group_id: string;
-  enabled: boolean | null;
-  join_audit_enabled: boolean | null;
-  auto_approve_join: boolean | null;
-  word_filter_enabled: boolean | null;
-  export_enabled: boolean | null;
+  enabled: boolean | number | null;
+  join_audit_enabled: boolean | number | null;
+  auto_approve_join: boolean | number | null;
+  word_filter_enabled: boolean | number | null;
+  export_enabled: boolean | number | null;
   raw_message_retention_days: number | null;
   mute_duration_seconds: number | null;
   warning_message: string | null;
@@ -76,7 +76,7 @@ VALUES ($1, $2)
 ON CONFLICT (group_id, keyword) DO NOTHING
 `.trim();
 
-export class PostgresGroupConfigRepository implements GroupConfigRepository {
+export class SqlGroupConfigRepository implements GroupConfigRepository {
   public constructor(private readonly db: Queryable) {}
 
   public async loadOverride(groupId: string): Promise<GroupConfigOverride | null> {
@@ -142,19 +142,18 @@ export class PostgresGroupConfigRepository implements GroupConfigRepository {
 }
 
 function rowToOverride(row: GroupConfigRow): GroupConfigOverride {
+  const enabled = optionalBoolean(row.enabled);
+  const joinAuditEnabled = optionalBoolean(row.join_audit_enabled);
+  const autoApproveJoin = optionalBoolean(row.auto_approve_join);
+  const wordFilterEnabled = optionalBoolean(row.word_filter_enabled);
+  const exportEnabled = optionalBoolean(row.export_enabled);
   return {
     groupId: row.group_id,
-    ...(row.enabled !== null ? { enabled: row.enabled } : {}),
-    ...(row.join_audit_enabled !== null
-      ? { joinAuditEnabled: row.join_audit_enabled }
-      : {}),
-    ...(row.auto_approve_join !== null
-      ? { autoApproveJoin: row.auto_approve_join }
-      : {}),
-    ...(row.word_filter_enabled !== null
-      ? { wordFilterEnabled: row.word_filter_enabled }
-      : {}),
-    ...(row.export_enabled !== null ? { exportEnabled: row.export_enabled } : {}),
+    ...(enabled !== undefined ? { enabled } : {}),
+    ...(joinAuditEnabled !== undefined ? { joinAuditEnabled } : {}),
+    ...(autoApproveJoin !== undefined ? { autoApproveJoin } : {}),
+    ...(wordFilterEnabled !== undefined ? { wordFilterEnabled } : {}),
+    ...(exportEnabled !== undefined ? { exportEnabled } : {}),
     ...(row.raw_message_retention_days !== null
       ? { rawMessageRetentionDays: row.raw_message_retention_days }
       : {}),
@@ -163,4 +162,14 @@ function rowToOverride(row: GroupConfigRow): GroupConfigOverride {
       : {}),
     ...(row.warning_message !== null ? { warningMessage: row.warning_message } : {}),
   };
+}
+
+/** SQLite 没有布尔类型，读回来是 0/1；PostgreSQL 读回来是真正的 boolean。 */
+function optionalBoolean(
+  value: boolean | number | null,
+): boolean | undefined {
+  if (value === null) {
+    return undefined;
+  }
+  return typeof value === "boolean" ? value : value !== 0;
 }

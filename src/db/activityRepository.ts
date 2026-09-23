@@ -71,7 +71,7 @@ FROM activity_registrations
 ORDER BY created_at ASC
 `.trim();
 
-export class PostgresActivityRepository implements ActivityRepository {
+export class SqlActivityRepository implements ActivityRepository {
   public constructor(private readonly db: Queryable) {}
 
   public async saveActivity(activity: Activity): Promise<void> {

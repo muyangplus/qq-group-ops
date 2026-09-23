@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   log.info("configuration loaded", {
     qqCredentialsConfigured: hasQqCredentials(settings),
     runtimeMode: runtime.mode,
-    persistenceEnabled: Boolean(persistence),
+    databaseDriver: persistence?.driver ?? "memory",
     rawMessageRetentionDays: settings.rawMessageRetentionDays,
     auditLogRetentionDays: settings.auditLogRetentionDays,
     logLevel: settings.logLevel,

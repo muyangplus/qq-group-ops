@@ -43,12 +43,12 @@ ORDER BY kind ASC, official_id ASC
 `.trim();
 
 /**
- * PostgreSQL 绑定关系仓储。
+ * 绑定关系仓储（SQLite / PostgreSQL 通用）。
  *
  * 一个 officialId 在一个 kind 下只允许绑定一个 externalId，反之一一对应。
  * 重新绑定会先删除任一方向上的旧记录，再写入新记录。
  */
-export class PostgresIdentityBindingRepository
+export class SqlIdentityBindingRepository
   implements IdentityBindingRepository
 {
   public constructor(private readonly db: Queryable) {}

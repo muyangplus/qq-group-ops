@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { PostgresPermissionRepository } from "../src/db/permissionRepository.js";
+import { SqlPermissionRepository } from "../src/db/permissionRepository.js";
 import { FakeQueryable } from "./helpers/fakeQueryable.js";
 
-describe("PostgresPermissionRepository", () => {
+describe("SqlPermissionRepository", () => {
   it("upserts grants idempotently", async () => {
     const db = new FakeQueryable();
-    const repository = new PostgresPermissionRepository(db);
+    const repository = new SqlPermissionRepository(db);
 
     await repository.save({
       scope: "group_admin",
@@ -21,7 +21,7 @@ describe("PostgresPermissionRepository", () => {
 
   it("removes grants", async () => {
     const db = new FakeQueryable();
-    const repository = new PostgresPermissionRepository(db);
+    const repository = new SqlPermissionRepository(db);
 
     await repository.remove({
       scope: "super_admin",
@@ -40,7 +40,7 @@ describe("PostgresPermissionRepository", () => {
         { scope: "moderator", group_id: "g1", user_id: "u2" },
       ],
     ]);
-    const repository = new PostgresPermissionRepository(db);
+    const repository = new SqlPermissionRepository(db);
 
     await expect(repository.findAll()).resolves.toEqual([
       { scope: "super_admin", groupId: "", userId: "root" },
@@ -52,7 +52,7 @@ describe("PostgresPermissionRepository", () => {
     const db = new FakeQueryable([
       [{ scope: "owner", group_id: "", user_id: "root" }],
     ]);
-    const repository = new PostgresPermissionRepository(db);
+    const repository = new SqlPermissionRepository(db);
     await expect(repository.findAll()).rejects.toThrow(
       /unknown permission scope/u,
     );

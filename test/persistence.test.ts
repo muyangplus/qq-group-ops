@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { loadSettings } from "../src/config.js";
@@ -38,12 +41,47 @@ class FakePool implements PersistencePool {
 }
 
 describe("connectPersistence", () => {
-  it("stays in memory mode when DATABASE_URL is not configured", async () => {
-    const persistence = await connectPersistence(loadSettings({}));
+  it("uses in-memory mode only when explicitly requested", async () => {
+    const persistence = await connectPersistence(
+      loadSettings({ DATABASE_URL: "memory" }),
+    );
     expect(persistence).toBeUndefined();
   });
 
-  it("migrates and exposes the identity binding repository", async () => {
+  it("defaults to a SQLite file and migrates the schema", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qq-group-ops-persistence-"));
+    const path = join(dir, "data", "bot.db");
+    try {
+      const persistence = await connectPersistence(
+        loadSettings({ SQLITE_PATH: path }),
+      );
+      expect(persistence?.driver).toBe("sqlite");
+      expect(existsSync(path)).toBe(true);
+      await persistence?.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps SQLite data across connections", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qq-group-ops-persistence-"));
+    const path = join(dir, "bot.db");
+    try {
+      const first = await connectPersistence(loadSettings({ SQLITE_PATH: path }));
+      await first?.identityBindings.bind("user", "u1", "10001");
+      await first?.close();
+
+      const second = await connectPersistence(loadSettings({ SQLITE_PATH: path }));
+      await expect(second?.identityBindings.findAll()).resolves.toEqual([
+        { kind: "user", officialId: "u1", externalId: "10001" },
+      ]);
+      await second?.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("migrates and exposes repositories for PostgreSQL", async () => {
     const pool = new FakePool();
     const urls: string[] = [];
     const persistence = await connectPersistence(
@@ -57,18 +95,18 @@ describe("connectPersistence", () => {
     );
 
     expect(urls).toEqual(["postgres://qqbot:secret@db:5432/ops"]);
+    expect(persistence?.driver).toBe("postgres");
     expect(pool.ended).toBe(false);
     expect(pool.errorListeners).toBe(1);
     expect(pool.inner.calls[0]?.text).toContain(
       "CREATE TABLE IF NOT EXISTS identity_bindings",
     );
-    expect(persistence?.identityBindings).toBeDefined();
 
     await persistence?.close();
     expect(pool.ended).toBe(true);
   });
 
-  it("fails fast when the database is unreachable", async () => {
+  it("fails fast when PostgreSQL is unreachable", async () => {
     const pool = new FakePool({ failMigrate: true });
     await expect(
       connectPersistence(loadSettings({ DATABASE_URL: "postgres://db/ops" }), {

@@ -41,7 +41,7 @@ FROM audit_records
 ORDER BY created_at ASC
 `.trim();
 
-export class PostgresAuditRepository implements AuditRepository {
+export class SqlAuditRepository implements AuditRepository {
   public constructor(private readonly db: Queryable) {}
 
   public async append(record: AuditRecord): Promise<void> {

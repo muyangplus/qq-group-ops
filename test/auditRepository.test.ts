@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AuditStatus } from "../src/core/enums.js";
 import { utcNow } from "../src/core/models.js";
-import { PostgresAuditRepository } from "../src/db/auditRepository.js";
+import { SqlAuditRepository } from "../src/db/auditRepository.js";
 import type { Queryable, QueryResult } from "../src/db/queryable.js";
 import { SCHEMA_SQL } from "../src/db/schema.js";
 
@@ -23,7 +23,7 @@ class FakeQueryable implements Queryable {
   }
 }
 
-describe("PostgresAuditRepository", () => {
+describe("SqlAuditRepository", () => {
   it("defines the expected schema tables", () => {
     expect(SCHEMA_SQL).toContain("audit_records");
     expect(SCHEMA_SQL).toContain("join_requests");
@@ -37,7 +37,7 @@ describe("PostgresAuditRepository", () => {
 
   it("inserts audit records", async () => {
     const db = new FakeQueryable();
-    const repository = new PostgresAuditRepository(db);
+    const repository = new SqlAuditRepository(db);
     const record = {
       recordId: "rec1",
       groupId: "g1",
@@ -78,7 +78,7 @@ describe("PostgresAuditRepository", () => {
         created_at: "2026-01-01T00:00:00.000Z",
       },
     ]);
-    const repository = new PostgresAuditRepository(db);
+    const repository = new SqlAuditRepository(db);
 
     await expect(repository.findByGroup("g1")).resolves.toEqual([
       {
@@ -107,7 +107,7 @@ describe("PostgresAuditRepository", () => {
         created_at: "2026-01-01T00:00:00.000Z",
       },
     ]);
-    const repository = new PostgresAuditRepository(db);
+    const repository = new SqlAuditRepository(db);
 
     const records = await repository.findAll();
 

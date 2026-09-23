@@ -19,6 +19,9 @@ pnpm-debug.log*
 # Runtime data
 data/
 backups/
+*.db
+*.db-wal
+*.db-shm
 
 # IDE / OS
 .idea/

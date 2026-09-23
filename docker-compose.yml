@@ -4,13 +4,17 @@ services:
     env_file:
       - .env
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
+    volumes:
+      # 默认数据库是 SQLite 文件，挂载出来保证容器重建后数据仍在
+      - ./data:/app/data
     networks:
       - qq-group-ops
 
+  # 可选：使用 PostgreSQL 时启动。需要 .env 里 DATABASE_URL 指向 db 服务：
+  #   DATABASE_URL=postgres://qqbot:change-me@db:5432/qq_group_ops
+  # 启动命令：pnpm db:up（即 docker compose --profile postgres up -d db）
   db:
+    profiles: ["postgres"]
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-qq_group_ops}

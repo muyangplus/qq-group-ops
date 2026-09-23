@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { JoinRequestStatus } from "../src/core/enums.js";
 import { utcNow } from "../src/core/models.js";
-import { PostgresJoinRequestRepository } from "../src/db/joinRequestRepository.js";
+import { SqlJoinRequestRepository } from "../src/db/joinRequestRepository.js";
 import { FakeQueryable } from "./helpers/fakeQueryable.js";
 
-describe("PostgresJoinRequestRepository", () => {
+describe("SqlJoinRequestRepository", () => {
   it("upserts join requests", async () => {
     const db = new FakeQueryable();
-    const repository = new PostgresJoinRequestRepository(db);
+    const repository = new SqlJoinRequestRepository(db);
     const createdAt = utcNow();
 
     await repository.upsert({
@@ -47,7 +47,7 @@ describe("PostgresJoinRequestRepository", () => {
         },
       ],
     ]);
-    const repository = new PostgresJoinRequestRepository(db);
+    const repository = new SqlJoinRequestRepository(db);
 
     await expect(repository.findPending("g1")).resolves.toEqual([
       {
@@ -63,7 +63,7 @@ describe("PostgresJoinRequestRepository", () => {
 
   it("updates review status", async () => {
     const db = new FakeQueryable();
-    const repository = new PostgresJoinRequestRepository(db);
+    const repository = new SqlJoinRequestRepository(db);
     const reviewedAt = utcNow();
 
     await repository.updateStatus(
@@ -86,7 +86,7 @@ describe("PostgresJoinRequestRepository", () => {
 
   it("returns null for unknown requests", async () => {
     const db = new FakeQueryable([[]]);
-    const repository = new PostgresJoinRequestRepository(db);
+    const repository = new SqlJoinRequestRepository(db);
     await expect(repository.findById("missing")).resolves.toBeNull();
   });
 
@@ -105,7 +105,7 @@ describe("PostgresJoinRequestRepository", () => {
         },
       ],
     ]);
-    const repository = new PostgresJoinRequestRepository(db);
+    const repository = new SqlJoinRequestRepository(db);
 
     await expect(repository.findAll()).resolves.toEqual([
       {

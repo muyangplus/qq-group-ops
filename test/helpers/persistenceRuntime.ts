@@ -1,0 +1,28 @@
+import { loadSettings } from "../../src/config.js";
+import { SqlActivityRepository } from "../../src/db/activityRepository.js";
+import { SqlAuditRepository } from "../../src/db/auditRepository.js";
+import { SqlGroupConfigRepository } from "../../src/db/groupConfigRepository.js";
+import { SqlGroupMessageModeRepository } from "../../src/db/groupMessageModeRepository.js";
+import { SqlIdentityBindingRepository } from "../../src/db/identityBindingRepository.js";
+import { SqlJoinRequestRepository } from "../../src/db/joinRequestRepository.js";
+import { SqlPermissionRepository } from "../../src/db/permissionRepository.js";
+import type { Queryable } from "../../src/db/queryable.js";
+import { createRuntime, type Runtime } from "../../src/runtime.js";
+
+/** 用真实仓储装配 runtime，生产装配路径的最小测试替身。 */
+export function createPersistentRuntime(
+  queryable: Queryable,
+  adminUserIds = "root",
+): Runtime {
+  return createRuntime(loadSettings({ ADMIN_USER_IDS: adminUserIds }), {
+    repositories: {
+      audit: new SqlAuditRepository(queryable),
+      joinRequests: new SqlJoinRequestRepository(queryable),
+      groupConfigs: new SqlGroupConfigRepository(queryable),
+      identityBindings: new SqlIdentityBindingRepository(queryable),
+      groupMessageModes: new SqlGroupMessageModeRepository(queryable),
+      permissions: new SqlPermissionRepository(queryable),
+      activities: new SqlActivityRepository(queryable),
+    },
+  });
+}

@@ -1,11 +1,19 @@
+export const DEFAULT_SQLITE_PATH = "data/qq-group-ops.db";
+
+export type DatabaseTarget =
+  | { driver: "sqlite"; path: string }
+  | { driver: "postgres"; url: string }
+  | { driver: "memory" };
+
 export interface Settings {
   qqBotAppId: string;
   qqBotClientSecret: string;
   qqBotToken: string;
   qqBotSandbox: boolean;
-  /** 是否显式配置了 DATABASE_URL；未配置时退化为内存模式。 */
-  databaseConfigured: boolean;
+  /** 原始 DATABASE_URL，仅用于日志与诊断。 */
   databaseUrl: string;
+  /** 解析后的数据库目标；默认 SQLite 文件。 */
+  databaseTarget: DatabaseTarget;
   adminUserIds: readonly string[];
   logLevel: string;
   logFile: string;
@@ -43,16 +51,54 @@ function splitCsv(value: string | undefined): string[] {
     .filter((part) => part.length > 0);
 }
 
+/**
+ * 解析数据库目标。
+ *
+ * - 未设置 `DATABASE_URL`：默认 SQLite 文件（可用 `SQLITE_PATH` 覆盖）；
+ * - `postgres://` / `postgresql://`：PostgreSQL；
+ * - `sqlite:` 前缀或普通路径：SQLite；
+ * - `memory` / `:memory:`：纯内存，重启即丢。
+ */
+export function resolveDatabaseTarget(
+  databaseUrl: string | undefined,
+  sqlitePath?: string,
+): DatabaseTarget {
+  const raw = databaseUrl?.trim() ?? "";
+  if (raw.length === 0) {
+    return sqliteTarget(sqlitePath?.trim() || DEFAULT_SQLITE_PATH);
+  }
+
+  const lower = raw.toLowerCase();
+  if (lower === "memory" || lower === ":memory:" || lower === "sqlite::memory:") {
+    return { driver: "memory" };
+  }
+  if (lower.startsWith("postgres://") || lower.startsWith("postgresql://")) {
+    return { driver: "postgres", url: raw };
+  }
+  if (lower.startsWith("sqlite:")) {
+    const path =
+      raw.slice("sqlite:".length).replace(/^\/\//u, "") || DEFAULT_SQLITE_PATH;
+    return sqliteTarget(path);
+  }
+  // 没有方言前缀时按 SQLite 文件路径处理，方便直接写 ./data/bot.db
+  return sqliteTarget(raw);
+}
+
+function sqliteTarget(path: string): DatabaseTarget {
+  return path === ":memory:" || path === "memory"
+    ? { driver: "memory" }
+    : { driver: "sqlite", path };
+}
+
 export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
+  const databaseUrl = env.DATABASE_URL?.trim() ?? "";
   return {
     qqBotAppId: env.QQ_BOT_APP_ID ?? "",
     qqBotClientSecret: env.QQ_BOT_CLIENT_SECRET ?? "",
     qqBotToken: env.QQ_BOT_TOKEN ?? "",
     qqBotSandbox: asBool(env.QQ_BOT_SANDBOX),
-    databaseConfigured: Boolean(env.DATABASE_URL?.trim()),
-    databaseUrl:
-      env.DATABASE_URL ??
-      "postgres://qqbot:change-me@localhost:5432/qq_group_ops",
+    databaseUrl,
+    databaseTarget: resolveDatabaseTarget(env.DATABASE_URL, env.SQLITE_PATH),
     adminUserIds: splitCsv(env.ADMIN_USER_IDS ?? env.ADMIN_QQ_IDS),
     logLevel: (env.LOG_LEVEL ?? "info").toUpperCase(),
     logFile: env.LOG_FILE ?? "logs/qq-group-ops.log",

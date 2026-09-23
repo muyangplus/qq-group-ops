@@ -62,13 +62,13 @@ SET status = $2,
     reviewer_id = $3,
     reviewed_at = $4,
     reason = CASE
-      WHEN $5::text IS NULL OR $5 = '' THEN reason
+      WHEN $5 IS NULL OR $5 = '' THEN reason
       ELSE $5
     END
 WHERE request_id = $1
 `.trim();
 
-export class PostgresJoinRequestRepository implements JoinRequestRepository {
+export class SqlJoinRequestRepository implements JoinRequestRepository {
   public constructor(private readonly db: Queryable) {}
 
   public async upsert(request: JoinRequest): Promise<void> {

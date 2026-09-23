@@ -31,7 +31,7 @@ FROM group_message_modes
 ORDER BY group_id ASC
 `.trim();
 
-export class PostgresGroupMessageModeRepository
+export class SqlGroupMessageModeRepository
   implements GroupMessageModeRepository
 {
   public constructor(private readonly db: Queryable) {}

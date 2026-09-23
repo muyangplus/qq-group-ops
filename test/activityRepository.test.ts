@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { utcNow } from "../src/core/models.js";
-import { PostgresActivityRepository } from "../src/db/activityRepository.js";
+import { SqlActivityRepository } from "../src/db/activityRepository.js";
 import { FakeQueryable } from "./helpers/fakeQueryable.js";
 
-describe("PostgresActivityRepository", () => {
+describe("SqlActivityRepository", () => {
   it("upserts activities", async () => {
     const db = new FakeQueryable();
-    const repository = new PostgresActivityRepository(db);
+    const repository = new SqlActivityRepository(db);
     const createdAt = utcNow();
 
     await repository.saveActivity({
@@ -50,7 +50,7 @@ describe("PostgresActivityRepository", () => {
         },
       ],
     ]);
-    const repository = new PostgresActivityRepository(db);
+    const repository = new SqlActivityRepository(db);
 
     await expect(repository.findActivities()).resolves.toEqual([
       {
@@ -67,7 +67,7 @@ describe("PostgresActivityRepository", () => {
 
   it("saves and deletes registrations", async () => {
     const db = new FakeQueryable();
-    const repository = new PostgresActivityRepository(db);
+    const repository = new SqlActivityRepository(db);
     const createdAt = utcNow();
 
     await repository.saveRegistration({
@@ -109,7 +109,7 @@ describe("PostgresActivityRepository", () => {
         },
       ],
     ]);
-    const repository = new PostgresActivityRepository(db);
+    const repository = new SqlActivityRepository(db);
 
     await expect(repository.findRegistrations()).resolves.toEqual([
       {
