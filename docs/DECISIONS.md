@@ -271,6 +271,21 @@
   - `AuditRepository` 新增 `deleteOlderThan`，`JoinRequestRepository` 新增 `deleteReviewedOlderThan`；
   - `main.ts` 在启动时执行一次清理并在退出时停止定时器。
 
+## ADR-0027：被动回复配额与事件处理容错
+
+- 状态：已采纳
+- 背景：官方对被动回复有硬限制——单聊同一 `msg_id` 最多回复 5 次，群聊被动回复 5 分钟有效，超限会失败（22009）；同时发现 `QQOfficialGateway` 的事件处理器如果抛错，`void this.handleMessage(payload)` 会产生未处理拒绝，回复发送失败（限流、网络抖动）就可能拖垮进程。
+- 决策：
+  1. 新增 `PassiveReplyQuota`：按 `msg_id` 记录回复次数与首次时间；窗口内超过 5 次或窗口已过期时，`sendGroupMessage` / `sendPrivateMessage` **在发请求前**抛出 `err_code=22009` 的错误，并记录 `passive reply quota exhausted` 日志。缓存上限 1000 条，超出淘汰最旧记录。
+  2. 事件处理容错：`QQOfficialGateway` 调用事件处理器时 try/catch，失败只记录日志并触发 `onError`，连接与后续事件不受影响。
+  3. 回复发送容错：`gatewayRunner` 的发送逻辑 try/catch，失败只记录日志（含 `rateLimited` 标记），不再向事件处理链抛出异常。
+- 理由：被动回复配额是平台硬约束，提前拦截可以避免无效请求打满频控；事件处理器是长驻进程里最容易出现「单点异常导致整个连接不可用」的位置，必须隔离。
+- 影响：
+  - `QQOfficialClientOptions` 新增 `passiveReplyQuota`（传 `null` 可关闭）；
+  - `gatewayRunner` 的回复发送从「直接 await」改为「容错发送」；
+  - 新增测试覆盖配额计数/过期/淘汰、客户端第 6 次拒绝、事件处理器抛错不影响连接、回复失败不影响事件。
+
+
 
 
 

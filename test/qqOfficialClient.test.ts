@@ -220,6 +220,35 @@ describe("QQOfficialClient", () => {
     expect(transport.calls[0]?.json).toEqual({ member_openids: ["u1"] });
   });
 
+  it("stops passive replies after five messages for the same msg_id", async () => {
+    const transport = new FakeTransport(
+      Array.from({ length: 5 }, () => ({
+        statusCode: 200,
+        jsonData: {},
+        text: "",
+      })),
+    );
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+      sendThrottle: new SendThrottle({ minIntervalMs: 0 }),
+    });
+
+    for (let index = 0; index < 5; index += 1) {
+      await client.sendPrivateMessage("u1", `reply ${index}`, "m1");
+    }
+
+    const error = (await client
+      .sendPrivateMessage("u1", "reply 6", "m1")
+      .catch((caught: unknown) => caught)) as QQOfficialAPIError | undefined;
+
+    expect(error).toBeInstanceOf(QQOfficialAPIError);
+    expect(error?.errorCode).toBe(22009);
+    expect(error?.isRateLimited).toBe(true);
+    // 第 6 次不会打到接口
+    expect(transport.calls).toHaveLength(5);
+  });
+
   it("reads join request lists with cursor pagination", async () => {
     const transport = new FakeTransport([
       {

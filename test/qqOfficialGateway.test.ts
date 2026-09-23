@@ -576,8 +576,7 @@ describe("QQOfficialGateway reconnection", () => {
     await gateway.stop();
   });
 
-  it("reconnects when the server sends op=7", async () => {
-    const sockets: FakeSocket[] = [];
+  it("reconnects when the server sends op=7", async () => {    const sockets: FakeSocket[] = [];
     const scheduler = new FakeScheduler();
     const gateway = new QQOfficialGateway({
       api: new FakeQQOfficialAPI(),
@@ -601,6 +600,49 @@ describe("QQOfficialGateway reconnection", () => {
     sockets[0]?.emit("message", JSON.stringify({ op: 7 }));
     expect(gateway.isRunning).toBe(false);
     expect(scheduler.callbacks).toHaveLength(1);
+
+    await gateway.stop();
+  });
+
+  it("keeps the connection when an event handler throws", async () => {
+    const socket = new FakeSocket();
+    const errors: unknown[] = [];
+    const gateway = new QQOfficialGateway({
+      api: new FakeQQOfficialAPI(),
+      createSocket: () => socket,
+      mapper: new QQOfficialEventMapper(),
+      scheduler: new FakeScheduler(),
+      onError: (error) => {
+        errors.push(error);
+      },
+    });
+
+    await gateway.start(() => {
+      throw new Error("handler boom");
+    });
+    socket.emit("open");
+    socket.emit(
+      "message",
+      JSON.stringify({ op: 10, d: { heartbeat_interval: 1_000 } }),
+    );
+    socket.emit(
+      "message",
+      JSON.stringify({
+        op: 0,
+        s: 1,
+        t: "GROUP_AT_MESSAGE_CREATE",
+        d: {
+          id: "m1",
+          group_openid: "g1",
+          content: "/test",
+          author: { member_openid: "u1" },
+        },
+      }),
+    );
+    await tick();
+
+    expect(errors).toHaveLength(1);
+    expect(gateway.isRunning).toBe(true);
 
     await gateway.stop();
   });

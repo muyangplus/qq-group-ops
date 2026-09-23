@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { FakeEventGateway } from "../src/adapters/fakeEventGateway.js";
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
@@ -93,5 +93,27 @@ describe("FakeEventGateway", () => {
     expect(api.sentPrivateMessages).toHaveLength(1);
     expect(api.sentPrivateMessages[0]?.content).toContain("已绑定");
     expect(api.sentPrivateMessages[0]?.msgId).toBe("m1");
+  });
+
+  it("does not fail the event when a reply cannot be sent", async () => {
+    const runtime = createRuntime(loadSettings({ ADMIN_USER_IDS: "mod" }));
+    runtime.identityMap.bindUser("mod", "10001");
+    runtime.identityMap.bindGroup("g1", "654321");
+    const api = runtime.api as FakeQQOfficialAPI;
+    vi.spyOn(api, "sendGroupMessage").mockRejectedValue(
+      new Error("passive reply quota exhausted"),
+    );
+    const gateway = new FakeEventGateway();
+    await attachGateway(runtime, gateway);
+
+    await expect(
+      gateway.emit({
+        type: "group_message",
+        groupId: "g1",
+        userId: "mod",
+        messageId: "m1",
+        content: "/test",
+      }),
+    ).resolves.toBeUndefined();
   });
 });

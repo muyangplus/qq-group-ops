@@ -1,5 +1,6 @@
 import { getLogger } from "../core/logger.js";
 import type { BotCacheSnapshot, BotCacheStore } from "./botCache.js";
+import { PassiveReplyQuota } from "./passiveReplyQuota.js";
 import {
   QQOfficialAPIError,
   isRateLimitedError,
@@ -129,6 +130,8 @@ export interface QQOfficialClientOptions {
   rateLimitCooldownMs?: number;
   /** 出站消息节流器；传入 null 可关闭。 */
   sendThrottle?: SendThrottle | null;
+  /** 被动回复配额；传入 null 可关闭拦截（默认开启）。 */
+  passiveReplyQuota?: PassiveReplyQuota | null;
 }
 
 export class QQOfficialClient implements QQOfficialAPI {
@@ -143,6 +146,7 @@ export class QQOfficialClient implements QQOfficialAPI {
   private readonly tokenRefreshMarginMs: number;
   private readonly gatewayCooldownMs: number;
   private readonly sendThrottle: SendThrottle | undefined;
+  private readonly passiveReplyQuota: PassiveReplyQuota | undefined;
 
   private tokenValue: string;
   private tokenExpiresAt: number | undefined;
@@ -178,6 +182,10 @@ export class QQOfficialClient implements QQOfficialAPI {
         ? undefined
         : (options.sendThrottle ??
           new SendThrottle({ isRateLimited: isRateLimitedError }));
+    this.passiveReplyQuota =
+      options.passiveReplyQuota === null
+        ? undefined
+        : (options.passiveReplyQuota ?? new PassiveReplyQuota());
   }
 
   public get token(): string {
@@ -293,6 +301,7 @@ export class QQOfficialClient implements QQOfficialAPI {
     content: string,
     msgId?: string,
   ): Promise<Record<string, unknown>> {
+    this.assertPassiveReplyAllowed(msgId);
     const payload: Record<string, unknown> = { content };
     if (msgId) {
       payload.msg_id = msgId;
@@ -300,6 +309,7 @@ export class QQOfficialClient implements QQOfficialAPI {
     const response = await this.throttled(`group:${groupId}`, () =>
       this.request("POST", fill(this.endpoints.sendGroupMessage, { groupId }), payload),
     );
+    this.recordPassiveReply(msgId);
     return isRecord(response.jsonData) ? response.jsonData : {};
   }
 
@@ -308,6 +318,7 @@ export class QQOfficialClient implements QQOfficialAPI {
     content: string,
     msgId?: string,
   ): Promise<Record<string, unknown>> {
+    this.assertPassiveReplyAllowed(msgId);
     const payload: Record<string, unknown> = { msg_type: 0, content };
     if (msgId) {
       payload.msg_id = msgId;
@@ -319,7 +330,41 @@ export class QQOfficialClient implements QQOfficialAPI {
         payload,
       ),
     );
+    this.recordPassiveReply(msgId);
     return isRecord(response.jsonData) ? response.jsonData : {};
+  }
+
+  /**
+   * 被动回复配额检查。
+   *
+   * 单聊同一 msg_id 最多回复 5 次、群聊被动回复 5 分钟有效；超限继续发会失败（22009），
+   * 这里直接拒绝并抛出可识别的错误，由调用方决定降级策略。
+   */
+  private assertPassiveReplyAllowed(msgId: string | undefined): void {
+    if (!msgId || !this.passiveReplyQuota) {
+      return;
+    }
+    const decision = this.passiveReplyQuota.check(msgId);
+    if (decision.allowed) {
+      return;
+    }
+    log.warn("passive reply quota exhausted", {
+      msgId,
+      reason: decision.reason,
+      used: decision.used,
+    });
+    throw new QQOfficialAPIError(
+      400,
+      `passive reply quota exhausted (${decision.reason})`,
+      { err_code: 22009, reason: decision.reason, used: decision.used },
+      { errorCode: 22009 },
+    );
+  }
+
+  private recordPassiveReply(msgId: string | undefined): void {
+    if (msgId && this.passiveReplyQuota) {
+      this.passiveReplyQuota.record(msgId);
+    }
   }
 
   public async recallGroupMessage(groupId: string, messageId: string): Promise<void> {

@@ -374,7 +374,16 @@ export class QQOfficialGateway implements EventGateway {
     }
     const event = this.options.mapper.map(raw.t, data);
     if (event && this.handler) {
-      await this.handler(event);
+      try {
+        await this.handler(event);
+      } catch (error) {
+        // 单个事件处理失败不应该影响连接与后续事件。
+        log.error("event handler failed", {
+          eventType: raw.t,
+          error: formatError(error),
+        });
+        this.options.onError?.(error);
+      }
     }
   }
 
