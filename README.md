@@ -1,4 +1,4 @@
-﻿# QQ Group Ops
+# QQ Group Ops
 
 > 基于 QQ 官方开放平台 API 的开源 QQ 群管理与运营平台：群管理、审核、活动报名、信息导出。
 
@@ -121,8 +121,8 @@ pnpm start       # 运行编译后的入口
 
 | 操作 | 指令 | 需要权限 |
 |---|---|---|
-| 查看规则 | `/rules` | 审核员（moderate）及以上 |
-| 修改规则 | `/rules set ...` | 群管理员（admin）及以上 |
+| 查看规则 | `/rules` | 审核员（moderator，`/perm grant mod`）及以上 |
+| 修改规则 | `/rules set ...` | 群管理员（admin，`/perm grant admin`）及以上 |
 
 前置条件（强制绑定，见 [配置说明](docs/CONFIGURATION.md)）：
 
