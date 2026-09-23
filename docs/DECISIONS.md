@@ -437,6 +437,25 @@
   - `JoinApprovalService.applyJoinRules` 增加 `notify` 返回值，配合新群配置 `notifyAutoApproved`（`group_settings` 持久化）决定自动处理是否通知；
   - 短码映射属于伪匿名数据，随数据库一起备份；不参与保留清理（体量很小，且删除后会导致旧消息里的短码失效）。
 
+## ADR-0037：个人资料、活动模块与关键词豁免
+
+- 状态：已采纳
+- 背景：需求分三块：① 管理员（审核员及以上）应豁免关键词判断；② 用户可维护个人资料（班级/学院/姓名/学号，学号 11 位、前两位 22-26 决定年级）；③ 完成活动发布/报名/管理，活动可配群号与链接（卡片呈现），报名按学院/年级限制。
+- 决策：
+  1. **关键词豁免**：`MessageGuardService` 注入 `PermissionService`，`canReviewContent`（审核员及以上）直接返回 Allow，不警告/不撤回/不处罚、不写审计，只记 `moderation exempt` debug 日志；普通成员照常；
+  2. **`/profile`**：新增 `user_profiles` 表与 `UserProfileService`。学号必须 11 位且前两位 ∈ {22..26}（年级 = `20` + 前两位）；班级必须存在于 `MemberRoster`（班级库），保存班级自动带出学院；学院/年级可手动覆盖；`/profile clear` 可删除；报名前要求「姓名+学号+班级」齐全；
+  3. **活动模块**：`ActivityService` 增加活动短码（6 位随机 Base62，`activity_details.code` 唯一索引）、链接、学院/年级白黑名单、`findByCode/updateActivity/checkEligibility/findRegistration`；扩展字段放独立的 `activity_details` 表，沿用「新表幂等升级、不改老表」的经验；
+  4. **报名规则**：黑名单优先，白名单为空表示不限；年级取学号前两位；学院匹配允许简称（`环境` 命中 `环境科学与工程学院`）；
+  5. **权限**：活动发布/修改/开停/看名单 = `canApproveJoin`（群管理员+）或活动发布者本人或全局超管；报名/取消/详情对所有已绑定用户开放；
+  6. **卡片**：抽出 `RichMessageSender`（Markdown+按钮 → Markdown → 纯文本三级降级，按钮白名单被拒后机器人级记住），入群申请卡片与活动卡片共用，避免两份降级逻辑；
+  7. **展示**：活动一律用短码 `#A7K2Q9`，与 ADR-0036 的系统 id 策略一致。
+- 理由：资料是活动限制的前提，先落库再报名才能保证规则可执行；活动扩展字段独立成表避免 ALTER 迁移；三级降级与短码复用既有基础设施，代码量与风险最小。
+- 影响：
+  - 新表 `user_profiles` / `activity_details`，新服务 `UserProfileService` / `ActivityCardService` / `RichMessageSender`；
+  - `AdminCommandService` 新增 `/profile`、`/activity`（含 `/help profile`、`/help activity` 主题），`MessageGuardService` 新增可选 `permissions` 参数；
+  - `NotificationService` 的三级降级逻辑迁移到 `RichMessageSender`（行为与 detail 命名保持不变，测试同步）；
+  - 学号样例统一为 `22123456789` 这种「22 + 9 位」格式（不是 `2022…`）。
+
 
 
 

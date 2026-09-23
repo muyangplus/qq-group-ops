@@ -361,6 +361,69 @@ CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json CLASS_INDE
 - 数据库打开或迁移失败：启动直接报错退出，不会静默退化为内存模式。
 - `DATABASE_URL=memory`：显式使用纯内存模式，重启后状态会丢失（仅调试用）。
 
+## 个人资料与活动
+
+### `/profile`（个人资料）
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| 无 | — | 个人资料不需要环境变量；班级库复用 `CLASS_INDEX_FILE` |
+
+```text
+/profile                                      查看
+/profile set name <姓名>
+/profile set id <11位学号>                     前两位必须是 22-26
+/profile set class <班级>                      必须在 class-index.json 的 classes 里
+/profile set college <学院>                    可手动覆盖（默认由班级库带出）
+/profile set year <年级>                       可手动覆盖（2022 / 22）
+/profile set <字段> clear                     清除单个字段
+/profile clear                                清空
+```
+
+- 存储：`user_profiles`（`user_id` 主键 + 姓名/学号/班级/学院/年级）；
+- 班级库缺失时 **拒绝** 设置班级（不会静默存一个查不到的班级）；
+- 报名活动前要求「姓名 + 学号 + 班级」齐全。
+
+### `/activity`（活动发布 / 报名 / 管理）
+
+```text
+/activity                                      本群活动列表
+/activity list <群号|#群短码>
+/activity create <标题>                         创建（群管理员+；私信需先写群号）
+/activity set <#活动短码> <字段> <值>
+/activity open <#活动短码>                      开放并把卡片发到群里
+/activity close|/activity cancel <#活动短码>
+/activity join <#活动短码> [备注]
+/activity quit <#活动短码>
+/activity info <#活动短码>
+/activity signups <#活动短码>
+```
+
+`/activity set` 字段：
+
+| 字段 | 说明 |
+|---|---|
+| `title` / `desc` | 标题 / 简介 |
+| `capacity` | 名额上限（正整数；`clear` 取消限制） |
+| `group` | 卡片里展示的活动群号 |
+| `link <url>` / `link <说明=url>` | 追加链接（可多次）；`links clear` 清空 |
+| `allowColleges` / `denyColleges` | 学院白名单 / 黑名单（逗号、顿号或空格分隔） |
+| `allowYears` / `denyYears` | 年级白名单 / 黑名单（22、23…；`2022` 也接受） |
+
+- 存储：`activities` / `activity_registrations`（原有）+ `activity_details`（短码、群号、链接、限制，`CREATE TABLE IF NOT EXISTS` 幂等升级）；
+- 活动短码是 6 位随机 Base62（`#A7K2Q9`），在 `activity_details.code` 上有唯一索引；
+- 报名规则：**黑名单优先**，白名单为空表示不限；年级来自 `/profile` 学号前两位；学院匹配允许简称（`环境` 命中 `环境科学与工程学院`）；
+- 卡片发送与入群申请共用 `RichMessageSender`：Markdown+按钮 → Markdown → 纯文本；
+- 权限：`canApproveJoin`（群管理员+）或活动发布者本人。
+
+### 关键词豁免（审核员及以上）
+
+操作 | 权限
+---|---
+`/profile`、`/activity join|quit|info` | 任意已绑定用户
+`/activity create|set|open|close|cancel|signups` | 群管理员+ 或活动发布者
+消息关键词判断 | **审核员及以上直接豁免**（不警告/不撤回/不处罚、不写审计，仅 debug 日志）
+
 ## 数据库
 
 默认 **SQLite**，不需要任何额外配置：
@@ -409,6 +472,8 @@ pnpm db:up     # docker compose --profile postgres up -d db
 | `notification_subscriptions` | 入群申请推送订阅（`__all__` 或 group_openid） | `NotificationService` |
 | `notification_deliveries` | 推送投递记录（去重与排查） | `NotificationService` |
 | `short_codes` | 随机短码 → 内部 id 映射（申请/用户/群） | `ShortCodeService` |
+| `user_profiles` | 个人资料（姓名/学号/班级/学院/年级） | `UserProfileService` |
+| `activity_details` | 活动短码/群号/链接/学院年级限制 | `ActivityService` |
 | `group_message_modes` | 全量消息模式诊断 | `GroupMessageModeRegistry` |
 | `activities` / `activity_registrations` | 活动与报名 | `ActivityService` |
 

@@ -54,6 +54,19 @@
 
 ### 变更
 
+- **新增个人资料 `/profile`**：班级/学院/姓名/学号，持久化到新表 `user_profiles`。
+  - 学号必须 11 位、前两位 22-26（决定年级）；班级必须存在于 `class-index.json`，保存班级自动带出学院；学院/年级可手动覆盖；
+  - `/profile`、`/profile set <字段> <值|clear>`、`/profile clear`，需要先 `/bind qq`（不要求群绑定）。
+- **完成活动发布/报名/管理模块**：
+  - `/activity create|set|open|close|cancel|list|info|signups` 与 `/activity join|quit`，活动短码复用随机 Base62（6 位，`#A7K2Q9`）；
+  - 活动归属一个群（可配置展示群号），发布时在群内发 Markdown 卡片，底部「报名 / 取消报名 / 活动详情 / 报名名单」指令按钮（与入群卡片共用三级降级）；
+  - 可配置链接（`link <说明=url>`，卡片渲染为 Markdown 链接）、名额、简介；
+  - 报名支持学院/年级**白名单 + 黑名单**（黑名单优先，留空不限）；年级用学号前两位 22-26 判断，学院来自 `/profile`（匹配允许简称，如「环境」→「环境科学与工程学院」）；报名前要求资料完整；
+  - 权限：创建/修改/开停/看名单需要群管理员及以上，**发布者本人**可管理自己发布的活动；普通成员只能报名/取消/看详情；
+  - 活动扩展字段（短码/链接/限制）存新表 `activity_details`，老库升级无需 ALTER。
+- **关键词豁免**：审核员及以上（`canReviewContent`）的消息不再做关键词判断——不警告、不撤回、不处罚，也不写审计，只记 debug 日志；普通成员照常。
+- 新增 `/profile`、`/activity` 两个帮助主题，`/help` 列表同步展示。
+
 - **展示标识改为随机短码**：不再暴露内部系统 id。
   - 每个 `join_request_id` / 未绑定 `user_openid` / 未绑定 `group_openid` 都会得到一个 **6 位随机 Base62 短码**（形如 `#M7K2Q9`），`short_codes` 表以 `code` 为主键、`(kind, target_id)` 唯一，生成时查重、碰撞重生成，**不使用自增 ID**；
   - 大小写不敏感解析、重启复用同一短码；`/pending`、`/sync`、推送卡片、`/audit`、`/status`、`/perm list`、`/rules`、`/notify`、`/test` 全部只显示 QQ号/群号/短码；

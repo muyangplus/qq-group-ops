@@ -41,6 +41,10 @@ TypeScript 核心服务
   ├── services/notifications.ts  入群申请推送（订阅、权限过滤、三级降级、投递去重）
   ├── services/shortCodes.ts     随机 Base62 短码（生成/解析/持久化，替代系统 id 展示）
   ├── services/displayNames.ts   统一展示与命令参数解析（QQ号/群号/短码）
+  ├── services/userProfiles.ts   个人资料（班级/学院/姓名/学号，学号 11 位 + 年级推导）
+  ├── services/activity.ts       活动发布/报名/管理（短码、链接、学院年级白黑名单）
+  ├── services/activityCards.ts  活动卡片（Markdown + 报名/取消/详情/名单按钮）
+  ├── services/richMessages.ts   富消息发送与三级降级（Markdown+按钮 → Markdown → 文本）
   ├── services/adminCommands.ts  管理员命令（含 /rules set、/audit、/sync）
   ├── services/groupConfig.ts    多群配置
   ├── services/activity.ts       活动报名
