@@ -397,4 +397,211 @@ describe("QQOfficialGateway reconnection", () => {
     await gateway.stop();
     expect(scheduler.callbacks).toHaveLength(0);
   });
+
+  it("resumes the session and reuses the resume gateway url", async () => {
+    const sockets: FakeSocket[] = [];
+    const urls: string[] = [];
+    const scheduler = new FakeScheduler();
+    const gateway = new QQOfficialGateway({
+      api: new FakeQQOfficialAPI(),
+      createSocket: (url) => {
+        urls.push(url);
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      mapper: new QQOfficialEventMapper(),
+      scheduler,
+      random: () => 0.5,
+      reconnect: { jitterRatio: 0 },
+    });
+
+    await gateway.start(() => undefined);
+    sockets[0]?.emit("open");
+    sockets[0]?.emit(
+      "message",
+      JSON.stringify({ op: 10, d: { heartbeat_interval: 1_000 } }),
+    );
+    sockets[0]?.emit(
+      "message",
+      JSON.stringify({
+        op: 0,
+        s: 7,
+        t: "READY",
+        d: {
+          session_id: "sess-1",
+          resume_gateway_url: "wss://resume.example/ws",
+        },
+      }),
+    );
+
+    sockets[0]?.emit("close");
+    scheduler.runNext();
+    await tick();
+
+    expect(urls[1]).toBe("wss://resume.example/ws");
+    sockets[1]?.emit("open");
+    sockets[1]?.emit(
+      "message",
+      JSON.stringify({ op: 10, d: { heartbeat_interval: 1_000 } }),
+    );
+
+    const resume = JSON.parse(sockets[1]?.sent[0] ?? "{}") as {
+      op: number;
+      d: Record<string, unknown>;
+    };
+    expect(resume.op).toBe(6);
+    expect(resume.d).toEqual({
+      token: "QQBot fake-token",
+      session_id: "sess-1",
+      seq: 7,
+    });
+
+    await gateway.stop();
+  });
+
+  it("falls back to identify when the session becomes invalid", async () => {
+    const sockets: FakeSocket[] = [];
+    const scheduler = new FakeScheduler();
+    const gateway = new QQOfficialGateway({
+      api: new FakeQQOfficialAPI(),
+      createSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      mapper: new QQOfficialEventMapper(),
+      scheduler,
+      random: () => 0.5,
+      reconnect: { jitterRatio: 0 },
+    });
+
+    await gateway.start(() => undefined);
+    sockets[0]?.emit("open");
+    sockets[0]?.emit(
+      "message",
+      JSON.stringify({ op: 10, d: { heartbeat_interval: 1_000 } }),
+    );
+    sockets[0]?.emit(
+      "message",
+      JSON.stringify({ op: 0, s: 3, t: "READY", d: { session_id: "sess-1" } }),
+    );
+
+    sockets[0]?.emit("message", JSON.stringify({ op: 9, d: true }));
+    await tick();
+    scheduler.runNext();
+    await tick();
+
+    sockets[1]?.emit("open");
+    sockets[1]?.emit(
+      "message",
+      JSON.stringify({ op: 10, d: { heartbeat_interval: 1_000 } }),
+    );
+
+    const payload = JSON.parse(sockets[1]?.sent[0] ?? "{}") as { op: number };
+    expect(payload.op).toBe(2);
+
+    await gateway.stop();
+  });
+
+  it("reconnects when the heartbeat is not acknowledged", async () => {
+    const sockets: FakeSocket[] = [];
+    const scheduler = new FakeScheduler();
+    const gateway = new QQOfficialGateway({
+      api: new FakeQQOfficialAPI(),
+      createSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      mapper: new QQOfficialEventMapper(),
+      scheduler,
+      random: () => 0.5,
+    });
+
+    await gateway.start(() => undefined);
+    sockets[0]?.emit("open");
+    sockets[0]?.emit(
+      "message",
+      JSON.stringify({ op: 10, d: { heartbeat_interval: 1_000 } }),
+    );
+    expect(gateway.isRunning).toBe(true);
+
+    scheduler.runNext();
+    expect(JSON.parse(sockets[0]?.sent.at(-1) ?? "{}")).toEqual({
+      op: 1,
+      d: null,
+    });
+
+    // 下一个周期仍未收到 op=11，应主动断开并安排重连
+    scheduler.runNext();
+    expect(gateway.isRunning).toBe(false);
+    expect(scheduler.callbacks).toHaveLength(1);
+
+    await gateway.stop();
+  });
+
+  it("keeps the connection while heartbeats are acknowledged", async () => {
+    const sockets: FakeSocket[] = [];
+    const scheduler = new FakeScheduler();
+    const gateway = new QQOfficialGateway({
+      api: new FakeQQOfficialAPI(),
+      createSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      mapper: new QQOfficialEventMapper(),
+      scheduler,
+      random: () => 0.5,
+    });
+
+    await gateway.start(() => undefined);
+    sockets[0]?.emit("open");
+    sockets[0]?.emit(
+      "message",
+      JSON.stringify({ op: 10, d: { heartbeat_interval: 1_000 } }),
+    );
+
+    scheduler.runNext();
+    sockets[0]?.emit("message", JSON.stringify({ op: 11 }));
+    scheduler.runNext();
+
+    expect(gateway.isRunning).toBe(true);
+    expect(JSON.parse(sockets[0]?.sent.at(-1) ?? "{}")).toEqual({
+      op: 1,
+      d: null,
+    });
+
+    await gateway.stop();
+  });
+
+  it("reconnects when the server sends op=7", async () => {
+    const sockets: FakeSocket[] = [];
+    const scheduler = new FakeScheduler();
+    const gateway = new QQOfficialGateway({
+      api: new FakeQQOfficialAPI(),
+      createSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      mapper: new QQOfficialEventMapper(),
+      scheduler,
+      random: () => 0.5,
+    });
+
+    await gateway.start(() => undefined);
+    sockets[0]?.emit("open");
+    sockets[0]?.emit(
+      "message",
+      JSON.stringify({ op: 10, d: { heartbeat_interval: 1_000 } }),
+    );
+
+    sockets[0]?.emit("message", JSON.stringify({ op: 7 }));
+    expect(gateway.isRunning).toBe(false);
+    expect(scheduler.callbacks).toHaveLength(1);
+
+    await gateway.stop();
+  });
 });

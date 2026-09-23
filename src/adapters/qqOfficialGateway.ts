@@ -77,6 +77,8 @@ export class QQOfficialGateway implements EventGateway {
   private reconnectTimer: unknown;
   private lastSequence: number | null = null;
   private sessionId: string | undefined;
+  private resumeGatewayUrl: string | undefined;
+  private heartbeatAcked = true;
   private stopped = false;
   private running = false;
   private attempts = 0;
@@ -129,9 +131,10 @@ export class QQOfficialGateway implements EventGateway {
   }
 
   private async connectOnce(): Promise<void> {
-    const gatewayUrl = await this.options.api.getGatewayUrl();
+    const gatewayUrl =
+      this.resumeGatewayUrl ?? (await this.options.api.getGatewayUrl());
     this.token = await this.options.api.getAccessToken();
-    log.debug("connecting", { gatewayUrl });
+    log.debug("connecting", { gatewayUrl, resuming: this.canResume() });
     const socket = this.options.createSocket(gatewayUrl);
     this.socket = socket;
     socket.on("open", () => {
@@ -287,14 +290,44 @@ export class QQOfficialGateway implements EventGateway {
       if (isRecord(data) && typeof data.heartbeat_interval === "number") {
         this.heartbeatIntervalMs = data.heartbeat_interval;
       }
-      log.debug("hello", { heartbeatIntervalMs: this.heartbeatIntervalMs });
+      log.debug("hello", {
+        heartbeatIntervalMs: this.heartbeatIntervalMs,
+        resuming: this.canResume(),
+      });
       this.options.onHello?.(this.heartbeatIntervalMs);
-      this.sendIdentify();
+      this.heartbeatAcked = true;
+      if (this.canResume()) {
+        this.sendResume();
+      } else {
+        this.sendIdentify();
+      }
       this.startHeartbeat();
       return;
     }
 
     if (op === 11) {
+      this.heartbeatAcked = true;
+      return;
+    }
+
+    // 服务端要求重连：关闭当前连接，交给退避逻辑重新 Resume。
+    if (op === 7) {
+      log.info("server requested reconnect");
+      this.running = false;
+      this.clearHeartbeat();
+      this.socket?.close();
+      return;
+    }
+
+    // 会话失效：丢弃 session，下次重连重新 Identify。
+    if (op === 9) {
+      log.warn("invalid session", { resumable: raw.d === true });
+      this.sessionId = undefined;
+      this.lastSequence = null;
+      this.resumeGatewayUrl = undefined;
+      this.running = false;
+      this.clearHeartbeat();
+      this.socket?.close();
       return;
     }
 
@@ -311,6 +344,9 @@ export class QQOfficialGateway implements EventGateway {
       typeof data.session_id === "string"
     ) {
       this.sessionId = data.session_id;
+      if (typeof data.resume_gateway_url === "string") {
+        this.resumeGatewayUrl = data.resume_gateway_url;
+      }
       this.attempts = 0;
       log.info("ready", { hasSession: Boolean(this.sessionId) });
       this.options.onReady?.(this.sessionId);
@@ -355,6 +391,29 @@ export class QQOfficialGateway implements EventGateway {
     });
   }
 
+  /** 断线重连时优先恢复会话，避免重新拉取离线期间的事件。 */
+  private sendResume(): void {
+    log.info("resuming session", { seq: this.lastSequence });
+    this.send({
+      op: 6,
+      d: {
+        token: `QQBot ${this.token}`,
+        session_id: this.sessionId,
+        seq: this.lastSequence,
+      },
+    });
+  }
+
+  private canResume(): boolean {
+    return this.sessionId !== undefined && this.lastSequence !== null;
+  }
+
+  /**
+   * 心跳循环。
+   *
+   * 每个周期开始时检查上一次心跳是否收到 op=11；没有收到就认为连接已经失效，
+   * 主动关闭并重连，而不是继续对着死连接发心跳。
+   */
   private startHeartbeat(): void {
     this.clearHeartbeat();
     if (this.stopped || this.heartbeatIntervalMs <= 0) {
@@ -362,12 +421,22 @@ export class QQOfficialGateway implements EventGateway {
     }
     this.heartbeatTimer = this.scheduler.setTimeout(() => {
       this.heartbeatTimer = undefined;
+      if (!this.heartbeatAcked) {
+        log.warn("heartbeat not acknowledged, reconnecting", {
+          intervalMs: this.heartbeatIntervalMs,
+        });
+        this.running = false;
+        this.clearHeartbeat();
+        this.socket?.close();
+        return;
+      }
       this.sendHeartbeat();
       this.startHeartbeat();
     }, this.heartbeatIntervalMs);
   }
 
   private sendHeartbeat(): void {
+    this.heartbeatAcked = false;
     log.debug("heartbeat", { seq: this.lastSequence });
     this.send({ op: 1, d: this.lastSequence });
   }
