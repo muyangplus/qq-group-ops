@@ -125,15 +125,15 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
         "",
         "你当前的绑定：",
         qq
-          ? `  userId ${context.userId} ↔ QQ ${qq}`
-          : "  尚未绑定，请执行 /bind qq <QQ号>",
+          ? `  QQ ${qq}`
+          : `  尚未绑定（当前识别为 ${context.userId}），请执行 /bind qq <QQ号>`,
       );
       if (context.groupId) {
         const groupNumber = context.identityMap?.getGroupNumber(context.groupId);
         lines.push(
           groupNumber
-            ? `  本群 ${context.groupId} ↔ 群号 ${groupNumber}`
-            : `  本群 ${context.groupId} 尚未绑定群号（群管理员执行 /bind group <群号>）`,
+            ? `  本群：群号 ${groupNumber}`
+            : `  本群：${context.groupId}（群管理员执行 /bind group <群号> 后可只显示群号）`,
         );
       }
       return lines;
@@ -291,7 +291,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "  /pending",
       "  /pending 654321",
       "",
-      "输出会列出申请 ID、申请人 userId 和入群理由；审批用 /approve、/reject。",
+      "输出会列出申请 ID、申请人 QQ号（未绑定时显示内部 openid）和入群理由；审批用 /approve、/reject。",
       "开通 /notify 后，新申请会自动私聊推送给审核员（带快捷按钮）。",
     ],
   },
@@ -372,6 +372,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "      「拒绝：回答错误」→ 请正确回答问题。",
       "      「拒绝：班级姓名」→ 请回答正确的班级姓名（如：环工2214小明）。",
       "  · 卡片正文含群号、申请人、回答、申请 ID 与审核意见（不再堆完整指令）",
+      "  · 所有用户可见输出只显示绑定的群号/QQ号，未绑定时才显示内部 openid（/whois 例外，它本身就是映射查询）",
       "  · 只推送仍需人工处理的申请；自动通过/拒绝的不会打扰",
       "",
       "说明：",
@@ -431,7 +432,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "用法：",
       "  /test",
       "",
-      "返回当前会话的群 ID / 用户 ID 与待审批申请数量，用于确认机器人能收到消息并回复。",
+      "返回当前会话的群 / 用户（已绑定则显示群号/QQ号）与待审批申请数量，用于确认机器人能收到消息并回复。",
     ],
   },
 ];

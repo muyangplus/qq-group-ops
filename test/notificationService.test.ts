@@ -151,7 +151,8 @@ describe("NotificationService", () => {
     await notifications.notifyJoinRequest({ ...PUSH, reason: "张三" });
 
     const message = api.sentPrivateMessages[0]!;
-    expect(message.markdown).toContain("654321（g1）");
+    // 群号已绑定 → 只显示群号，不显示 group_openid
+    expect(message.markdown).toContain("**群**：654321");
     expect(message.markdown).toContain("配置问题：班级库未加载");
     expect(message.markdown).toContain("建议：人工核实");
   });
@@ -175,6 +176,18 @@ describe("NotificationService", () => {
     notifications.subscribe("admin", NOTIFY_SCOPE_ALL);
     expect(notifications.subscribersFor("g2")).toEqual([]);
     expect(notifications.subscribersFor("g1")).toEqual(["admin"]);
+  });
+
+  it("shows the applicant QQ number when the applicant is bound", async () => {
+    const { api, notifications, identityMap } = await createHarness();
+    await identityMap.bindUser("u1", "123456");
+    notifications.subscribe("admin", "g1");
+
+    await notifications.notifyJoinRequest(PUSH);
+
+    expect(api.sentPrivateMessages[0]?.markdown).toContain(
+      "**申请人**：123456",
+    );
   });
 
   it("never pushes the same request to the same user twice", async () => {
@@ -217,7 +230,9 @@ describe("NotificationService", () => {
     expect(result.sent).toBe(1);
     expect(api.sentPrivateMessages[0]?.markdown).toBeUndefined();
     expect(api.sentPrivateMessages[0]?.content).toContain("【新的入群申请】");
-    expect(api.sentPrivateMessages[0]?.content).toContain("同意：/approve g1 r1");
+    expect(api.sentPrivateMessages[0]?.content).toContain(
+      "同意：/approve 654321 r1",
+    );
   });
 
   it("records a failed delivery when every attempt fails", async () => {

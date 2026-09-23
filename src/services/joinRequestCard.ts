@@ -23,6 +23,8 @@ export interface JoinRequestCardInput {
   requestId: string;
   /** 申请人 openid。 */
   userId: string;
+  /** 申请人已绑定的 QQ 号；有则优先展示，不再显示 openid。 */
+  applicantQq?: string | undefined;
   /** 申请人昵称（官方 `username`），可选。 */
   applicantName?: string | undefined;
   /** 入群问题/理由原文。 */
@@ -64,15 +66,19 @@ const DEFAULT_REJECT_REASON = "审核未通过";
 export function buildJoinRequestCard(
   input: JoinRequestCardInput,
 ): JoinRequestCard {
-  const groupLabel = input.groupNumber
-    ? `${input.groupNumber}（${input.groupId}）`
-    : input.groupId;
+  // 展示用：绑定过的群/用户只显示群号/QQ号，未绑定才回退到内部 openid
+  const groupLabel = input.groupNumber ?? input.groupId;
+  const applicantId = input.applicantQq ?? input.userId;
+  // 按钮/指令参数用官方 id（最稳妥）；可见文本用解析后的群号
   const approveCommand = `/approve ${input.groupId} ${input.requestId}`;
   const rejectCommand = `/reject ${input.groupId} ${input.requestId} ${DEFAULT_REJECT_REASON}`;
   const rejectCommandFor = (reason: string): string =>
     `/reject ${input.groupId} ${input.requestId} ${reason}`;
+  const approveText = `/approve ${groupLabel} ${input.requestId}`;
+  const rejectTextFor = (reason: string): string =>
+    `/reject ${groupLabel} ${input.requestId} ${reason}`;
 
-  const applicantLabel = `${escapeText(input.userId)}${
+  const applicantLabel = `${escapeText(applicantId)}${
     input.applicantName ? `（${escapeText(input.applicantName)}）` : ""
   }`;
   const questions = (input.questions ?? []).filter(
@@ -97,10 +103,10 @@ export function buildJoinRequestCard(
     lines.push(
       "",
       "请审核（按钮不可用，可直接发送指令）：",
-      `同意：${approveCommand}`,
-      `拒绝：${rejectCommandFor("[原因]")}`,
+      `同意：${approveText}`,
+      `拒绝：${rejectTextFor("[原因]")}`,
       ...JOIN_REJECT_PRESETS.map(
-        (preset) => `${preset.label}：${rejectCommandFor(preset.reason)}`,
+        (preset) => `${preset.label}：${rejectTextFor(preset.reason)}`,
       ),
     );
     return { markdown: lines.join("\n") };
@@ -175,15 +181,14 @@ export function buildJoinRequestCard(
 
 /** 按钮不可用时的纯文本降级内容（包含同样的指令与预设拒因）。 */
 export function renderJoinRequestCardText(input: JoinRequestCardInput): string {
-  const groupLabel = input.groupNumber
-    ? `${input.groupNumber}（${input.groupId}）`
-    : input.groupId;
-  const rejectCommandFor = (reason: string): string =>
-    `/reject ${input.groupId} ${input.requestId} ${reason}`;
+  const groupLabel = input.groupNumber ?? input.groupId;
+  const applicantId = input.applicantQq ?? input.userId;
+  const rejectTextFor = (reason: string): string =>
+    `/reject ${groupLabel} ${input.requestId} ${reason}`;
   const lines = [
     "【新的入群申请】",
     `群：${groupLabel}`,
-    `申请人：${input.userId}${
+    `申请人：${applicantId}${
       input.applicantName ? `（${singleLine(input.applicantName)}）` : ""
     }`,
     `申请ID：${input.requestId}`,
@@ -197,10 +202,10 @@ export function renderJoinRequestCardText(input: JoinRequestCardInput): string {
   }
   lines.push(
     "",
-    `同意：/approve ${input.groupId} ${input.requestId}`,
-    `拒绝：${rejectCommandFor("[原因]")}`,
+    `同意：/approve ${groupLabel} ${input.requestId}`,
+    `拒绝：${rejectTextFor("[原因]")}`,
     ...JOIN_REJECT_PRESETS.map(
-      (preset) => `${preset.label}：${rejectCommandFor(preset.reason)}`,
+      (preset) => `${preset.label}：${rejectTextFor(preset.reason)}`,
     ),
   );
   return lines.join("\n");

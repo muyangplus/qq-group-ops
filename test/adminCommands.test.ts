@@ -155,7 +155,9 @@ describe("AdminCommandService", async () => {
     expect(result.ok).toBe(true);
     expect(result.text).toContain("/bind qq <QQ号>");
     expect(result.text).toContain("尚未绑定");
-    expect(result.text).toContain("本群 g1 ↔ 群号 654321");
+    // 群号已绑定：只显示群号，不再显示 group_openid
+    expect(result.text).toContain("本群：群号 654321");
+    expect(result.text).not.toContain("g1");
   });
 
   it("suggests topics for an unknown help argument", async () => {
@@ -274,11 +276,13 @@ describe("AdminCommandService", async () => {
   it("allows super admin to list and grant permissions", async () => {
     const list = await service.handle("g1", "root", "/perm list");
     expect(list.ok).toBe(true);
-    expect(list.text).toContain("超级管理员：root");
+    // 已绑定的用户只显示 QQ号，不显示内部 userId
+    expect(list.text).toContain("全局超级管理员：10004");
+    expect(list.text).not.toContain("root");
 
     const grant = await service.handle("g1", "root", "/perm grant mod u3");
     expect(grant.ok).toBe(true);
-    expect(grant.text).toContain("u3");
+    expect(grant.text).toContain("已更新权限：mod 10005");
 
     const memberPermission = await service.handle("g1", "u3", "/myperm");
     expect(memberPermission.text).toContain("你的权限等级：moderator");
@@ -495,7 +499,8 @@ describe("AdminCommandService", async () => {
   it("configures group permissions from private with group_openid", async () => {
     const grant = await service.handle(undefined, "root", "/perm grant mod g1 u4");
     expect(grant.ok).toBe(true);
-    expect(grant.text).toContain("u4");
+    // u4 已绑定 QQ 10006 → 只显示 QQ号
+    expect(grant.text).toContain("已更新权限：mod 10006");
 
     const groupPermission = await service.handle("g1", "u4", "/myperm");
     expect(groupPermission.text).toContain("你的权限等级：moderator");
@@ -514,7 +519,9 @@ describe("AdminCommandService", async () => {
 
     const status = await service.handle(undefined, "root", "/status 654321");
     expect(status.ok).toBe(true);
-    expect(status.text).toContain("群号：654321");
+    // 群号已绑定：标题只显示群号，不再显示 group_openid
+    expect(status.text).toContain("群 654321 状态：");
+    expect(status.text).not.toContain("g1");
   });
 
   it("resolves QQ numbers when granting permissions", async () => {
@@ -828,7 +835,9 @@ describe("AdminCommandService", async () => {
 
     expect(result.ok).toBe(true);
     expect(result.text).toContain("approve_join_request");
-    expect(result.text).toContain("admin");
+    // 操作人已绑定 → 显示 QQ号；申请人未绑定 → 回退 openid
+    expect(result.text).toContain("by 10003");
+    expect(result.text).toContain("→ u1");
   });
 
   it("limits and filters audit records per group", async () => {
@@ -908,7 +917,9 @@ describe("AdminCommandService", async () => {
     expect(notifications.isSubscribed("admin", "g1")).toBe(true);
 
     const status = await service.handle("g1", "admin", "/notify");
-    expect(status.text).toContain("群 654321（g1）：已开启");
+    // 群号已绑定 → 只显示群号
+    expect(status.text).toContain("群 654321：已开启");
+    expect(status.text).not.toContain("（g1）");
 
     const off = await service.handle("g1", "admin", "/notify off");
     expect(off.text).toContain("已关闭");
@@ -950,7 +961,8 @@ describe("AdminCommandService", async () => {
     const result = await service.handle(undefined, "admin", "/notify");
 
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("可审批的群：654321（g1）");
+    expect(result.text).toContain("可审批的群：654321");
+    expect(result.text).not.toContain("（g1）");
     expect(result.text).toContain("用法：");
   });
 

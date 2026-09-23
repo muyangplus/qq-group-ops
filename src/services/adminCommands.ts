@@ -192,7 +192,7 @@ export class AdminCommandService {
       log.info("bound user qq", { userId, qq });
       return {
         ok: true,
-        text: `已绑定：userId ${userId} ↔ QQ ${qq}`,
+        text: `已绑定：QQ ${qq}`,
       };
     }
 
@@ -223,7 +223,7 @@ export class AdminCommandService {
       log.info("bound group number", { groupId, groupNumber, userId });
       return {
         ok: true,
-        text: `已绑定：group_openid ${groupId} ↔ 群号 ${groupNumber}`,
+        text: `已绑定：群号 ${groupNumber}`,
       };
     }
 
@@ -249,7 +249,7 @@ export class AdminCommandService {
       log.info("bound user qq", { officialId, qq, operator: userId });
       return {
         ok: true,
-        text: `已绑定：userId ${officialId} ↔ QQ ${qq}`,
+        text: `已绑定：QQ ${qq}`,
       };
     }
 
@@ -279,7 +279,7 @@ export class AdminCommandService {
       });
       return {
         ok: true,
-        text: `已绑定：group_openid ${officialId} ↔ 群号 ${groupNumber}`,
+        text: `已绑定：群号 ${groupNumber}`,
       };
     }
 
@@ -511,7 +511,7 @@ export class AdminCommandService {
         groupId
           ? `本群超级管理员：${this.permissions.isGroupSuperAdmin(userId, groupId)}`
           : undefined,
-        groupId ? `当前群 ID：${groupId}` : "当前会话：私聊",
+        groupId ? `当前群：${this.displayGroup(groupId)}` : "当前会话：私聊",
         `审核入群：${this.permissions.canApproveJoin(userId, groupId ?? "")}`,
         `管理规则：${this.permissions.canManageRules(userId, groupId ?? "")}`,
         `内容审核：${this.permissions.canReviewContent(userId, groupId ?? "")}`,
@@ -602,18 +602,23 @@ export class AdminCommandService {
     });
     return {
       ok: true,
-      text: `已更新权限：${role} ${targetUserId}\n\n${this.formatPermissionList(targetGroupId)}`,
+      text: `已更新权限：${role} ${this.displayUser(targetUserId)}\n\n${this.formatPermissionList(targetGroupId)}`,
     };
   }
 
   private formatPermissionList(groupId?: string): string {
-    const lines = [`全局超级管理员：${formatList(this.permissions.listSuperAdmins())}`];
+    const lines = [`全局超级管理员：${this.displayUsers(this.permissions.listSuperAdmins())}`];
     if (groupId) {
+      const label = this.displayGroup(groupId);
       lines.push(
-        `本群超级管理员（${groupId}）：${formatList(this.permissions.listGroupSuperAdmins(groupId))}`,
+        `本群超级管理员（${label}）：${this.displayUsers(this.permissions.listGroupSuperAdmins(groupId))}`,
       );
-      lines.push(`群管理员（${groupId}）：${formatList(this.permissions.listGroupAdmins(groupId))}`);
-      lines.push(`审核员（${groupId}）：${formatList(this.permissions.listModerators(groupId))}`);
+      lines.push(
+        `群管理员（${label}）：${this.displayUsers(this.permissions.listGroupAdmins(groupId))}`,
+      );
+      lines.push(
+        `审核员（${label}）：${this.displayUsers(this.permissions.listModerators(groupId))}`,
+      );
     } else {
       lines.push("本群超级管理员：私信中请指定 group_openid");
       lines.push("群管理员：私信中请指定 group_openid");
@@ -709,7 +714,7 @@ export class AdminCommandService {
     const lines = [`已同步官方待审批申请，当前待审批 ${pending.length} 条：`];
     for (const request of pending.slice(0, 5)) {
       const reason = request.reason ? ` 理由：${request.reason}` : "";
-      lines.push(`- ${request.requestId} 用户：${request.userId}${reason}`);
+      lines.push(`- ${request.requestId} 用户：${this.displayUser(request.userId)}${reason}`);
     }
     if (pending.length > 5) {
       lines.push(`（仅显示前 5 条，使用 /pending 查看全部）`);
@@ -826,8 +831,21 @@ export class AdminCommandService {
   }
 
   private groupLabel(groupId: string): string {
-    const number = this.identityMap?.getGroupNumber(groupId);
-    return number ? `${number}（${groupId}）` : groupId;
+    return this.displayGroup(groupId);
+  }
+
+  /** 展示用：已绑定 QQ 号时只显示 QQ 号，否则回退到 openid。 */
+  private displayUser(officialId: string): string {
+    return this.identityMap?.displayUser(officialId) ?? officialId;
+  }
+
+  /** 展示用：已绑定群号时只显示群号，否则回退到 group_openid。 */
+  private displayGroup(groupId: string): string {
+    return this.identityMap?.displayGroup(groupId) ?? groupId;
+  }
+
+  private displayUsers(ids: readonly string[]): string {
+    return formatList(ids.map((id) => this.displayUser(id)));
   }
 
   /** 同步补齐的申请也推送一次；投递表保证同一申请不会重复推给同一个人。 */
@@ -881,7 +899,9 @@ export class AdminCommandService {
       config.joinReviewOpinion && this.joinRules !== undefined;
     pending.forEach((request, index) => {
       const reason = request.reason ? ` 理由：${request.reason}` : "";
-      lines.push(`${index + 1}. ${request.requestId} 用户：${request.userId}${reason}`);
+      lines.push(
+        `${index + 1}. ${request.requestId} 用户：${this.displayUser(request.userId)}${reason}`,
+      );
       if (withOpinion) {
         const evaluation = this.joinRules?.evaluate(request.reason, {
           mode: config.joinDecision,
@@ -1083,7 +1103,7 @@ export class AdminCommandService {
   private formatRules(targetGroupId: string): string {
     return formatEffectiveConfig(
       this.configStore.get(targetGroupId),
-      `群 ${targetGroupId} 规则配置：`,
+      `群 ${this.displayGroup(targetGroupId)} 规则配置：`,
     );
   }
 
@@ -1120,10 +1140,12 @@ export class AdminCommandService {
     }
     const lines = [`最近 ${records.length} 条审计记录：`];
     for (const record of records) {
-      const target = record.targetUserId ? ` → ${record.targetUserId}` : "";
+      const target = record.targetUserId
+        ? ` → ${this.displayUser(record.targetUserId)}`
+        : "";
       lines.push(
         `${formatTime(record.createdAt)} ${record.action} ${record.status}${
-          record.actorId ? ` by ${record.actorId}` : ""
+          record.actorId ? ` by ${this.displayUser(record.actorId)}` : ""
         }${target}`,
       );
     }
@@ -1146,12 +1168,10 @@ export class AdminCommandService {
       return { ok: false, text: "权限不足：需要审核员或以上权限。" };
     }
     const config = this.configStore.get(targetGroupId);
-    const groupNumber = this.identityMap?.getGroupNumber(targetGroupId);
     return {
       ok: true,
       text: [
-        `群 ${targetGroupId} 状态：`,
-        groupNumber ? `群号：${groupNumber}` : undefined,
+        `群 ${this.displayGroup(targetGroupId)} 状态：`,
         `机器人启用：${config.enabled}`,
         `消息过滤：${config.wordFilterEnabled}`,
         `全量消息模式：${this.groupMessageMode?.get(targetGroupId) ?? "unknown"}`,
@@ -1172,8 +1192,8 @@ export class AdminCommandService {
     log.info("test command", { groupId, userId });
     const lines = [
       "测试成功：机器人已响应。",
-      groupId ? `群 ID：${groupId}` : "当前会话：私聊",
-      `用户 ID：${userId}`,
+      groupId ? `群：${this.displayGroup(groupId)}` : "当前会话：私聊",
+      `用户：${this.displayUser(userId)}`,
     ];
     if (groupId) {
       lines.push(`待审批申请：${this.joinAudit.pending(groupId).length}`);

@@ -107,6 +107,19 @@ export class IdentityMapService {
     return this.groupNumberByGroupId.get(officialId);
   }
 
+  /**
+   * 展示用：已绑定 QQ 号时只显示 QQ 号，否则回退到系统 openid。
+   * 用户可见输出统一走这里，避免同时暴露内部 openid。
+   */
+  public displayUser(officialId: string): string {
+    return this.qqByUserId.get(officialId) ?? officialId;
+  }
+
+  /** 展示用：已绑定群号时只显示群号，否则回退到 group_openid。 */
+  public displayGroup(groupId: string): string {
+    return this.groupNumberByGroupId.get(groupId) ?? groupId;
+  }
+
   public listUsers(): UserIdentity[] {
     return [...this.qqByUserId.entries()]
       .map(([officialId, qq]) => ({ officialId, qq }))

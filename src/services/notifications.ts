@@ -199,12 +199,14 @@ export class NotificationService {
     }
 
     const opinion = this.opinionFor(push.groupId, push.reason);
+    const applicantQq = this.identityMap?.getQq(push.userId);
     for (const userId of recipients) {
       const input: JoinRequestCardInput = {
         groupId: push.groupId,
         groupNumber: this.identityMap?.getGroupNumber(push.groupId),
         requestId: push.requestId,
         userId: push.userId,
+        ...(applicantQq !== undefined ? { applicantQq } : {}),
         reason: push.reason,
         ...(push.applicantName !== undefined
           ? { applicantName: push.applicantName }
@@ -260,12 +262,12 @@ export class NotificationService {
       };
     }
     const groupNumber = this.identityMap?.getGroupNumber(groupId);
-    const groupLabel = groupNumber ? `${groupNumber}（${groupId}）` : groupId;
+    const groupLabel = groupNumber ?? groupId;
     const markdown = [
       "## 推送测试",
       "能看到这张卡片说明入群申请推送通道正常。",
       `- 群：${groupLabel}`,
-      `- 按钮测试：点击下方按钮会发送 \`/pending ${groupId}\``,
+      `- 按钮测试：点击下方按钮会发送 /pending ${groupLabel}`,
       "",
       "同意 / 拒绝按钮只出现在真实的入群申请卡片上。",
     ].join("\n");

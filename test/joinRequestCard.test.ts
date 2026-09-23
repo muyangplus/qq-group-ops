@@ -21,7 +21,9 @@ describe("join request card", () => {
     const card = buildJoinRequestCard(input);
 
     expect(card.markdown).toContain("## 新的入群申请");
-    expect(card.markdown).toContain("654321（g1）");
+    // 群号已绑定 → 只显示群号，不显示 group_openid
+    expect(card.markdown).toContain("**群**：654321");
+    expect(card.markdown).not.toContain("g1");
     expect(card.markdown).toContain("材化2211 张三");
     expect(card.markdown).toContain("**申请ID**：r1");
     expect(card.markdown).toContain("请审核：点击下方按钮。");
@@ -80,6 +82,16 @@ describe("join request card", () => {
     ]);
   });
 
+  it("shows a bound applicant QQ number instead of the openid", () => {
+    const card = buildJoinRequestCard({ ...input, applicantQq: "123456" });
+
+    expect(card.markdown).toContain("**申请人**：123456");
+    expect(card.markdown).not.toContain("u1");
+    // 按钮数据仍然使用 openid（指令必须用官方 id）
+    const buttons = card.keyboard?.content.rows[0]?.buttons ?? [];
+    expect(buttons[0]?.action.data).toBe("/approve g1 r1");
+  });
+
   it("shows the applicant nickname and the admin Q&A question", () => {
     const card = buildJoinRequestCard({
       ...input,
@@ -112,12 +124,16 @@ describe("join request card", () => {
     expect(card.keyboard).toBeUndefined();
     expect(card.markdown).toContain("**申请ID**：r1");
     expect(card.markdown).toContain("请审核（按钮不可用，可直接发送指令）：");
-    expect(card.markdown).toContain("同意：/approve g1 r1");
-    expect(card.markdown).toContain("拒绝：/reject g1 r1 [原因]");
-    expect(card.markdown).toContain("拒绝：回答错误：/reject g1 r1 请正确回答问题。");
+    // 文本里的指令用已绑定的群号（同样能被 /approve、/reject 解析）
+    expect(card.markdown).toContain("同意：/approve 654321 r1");
+    expect(card.markdown).toContain("拒绝：/reject 654321 r1 [原因]");
     expect(card.markdown).toContain(
-      "拒绝：班级姓名：/reject g1 r1 请回答正确的班级姓名（如：环工2214小明）。",
+      "拒绝：回答错误：/reject 654321 r1 请正确回答问题。",
     );
+    expect(card.markdown).toContain(
+      "拒绝：班级姓名：/reject 654321 r1 请回答正确的班级姓名（如：环工2214小明）。",
+    );
+    expect(card.markdown).not.toContain("/reject g1");
   });
 
   it("escapes markdown-breaking characters in the answer", () => {
@@ -135,11 +151,11 @@ describe("join request card", () => {
     });
     expect(text).toContain("【新的入群申请】");
     expect(text).toContain("申请ID：r1");
-    expect(text).toContain("同意：/approve g1 r1");
-    expect(text).toContain("拒绝：/reject g1 r1 [原因]");
-    expect(text).toContain("拒绝：回答错误：/reject g1 r1 请正确回答问题。");
+    expect(text).toContain("同意：/approve 654321 r1");
+    expect(text).toContain("拒绝：/reject 654321 r1 [原因]");
+    expect(text).toContain("拒绝：回答错误：/reject 654321 r1 请正确回答问题。");
     expect(text).toContain(
-      "拒绝：班级姓名：/reject g1 r1 请回答正确的班级姓名（如：环工2214小明）。",
+      "拒绝：班级姓名：/reject 654321 r1 请回答正确的班级姓名（如：环工2214小明）。",
     );
     expect(text).toContain("建议：人工核实");
   });
