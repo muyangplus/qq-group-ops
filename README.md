@@ -9,7 +9,7 @@
 - 技术路线：**仅使用 QQ 官方开放平台 API**，不使用 OneBot、NapCat、Lagrange 等个人号协议端。
 - 已实现：配置、结构化调试日志（控制台 + 文件 + auto 彩色）、领域模型、规则引擎、审计日志、权限模型、权限自助查询、超管权限配置、OpenID ↔ QQ号/群号映射、全状态持久化（SQLite 默认 / PostgreSQL 可选：绑定关系、权限、审计、入群申请、群配置、全量消息模式、活动报名、推送订阅与投递记录）、数据保留清理（审计、已审批申请与推送投递，启动 + 每 24 小时）、动态权限帮助、私信指令、全量消息模式诊断、多群配置、入群审核状态机、入群审批调用官方接口（含自动通过）、官方申请同步（`/sync`）、关键词命中动作（撤回 / 禁言 / 移出 / 拉黑）、班级库驱动的入群审核规则（班级+姓名+正则、5 档决策模式、审核意见）、入群申请推送（`/notify` 订阅 + Markdown 卡片 + 快捷同意/拒绝按钮）、群配置关键词驱动的消息审核、`/rules set` 群规则配置、`/audit` 审计查询、官方禁言/踢人/黑名单接口（请求体已按官方文档核对）、事件路由、事件网关抽象、官方 WebSocket 协议网关（自动重连 + Resume 会话恢复 + 心跳 ACK 超时检测 + 指数退避 + 限流冷却）、官方事件映射器、原生 WebSocket 工厂、access token 与网关地址持久化缓存、出站消息节流与 22009 重试、被动回复配额拦截、401 自动刷新、事件与回复失败容错、`/test` 自检指令、运行时装配、数据库 schema/迁移/方言适配与全部仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
 - 待实现：真实环境联调、Web 管理后台、内容安全与 AI 辅助。
-- 测试：Vitest，共 418 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
+- 测试：Vitest，共 434 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
 
 ## 技术栈
 
@@ -270,6 +270,13 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 | `reject_on_match` | 命中规则 → 拒绝；未命中 → 人工 |
 | `reject_on_mismatch` | 未命中规则 → 拒绝；命中 → 人工（“必须回答正确”） |
 
+自动处理是否通知审核员由 `notifyAutoApproved` 控制：
+
+```text
+/rules set notifyAutoApproved on     # 机器人自动通过/拒绝也推送通知（只是告知结果，无审批按钮）
+/rules set notifyAutoApproved off    # 默认：只推需要人工处理的申请
+```
+
 还可以追加自定义正则：
 
 ```text
@@ -299,6 +306,41 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 - 用上面的规则把 **班级 + 姓名** 解析出来，展示在 `/pending` 审核意见与日志里，人工照抄改名；
 - 解析结果也可用于审计与统计（`JoinRuleEvaluator` 已把班级/专业/学院/年级结构化）；
 - 若以后官方开放昵称接口，只需在 `JoinRuleEvaluator` 的输出之上接一个调用，规则层不用改。
+
+## 短码与系统 id 暴露策略
+
+官方内部 id（`join_request_id`、`user_openid`、`group_openid`）又长又难读，也怕被枚举后越权审核。机器人给每个内部 id 生成一个**随机 6 位 Base62 短码**（形如 `#M7K2Q9`），用它替代所有展示场景：
+
+- 生成方式：`crypto.randomInt` 逐位随机，**不用自增 ID**，猜不到下一个；
+- 唯一性：`short_codes` 表以 `code` 为主键、`(kind, target_id)` 唯一；生成时先查重，碰撞就重新生成；
+- 大小写不敏感：`#m7k2q9` 也能解析，展示时保留原始大小写；
+- 持久化：重启后同一个内部 id 复用同一短码；
+- 三种用途：`join_request`（申请短码）、`user`（未绑定用户）、`group`（未绑定群）。
+
+| 场景 | 展示 | 命令参数 |
+|---|---|---|
+| 已绑定 QQ号 | QQ号 | QQ号 或 `#用户短码` |
+| 未绑定用户 | `#用户短码` | `#用户短码` |
+| 已绑定群号 | 群号 | 群号 或 `#群短码` |
+| 未绑定群 | `#群短码` | `#群短码` |
+| 入群申请 | `#申请短码` | `#申请短码`（兼容完整 `join_request_id`） |
+
+**永远不暴露内部系统 id**，唯一例外是 `/whois`（超管）：
+
+```text
+/pending
+1. #M7K2Q9 用户：#U3F7K2 理由：材化2211 张三
+
+/approve #M7K2Q9
+已通过入群申请 #M7K2Q9。
+
+/whois #M7K2Q9
+类型：入群申请
+短码：#M7K2Q9
+真实申请 ID：ARvtM_tE85a2U1EG8z_B3YPEx6EcEIIJ...
+```
+
+`/pending`、`/sync`、推送卡片、`/audit`、`/status`、`/perm list`、`/rules`、`/notify`、`/test` 都只出现 QQ号 / 群号 / 短码；只有 `/whois` 会显示真实系统 id。
 
 ## 入群申请推送（卡片 + 快捷同意/拒绝）
 
@@ -331,7 +373,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 **申请人**：A1B2C3D4...（小明）
 **入群问题**：请回答班级+姓名
 **回答**：材化2211 张三
-**申请ID**：r1
+**申请ID**：#M7K2Q9
 
 > 审核意见（按当前入群规则自动生成）：
 >   识别到：班级 材化2211（材料化学 / 化学与生命科学学院 / 2022 级）、姓名 张三
@@ -345,17 +387,27 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 
 > 「回答」来自官方的入群验证信息：`verify_info.method = verify_message` 时取 `verify_message`；`admin_review_qa`（管理员设置问题）时取 `review_qa_list[].answer`（多个答案用空格拼接），同时展示问题文本与申请人昵称。被邀请入群（`apply_source = invited`）没有验证信息，此时「回答」为空，班级类规则会自动转人工。
 
-「同意 / 拒绝」是**指令按钮**：点击后自动发送 `/approve <group_openid> <申请ID>` / `/reject <group_openid> <申请ID> <原因>`，并带二次确认弹窗。按钮走的是与手动输入**完全相同**的指令与权限校验，不存在绕过。
+「同意 / 拒绝」是**指令按钮**：点击后自动发送 `/approve <#申请短码>` / `/reject <#申请短码> <原因>`，并带二次确认弹窗。短码唯一，处理时会自动定位申请所属群（也可以显式写群号：`/approve 654321 #M7K2Q9`）。按钮走的是与手动输入**完全相同**的指令与权限校验，不存在绕过。
 
 第二行是**预设拒绝原因**，拒绝按钮统一用红色（官方样式 `3`＝白底红字，是官方唯一提供的红色按钮样式），一键把回复作为官方 `reject_reason` 提交给申请人：
 
 | 按钮 | 发起的指令 |
 |---|---|
-| 拒绝 | `/reject <group> <id> 审核未通过` |
-| 拒绝：回答错误 | `/reject <group> <id> 请正确回答问题。` |
-| 拒绝：班级姓名 | `/reject <group> <id> 请回答正确的班级姓名（如：环工2214小明）。` |
+| 拒绝 | `/reject <#申请短码> 审核未通过` |
+| 拒绝：回答错误 | `/reject <#申请短码> 请正确回答问题。` |
+| 拒绝：班级姓名 | `/reject <#申请短码> 请回答正确的班级姓名（如：环工2214小明）。` |
 
 按钮不可用（未开通白名单）时，卡片正文会列出这些指令，纯文本也能一键复制审批；正常情况下正文只展示申请信息与 `申请ID`，不再堆完整指令。
+
+### 机器人自动处理的通知（`notifyAutoApproved`）
+
+默认只推送**需要人工处理**的申请。开启后，机器人自动通过/拒绝的申请也会推一张**只读卡片**（显示「已自动通过（按入群规则）」/「已自动拒绝（按入群规则）」，没有按钮），让审核员知晓结果：
+
+```text
+/rules set notifyAutoApproved on      # 自动处理也通知
+/rules set 通知自动通过 off            # 关闭（默认）
+/rules set all notifyAutoApproved on  # 全局默认（超管）
+```
 
 ### 官方能力与限制（先看这里）
 
@@ -588,6 +640,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 | `joinRequireName` | `要求姓名` | on / off | 答案必须包含姓名 |
 | `joinAnswerPattern` | `答案正则` | 正则；`clear` 清空 | 答案必须匹配的额外正则 |
 | `joinReviewOpinion` | `审核意见` | on / off | `/pending` 是否展示自动审核意见 |
+| `notifyAutoApproved` | `通知自动通过`、`autoNotify` | on / off | 机器人自动通过/拒绝的申请是否也推送给审核员（默认 off，只推需要人工处理的） |
 | `export` | `导出` | on / off | 导出开关（当前仅存储展示） |
 | `enabled` | `启用` | on / off | 本群机器人总开关 |
 

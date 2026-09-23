@@ -419,6 +419,24 @@
   - `adminCommands.handleRules` 在私信无群参数且调用者是全局超管时返回全局规则视图；
   - 以后新增规则字段的 checklist：加进 `GroupConfig`/`EffectiveGroupConfig`/`DEFAULT_CONFIG` → 加入 `SETTING_FIELDS`（首选）或 `SQL_FIELDS` → 加 `parseSettingValue`/`applySettingField`（键值字段）与 `/rules set` 解析 → 跑 `pnpm test`。
 
+## ADR-0036：用随机 Base62 短码替代系统 id 展示，`/whois` 是唯一还原入口
+
+- 状态：已采纳
+- 背景：官方 `join_request_id` 长达 100+ 字符，直接贴进卡片/`/pending` 既难看又难复制；同时 `user_openid` / `group_openid` 属于内部标识，展示出去存在被枚举、被误用（例如拿别人的申请 id 尝试审批）的风险。之前「未绑定就回退显示 openid」的做法仍然暴露了系统 id。
+- 决策：
+  1. 新增 `short_codes` 表：`code` 为主键、`(kind, target_id)` 唯一，`kind ∈ {user, group, join_request}`；
+  2. 短码为 **6 位随机 Base62**（`crypto.randomInt` 逐位生成，**不用自增 ID**），展示时加 `#` 前缀（`#M7K2Q9`）；内存与数据库双重查重，碰撞就重新生成；
+  3. 新增 `ShortCodeService`（生成/解析/持久化）与 `DisplayNameService`（统一展示与参数解析）：已绑定 QQ号/群号仍显示解析号，未绑定显示短码，申请单一律显示短码；
+  4. 所有命令参数同时接受短码与原有的 QQ号/群号/完整 id（`resolveRequest` 对非短码输入原样返回），保证旧消息与手工粘贴仍可用；
+  5. `/whois` 扩展为支持 `#短码`，是**唯一**会输出真实系统 id 的指令（超管限定）；其它用户可见输出只出现 QQ号/群号/短码；
+  6. 短码懒生成：第一次需要展示时创建并写穿透到数据库，重启由 `load()` 恢复。
+- 理由：随机短码不可枚举、可读、可复制，既解决「太长」，又把系统 id 从所有普通输出里彻底移除；`/whois` 作为受控出口保留排障能力；懒生成避免为从不展示的 id 浪费空间。
+- 影响：
+  - 新增 `short_codes` 表、`SqlShortCodeRepository`、`ShortCodeService`、`DisplayNameService`，并接入 `runtime` / `main` / 持久化装配；
+  - `AdminCommandService` / `NotificationService` / `JoinRequestCard` 全部改用展示名，`/pending`、`/sync`、卡片、`/audit`、`/status`、`/perm list`、`/rules`、`/notify`、`/test` 不再出现系统 id；
+  - `JoinApprovalService.applyJoinRules` 增加 `notify` 返回值，配合新群配置 `notifyAutoApproved`（`group_settings` 持久化）决定自动处理是否通知；
+  - 短码映射属于伪匿名数据，随数据库一起备份；不参与保留清理（体量很小，且删除后会导致旧消息里的短码失效）。
+
 
 
 

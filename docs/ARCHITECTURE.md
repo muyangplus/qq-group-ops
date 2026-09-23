@@ -39,6 +39,8 @@ TypeScript 核心服务
   ├── services/memberRoster.ts   班级/专业索引加载与姓名抽取
   ├── services/joinRequestCard.ts 入群申请推送卡片（Markdown + 指令按钮）
   ├── services/notifications.ts  入群申请推送（订阅、权限过滤、三级降级、投递去重）
+  ├── services/shortCodes.ts     随机 Base62 短码（生成/解析/持久化，替代系统 id 展示）
+  ├── services/displayNames.ts   统一展示与命令参数解析（QQ号/群号/短码）
   ├── services/adminCommands.ts  管理员命令（含 /rules set、/audit、/sync）
   ├── services/groupConfig.ts    多群配置
   ├── services/activity.ts       活动报名

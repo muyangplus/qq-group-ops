@@ -54,6 +54,13 @@
 
 ### 变更
 
+- **展示标识改为随机短码**：不再暴露内部系统 id。
+  - 每个 `join_request_id` / 未绑定 `user_openid` / 未绑定 `group_openid` 都会得到一个 **6 位随机 Base62 短码**（形如 `#M7K2Q9`），`short_codes` 表以 `code` 为主键、`(kind, target_id)` 唯一，生成时查重、碰撞重生成，**不使用自增 ID**；
+  - 大小写不敏感解析、重启复用同一短码；`/pending`、`/sync`、推送卡片、`/audit`、`/status`、`/perm list`、`/rules`、`/notify`、`/test` 全部只显示 QQ号/群号/短码；
+  - 所有命令参数（`/approve`、`/reject`、`/rules set`、`/status`、`/audit`、`/perm`、`/notify` 等）都接受短码；完整 `join_request_id` 仍然兼容；
+  - `/whois` 新增短码查询，成为**唯一**能看到真实系统 id 的指令（超管限定）。
+- 新增群配置 `notifyAutoApproved`（`/rules set notifyAutoApproved on|off`，别名 `通知自动通过`）：机器人自动通过/拒绝的申请是否也推送给审核员。开启后推送只读卡片（显示「已自动通过/拒绝（按入群规则）」，不带审批按钮）；默认关闭，只推需要人工处理的申请。该字段同样走 `group_settings` 键值持久化。
+
 - `GroupConfigStore.setOverride({ groupId: "__default__" })` 从抛错改为更新全局默认配置；新增 `DEFAULT_GROUP_ID` 常量与 `builtinDefault` 访问器。
 - 官方调用域名从 `api.sgroup.qq.com` 迁移到 `api.bot.qq.com`（官方 2026-08-10 起统一域名）。
 - `/perm list` 第一行改为「全局超级管理员」，并新增「本群超级管理员」；`/myperm` 新增全局/本群超管两行。

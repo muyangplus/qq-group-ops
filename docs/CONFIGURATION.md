@@ -166,6 +166,7 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 /rules set joinRequireName on|off                  # 答案必须包含姓名
 /rules set joinAnswerPattern <正则>|clear          # 追加自定义正则
 /rules set joinReviewOpinion on|off                # /pending 是否展示审核意见
+/rules set notifyAutoApproved on|off               # 机器人自动通过/拒绝的申请是否也推送通知
 /rules set export on|off                           # 导出功能开关
 /rules set enabled on|off                          # 机器人本群总开关
 ```
@@ -247,7 +248,7 @@ CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json CLASS_INDE
 /notify test                          # 给自己发一张测试卡片
 ```
 
-- 推送时机：只推送**仍需人工处理**的申请（`manual` / 规则无法判定）；自动通过/拒绝的不推送；
+- 推送时机：默认只推送**仍需人工处理**的申请（`manual` / 规则无法判定）；群配置 `notifyAutoApproved on` 后，机器人自动通过/拒绝的申请也会推一张只读卡片（显示处理结果、无按钮）；
 - 接收者：订阅了该群（或全部群）**且**在当前群有审批权限的人；订阅持久化在 `notification_subscriptions`；
 - 卡片：Markdown 正文（群号、申请人+昵称、入群问题、回答、申请 ID、审核意见）+ 「同意 / 拒绝」指令按钮，第二行是两个红色预设拒因（回答错误 / 班级姓名），点击即把固定文案作为拒绝理由提交；按钮未开通（官方内邀）会自动降级为纯 Markdown → 纯文本（正文里会列出全部指令与预设拒因）；
 - 回答来源：`verify_info.method = verify_message` 取 `verify_message`，`admin_review_qa` 取 `review_qa_list[].answer`（多个用空格拼接）；被邀请入群（`invited`）没有答案，班级类规则自动转人工；
@@ -272,13 +273,15 @@ CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json CLASS_INDE
 - 入群申请审批：
 
 ```text
-/pending [group_openid|群号]               # 查看本地待审批队列
-/sync [group_openid|群号]                  # 从官方接口补齐待审批申请（按群 30 秒节流）
-/approve [group_openid|群号] <申请ID>       # 通过（会调用官方审批接口）
-/reject [group_openid|群号] <申请ID> [原因]  # 拒绝（会调用官方审批接口）
+/pending [#群短码|群号]                    # 查看本地待审批队列
+/sync [#群短码|群号]                       # 从官方接口补齐待审批申请（按群 30 秒节流）
+/approve <#申请短码>                       # 通过（自动定位所属群）
+/approve <#群短码|群号> <#申请短码>          # 私信中显式指定群
+/reject <#申请短码> [原因]
+/reject <#群短码|群号> <#申请短码> [原因]
 ```
 
-审批顺序是「先调用官方接口，成功后再更新本地状态」；官方调用失败时申请保持待审批并返回错误。
+申请短码由 `/pending`、`/sync` 或推送卡片给出；完整 `join_request_id` 仍然兼容。审批顺序是「先调用官方接口，成功后再更新本地状态」；官方调用失败时申请保持待审批并返回错误。
 
 审计查询（审核员及以上）：
 
@@ -295,23 +298,23 @@ CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json CLASS_INDE
 - `/test`（超级管理员）
 - `/perm`（超级管理员）
 
-群管理指令在私信中需要额外提供 `group_openid` 或已绑定的群号：
+群管理指令在私信中需要额外提供群号或 `#群短码`（`/approve`、`/reject` 带申请短码时也可以省略）：
 
 ```text
-/pending <group_openid|群号>
-/sync <group_openid|群号>
-/approve <group_openid|群号> <申请ID>
-/reject <group_openid|群号> <申请ID> [原因]
-/rules <group_openid|群号>
+/pending <#群短码|群号>
+/sync <#群短码|群号>
+/approve <#申请短码>
+/reject <#申请短码> [原因]
+/rules <#群短码|群号>
 /rules                                 # 私信 + 全局超管：等价 /rules all（查看全局默认规则）
-/rules set <group_openid|群号> <字段> <值>
-/notify [group_openid|群号|all] on|off
+/rules set <#群短码|群号> <字段> <值>
+/notify [#群短码|群号|all] on|off
 /notify test
-/audit <group_openid|群号> [数量]
-/status <group_openid|群号>
-/perm grant gsuper <group_openid|群号> <userId|QQ号>
-/perm grant admin <group_openid|群号> <userId|QQ号>
-/perm grant mod <group_openid|群号> <userId|QQ号>
+/audit <#群短码|群号> [数量]
+/status <#群短码|群号>
+/perm grant gsuper <#群短码|群号> <userId|QQ号|#用户短码>
+/perm grant admin <#群短码|群号> <userId|QQ号|#用户短码>
+/perm grant mod <#群短码|群号> <userId|QQ号|#用户短码>
 ```
 
 ### 绑定 QQ号 / 群号
@@ -334,13 +337,15 @@ CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json CLASS_INDE
 /pending 654321
 ```
 
-**展示规则：已绑定就只显示解析号。**
+**展示规则：已绑定显示解析号，未绑定显示随机短码；内部系统 id 永不暴露。**
 
-- 只要 QQ号 / 群号已绑定，机器人所有用户可见输出都只显示 QQ号 / 群号，不再显示内部 `userId` / `group_openid`；
+- 已绑定 QQ号 / 群号 → 只显示 QQ号 / 群号；
+- 未绑定用户 / 群 → 显示随机短码 `#M7K2Q9`（6 位 Base62、随机生成、唯一索引、碰撞重生成），不再显示 `userId` / `group_openid`；
+- 入群申请 → 一律显示申请短码，替代又长又难读的 `join_request_id`；
 - 覆盖范围：`/pending`、`/sync`、推送卡片与纯文本降级、`/audit`、`/status`、`/test`、`/myperm`、`/perm list`、`/notify` 状态、`/rules` 标题、`/bind` 成功回复；
-- 未绑定时才回退显示内部 id（例如新申请人通常还没绑定 QQ号）；
-- 唯一例外是 `/whois`，它的用途就是查询 `OpenID ↔ QQ号/群号` 映射，因此会同时展示两边；
-- 指令参数仍可用群号或 openid（`/status 654321` 与 `/status B6B3...` 等价）。
+- 命令参数同时接受群号/QQ号与短码：`/status 654321`、`/approve #M7K2Q9`、`/rules set #G7K2Q9 keywords 广告` 都能执行；完整 `join_request_id` 仍然兼容；
+- **唯一例外是 `/whois`**（超管）：`/whois #M7K2Q9` 会显示短码对应的类型与真实系统 id，`/whois <QQ号>` 显示对应 `userId` 与短码；
+- 短码持久化在 `short_codes` 表（`code` 主键 + `(kind, target_id)` 唯一），重启后同一 id 复用同一短码。
 
 强制绑定规则：
 
@@ -403,6 +408,7 @@ pnpm db:up     # docker compose --profile postgres up -d db
 | `group_settings` | 群扩展配置（命中动作、入群审核规则等，键值对） | `GroupConfigStore` |
 | `notification_subscriptions` | 入群申请推送订阅（`__all__` 或 group_openid） | `NotificationService` |
 | `notification_deliveries` | 推送投递记录（去重与排查） | `NotificationService` |
+| `short_codes` | 随机短码 → 内部 id 映射（申请/用户/群） | `ShortCodeService` |
 | `group_message_modes` | 全量消息模式诊断 | `GroupMessageModeRegistry` |
 | `activities` / `activity_registrations` | 活动与报名 | `ActivityService` |
 
