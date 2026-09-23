@@ -239,6 +239,15 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 - `data/` 已在 `.gitignore` 中，**真实班级数据不会提交到 Git**；
 - 索引文件路径可用 `CLASS_INDEX_FILE` 覆盖；索引缺失时班级类规则会**自动退化为人工审核**，不会误放行。
 
+`joinRequireClass` 匹配的是索引里的 **`classes` 班级名**：
+
+- 忽略空白、按**子串包含**判断、长班级名优先（`材化2211 张三`、`我是材化2211的小明` 都能命中）；
+- 所以答案里的班级名必须**真的存在于索引**中。例如索引里 22 级环工只有 `环工2211/2212/2213`，大类是 `环境类2214`；申请人写 `环工2214` 不会命中，写 `环境类2214` 才会；
+- `majors` / `college`（专业、学院）只用于审核意见展示，以及姓名提取时排除误判，**不参与「必须匹配」判断**；
+- 索引只在**启动时加载一次**：重新运行 `pnpm class:index` 之后必须**重启机器人**；改规则本身立即生效、不用重启。
+
+排查「明明写了班级却不匹配」：打开 `data/class-index.json` 搜一下 `classes` 里有没有那个名字（注意大类/专业命名差异），也可以用 `node -e "..."` 或编辑器搜索；`/pending` 的审核意见会显示 `缺少：班级`。
+
 ### 入群审核规则（`班级+姓名` 示例）
 
 以「入群问题必须回答 班级+姓名，答对自动通过」为例：
@@ -608,6 +617,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 | 关键词命中了但没被移出/拉黑 | `batch_remove_members` 与黑名单接口仅白名单机器人可用（11253）；机器人需为群管理员。看日志里的 `_failed` 详情，`/audit` 里全部失败会显示 `pending` |
 | 入群申请没有自动通过/拒绝 | 检查 `joinDecision`、`joinRequireClass`/`joinRequireName`/`joinAnswerPattern`，以及 `data/class-index.json` 是否存在；索引缺失或正则无效会强制转人工 |
 | 卡片「回答」显示（未填写） | 该群没有设置入群验证问题，或被邀请入群（`apply_source=invited`）。看日志 `join request has no answer` 里的 `verifyKeys` / `method` / `applySource` 确认官方字段 |
+| 审核意见说「缺少：班级」但答案明明写了班级 | 班级名必须与 `data/class-index.json` 的 `classes` 完全一致（如索引里是「环境类2214」而不是「环工2214」）。核对后让申请人按索引里的班级名回答，或用 `CLASS_INDEX_YEARS` 重新生成索引并重启 |
 
 ### 11. 规则持久化（强制不变量）
 

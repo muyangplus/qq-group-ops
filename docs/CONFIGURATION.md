@@ -216,6 +216,8 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 
 规则由三项组成（可组合）：`joinRequireClass`（答案必须包含班级库里的班级）、`joinRequireName`（必须包含姓名）、`joinAnswerPattern`（附加正则）。`joinReviewOpinion on` 时 `/pending` 会展示识别出的班级/专业/学院/年级、缺失项与建议。
 
+`joinRequireClass` 匹配 `class-index.json` 的 `classes`：忽略空白、按子串包含、长班级名优先；`majors`/`college` 只用于展示与姓名排除，不参与匹配。因此班级名必须与索引一致（例如索引里是 `环境类2214`，写 `环工2214` 不会命中）。索引只在启动时加载一次，重新生成后需重启进程。
+
 班级库来自 `CLASS_INDEX_FILE`（默认 `data/class-index.json`），由 `pnpm class:index` 从 `data/class.json` 生成（默认保留 2022-2026 级，可用 `CLASS_INDEX_YEARS` 调整）。索引缺失、正则无效或规则无法判定时**一律回退人工审核**，不会误放行。原始 `data/class.json` 与生成的索引都在 `.gitignore` 中，不要提交。
 
 | 变量 | 必填 | 说明 |
