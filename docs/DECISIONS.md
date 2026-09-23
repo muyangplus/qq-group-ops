@@ -400,6 +400,23 @@
   - **修复 `instrumentQQOfficialAPI` 之前丢弃可选参数的缺陷**：`sendGroupMessage` / `sendPrivateMessage` 现在透传富消息 options，`removeGroupMember` 透传 `addToMemberBlacklist`，并补上 `updateMemberBlacklist` 调试包装（此前 `kick_blacklist` 经运行时装配后会退化成普通移出）；
   - `/notify` 加入 `/help` 与 `/help notify` 主题；`RetentionService` 增加推送投递清理。
 
+## ADR-0035：规则配置必须全部可持久化，并由测试守住这条不变量
+
+- 状态：已采纳
+- 背景：规则字段是逐批加出来的：先是 `group_configs` 的列式字段，后是 `group_settings` 键值字段。只要有人新增一个字段却忘了加入持久化清单，它就会在内存里生效、重启后静默丢失——这类 bug 不会报错，只会让管理员以为配置没保存，排查成本高。另外还有两处相关缺陷：`main.ts` 曾经漏传 `groupSettings` 仓储，导致扩展字段在真实运行时根本没落库；全局超级管理员在私信里查看 `/help rules` 会被误判为「权限不足」。
+- 决策：
+  1. **不变量**：`EffectiveGroupConfig` 的每个字段都必须出现在 `SQL_FIELDS`（写 `group_configs` 列）或 `SETTING_FIELDS`（写 `group_settings` 键值）中；
+  2. 导出 `PERSISTED_CONFIG_FIELDS = [...SQL_FIELDS, ...SETTING_FIELDS]`，并在 `test/groupConfig.test.ts` 做**双向**校验：生效字段 ⊆ 可持久化字段，且可持久化字段 ⊆ 生效字段（去掉遗留字段名）；
+  3. 新增 `test/rulesPersistence.test.ts`：用真实命令层逐字段执行 `/rules set <字段>`（含全局 `all`），`flush()` 后**重新装配 `GroupConfigStore`** 从仓储恢复并断言每个字段；同时覆盖「只有扩展字段的群」和 `removeOverride` 清空两张表；
+  4. 生产装配路径（`main.ts` / `test/helpers/persistenceRuntime.ts`）必须把 `groupSettings` 传给 runtime，保证扩展字段真的写库；
+  5. 全局超管在私信里查看群指令帮助（`/help rules` 等）直接放行；私信不带群号的 `/rules` 对超管等价于 `/rules all`。
+- 理由：把「配置字段 = 可持久化字段」变成一条会被 CI 守住的不变量，比写文档提醒更可靠；端到端重装 store 的测试能同时抓住「漏加入库清单」「仓储没接线」「load 没合并」三类问题。
+- 影响：
+  - `groupConfig.ts` 新增导出 `PERSISTED_CONFIG_FIELDS` / `PersistedConfigField`；
+  - `helpTopics.ts` 的 `isModerator` / `isGroupAdmin` 在私信分支先判 `isSuperAdmin`；
+  - `adminCommands.handleRules` 在私信无群参数且调用者是全局超管时返回全局规则视图；
+  - 以后新增规则字段的 checklist：加进 `GroupConfig`/`EffectiveGroupConfig`/`DEFAULT_CONFIG` → 加入 `SETTING_FIELDS`（首选）或 `SQL_FIELDS` → 加 `parseSettingValue`/`applySettingField`（键值字段）与 `/rules set` 解析 → 跑 `pnpm test`。
+
 
 
 

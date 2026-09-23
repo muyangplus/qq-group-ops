@@ -186,6 +186,22 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 - 踢人动作使用官方 `batch_remove_members`，`kick_blacklist` 会在同一次调用里带 `add_to_member_blacklist: true`；**该接口仅白名单机器人可用**，未开通时会返回错误码 11253。
 - 单独拉黑（目标当前不在群中）使用 `POST /v2/groups/{g}/member_blacklist`。
 
+### 规则持久化（强制不变量）
+
+规则配置**全部入库**，不存在只留内存的字段：
+
+| 字段类别 | 存储位置 | 说明 |
+|---|---|---|
+| 旧字段（关键词、警告文案、开关、禁言时长） | `group_configs` + `group_keywords` | 每群一行快照 + 关键词行 |
+| 扩展字段（命中动作、入群审核规则等） | `group_settings`（键值表） | 新增字段无需 ALTER TABLE |
+| 全局默认 | 上述两张表的 `group_id = __default__` | 与单群覆盖同一套路径 |
+
+- `GroupConfigStore.load()` 启动时读两张表并按字段合并：群覆盖 > 全局默认 > 内置默认；
+- 单群「只有扩展字段」时不会写 `group_configs` 行，但重启后依然能从 `group_settings` 恢复出该群覆盖；
+- `removeOverride` 会同时清理两张表；
+- **新增规则字段的硬约束**：`EffectiveGroupConfig` 的每个字段都必须在 `SQL_FIELDS` 或 `SETTING_FIELDS` 中（`PERSISTED_CONFIG_FIELDS` 导出供测试双向校验），遗漏会导致 `pnpm test` 失败；
+- `/rules set` 的逐字段持久化回归见 `test/rulesPersistence.test.ts`。
+
 ### 入群审核与班级库
 
 `joinDecision` 控制新申请怎么处理：
@@ -284,6 +300,7 @@ CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json CLASS_INDE
 /approve <group_openid|群号> <申请ID>
 /reject <group_openid|群号> <申请ID> [原因]
 /rules <group_openid|群号>
+/rules                                 # 私信 + 全局超管：等价 /rules all（查看全局默认规则）
 /rules set <group_openid|群号> <字段> <值>
 /notify [group_openid|群号|all] on|off
 /notify test

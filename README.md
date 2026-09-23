@@ -9,7 +9,7 @@
 - 技术路线：**仅使用 QQ 官方开放平台 API**，不使用 OneBot、NapCat、Lagrange 等个人号协议端。
 - 已实现：配置、结构化调试日志（控制台 + 文件 + auto 彩色）、领域模型、规则引擎、审计日志、权限模型、权限自助查询、超管权限配置、OpenID ↔ QQ号/群号映射、全状态持久化（SQLite 默认 / PostgreSQL 可选：绑定关系、权限、审计、入群申请、群配置、全量消息模式、活动报名、推送订阅与投递记录）、数据保留清理（审计、已审批申请与推送投递，启动 + 每 24 小时）、动态权限帮助、私信指令、全量消息模式诊断、多群配置、入群审核状态机、入群审批调用官方接口（含自动通过）、官方申请同步（`/sync`）、关键词命中动作（撤回 / 禁言 / 移出 / 拉黑）、班级库驱动的入群审核规则（班级+姓名+正则、5 档决策模式、审核意见）、入群申请推送（`/notify` 订阅 + Markdown 卡片 + 快捷同意/拒绝按钮）、群配置关键词驱动的消息审核、`/rules set` 群规则配置、`/audit` 审计查询、官方禁言/踢人/黑名单接口（请求体已按官方文档核对）、事件路由、事件网关抽象、官方 WebSocket 协议网关（自动重连 + Resume 会话恢复 + 心跳 ACK 超时检测 + 指数退避 + 限流冷却）、官方事件映射器、原生 WebSocket 工厂、access token 与网关地址持久化缓存、出站消息节流与 22009 重试、被动回复配额拦截、401 自动刷新、事件与回复失败容错、`/test` 自检指令、运行时装配、数据库 schema/迁移/方言适配与全部仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
 - 待实现：真实环境联调、Web 管理后台、内容安全与 AI 辅助。
-- 测试：Vitest，共 399 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
+- 测试：Vitest，共 409 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
 
 ## 技术栈
 
@@ -147,7 +147,8 @@ pnpm start       # 运行编译后的入口
 - 每个群的角色单独配置、互不影响；
 - 存储上本群超管复用 `permission_grants` 的 `scope='super_admin'` + 非空 `group_id`，**无需改表结构**；
 - `ADMIN_USER_IDS` 只在数据库里没有任何**全局**超管时作为种子写入（只存在本群超管时仍会种子，避免全局超管被锁死）；
-- 角色授权**不豁免**「先 `/bind qq`」的要求，被授权用户仍需先绑定自己的 QQ 号。
+- 角色授权**不豁免**「先 `/bind qq`」的要求，被授权用户仍需先绑定自己的 QQ 号；
+- **全局超管的私信体验**：私信里查看群指令帮助（`/help rules`、`/help approve`、`/help notify` 等）不受群上下文限制；私信直接发 `/rules` 等价于 `/rules all`（查看全局默认规则）。
 
 ## 指令帮助（`/help`）
 
@@ -592,6 +593,17 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 | 配了关键词但没反应 | 检查 `/rules`（或 `/rules all`）里 `启用` 与 `关键词过滤` 是否为 `true`；非 @ 的普通消息还需要群管理员在机器人资料页开启「接收所有消息」 |
 | 关键词命中了但没被移出/拉黑 | `batch_remove_members` 与黑名单接口仅白名单机器人可用（11253）；机器人需为群管理员。看日志里的 `_failed` 详情，`/audit` 里全部失败会显示 `pending` |
 | 入群申请没有自动通过/拒绝 | 检查 `joinDecision`、`joinRequireClass`/`joinRequireName`/`joinAnswerPattern`，以及 `data/class-index.json` 是否存在；索引缺失或正则无效会强制转人工 |
+
+### 11. 规则持久化（强制不变量）
+
+**规则配置一律入库，不存在只留内存的字段。**
+
+- 旧字段（关键词、警告文案、开关、禁言时长）写 `group_configs` + `group_keywords`；
+- 扩展字段（命中动作、入群审核规则等）写 `group_settings` 键值表，因此新增字段**不需要改表结构**；
+- 全局默认用 `group_id = __default__`，与单群覆盖走同一套读写路径；
+- `GroupConfigStore.load()` 会同时读两张表并合并（按字段继承：群覆盖 > 全局默认 > 内置默认）；
+- **新增字段的硬约束**：`EffectiveGroupConfig` 的每个字段都必须出现在 `SQL_FIELDS` 或 `SETTING_FIELDS` 中。`src/services/groupConfig.ts` 导出的 `PERSISTED_CONFIG_FIELDS` 与 `test/groupConfig.test.ts` 会双向校验「生效字段 = 可持久化字段」，漏加字段会直接测试失败；
+- 每条 `/rules set <字段>` 的端到端持久化（写入 → 重新装配 store → 恢复）由 `test/rulesPersistence.test.ts` 覆盖，包括「只有扩展字段的群」和「全局规则继承」。
 
 更多细节见 [配置说明](docs/CONFIGURATION.md) 与 [真实环境验收清单](docs/ACCEPTANCE.md)。
 

@@ -53,6 +53,14 @@
 - `GroupConfigStore.setOverride({ groupId: "__default__" })` 从抛错改为更新全局默认配置；新增 `DEFAULT_GROUP_ID` 常量与 `builtinDefault` 访问器。
 - 官方调用域名从 `api.sgroup.qq.com` 迁移到 `api.bot.qq.com`（官方 2026-08-10 起统一域名）。
 - `/perm list` 第一行改为「全局超级管理员」，并新增「本群超级管理员」；`/myperm` 新增全局/本群超管两行。
+- 全局超级管理员在私信里发 `/rules`（不带群号）现在等价于 `/rules all`，直接查看全局默认规则。
+
+### 修复
+
+- **全局超管在私信里看群指令帮助被误判为权限不足**：`/help rules`、`/help approve`、`/help reject`、`/help notify` 等主题的权限判断在「私信无群上下文」分支里只查了群级角色，没把全局超管算进去；现在全局超管在私信里可以正常查看全部指令帮助。
+- **规则持久化不变量**：导出 `PERSISTED_CONFIG_FIELDS` 并新增双向校验测试（`test/groupConfig.test.ts`），确保 `EffectiveGroupConfig` 的每个字段都落在 `SQL_FIELDS` 或 `SETTING_FIELDS` 中，以后新增规则字段漏加入库清单会直接测试失败。
+- 新增 `test/rulesPersistence.test.ts`：逐字段跑 `/rules set`（含全局 `all`），重新装配 `GroupConfigStore` 后校验全部字段从数据库恢复；覆盖「只有扩展字段的群」与「全局规则按字段继承」。
+- 修复入群推送卡片正文被截断（「请审核」之后的指令提示丢失）导致纯 Markdown 卡片看不到 `/approve` 指令的问题。
 
 ## [0.1.0] - 2026-09-23
 

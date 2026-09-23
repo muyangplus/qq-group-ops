@@ -46,6 +46,8 @@ B/C/D/G 组的核心链路（审批闭环、关键词警告/处罚与审计、�
 | B7 | 权限持久化 | 超管 `/perm grant mod <QQ号>` 后重启进程 | `/myperm` 仍是 moderator，权限未回退 |
 | B8 | 本群超管只在本群生效 | 超管 `/perm grant gsuper <QQ号>`（在群 g1 内），再让该用户去另一个群执行 `/approve` | 群 g1 内可审批/改规则；别的群或私信中报「权限不足」；`/perm`、`/rules all` 始终被拒 |
 | B9 | 全局超管不被本群超管顶掉 | 只配置本群超管后重启进程 | 日志出现 `seeding super admins from configuration`，`ADMIN_USER_IDS` 仍是全局超管 |
+| B10 | 超管私信看帮助 | 全局超管私信 `/help rules`、`/help notify` | 正常返回详细帮助，不再出现「权限不足」 |
+| B11 | 超管私信看全局规则 | 全局超管私信发 `/rules`（不带群号） | 显示全局默认规则（等价 `/rules all`） |
 
 ## 2. 入群审批闭环（Phase 1 关键退出条件）
 
@@ -111,6 +113,7 @@ B/C/D/G 组的核心链路（审批闭环、关键词警告/处罚与审计、�
 | G3 | PostgreSQL 可切换 | `.env` 设 `DATABASE_URL=postgres://...` + `pnpm db:up` | `databaseDriver: postgres`，功能一致 |
 | G4 | 内存模式 | `DATABASE_URL=memory` | 启动告警，重启后数据清空（预期） |
 | G5 | 保留清理 | 日志中查看 `retention cleanup finished` | 启动时执行一次，无过期数据时为 0 |
+| G6 | 规则全部入库 | 逐项执行 `/rules set`（含 `all` 与只改扩展字段的情况）后重启进程 | 每个字段都保持修改后的值：单群规则、全局规则、仅扩展字段的群覆盖都不丢 |
 
 ## 7. 验收记录模板
 
