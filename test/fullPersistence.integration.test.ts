@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { AuditStatus, JoinRequestStatus } from "../src/core/enums.js";
+import {
+  AuditStatus,
+  JoinRequestStatus,
+  PermissionLevel,
+} from "../src/core/enums.js";
 import { utcNow } from "../src/core/models.js";
 import { createPersistentRuntime } from "./helpers/persistenceRuntime.js";
 import { TEST_DATABASES } from "./helpers/testDatabases.js";
@@ -111,8 +115,38 @@ for (const driver of TEST_DATABASES) {
       }
     });
 
-    it("removes deleted group config overrides and keywords from the database", async () => {
+    it("keeps group super admins scoped and still seeds a global super admin", async () => {
       const database = await driver.create();
+      try {
+        const first = createPersistentRuntime(database.queryable, "root");
+        await first.load();
+        first.permissions.grantGroupSuperAdmin("g1", "owner1");
+        await first.flush();
+
+        const restarted = createPersistentRuntime(
+          await database.restart(),
+          "root",
+        );
+        await restarted.load();
+
+        // 本群超管只在 g1 生效，且不是全局超管
+        expect(restarted.permissions.isGroupSuperAdmin("owner1", "g1")).toBe(true);
+        expect(restarted.permissions.levelFor("owner1", "g1")).toBe(
+          PermissionLevel.SuperAdmin,
+        );
+        expect(restarted.permissions.isSuperAdmin("owner1")).toBe(false);
+        expect(restarted.permissions.levelFor("owner1", "g2")).toBe(
+          PermissionLevel.Member,
+        );
+
+        // 数据库里只有本群超管时，仍然要用 ADMIN_USER_IDS 种子全局超管
+        expect(restarted.permissions.isSuperAdmin("root")).toBe(true);
+      } finally {
+        await database.cleanup();
+      }
+    });
+
+    it("removes deleted group config overrides and keywords from the database", async () => {      const database = await driver.create();
       try {
         const first = createPersistentRuntime(database.queryable);
         await first.load();

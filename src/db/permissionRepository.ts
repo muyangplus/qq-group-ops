@@ -3,8 +3,15 @@ import type { Queryable } from "./queryable.js";
 export type PermissionGrantScope = "super_admin" | "group_admin" | "moderator";
 
 export interface PermissionGrant {
+  /**
+   * `super_admin` 表示超级管理员：
+   * - `groupId === ""` → 全局超级管理员（拥有平台级能力）；
+   * - `groupId !== ""` → 本群超级管理员（仅在该群内拥有最高权限）。
+   *
+   * 复用同一个 scope 可以避免修改 `permission_grants` 的 CHECK 约束
+   * （SQLite 无法直接修改列约束，需要重建表）。
+   */
   scope: PermissionGrantScope;
-  /** 超级管理员使用空字符串。 */
   groupId: string;
   userId: string;
 }

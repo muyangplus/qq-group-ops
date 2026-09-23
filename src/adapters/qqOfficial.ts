@@ -95,7 +95,8 @@ export interface QQOfficialEndpoints {
 }
 
 export const DEFAULT_ENDPOINTS: QQOfficialEndpoints = {
-  baseUrl: "https://api.sgroup.qq.com",
+  // 官方文档自 2026-08-10 起统一调用域名为 api.bot.qq.com
+  baseUrl: "https://api.bot.qq.com",
   tokenUrl: "https://bots.qq.com/app/getAppAccessToken",
   gatewayUrl: "/gateway",
   sendGroupMessage: "/v2/groups/{groupId}/messages",

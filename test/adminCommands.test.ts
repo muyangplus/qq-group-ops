@@ -220,6 +220,64 @@ describe("AdminCommandService", async () => {
     expect(result.text).toContain("仅超级管理员");
   });
 
+  it("scopes group super admins to their own group", async () => {
+    const grant = await service.handle("g1", "root", "/perm grant gsuper u4");
+    expect(grant.ok).toBe(true);
+    expect(permissions.isGroupSuperAdmin("u4", "g1")).toBe(true);
+
+    const myperm = await service.handle("g1", "u4", "/myperm");
+    expect(myperm.text).toContain("你的权限等级：super_admin");
+    expect(myperm.text).toContain("本群超级管理员：true");
+    expect(myperm.text).toContain("全局超级管理员：false");
+    expect(myperm.text).toContain("配置权限：false");
+
+    // 在本群内可以做群管理与审批
+    joinAudit.submit("g1", "u1", "想加入", "r1");
+    const approve = await service.handle("g1", "u4", "/approve r1");
+    expect(approve.ok).toBe(true);
+    const rules = await service.handle("g1", "u4", "/rules set keywords 本群词");
+    expect(rules.ok).toBe(true);
+
+    // 其他群没有任何权限
+    expect(permissions.levelFor("u4", "g2")).toBe("member");
+
+    // 拿不到平台级能力
+    const perm = await service.handle("g1", "u4", "/perm list");
+    expect(perm.ok).toBe(false);
+    expect(perm.text).toContain("仅超级管理员");
+    const globalRules = await service.handle("g1", "u4", "/rules all");
+    expect(globalRules.ok).toBe(false);
+    expect(globalRules.text).toContain("仅超级管理员");
+  });
+
+  it("revokes group super admins and supports the private form", async () => {
+    const grant = await service.handle(
+      undefined,
+      "root",
+      "/perm grant gsuper 654321 u4",
+    );
+    expect(grant.ok).toBe(true);
+    expect(permissions.isGroupSuperAdmin("u4", "g1")).toBe(true);
+
+    const list = await service.handle("g1", "root", "/perm list");
+    expect(list.text).toContain("本群超级管理员");
+
+    const revoke = await service.handle("g1", "root", "/perm revoke 群超管 u4");
+    expect(revoke.ok).toBe(true);
+    expect(permissions.isGroupSuperAdmin("u4", "g1")).toBe(false);
+  });
+
+  it("requires a group for group super admin grants", async () => {
+    const result = await service.handle(
+      undefined,
+      "root",
+      "/perm grant gsuper u4",
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("需要提供 group_openid");
+  });
+
   it("supports private binding commands", async () => {
     const result = await service.handle(undefined, "member", "/bind qq 999999");
     expect(result.ok).toBe(true);

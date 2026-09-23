@@ -40,7 +40,7 @@ TypeScript 核心服务
   ├── services/activity.ts       活动报名
   ├── services/export.ts         信息导出
   ├── services/audit.ts          审计日志
-  ├── services/permissions.ts    权限模型
+  ├── services/permissions.ts    权限模型（全局超管 / 本群超管 / 群管理员 / 审核员）
   ├── services/identityMap.ts    OpenID ↔ QQ号/群号 映射（内存缓存 + 写穿透）
   ├── adapters/qqOfficial.ts     官方 REST 客户端与传输抽象
   ├── adapters/fetchTransport.ts 原生 fetch 传输
@@ -110,6 +110,12 @@ Web 管理 API + 管理后台（Phase 2）
 - 群聊消息可能包含个人信息甚至敏感个人信息。
 - 长期保存原文会显著增加合规和安全风险。
 - 默认只保存审核结果、规则命中、操作人和时间；需要原文追溯时短期保留并自动删除。
+
+### 5. 为什么权限分成「全局超管」和「本群超管」？
+
+- 全局超级管理员拥有平台级能力（`/perm`、`/rules all`、`/bind user|groupid`、`/whois`），对应 `ADMIN_USER_IDS` 与 `/perm grant super`。
+- 本群超级管理员（`/perm grant gsuper`）只在被授权的群内等价于 `super_admin`，用来把「这个群的负责人」和「平台运维」分开，避免群级管理员获得跨群能力。
+- 角色全部手工配置：官方成员接口虽然返回 `member_role`（`owner`/`admin`/`member`），但属于内邀白名单能力（未开通返回 11253），因此不做自动映射（见 DECISIONS.md 的 ADR-0029）。
 
 ## 待验证的架构风险
 

@@ -52,7 +52,7 @@ cp .env.example .env
 
 ```bash
 # 看是否在反复请求 /gateway（正常情况下只有首次启动出现）
-rg '"url":"https://api.sgroup.qq.com/gateway"' logs/qq-group-ops.log
+rg '"url":"https://api.bot.qq.com/gateway"' logs/qq-group-ops.log
 
 # 看限流冷却与重连调度
 rg 'cooling down|scheduling reconnect|rate limited' logs/qq-group-ops.log
@@ -106,26 +106,42 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 
 ```text
 /myperm
-/perm list
-/perm grant super <userId|QQ号>
+/perm list [group_openid|群号]
+/perm grant super <userId|QQ号>                          # 全局超级管理员
 /perm revoke super <userId|QQ号>
-/perm grant admin <userId|QQ号>
-/perm revoke admin <userId|QQ号>
-/perm grant mod <userId|QQ号>
-/perm revoke mod <userId|QQ号>
+/perm grant gsuper [group_openid|群号] <userId|QQ号>      # 本群超级管理员
+/perm revoke gsuper [group_openid|群号] <userId|QQ号>
+/perm grant admin [group_openid|群号] <userId|QQ号>
+/perm revoke admin [group_openid|群号] <userId|QQ号>
+/perm grant mod [group_openid|群号] <userId|QQ号>
+/perm revoke mod [group_openid|群号] <userId|QQ号>
 ```
 
 说明：
 
-- `/myperm`：所有用户可查询自己的权限。
+- `/myperm`：所有用户可查询自己的权限（会分别显示全局/本群超级管理员）。
 - `/help`：只显示当前用户有权限执行的指令。
-- `/perm`：仅超级管理员可用。
-- `super`：全局超级管理员。
+- `/perm`：仅**全局**超级管理员可用。
+- `super`：全局超级管理员，拥有平台级能力（`/perm`、`/rules all`、`/bind user`、`/bind groupid`、`/whois`）。
+- `gsuper`（别名 `groupsuper` / `群超管` / `本群超管` / `群超级管理员`）：**本群超级管理员**，只在该群内等价于 `super_admin`，可以审批、改规则、查审计、导出；**拿不到任何跨群或平台级能力**。
 - `admin`：当前群的群管理员。
 - `mod`：当前群的审核员。
-- 当前权限配置会持久化到 PostgreSQL（配置了 `DATABASE_URL` 时）。
-- `ADMIN_USER_IDS` 只在数据库里不存在任何超级管理员时作为初始种子写入；之后以数据库为准。
+- 所有角色都是**手工配置**的：不依赖 QQ 群主/管理员身份自动授予（官方成员接口目前是内邀白名单能力）。
+- 权限配置会持久化到数据库（SQLite / PostgreSQL）。
+- `ADMIN_USER_IDS` 只在数据库里不存在任何**全局**超级管理员时作为初始种子写入；之后以数据库为准。
   这意味着把某人从 `ADMIN_USER_IDS` 删除并不会撤销其权限，需要用 `/perm revoke super` 显式撤销。
+  注意：数据库里只有「本群超级管理员」时**仍会**重新种子 `ADMIN_USER_IDS`，避免全局超管被锁死。
+
+角色能力对照：
+
+| 能力 | 全局超管 | 本群超管 | 群管理员 | 审核员 | 成员 |
+|---|---|---|---|---|---|
+| `/perm`、`/rules all`、`/bind user\|groupid`、`/whois` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `/approve`、`/reject`、`/rules set`、`/bind group` | ✅ | ✅（本群） | ✅（本群） | ❌ | ❌ |
+| `/pending`、`/sync`、`/audit`、`/test`、`/rules`、`/status` | ✅ | ✅（本群） | ✅（本群） | ✅（本群） | ❌ |
+| `/myperm`、`/help` | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+存储方式：本群超级管理员复用 `permission_grants` 的 `scope = 'super_admin'` + 非空 `group_id`（全局超管为 `group_id = ''`），因此**不需要改表结构**。
 
 ## 群规则与内容审核
 
@@ -213,6 +229,7 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 /rules set <group_openid|群号> <字段> <值>
 /audit <group_openid|群号> [数量]
 /status <group_openid|群号>
+/perm grant gsuper <group_openid|群号> <userId|QQ号>
 /perm grant admin <group_openid|群号> <userId|QQ号>
 /perm grant mod <group_openid|群号> <userId|QQ号>
 ```

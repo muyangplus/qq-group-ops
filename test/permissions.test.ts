@@ -74,4 +74,35 @@ describe("PermissionService", () => {
     expect(mutable.canApproveJoin("u1", "g1")).toBe(false);
     expect(mutable.canReviewContent("u2", "g1")).toBe(false);
   });
+
+  it("scopes group super admins to their own group only", () => {
+    const mutable = new PermissionService({
+      groupSuperAdminIds: new Map([["g1", new Set(["owner1"])]]),
+    });
+
+    // 本群内是最高权限
+    expect(mutable.levelFor("owner1", "g1")).toBe(PermissionLevel.SuperAdmin);
+    expect(mutable.canApproveJoin("owner1", "g1")).toBe(true);
+    expect(mutable.canManageRules("owner1", "g1")).toBe(true);
+    expect(mutable.isGroupSuperAdmin("owner1", "g1")).toBe(true);
+
+    // 其他群、私信、平台级判断都不受影响
+    expect(mutable.levelFor("owner1", "g2")).toBe(PermissionLevel.Member);
+    expect(mutable.levelFor("owner1", undefined)).toBe(PermissionLevel.Guest);
+    expect(mutable.isGroupSuperAdmin("owner1", "g2")).toBe(false);
+    expect(mutable.isSuperAdmin("owner1")).toBe(false);
+  });
+
+  it("grants and revokes group super admins", () => {
+    const mutable = new PermissionService();
+
+    mutable.grantGroupSuperAdmin("g1", "u1");
+    expect(mutable.isGroupSuperAdmin("u1", "g1")).toBe(true);
+    expect(mutable.listGroupSuperAdmins("g1")).toEqual(["u1"]);
+    expect(mutable.hasAnyGroupRole("u1", PermissionLevel.GroupAdmin)).toBe(true);
+
+    mutable.revokeGroupSuperAdmin("g1", "u1");
+    expect(mutable.isGroupSuperAdmin("u1", "g1")).toBe(false);
+    expect(mutable.levelFor("u1", "g1")).toBe(PermissionLevel.Member);
+  });
 });

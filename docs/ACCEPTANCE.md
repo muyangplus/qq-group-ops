@@ -42,6 +42,8 @@ B/C/D/G 组的核心链路（审批闭环、关键词警告与审计、按群隔
 | B5 | 群号绑定 | 群管理员 `/bind group <群号>` | `已绑定：group_openid ... ↔ 群号 ...` |
 | B6 | 强制绑定 | 未绑定用户在群里发 `/myperm` | 返回 `请先绑定 QQ 号：/bind qq <QQ号>` |
 | B7 | 权限持久化 | 超管 `/perm grant mod <QQ号>` 后重启进程 | `/myperm` 仍是 moderator，权限未回退 |
+| B8 | 本群超管只在本群生效 | 超管 `/perm grant gsuper <QQ号>`（在群 g1 内），再让该用户去另一个群执行 `/approve` | 群 g1 内可审批/改规则；别的群或私信中报「权限不足」；`/perm`、`/rules all` 始终被拒 |
+| B9 | 全局超管不被本群超管顶掉 | 只配置本群超管后重启进程 | 日志出现 `seeding super admins from configuration`，`ADMIN_USER_IDS` 仍是全局超管 |
 
 ## 2. 入群审批闭环（Phase 1 关键退出条件）
 
@@ -121,7 +123,7 @@ G 持久化：通过 / 未通过        备注：
 
 ```bash
 # 是否被限流（应只在首次启动出现 /gateway 请求）
-rg '"url":"https://api.sgroup.qq.com/gateway"' logs/qq-group-ops.log
+rg '"url":"https://api.bot.qq.com/gateway"' logs/qq-group-ops.log
 rg 'cooling down|rate limited' logs/qq-group-ops.log
 
 # 网关连接与重连

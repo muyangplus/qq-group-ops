@@ -6,6 +6,12 @@
 
 ### 新增
 
+- **权限模型拆分**：新增「本群超级管理员」（`/perm grant gsuper`，别名 `groupsuper` / `群超管` / `本群超管` / `群超级管理员`）。
+  - 只在该群内等价于 `super_admin`（可审批、改规则、查审计、导出），拿不到 `/perm`、`/rules all`、`/bind user|groupid`、`/whois` 等平台级能力；
+  - 每个群的角色单独配置，`/perm list` 与 `/myperm` 分别展示全局/本群超管；
+  - 复用 `permission_grants` 的 `scope='super_admin'` + 非空 `group_id` 存储，无需改表结构；
+  - `ADMIN_USER_IDS` 只在数据库里没有**全局**超管时作为种子（只存在本群超管时仍会种子，避免全局超管被锁死）。
+  - 说明：**不实现**按 QQ 群主/管理员自动授权——官方成员接口（返回 `member_role`）目前是内邀白名单能力，普通机器人会返回 11253。
 - 全局规则：`/rules all` 查看、`/rules set all <字段> <值>` 修改（`all` 也可写作 `global` / `default` / `全局` / `默认`），仅超级管理员可用。
   - 未单独配置的群继承全局规则；已配置的群按字段覆盖（例如群覆盖了 `keywords`，仍继承全局的 `autoApprove`）。
   - 全局配置持久化在 `group_configs` / `group_keywords` 的 `__default__` 行，重启不丢。
@@ -13,6 +19,8 @@
 ### 变更
 
 - `GroupConfigStore.setOverride({ groupId: "__default__" })` 从抛错改为更新全局默认配置；新增 `DEFAULT_GROUP_ID` 常量与 `builtinDefault` 访问器。
+- 官方调用域名从 `api.sgroup.qq.com` 迁移到 `api.bot.qq.com`（官方 2026-08-10 起统一域名）。
+- `/perm list` 第一行改为「全局超级管理员」，并新增「本群超级管理员」；`/myperm` 新增全局/本群超管两行。
 
 ## [0.1.0] - 2026-09-23
 

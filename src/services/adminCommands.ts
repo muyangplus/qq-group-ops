@@ -400,6 +400,8 @@ export class AdminCommandService {
       lines.push("/perm list [group_openid|群号] - 查看权限配置");
       lines.push("/perm grant super <userId|QQ号> - 授予全局超管");
       lines.push("/perm revoke super <userId|QQ号> - 撤销全局超管");
+      lines.push("/perm grant gsuper [group_openid|群号] <userId|QQ号> - 授予本群超管");
+      lines.push("/perm revoke gsuper [group_openid|群号] <userId|QQ号> - 撤销本群超管");
       lines.push("/perm grant admin [group_openid|群号] <userId|QQ号> - 授予群管理员");
       lines.push("/perm revoke admin [group_openid|群号] <userId|QQ号> - 撤销群管理员");
       lines.push("/perm grant mod [group_openid|群号] <userId|QQ号> - 授予审核员");
@@ -422,13 +424,19 @@ export class AdminCommandService {
       ok: true,
       text: [
         `你的权限等级：${level}`,
+        `全局超级管理员：${this.permissions.isSuperAdmin(userId)}`,
+        groupId
+          ? `本群超级管理员：${this.permissions.isGroupSuperAdmin(userId, groupId)}`
+          : undefined,
         groupId ? `当前群 ID：${groupId}` : "当前会话：私聊",
         `审核入群：${this.permissions.canApproveJoin(userId, groupId ?? "")}`,
         `管理规则：${this.permissions.canManageRules(userId, groupId ?? "")}`,
         `内容审核：${this.permissions.canReviewContent(userId, groupId ?? "")}`,
         `导出数据：${this.permissions.canExportData(userId, groupId ?? "")}`,
         `配置权限：${this.permissions.isSuperAdmin(userId)}`,
-      ].join("\n"),
+      ]
+        .filter((line): line is string => line !== undefined)
+        .join("\n"),
     };
   }
 
@@ -453,31 +461,33 @@ export class AdminCommandService {
 
     const role = normalize(parts[2]);
     const isSuperRole = role === "super" || role === "超管";
+    const isGroupSuperRole = GROUP_SUPER_ROLES.has(role);
     let targetGroupId: string | undefined;
     let targetUserId: string | undefined;
 
     if (isSuperRole) {
       targetUserId = this.resolveUserId(parts[3]);
+    } else if (isGroupSuperRole) {
+      targetGroupId = groupId ?? this.resolveTargetGroupId(undefined, parts[3]);
+      targetUserId = this.resolveUserId(groupId ? parts[3] : parts[4]);
     } else {
       targetGroupId = this.resolveTargetGroupId(groupId, parts[3]);
       targetUserId = this.resolveUserId(groupId ? parts[3] : parts[4]);
     }
 
-    if (!role || !targetUserId) {
-      return {
-        ok: false,
-        text:
-          "用法：\n" +
-          "/perm grant|revoke super <userId|QQ号>\n" +
-          "/perm grant|revoke admin|mod [group_openid|群号] <userId|QQ号>",
-      };
+    if (!role) {
+      return { ok: false, text: PERM_USAGE };
     }
 
     if (!isSuperRole && !targetGroupId) {
       return {
         ok: false,
-        text: "私信中配置群管理员/审核员需要提供 group_openid 或已绑定的群号。",
+        text: "私信中配置群角色需要提供 group_openid 或已绑定的群号。",
       };
+    }
+
+    if (!targetUserId) {
+      return { ok: false, text: PERM_USAGE };
     }
 
     try {
@@ -486,13 +496,7 @@ export class AdminCommandService {
       } else if (action === "revoke" || action === "撤销") {
         this.revokeRole(targetGroupId, role, targetUserId);
       } else {
-        return {
-          ok: false,
-          text:
-            "用法：\n" +
-            "/perm grant|revoke super <userId|QQ号>\n" +
-            "/perm grant|revoke admin|mod [group_openid|群号] <userId|QQ号>",
-        };
+        return { ok: false, text: PERM_USAGE };
       }
     } catch (error) {
       log.warn("permission config failed", {
@@ -520,11 +524,15 @@ export class AdminCommandService {
   }
 
   private formatPermissionList(groupId?: string): string {
-    const lines = [`超级管理员：${formatList(this.permissions.listSuperAdmins())}`];
+    const lines = [`全局超级管理员：${formatList(this.permissions.listSuperAdmins())}`];
     if (groupId) {
+      lines.push(
+        `本群超级管理员（${groupId}）：${formatList(this.permissions.listGroupSuperAdmins(groupId))}`,
+      );
       lines.push(`群管理员（${groupId}）：${formatList(this.permissions.listGroupAdmins(groupId))}`);
       lines.push(`审核员（${groupId}）：${formatList(this.permissions.listModerators(groupId))}`);
     } else {
+      lines.push("本群超级管理员：私信中请指定 group_openid");
       lines.push("群管理员：私信中请指定 group_openid");
       lines.push("审核员：私信中请指定 group_openid");
     }
@@ -542,6 +550,10 @@ export class AdminCommandService {
     }
     if (!groupId) {
       throw new Error("group_openid is required");
+    }
+    if (GROUP_SUPER_ROLES.has(role)) {
+      this.permissions.grantGroupSuperAdmin(groupId, targetUserId);
+      return;
     }
     if (role === "admin" || role === "管理员") {
       this.permissions.grantGroupAdmin(groupId, targetUserId);
@@ -565,6 +577,10 @@ export class AdminCommandService {
     }
     if (!groupId) {
       throw new Error("group_openid is required");
+    }
+    if (GROUP_SUPER_ROLES.has(role)) {
+      this.permissions.revokeGroupSuperAdmin(groupId, targetUserId);
+      return;
     }
     if (role === "admin" || role === "管理员") {
       this.permissions.revokeGroupAdmin(groupId, targetUserId);
@@ -970,6 +986,22 @@ const MAX_MUTE_DURATION_SECONDS = 30 * 24 * 60 * 60;
 const MAX_AUDIT_LIMIT = 50;
 const DEFAULT_AUDIT_LIMIT = 10;
 const GLOBAL_TARGETS = new Set(["all", "global", "default", "全局", "默认"]);
+/** `/perm grant gsuper` 的别名：本群超级管理员。 */
+const GROUP_SUPER_ROLES = new Set([
+  "gsuper",
+  "groupsuper",
+  "群超管",
+  "本群超管",
+  "群超级管理员",
+]);
+const PERM_USAGE = [
+  "用法：",
+  "/perm list [group_openid|群号]",
+  "/perm grant|revoke super <userId|QQ号> - 全局超级管理员",
+  "/perm grant|revoke gsuper [group_openid|群号] <userId|QQ号> - 本群超级管理员",
+  "/perm grant|revoke admin [group_openid|群号] <userId|QQ号> - 群管理员",
+  "/perm grant|revoke mod [group_openid|群号] <userId|QQ号> - 审核员",
+].join("\n");
 const TOGGLE_ON = new Set(["on", "true", "1", "yes", "y", "开", "启用", "是"]);
 const TOGGLE_OFF = new Set(["off", "false", "0", "no", "n", "关", "关闭", "否"]);
 const CLEAR_WORDS = new Set(["clear", "清空", "默认", "reset"]);

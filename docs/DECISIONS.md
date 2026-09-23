@@ -304,6 +304,32 @@
   - 单群配置与全局配置的优先级为：群覆盖 > 全局默认 > 内置默认；
   - 全局规则的写穿透使用独立的队列标签（`group-config.default.save` / `group-config.default.keywords`），便于日志排查。
 
+## ADR-0029：权限分为全局超管与本群超管，且不做 QQ 角色自动映射
+
+- 状态：已采纳
+- 背景：希望「群主/群管理员天然拥有该群的机器人管理权限」。核实官方文档后确认：`GET /v2/groups/{group_openid}/members`（每页 30 条、60 QPM）与 `GET /v2/groups/{group_openid}/members/{member_openid}`（30 QPM）确实返回 `member_role`（`member` / `owner` / `admin`），但两个接口都标注「该能力正在内邀接入中」，且未开通时返回 11253「应用无接口访问权限」（仅白名单机器人可用）。同时原权限模型只有「全局超级管理员」一个高层级，无法表达「只在这个群里是最高权限」。
+- 决策：
+  1. **拆分权限层级**：新增 `groupSuperAdminIds`（本群超级管理员）。`levelFor(userId, groupId)` 在该群内返回 `SuperAdmin`；`isSuperAdmin(userId)` 仍然只表示全局超管，平台级能力（`/perm`、`/rules all`、`/bind user|groupid`、`/whois`）继续只认它。
+  2. **本群超管只在本群生效**：没有群上下文（私信）或其他群时回落为 `Guest` / `Member`，不存在跨群权限。
+  3. **手工配置，不做自动映射**：不实现「按 QQ 群主/管理员自动授权」。等成员接口开放白名单后，可在此模型之上接入 `MemberRoleService` 作为角色来源，而无需改动权限层级。
+  4. **复用存储**：本群超管写成 `permission_grants` 的 `scope='super_admin'` + 非空 `group_id`（全局超管为 `group_id=''`），避免修改 CHECK 约束（SQLite 无法直接改列约束，需要重建表）。
+  5. **种子判定**：只有「存在 `scope='super_admin'` 且 `group_id=''`」时才算已有全局超管；数据库里只有本群超管时仍会用 `ADMIN_USER_IDS` 种子全局超管，避免把全局超管锁死。
+  6. **不豁免绑定**：角色授权不会绕过「除 `/help`、`/bind` 外必须先 `/bind qq`」的强制绑定要求。
+  7. 指令：`/perm grant|revoke gsuper`（别名 `groupsuper` / `群超管` / `本群超管` / `群超级管理员`）；`/perm list` 与 `/myperm` 分别展示本群超管与全局超管。
+- 理由：把「平台级」与「群级」彻底分开可以避免群级管理员获得跨群能力（越权风险），同时为将来的自动映射留好接口；不依赖白名单能力也能立刻交付可用价值。
+- 影响：
+  - `PermissionPolicy`/`PermissionService` 新增 `groupSuperAdminIds`、`isGroupSuperAdmin`、`grantGroupSuperAdmin`、`revokeGroupSuperAdmin`、`listGroupSuperAdmins`；
+  - `/myperm` 输出新增「全局超级管理员」「本群超级管理员」两行；
+  - `/perm list` 第一行由「超级管理员」改为「全局超级管理员」，并新增「本群超级管理员」；
+  - 私信中缺少群号时先提示「需要提供 group_openid」而不是直接给用法，减少歧义。
+
+## ADR-0030：官方调用域名迁移到 api.bot.qq.com
+
+- 状态：已采纳
+- 背景：官方变更记录（20260810）说明「接口调用域名统一为 `api.bot.qq.com`」；项目此前使用 `https://api.sgroup.qq.com`（旧域名仍可用，日志中可见请求成功）。
+- 决策：把 `DEFAULT_ENDPOINTS.baseUrl` 改为 `https://api.bot.qq.com`，同步更新测试断言与文档里的日志排查示例。token 域名 `https://bots.qq.com/app/getAppAccessToken` 不变。
+- 影响：`QQOfficialClient` 默认走新域名；如需回退可用 `endpoints` 选项覆盖（测试里已有自定义 endpoints 用例）。
+
 
 
 

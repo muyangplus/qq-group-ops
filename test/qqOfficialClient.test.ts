@@ -345,7 +345,7 @@ describe("QQOfficialClient", () => {
       "wss://gateway.example/websocket",
     );
     expect(transport.calls[0]?.method).toBe("GET");
-    expect(transport.calls[0]?.url).toBe("https://api.sgroup.qq.com/gateway");
+    expect(transport.calls[0]?.url).toBe("https://api.bot.qq.com/gateway");
   });
 
   it("returns the access token", async () => {
@@ -602,8 +602,8 @@ describe("QQOfficialClient caching and rate limiting", () => {
       await first.recallGroupMessage("g1", "m1");
       expect(firstTransport.calls.map((call) => call.url)).toEqual([
         "https://bots.qq.com/app/getAppAccessToken",
-        "https://api.sgroup.qq.com/gateway",
-        "https://api.sgroup.qq.com/v2/groups/g1/messages/m1",
+        "https://api.bot.qq.com/gateway",
+        "https://api.bot.qq.com/v2/groups/g1/messages/m1",
       ]);
 
       // 第二次构造模拟进程重启：不应再请求 token 与 /gateway

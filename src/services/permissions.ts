@@ -18,6 +18,7 @@ const LEVEL_RANK: Record<PermissionLevel, number> = {
 
 export interface PermissionPolicy {
   superAdminIds?: ReadonlySet<string>;
+  groupSuperAdminIds?: ReadonlyMap<string, ReadonlySet<string>>;
   groupAdminIds?: ReadonlyMap<string, ReadonlySet<string>>;
   moderatorIds?: ReadonlyMap<string, ReadonlySet<string>>;
 }
@@ -32,13 +33,21 @@ export class PermissionDeniedError extends Error {
 /**
  * 权限模型。
  *
+ * 分两个层级：
+ * - **全局超级管理员**：`ADMIN_USER_IDS` 种子或 `/perm grant super`，可管理平台级能力
+ *   （`/perm`、`/rules all`、`/bind user`、`/bind groupid`、`/whois`）；
+ * - **本群超级管理员**：`/perm grant gsuper`，只在被授权的群内等价于 `SuperAdmin`，
+ *   拿不到任何跨群或平台级能力。
+ *
  * 注入仓储后：
- * - `load()` 从数据库载入全部授权；仅当数据库里没有任何超级管理员时，才用
+ * - `load()` 从数据库载入全部授权；仅当数据库里没有任何**全局**超级管理员时，才用
  *   `ADMIN_USER_IDS` 作为初始种子并写回数据库；
- * - 授权 / 撤销同步更新内存，并写穿透到数据库。
+ * - 授权 / 撤销同步更新内存，并写穿透到数据库；
+ * - 本群超级管理员复用 `scope = super_admin` + 非空 `group_id` 存储，无需改表结构。
  */
 export class PermissionService {
   private readonly superAdminIds = new Set<string>();
+  private readonly groupSuperAdminIds = new Map<string, Set<string>>();
   private readonly groupAdminIds = new Map<string, Set<string>>();
   private readonly moderatorIds = new Map<string, Set<string>>();
   private readonly seedSuperAdminIds: ReadonlySet<string>;
@@ -52,6 +61,9 @@ export class PermissionService {
   ) {
     for (const userId of policy.superAdminIds ?? []) {
       this.superAdminIds.add(userId);
+    }
+    for (const [groupId, userIds] of policy.groupSuperAdminIds ?? []) {
+      this.groupSuperAdminIds.set(groupId, new Set(userIds));
     }
     for (const [groupId, userIds] of policy.groupAdminIds ?? []) {
       this.groupAdminIds.set(groupId, new Set(userIds));
@@ -74,13 +86,16 @@ export class PermissionService {
     }
     const grants = await this.repository.findAll();
     this.superAdminIds.clear();
+    this.groupSuperAdminIds.clear();
     this.groupAdminIds.clear();
     this.moderatorIds.clear();
     for (const grant of grants) {
       this.applyGrant(grant);
     }
-    const hasSuperAdmin = grants.some((grant) => grant.scope === "super_admin");
-    if (!hasSuperAdmin && this.seedSuperAdminIds.size > 0) {
+    const hasGlobalSuperAdmin = grants.some(
+      (grant) => grant.scope === "super_admin" && grant.groupId === "",
+    );
+    if (!hasGlobalSuperAdmin && this.seedSuperAdminIds.size > 0) {
       log.info("seeding super admins from configuration", {
         count: this.seedSuperAdminIds.size,
       });
@@ -101,6 +116,9 @@ export class PermissionService {
     }
     if (!groupId) {
       return PermissionLevel.Guest;
+    }
+    if (this.groupSuperAdminIds.get(groupId)?.has(userId)) {
+      return PermissionLevel.SuperAdmin;
     }
     if (this.groupAdminIds.get(groupId)?.has(userId)) {
       return PermissionLevel.GroupAdmin;
@@ -137,6 +155,7 @@ export class PermissionService {
 
   public hasAnyGroupRole(userId: string, required: PermissionLevel): boolean {
     const groupIds = new Set([
+      ...this.groupSuperAdminIds.keys(),
       ...this.groupAdminIds.keys(),
       ...this.moderatorIds.keys(),
     ]);
@@ -148,8 +167,17 @@ export class PermissionService {
     return false;
   }
 
+  /** 全局超级管理员：可管理平台级能力。 */
   public isSuperAdmin(userId: string): boolean {
     return this.superAdminIds.has(userId);
+  }
+
+  /** 本群超级管理员：仅在被授权的群内拥有最高权限。 */
+  public isGroupSuperAdmin(userId: string, groupId: string): boolean {
+    if (!groupId) {
+      return false;
+    }
+    return this.groupSuperAdminIds.get(groupId)?.has(userId) ?? false;
   }
 
   public grantSuperAdmin(userId: string): void {
@@ -164,6 +192,20 @@ export class PermissionService {
     const removed = this.superAdminIds.delete(userId);
     if (removed) {
       this.enqueueRemove({ scope: "super_admin", groupId: "", userId });
+    }
+    return removed;
+  }
+
+  public grantGroupSuperAdmin(groupId: string, userId: string): void {
+    this.ensureGroupSet(groupId, this.groupSuperAdminIds).add(userId);
+    this.enqueueSave({ scope: "super_admin", groupId, userId });
+  }
+
+  public revokeGroupSuperAdmin(groupId: string, userId: string): boolean {
+    const removed =
+      this.groupSuperAdminIds.get(groupId)?.delete(userId) ?? false;
+    if (removed) {
+      this.enqueueRemove({ scope: "super_admin", groupId, userId });
     }
     return removed;
   }
@@ -198,6 +240,10 @@ export class PermissionService {
     return [...this.superAdminIds].sort();
   }
 
+  public listGroupSuperAdmins(groupId: string): string[] {
+    return [...(this.groupSuperAdminIds.get(groupId) ?? [])].sort();
+  }
+
   public listGroupAdmins(groupId: string): string[] {
     return [...(this.groupAdminIds.get(groupId) ?? [])].sort();
   }
@@ -213,13 +259,24 @@ export class PermissionService {
   }
 
   private applyGrant(grant: PermissionGrant): void {
-    if (grant.scope === "super_admin") {
-      this.superAdminIds.add(grant.userId);
-      return;
+    switch (grant.scope) {
+      case "super_admin":
+        // groupId 为空 = 全局超级管理员；非空 = 本群超级管理员
+        if (grant.groupId) {
+          this.ensureGroupSet(grant.groupId, this.groupSuperAdminIds).add(
+            grant.userId,
+          );
+        } else {
+          this.superAdminIds.add(grant.userId);
+        }
+        return;
+      case "group_admin":
+        this.ensureGroupSet(grant.groupId, this.groupAdminIds).add(grant.userId);
+        return;
+      case "moderator":
+        this.ensureGroupSet(grant.groupId, this.moderatorIds).add(grant.userId);
+        return;
     }
-    const target =
-      grant.scope === "group_admin" ? this.groupAdminIds : this.moderatorIds;
-    this.ensureGroupSet(grant.groupId, target).add(grant.userId);
   }
 
   private enqueueSave(grant: PermissionGrant): void {
