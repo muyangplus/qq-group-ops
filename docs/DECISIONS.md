@@ -330,6 +330,53 @@
 - 决策：把 `DEFAULT_ENDPOINTS.baseUrl` 改为 `https://api.bot.qq.com`，同步更新测试断言与文档里的日志排查示例。token 域名 `https://bots.qq.com/app/getAppAccessToken` 不变。
 - 影响：`QQOfficialClient` 默认走新域名；如需回退可用 `endpoints` 选项覆盖（测试里已有自定义 endpoints 用例）。
 
+## ADR-0031：群扩展配置使用 `group_settings` 键值表，而不是给 `group_configs` 加列
+
+- 状态：已采纳
+- 背景：本阶段要给群规则增加 7 个字段（`keywordRecall`、`keywordPunish`、`joinDecision`、`joinRequireClass`、`joinRequireName`、`joinAnswerPattern`、`joinReviewOpinion`）。直接给 `group_configs` 加列会面临：SQLite 不支持 `ADD COLUMN IF NOT EXISTS`，且 `group_configs` 的建表语句与方言适配层需要同步维护，回归风险高、后续每加一个字段都要改 schema。
+- 决策：新增键值表 `group_settings`，`CREATE TABLE IF NOT EXISTS group_settings(group_id, setting_key, setting_value, updated_at, PRIMARY KEY(group_id, setting_key))`，承载这批扩展字段；原 `group_configs` 只保留既有列（`enabled`/`wordFilter` 等），并区分 `SETTING_FIELDS` 与 `SQL_FIELDS`：
+  1. `GroupConfigStore.persistGroupOverride` 只在该群的 SQL 列字段变化时重写 `group_configs` 行；
+  2. 扩展字段单独 upsert/delete 到 `group_settings`；
+  3. `load()` 先读 `group_configs`，再把 `group_settings` 按 `group_id` 合并进来；
+  4. 全局默认沿用 `__default__` 作为 `group_id`；
+  5. `Persistence` 暴露 `groupSettings` 仓储，`SqlGroupSettingsRepository` 实现 `findAll` / `save` / `remove` / `removeAll`。
+- 理由：`CREATE TABLE IF NOT EXISTS` 是幂等的，老库升级只需跑一次迁移即可新增表，**完全不需要 ALTER TABLE 或重建表**；键值表对 SQLite / PostgreSQL 语义一致；未来再加配置项只改 `SETTING_FIELDS` 与解析函数，动不到 schema。
+- 影响：
+  - 新增字段走 `/rules set <字段>` 与 `/rules set all <字段>` 两条路径（复用同一 key-value 写入）；
+  - `/rules`、`/rules all`、`/help rules` 的输出需要同时展示 SQL 列字段与扩展字段；
+  - 扩展字段的 `clear` 语义是删除该键（回到继承/默认），而不是写入空值。
+
+## ADR-0032：入群审核从「自动通过开关」升级为规则 + 决策模式
+
+- 状态：已采纳
+- 背景：实际场景是「入群问题必须回答 班级+姓名」。原来的 `autoApprove` 只能全自动通过，无法要求答案内容，也无法在答错时拒绝或转人工；同时机器人不能修改群昵称（见 ADR-0033），至少要把识别结果结构化地提供给审核人。
+- 决策：
+  1. 新增 `JoinRuleEvaluator`，输入是申请回答（`verify_message`）与群配置，输出 `{matched, className, name, major, college, year, missing, configIssue?, action, opinion}`；
+  2. 规则项为 `joinRequireClass`（答案必须包含班级库里的班级）、`joinRequireName`（必须包含姓名）、`joinAnswerPattern`（附加正则，保存时校验合法性）；
+  3. `joinDecision` 五档：`manual`（默认）、`auto_approve`、`approve_on_match`、`reject_on_match`、`reject_on_mismatch`；旧 `autoApprove on` 保留为 `auto_approve` 的便捷别名；
+  4. `JoinApprovalService.applyJoinRules` 取代 `autoApproveIfEnabled`，仍然**先官方、后本地**：官方审批失败时申请保持待审批；
+  5. 索引缺失、正则无效、规则无法判定时**一律回退人工**（`configIssue` 记录原因），绝不猜测放行；
+  6. `/rules set joinReviewOpinion on` 时 `/pending` 附带审核意见；`bot:auto` 作为自动决策的审核人写审计；
+  7. 班级数据来自 `data/class.json` 经 `pnpm class:index` 生成的 `data/class-index.json`（`MemberRoster` 负责加载与解析），原始数据与生成索引都**不提交仓库**。`CLASS_INDEX_YEARS` 控制在读入时就过滤年级（默认 2022-2026），避免无关历史班级进入匹配集合。
+- 理由：把「解析」与「决策」分开，解析结果可以同时用于审核意见、审计与未来功能；决策模式用枚举而非布尔组合，语义清晰且可测试；「先官方后本地」与「不确定就转人工」符合审核场景的安全默认。
+- 影响：
+  - 事件路由的 `join_request` 结果新增 `auto_approved` / `auto_rejected` / `queued`；
+  - `AdminCommandService` 新增 `joinRules` 依赖与 `/rules` 展示、`/pending` 意见渲染；
+  - 拒绝理由统一截断到 120 字符（官方限制）。
+
+## ADR-0033：不实现「入群后自动修改群昵称」（官方无该接口）
+
+- 状态：已采纳（受限于官方能力）
+- 背景：需求希望入群审核通过后自动把群昵称改成「班级+姓名」。核对官方开放平台「群聊管理」接口列表与变更记录后确认：**没有修改群成员昵称/群名片的接口**；能改昵称的接口只作用于机器人自身资料，成员相关接口只有查询成员、禁言、移出、黑名单等（成员查询本身还是内邀白名单能力）。
+- 决策：
+  1. 不实现自动改昵称，也不引入任何非官方（第三方协议 / Hook）方案绕过该限制；
+  2. 已识别出的班级/姓名结构化保留在 `JoinRuleEvaluator` 的输出里，通过 `/pending` 审核意见与结构化日志呈现，人工据此改名；
+  3. 解析结果可继续用于审计、导出与统计；
+  4. 如果官方以后开放昵称接口，只需在解析结果之上加一次 `setMemberNickname` 调用，规则层与配置层无需改动。
+- 理由：项目定位是「仅用 QQ 官方 API」，为了一个非核心功能引入非官方实现会破坏可维护性与合规性；人工改名一次的成本远低于维护第三方协议栈。
+- 影响：文档（README / CONFIGURATION / CHANGELOG）明确写出该限制与替代做法，避免使用者误以为配置后会自动改名片。
+
+
 
 
 

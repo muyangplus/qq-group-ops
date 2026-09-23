@@ -9,7 +9,7 @@
 - 技术路线：**仅使用 QQ 官方开放平台 API**，不使用 OneBot、NapCat、Lagrange 等个人号协议端。
 - 已实现：配置、结构化调试日志（控制台 + 文件 + auto 彩色）、领域模型、规则引擎、审计日志、权限模型、权限自助查询、超管权限配置、OpenID ↔ QQ号/群号映射、全状态持久化（SQLite 默认 / PostgreSQL 可选：绑定关系、权限、审计、入群申请、群配置、全量消息模式、活动报名）、数据保留清理（审计与已审批申请，启动 + 每 24 小时）、动态权限帮助、私信指令、全量消息模式诊断、多群配置、入群审核状态机、入群审批调用官方接口（含自动通过）、官方申请同步（`/sync`）、群配置关键词驱动的消息审核、`/rules set` 群规则配置、`/audit` 审计查询、官方禁言/踢人接口（请求体已按官方文档核对）、事件路由、事件网关抽象、官方 WebSocket 协议网关（自动重连 + Resume 会话恢复 + 心跳 ACK 超时检测 + 指数退避 + 限流冷却）、官方事件映射器、原生 WebSocket 工厂、access token 与网关地址持久化缓存、出站消息节流与 22009 重试、被动回复配额拦截、401 自动刷新、事件与回复失败容错、`/test` 自检指令、运行时装配、数据库 schema/迁移/方言适配与全部仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
 - 待实现：真实环境联调、Web 管理后台、内容安全与 AI 辅助。
-- 测试：Vitest，共 333 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
+- 测试：Vitest，共 363 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
 
 ## 技术栈
 
@@ -104,6 +104,7 @@ pnpm install --registry=https://registry.npmmirror.com
 
 ```bash
 pnpm dev         # 本地开发入口
+pnpm class:index # 可选：把 data/class.json 转成班级索引（入群审核规则用）
 pnpm db:up       # 可选：用 Docker Compose 启动 PostgreSQL
 pnpm test        # 运行 Vitest
 pnpm typecheck   # TypeScript 类型检查
@@ -197,6 +198,94 @@ pnpm start       # 运行编译后的入口
 - `/help` 与 `/help <主题>` 都**不要求绑定**，未绑定用户可以先看帮助；
 - 输入未知主题时会提示用法并回退到指令列表。
 
+## 关键词处罚与入群审核规则
+
+### 关键词命中后做什么（撤回 / 禁言 / 移出 / 拉黑）
+
+命中关键词默认只发警告，可以叠加撤回与处罚：
+
+```text
+/rules set keywordRecall on              # 命中后撤回消息
+/rules set keywordPunish mute            # 禁言，时长取 muteDuration
+/rules set keywordPunish kick            # 移出群
+/rules set keywordPunish kick_blacklist  # 移出并加入黑名单（一次调用）
+/rules set keywordPunish none            # 只警告（默认）
+/rules set muteDuration 600              # 禁言时长（秒）
+```
+
+| 动作 | 官方接口 | 限制 |
+|---|---|---|
+| 撤回 | `DELETE /v2/groups/{g}/messages/{id}` | 机器人需在群内；过旧的消息可能撤回失败 |
+| 禁言 | `POST .../restrict_chat_setting` | 机器人需为群管理员，最长 30 天 |
+| 移出 | `POST .../batch_remove_members` | **仅白名单机器人可用**（错误码 11253） |
+| 移出并拉黑 | 同上 + `add_to_member_blacklist: true` | 同上；纯拉黑用 `POST .../member_blacklist`，要求目标当前不在群中 |
+
+每个动作都是**尽力而为**：单个动作失败（撤回超时、未开通白名单等）只会在日志里体现，不会阻断其他动作；全部失败时 `/audit` 记录的审计状态为 `pending`。
+
+### 班级 / 专业库（`data/class.json` → 索引）
+
+把教务导出的原始 JSON 转成机器人可用的索引：
+
+```bash
+pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
+```
+
+- 默认只保留**年级 2022-2026**（可用 `CLASS_INDEX_YEARS=22-26` 调整，支持两位数年份）；
+- 输出 `classes`（班级名）、`majors`（专业）、`classInfo`（班级 → 专业/学院/年级）；
+- `data/` 已在 `.gitignore` 中，**真实班级数据不会提交到 Git**；
+- 索引文件路径可用 `CLASS_INDEX_FILE` 覆盖；索引缺失时班级类规则会**自动退化为人工审核**，不会误放行。
+
+### 入群审核规则（`班级+姓名` 示例）
+
+以「入群问题必须回答 班级+姓名，答对自动通过」为例：
+
+```text
+/rules set joinRequireClass on        # 答案必须包含班级库里的班级
+/rules set joinRequireName on         # 答案必须包含姓名
+/rules set joinDecision approve_on_match
+/rules set joinReviewOpinion on       # 未命中时在 /pending 给出审核意见
+```
+
+`joinDecision` 五个取值：
+
+| 取值 | 行为 |
+|---|---|
+| `manual` | 全部人工审核（默认） |
+| `auto_approve` | 全部自动通过（忽略规则） |
+| `approve_on_match` | 命中规则 → 通过；未命中 → 人工 |
+| `reject_on_match` | 命中规则 → 拒绝；未命中 → 人工 |
+| `reject_on_mismatch` | 未命中规则 → 拒绝；命中 → 人工（“必须回答正确”） |
+
+还可以追加自定义正则：
+
+```text
+/rules set joinAnswerPattern ^材化\d{4}\s+\S{2,4}$
+/rules set joinAnswerPattern clear
+```
+
+`/pending` 会给出审核意见（可用 `joinReviewOpinion off` 关闭）：
+
+```text
+1. r1 用户：XXXX 理由：材化2211 张三
+   审核意见（按当前入群规则自动生成）：
+     识别到：班级 材化2211（材料化学 / 化学与生命科学学院 / 2022 级）、姓名 张三
+     规则要求已全部满足
+     建议：通过
+     原始回答：材化2211 张三
+```
+
+自动决策同样遵循「先官方、后本地」：官方接口失败时申请保持待审批。规则缺失或正则写错时**一律转人工**，不会猜。
+
+### 入群后自动改群昵称：官方不支持
+
+官方开放平台「群聊管理」接口里**没有修改群成员昵称/群名片的接口**（已核对接口列表与变更记录），因此机器人无法自动把群昵称改成「班级+姓名」。
+
+可替代的做法：
+
+- 用上面的规则把 **班级 + 姓名** 解析出来，展示在 `/pending` 审核意见与日志里，人工照抄改名；
+- 解析结果也可用于审计与统计（`JoinRuleEvaluator` 已把班级/专业/学院/年级结构化）；
+- 若以后官方开放昵称接口，只需在 `JoinRuleEvaluator` 的输出之上接一个调用，规则层不用改。
+
 ## 配置群规则（完整示例）
 
 群规则决定机器人在这个群里做什么：关键词过滤、命中后的警告文案、是否审核入群、是否自动通过。规则保存在数据库里（SQLite / PostgreSQL），重启不丢；修改后立即生效，不需要重启机器人。
@@ -267,7 +356,7 @@ pnpm start       # 运行编译后的入口
 
 - 分隔符支持英文逗号 `,`、中文逗号 `，`、顿号 `、` 和空格，可混用；
 - 关键词会**去重、去空白并按字典序保存**，所以 `/rules` 里显示的顺序可能和输入顺序不同；
-- 命中任一关键词即触发**警告**：发送下面的「警告文案」，并写一条审计记录（`/audit` 可查）；
+- 命中任一关键词即触发一次审核动作：默认发送下面的「警告文案」，若配置了 `keywordRecall` / `keywordPunish` 还会撤回、禁言、移出或拉黑（见「关键词处罚与入群审核规则」），并写一条审计记录（`/audit` 可查）；
 - `clear`（也接受 `清空`、`默认`、`reset`）表示清空关键词；
 - 修改立即生效。
 
@@ -296,10 +385,11 @@ pnpm start       # 运行编译后的入口
 
 | 开关 | 作用 |
 |---|---|
-| `wordFilter` | 关键词过滤总开关；关闭后命中也不再警告，但关键词配置保留 |
-| `enabled` | 本群总开关；关闭后停止关键词审核与自动通过（管理指令仍可用） |
-| `joinAudit` | 目前只作为「自动通过」的前置条件；不会禁用 `/pending`、`/sync`、`/approve` |
-| `autoApprove` | 需要 `enabled` 与 `joinAudit` 同时开启才会自动通过新申请 |
+| `wordFilter` | 关键词过滤总开关；关闭后命中也不再警告/撤回/处罚，但关键词配置保留 |
+| `enabled` | 本群总开关；关闭后停止关键词审核与入群自动决策（管理指令仍可用） |
+| `joinAudit` | 入群审核总开关；关闭后不做自动决策，但不会禁用 `/pending`、`/sync`、`/approve` |
+| `autoApprove` | 便捷开关：开启后等价 `joinDecision auto_approve`（需要 `enabled` 与 `joinAudit` 同时开启） |
+| `joinDecision` | 更细的入群决策模式，见「关键词处罚与入群审核规则」 |
 | `export` | 目前仅存储与展示，导出能力的鉴权以权限模型为准 |
 
 ### 5. 禁言时长
@@ -310,7 +400,7 @@ pnpm start       # 运行编译后的入口
 
 单位是秒，取值必须是非负整数，上限 30 天（`2592000` 秒，超出会被截断）。
 
-> 当前版本关键词命中的动作固定为「警告」，禁言/踢人动作需要在 `src/services/moderation.ts` 的规则引擎中配置动作后才会用到这个时长，因此 `muteDuration` 属于预留配置。
+> 这个时长只在 `keywordPunish` 为 `mute`（或 `kick` 失败后需要改判禁言）时使用；默认动作是「只警告」，不会用到时长。
 
 ### 6. 全局规则（`all`）
 
@@ -325,6 +415,11 @@ pnpm start       # 运行编译后的入口
 /rules set all autoApprove off
 /rules set all muteDuration 600
 /rules set all enabled on
+/rules set all keywordRecall on          # 全局：命中后撤回
+/rules set all keywordPunish mute        # 全局：命中后禁言
+/rules set all joinDecision approve_on_match
+/rules set all joinRequireClass on
+/rules set all joinRequireName on
 /rules set all keywords clear           # 清空全局关键词
 ```
 
@@ -332,7 +427,7 @@ pnpm start       # 运行编译后的入口
 
 - `all` 也可以写成 `global` / `default` / `全局` / `默认`，例如 `/rules 全局`、`/rules set 全局 keywords 广告`；
 - **全局规则仅超级管理员可以查看与修改**（群管理员只能改自己群的规则）；
-- 全局规则持久化在数据库里（`group_configs` 中 `group_id = __default__` 的那一行 + `group_keywords`），重启不丢；
+- 全局规则持久化在数据库里（`group_configs` 中 `group_id = __default__` 的那一行 + `group_keywords`，扩展字段在 `group_settings` 里同用 `__default__`），重启不丢；
 - 群内执行时会照常要求「本群已绑定」；私信中直接执行即可（需要超级管理员且已绑定 QQ 号）；
 - 继承是**按字段**生效的：例如全局设了 `keywords 广告`，某群只设了 `autoApprove on`，那么该群仍然是「全局关键词 + 自己的 autoApprove」。
 
@@ -389,20 +484,27 @@ pnpm start       # 运行编译后的入口
 
 ### 8. 验证是否生效
 
-1. 在群里发一条包含关键词的消息，机器人应回复你配置的警告文案；
-2. `/audit` 查看最近记录，应出现 `moderation:warn`，reason 为 `命中关键词：<关键词>`；
+1. 在群里发一条包含关键词的消息，机器人应回复你配置的警告文案（若开了 `keywordRecall`，消息应先被撤回）；
+2. `/audit` 查看最近记录，应出现 `moderation:warn`（或 `moderation:recall` / `moderation:mute` / `moderation:kick`），reason 为 `命中关键词：<关键词>`；具体每个动作成功与否看日志（带 `_failed` 后缀），全部失败时审计状态为 `pending`；
 3. `/status` 查看该群运行状态（启用、过滤、全量消息模式等）。
 
 ### 9. 字段速查表
 
 | 字段 | 别名 | 取值 | 说明 |
 |---|---|---|---|
-| `keywords` | `keyword`、`关键词` | 关键词列表；`clear` 清空 | 命中即警告 |
+| `keywords` | `keyword`、`关键词` | 关键词列表；`clear` 清空 | 命中即触发下方的动作 |
 | `warning` | `warningMessage`、`警告` | 任意文案；`clear` 恢复默认 | 命中后发送的文案 |
-| `muteDuration` | `mute`、`禁言时长` | 非负整数秒，≤ `2592000` | 预留：禁言动作使用的时长 |
+| `keywordRecall` | `recall`、`撤回` | on / off | 命中后是否撤回消息 |
+| `keywordPunish` | `punish`、`处罚` | `none` / `mute` / `kick` / `kick_blacklist` | 命中后的处罚动作 |
+| `muteDuration` | `mute`、`禁言时长` | 非负整数秒，≤ `2592000` | 禁言动作使用的时长 |
 | `wordFilter` | `关键词过滤` | on / off | 关键词过滤总开关 |
-| `joinAudit` | `入群审核` | on / off | 自动通过的前置开关 |
-| `autoApprove` | `自动通过` | on / off | 新入群申请自动通过 |
+| `joinAudit` | `入群审核` | on / off | 入群审核总开关 |
+| `autoApprove` | `自动通过` | on / off | 新入群申请全部自动通过（旧开关，等价 `joinDecision auto_approve`） |
+| `joinDecision` | `入群决策`、`审核决策` | `manual` / `auto_approve` / `approve_on_match` / `reject_on_match` / `reject_on_mismatch` | 入群自动决策模式 |
+| `joinRequireClass` | `要求班级` | on / off | 答案必须包含班级库里的班级 |
+| `joinRequireName` | `要求姓名` | on / off | 答案必须包含姓名 |
+| `joinAnswerPattern` | `答案正则` | 正则；`clear` 清空 | 答案必须匹配的额外正则 |
+| `joinReviewOpinion` | `审核意见` | on / off | `/pending` 是否展示自动审核意见 |
 | `export` | `导出` | on / off | 导出开关（当前仅存储展示） |
 | `enabled` | `启用` | on / off | 本群机器人总开关 |
 
@@ -426,7 +528,12 @@ pnpm start       # 运行编译后的入口
 | `设置失败：xxx 需要 on 或 off` | 开关只能填 on/off 及其同义写法 |
 | `设置失败：禁言时长需要非负整数（秒）` | `muteDuration` 只能填数字 |
 | `私信中设置规则需要提供已绑定的 group_openid 或群号。` | 私信里必须写群号或 `group_openid`（全局规则写 `all`） |
+| `设置失败：keywordPunish 只能是 none/mute/kick/kick_blacklist` | 处罚动作取值写错 |
+| `设置失败：joinDecision 只能是 manual/auto_approve/approve_on_match/reject_on_match/reject_on_mismatch` | 入群决策取值写错 |
+| `设置失败：joinAnswerPattern 不是合法的正则（…）` | 正则写错了，会拒绝保存（写错的正则不会生效） |
 | 配了关键词但没反应 | 检查 `/rules`（或 `/rules all`）里 `启用` 与 `关键词过滤` 是否为 `true`；非 @ 的普通消息还需要群管理员在机器人资料页开启「接收所有消息」 |
+| 关键词命中了但没被移出/拉黑 | `batch_remove_members` 与黑名单接口仅白名单机器人可用（11253）；机器人需为群管理员。看日志里的 `_failed` 详情，`/audit` 里全部失败会显示 `pending` |
+| 入群申请没有自动通过/拒绝 | 检查 `joinDecision`、`joinRequireClass`/`joinRequireName`/`joinAnswerPattern`，以及 `data/class-index.json` 是否存在；索引缺失或正则无效会强制转人工 |
 
 更多细节见 [配置说明](docs/CONFIGURATION.md) 与 [真实环境验收清单](docs/ACCEPTANCE.md)。
 
@@ -445,6 +552,9 @@ pnpm start       # 运行编译后的入口
 │   ├── persistence.ts       # 数据库目标解析、连接与仓储装配
 │   └── main.ts              # 入口
 ├── test/                    # Vitest 测试
+├── scripts/
+│   └── build-class-index.mjs # pnpm class:index：data/class.json → data/class-index.json
+├── data/                    # 本地数据（gitignored）：class.json、class-index.json、SQLite 文件
 ├── package.json
 ├── tsconfig.json
 ├── vitest.config.ts
@@ -462,7 +572,7 @@ QQ 官方开放平台
       │
       ▼
 QQ Group Ops 核心服务
-  ├── 入群审核 / 同步
+  ├── 入群审核 / 同步 / 规则引擎（班级库）
   ├── 规则引擎 / 消息审核
   ├── 管理员命令
   ├── 活动报名

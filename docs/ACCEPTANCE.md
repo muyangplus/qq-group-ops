@@ -9,13 +9,14 @@
 
 ```bash
 pnpm install
+pnpm class:index          # 可选：配置班级+姓名入群规则时需要
 cp .env.example .env      # 填写 AppID / Secret / ADMIN_USER_IDS
 pnpm typecheck && pnpm test && pnpm build
 pnpm dev
 ```
 
 `pnpm test` 中的 `test/acceptance.test.ts` 已用真实 SQLite 文件 + 官方 API 测试替身自动跑通
-B/C/D/G 组的核心链路（审批闭环、关键词警告与审计、按群隔离、重启恢复、动态 `/help`），
+B/C/D/G 组的核心链路（审批闭环、关键词警告/处罚与审计、班级+姓名入群规则、按群隔离、重启恢复、动态 `/help`），
 因此人工验收只需聚焦**依赖真实 QQ 平台**的部分（真的进群、真的禁言/踢人、真实事件推送）。
 
 启动后应看到（`logs/qq-group-ops.log` 或控制台）：
@@ -56,6 +57,9 @@ B/C/D/G 组的核心链路（审批闭环、关键词警告与审计、按群隔
 | C4 | 拒绝 | `/reject <申请ID> 资料不完整` | 回复 `已拒绝...`，用户未进群，`/audit` 里 reason 为「资料不完整」 |
 | C5 | 官方失败不误报 | 权限不足/接口报错时执行 `/approve` | 返回 `审批失败：...`，`/pending` 里申请仍是待审批 |
 | C6 | 自动通过 | `/rules set autoApprove on` 后再有申请 | 无需人工操作即通过（日志 `auto approved join request`） |
+| C7 | 班级+姓名规则 | 先 `pnpm class:index`，再 `/rules set joinRequireClass on`、`/rules set joinRequireName on`、`/rules set joinDecision approve_on_match`、`/rules set joinReviewOpinion on`；用正确回答与错误回答各申请一次 | 正确 → 自动通过；错误 → 保持待审批，`/pending` 显示识别到的班级/姓名与「建议：人工审核」 |
+| C8 | 规则不误放行 | 删除/改名 `data/class-index.json`，或把 `joinAnswerPattern` 设成无效正则（应被拒绝保存），再触发一次申请 | 规则无法判定时一律转人工，日志有 `configIssue`，绝不会自动通过 |
+| C9 | 决策模式 | 分别试 `reject_on_match` 与 `reject_on_mismatch` | 命中/未命中按表格语义自动拒绝，且 `/audit` 里 reason 为截断后的审核意见 |
 
 > C3 依赖官方 `approval_join_request` 接口与机器人权限；若返回 `11253` 或权限错误，请确认机器人在该群的管理员身份与开放平台权限。
 
@@ -70,6 +74,8 @@ B/C/D/G 组的核心链路（审批闭环、关键词警告与审计、按群隔
 | D5 | 立即生效 | 追加一个关键词后立刻测试 | 无需重启即生效 |
 | D6 | 重启保留 | 重启进程后 `/rules` | 关键词仍在 |
 | D7 | 关闭过滤 | `/rules set wordFilter off` 后再发关键词 | 不再触发 |
+| D8 | 命中撤回 | `/rules set keywordRecall on` 后发含关键词的消息 | 消息被撤回，且仍发出警告；`/audit` 的 detail 含 `recall` |
+| D9 | 命中处罚 | `/rules set keywordPunish mute`（或 `kick` / `kick_blacklist`）后再发 | 该成员被禁言/移出/移出并拉黑；日志里能看到动作成功或 `*_failed`，全部失败时 `/audit` 状态为 `pending` 且警告仍会发出 |
 
 ## 4. 非 @ 指令识别
 
@@ -84,11 +90,12 @@ B/C/D/G 组的核心链路（审批闭环、关键词警告与审计、按群隔
 
 | # | 验收项 | 操作 | 预期结果 |
 |---|---|---|---|
-| F1 | 禁言 | 触发一次禁言动作（或临时把关键词动作配置为禁言） | 该成员被禁言，`/audit` 有记录 |
+| F1 | 禁言 | `/rules set keywordPunish mute` 后触发关键词 | 该成员被禁言（时长取 `muteDuration`），`/audit` 有记录 |
 | F2 | 解除禁言 | 时长为 0 | 立即解除 |
-| F3 | 踢人 | 触发踢人动作 | 成功；若返回 `11253` 说明应用未在白名单，需要向平台申请 |
+| F3 | 踢人 | `/rules set keywordPunish kick`（或 `kick_blacklist`）后触发关键词 | 成功；返回 `11253` 说明应用未在白名单，需要向平台申请 |
+| F4 | 纯拉黑 | 目标不在群时调用黑名单接口（`updateMemberBlacklist`） | 成功；目标是群成员时该接口会报错，属预期 |
 
-> 目前关键词命中默认动作是「警告」；禁言/踢人需要在规则引擎中配置对应动作（见 `src/services/moderation.ts`）。
+> 关键词命中的默认动作是「警告」；撤回与处罚由 `keywordRecall` / `keywordPunish` 配置（见 README「关键词处罚与入群审核规则」）。
 
 ## 6. 持久化与数据保留
 

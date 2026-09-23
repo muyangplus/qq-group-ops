@@ -155,10 +155,17 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 /rules set keywords clear                          # 清空关键词
 /rules set warning 本群禁止广告，请撤回。           # 自定义警告文案
 /rules set warning clear                           # 恢复默认警告文案
-/rules set muteDuration 600                        # 禁言时长（秒），供禁言动作使用
+/rules set keywordRecall on|off                    # 命中后是否撤回消息
+/rules set keywordPunish none|mute|kick|kick_blacklist  # 命中后的处罚动作
+/rules set muteDuration 600                        # 禁言时长（秒），供 mute 动作使用
 /rules set wordFilter on|off                       # 关键词过滤总开关
 /rules set joinAudit on|off                        # 入群审核开关
-/rules set autoApprove on|off                      # 自动通过入群申请
+/rules set autoApprove on|off                      # 全部自动通过（等价 joinDecision auto_approve）
+/rules set joinDecision manual|auto_approve|approve_on_match|reject_on_match|reject_on_mismatch
+/rules set joinRequireClass on|off                 # 答案必须包含班级库中的班级
+/rules set joinRequireName on|off                  # 答案必须包含姓名
+/rules set joinAnswerPattern <正则>|clear          # 追加自定义正则
+/rules set joinReviewOpinion on|off                # /pending 是否展示审核意见
 /rules set export on|off                           # 导出功能开关
 /rules set enabled on|off                          # 机器人本群总开关
 ```
@@ -172,10 +179,43 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 审核行为：
 
 - 群配置里的关键词会真正参与消息审核；命中后默认动作是**警告**（发送该群的警告文案并写入审计）。
+- `keywordRecall on` 会追加撤回；`keywordPunish` 可设为 `mute` / `kick` / `kick_blacklist`；动作**尽力而为**，单个失败不影响其他动作，失败会记在日志中（带 `_failed` 后缀）；全部失败时 `/audit` 里的审计状态为 `pending`。
 - 关键词按群隔离，修改后立即生效（规则引擎按群缓存，关键词变化时自动失效）。
 - 关键词会去重、去空白并按字典序保存，保证重启前后顺序一致。
 - 禁言动作使用官方 `restrict_chat_setting`（最长 30 天，机器人需为群管理员）。
-- 踢人动作使用官方 `batch_remove_members`，**该接口仅白名单机器人可用**，未开通时会返回错误码 11253。
+- 踢人动作使用官方 `batch_remove_members`，`kick_blacklist` 会在同一次调用里带 `add_to_member_blacklist: true`；**该接口仅白名单机器人可用**，未开通时会返回错误码 11253。
+- 单独拉黑（目标当前不在群中）使用 `POST /v2/groups/{g}/member_blacklist`。
+
+### 入群审核与班级库
+
+`joinDecision` 控制新申请怎么处理：
+
+| 取值 | 行为 |
+|---|---|
+| `manual`（默认） | 全部人工，只进 `/pending` |
+| `auto_approve` | 全部自动通过（忽略规则；`autoApprove on` 是其便捷别名） |
+| `approve_on_match` | 命中规则 → 通过，未命中 → 人工 |
+| `reject_on_match` | 命中规则 → 拒绝，未命中 → 人工 |
+| `reject_on_mismatch` | 未命中 → 拒绝，命中 → 人工 |
+
+规则由三项组成（可组合）：`joinRequireClass`（答案必须包含班级库里的班级）、`joinRequireName`（必须包含姓名）、`joinAnswerPattern`（附加正则）。`joinReviewOpinion on` 时 `/pending` 会展示识别出的班级/专业/学院/年级、缺失项与建议。
+
+班级库来自 `CLASS_INDEX_FILE`（默认 `data/class-index.json`），由 `pnpm class:index` 从 `data/class.json` 生成（默认保留 2022-2026 级，可用 `CLASS_INDEX_YEARS` 调整）。索引缺失、正则无效或规则无法判定时**一律回退人工审核**，不会误放行。原始 `data/class.json` 与生成的索引都在 `.gitignore` 中，不要提交。
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `CLASS_INDEX_FILE` | 否 | 班级索引文件路径，默认 `data/class-index.json` |
+| `CLASS_RAW_FILE` | 否 | 仅 `pnpm class:index` 使用：原始教务导出 JSON，默认 `data/class.json` |
+| `CLASS_INDEX_YEARS` | 否 | 仅 `pnpm class:index` 使用：保留的年级范围，默认 `2022-2026`（也接受 `22-26`） |
+
+```bash
+pnpm class:index
+# 等价于：
+CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json CLASS_INDEX_YEARS=22-26 \
+  node scripts/build-class-index.mjs
+```
+
+自动决策遵循「先官方、后本地」：官方审批接口调用失败时申请保持待审批状态。
 
 ### 全局规则（`all`）
 
@@ -312,6 +352,7 @@ pnpm db:up     # docker compose --profile postgres up -d db
 | `audit_records` | 审计记录 | `AuditLogStore` |
 | `join_requests` | 入群申请与审批结果 | `JoinAuditService` |
 | `group_configs` / `group_keywords` | 群配置与关键词 | `GroupConfigStore` |
+| `group_settings` | 群扩展配置（命中动作、入群审核规则等，键值对） | `GroupConfigStore` |
 | `group_message_modes` | 全量消息模式诊断 | `GroupMessageModeRegistry` |
 | `activities` / `activity_registrations` | 活动与报名 | `ActivityService` |
 

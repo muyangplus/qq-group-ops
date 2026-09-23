@@ -21,6 +21,25 @@
 - 全局规则：`/rules all` 查看、`/rules set all <字段> <值>` 修改（`all` 也可写作 `global` / `default` / `全局` / `默认`），仅超级管理员可用。
   - 未单独配置的群继承全局规则；已配置的群按字段覆盖（例如群覆盖了 `keywords`，仍继承全局的 `autoApprove`）。
   - 全局配置持久化在 `group_configs` / `group_keywords` 的 `__default__` 行，重启不丢。
+- **关键词处罚动作**：命中关键词不再只是警告。
+  - 新增 `/rules set keywordRecall on|off`（撤回）与 `/rules set keywordPunish none|mute|kick|kick_blacklist`；
+  - 每个动作**尽力而为**，单个失败只记日志（带 `_failed` 后缀），不阻断其他动作；全部失败时审计状态为 `pending`；
+  - 新增官方客户端 `removeGroupMember(..., { addToMemberBlacklist })` 与 `updateMemberBlacklist()`（`POST /v2/groups/{g}/member_blacklist`）。
+- **入群审核规则引擎**：由「全部自动通过」升级为可配置决策。
+  - `/rules set joinDecision manual|auto_approve|approve_on_match|reject_on_match|reject_on_mismatch`；
+  - 规则项：`joinRequireClass`（答案必须包含班级库中的班级）、`joinRequireName`（必须包含姓名）、`joinAnswerPattern`（自定义正则）；
+  - `/rules set joinReviewOpinion on|off` 控制 `/pending` 是否展示自动审核意见（识别到的班级/专业/学院/年级、缺失项、建议）；
+  - 索引缺失、正则无效或规则无法判定时**一律回退人工审核**；自动决策遵循「先官方、后本地」。
+- **班级 / 专业库**：`pnpm class:index` 把教务导出的 `data/class.json` 转成 `data/class-index.json`（默认保留 2022-2026 级，`CLASS_INDEX_YEARS` 可调）。
+  - 新增 `MemberRoster`（班级/专业/姓名解析）与 `JoinRuleEvaluator`；
+  - 原始数据与生成的索引都在 `.gitignore` 中，不会提交到仓库。
+- **群扩展配置持久化**：新增 `group_settings` 键值表（`group_id` + `setting_key` + `setting_value`），承载 `keywordRecall` / `keywordPunish` / `joinDecision` / `joinRequireClass` / `joinRequireName` / `joinAnswerPattern` / `joinReviewOpinion`。
+  - 与 `group_configs` 的列式字段分开存：新增扩展字段只需写键值表，**无需 ALTER TABLE**；SQLite 与 PostgreSQL 通用；
+  - `GroupConfigStore.persistGroupOverride` 只在该群的 SQL 列字段变化时更新 `group_configs`，扩展字段单独写 `group_settings`。
+
+### 已知限制
+
+- **无法自动修改群成员昵称/群名片**：官方开放平台「群聊管理」接口中没有该能力，已核对接口列表。入群审核识别到的「班级+姓名」会展示在 `/pending` 审核意见与日志中，供人工改名；若官方后续开放该接口，可在 `JoinRuleEvaluator` 输出之上直接接入。
 
 ### 变更
 
