@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { loadSettings } from "../src/config.js";
 import { createRuntime } from "../src/runtime.js";
+import { FakeIdentityBindingRepository } from "./helpers/fakeIdentityBindingRepository.js";
 
 describe("createRuntime", () => {
   it("falls back to fake mode without credentials", () => {
@@ -39,5 +40,50 @@ describe("createRuntime", () => {
     expect(result.kind).toBe("command");
     expect(result.ok).toBe(true);
     expect(result.text).toContain("r1");
+  });
+
+  it("loads persisted bindings into the identity map", async () => {
+    const repository = new FakeIdentityBindingRepository();
+    await repository.bind("user", "admin", "10001");
+    await repository.bind("group", "g1", "654321");
+
+    const runtime = createRuntime(loadSettings({ ADMIN_USER_IDS: "admin" }), {
+      identityBindings: repository,
+    });
+    await runtime.identityMap.reload();
+
+    expect(runtime.identityMap.persistent).toBe(true);
+    expect(runtime.identityMap.getQq("admin")).toBe("10001");
+    expect(runtime.identityMap.getGroupNumber("g1")).toBe("654321");
+  });
+
+  it("persists bindings made through the router and restores them after restart", async () => {
+    const repository = new FakeIdentityBindingRepository();
+    const first = createRuntime(loadSettings({}), {
+      identityBindings: repository,
+    });
+
+    const bind = await first.router.handle({
+      type: "private_message",
+      userId: "u1",
+      messageId: "m1",
+      content: "/bind qq 123456",
+    });
+    expect(bind.ok).toBe(true);
+    expect(repository.bindings).toEqual([
+      { kind: "user", officialId: "u1", externalId: "123456" },
+    ]);
+
+    const restarted = createRuntime(loadSettings({}), {
+      identityBindings: repository,
+    });
+    await restarted.identityMap.reload();
+    const query = await restarted.router.handle({
+      type: "private_message",
+      userId: "u1",
+      messageId: "m2",
+      content: "/myperm",
+    });
+    expect(query.ok).toBe(true);
   });
 });

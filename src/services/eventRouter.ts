@@ -68,7 +68,7 @@ export class EventRouter {
     switch (event.type) {
       case "group_message": {
         if (event.content.trim().startsWith("/")) {
-          const commandResult = this.adminCommands.handle(
+          const commandResult = await this.adminCommands.handle(
             event.groupId,
             event.userId,
             event.content,
@@ -109,7 +109,7 @@ export class EventRouter {
       }
       case "private_message": {
         if (event.content.trim().startsWith("/")) {
-          const result = this.adminCommands.handle(
+          const result = await this.adminCommands.handle(
             undefined,
             event.userId,
             event.content,
@@ -123,7 +123,7 @@ export class EventRouter {
         return { kind: "private_message", ok: true, text: "" };
       }
       case "admin_command": {
-        const result = this.adminCommands.handle(
+        const result = await this.adminCommands.handle(
           event.groupId,
           event.userId,
           event.text,

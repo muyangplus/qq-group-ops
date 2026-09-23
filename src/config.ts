@@ -3,6 +3,8 @@ export interface Settings {
   qqBotClientSecret: string;
   qqBotToken: string;
   qqBotSandbox: boolean;
+  /** 是否显式配置了 DATABASE_URL；未配置时退化为内存模式。 */
+  databaseConfigured: boolean;
   databaseUrl: string;
   adminUserIds: readonly string[];
   logLevel: string;
@@ -47,6 +49,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     qqBotClientSecret: env.QQ_BOT_CLIENT_SECRET ?? "",
     qqBotToken: env.QQ_BOT_TOKEN ?? "",
     qqBotSandbox: asBool(env.QQ_BOT_SANDBOX),
+    databaseConfigured: Boolean(env.DATABASE_URL?.trim()),
     databaseUrl:
       env.DATABASE_URL ??
       "postgres://qqbot:change-me@localhost:5432/qq_group_ops",

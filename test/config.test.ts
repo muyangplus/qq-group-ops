@@ -6,11 +6,20 @@ describe("loadSettings", () => {
   it("loads defaults", () => {
     const settings = loadSettings({});
     expect(hasQqCredentials(settings)).toBe(false);
+    expect(settings.databaseConfigured).toBe(false);
     expect(settings.rawMessageRetentionDays).toBe(0);
     expect(settings.auditLogRetentionDays).toBe(180);
     expect(settings.logFile).toBe("logs/qq-group-ops.log");
     expect(settings.logConsole).toBe(true);
     expect(settings.logColor).toBe("auto");
+  });
+
+  it("detects an explicit DATABASE_URL", () => {
+    expect(
+      loadSettings({ DATABASE_URL: "postgres://user:pass@db:5432/ops" })
+        .databaseConfigured,
+    ).toBe(true);
+    expect(loadSettings({ DATABASE_URL: "   " }).databaseConfigured).toBe(false);
   });
 
   it("loads environment values", () => {

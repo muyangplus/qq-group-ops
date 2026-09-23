@@ -134,28 +134,41 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 - 未绑定用户会返回：`请先绑定 QQ 号：/bind qq <QQ号>`。
 - 未绑定群会返回：`请先绑定本群：/bind group <群号>`。
 
-当前映射保存在内存中，重启后丢失；PostgreSQL 持久化待实现。
+绑定关系通过 `DATABASE_URL` 持久化到 PostgreSQL：
+
+- 配置了 `DATABASE_URL`：启动时自动建表并载入全部绑定，`/bind` 写入数据库，重启后仍然有效；成功回复会带上 `（已保存到数据库）`。
+- 数据库连接或迁移失败：启动直接报错退出，不会静默退化为内存模式。
+- 未配置 `DATABASE_URL`（或设为空）：退化为内存模式并输出警告，重启后绑定会丢失。
 
 ## 数据库
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `DATABASE_URL` | 生产是 | PostgreSQL 连接字符串 |
+| `DATABASE_URL` | 生产是 | PostgreSQL 连接字符串；留空表示使用内存模式 |
 
 示例：
 
 ```env
 DATABASE_URL=postgres://qqbot:change-me@localhost:5432/qq_group_ops
+# docker-compose.yml 的 db 服务密码，需要与 DATABASE_URL 中的密码一致
+POSTGRES_PASSWORD=change-me
 ```
 
-当前 PostgreSQL 相关代码包括：
+本地开发可以用 Docker Compose 只启动数据库：
 
-- `src/db/schema.ts`
-- `src/db/migrate.ts`
-- `src/db/pgQueryable.ts`
-- 审计 / 入群申请 / 群配置仓储
+```bash
+pnpm db:up
+pnpm dev
+```
 
-生产接入仍在继续完善。
+启动时会自动执行 `src/db/schema.ts` 中的迁移，当前持久化的表：
+
+- `identity_bindings`：OpenID ↔ QQ号 / 群号 绑定（已接入运行时）
+- `audit_records`：审计记录
+- `join_requests`：入群申请
+- `group_configs` / `group_keywords`：群配置
+
+其中审计、入群申请、群配置仓储已经实现，但服务层仍在内存中运行，持久化接线会在后续阶段完成。
 
 ## 日志
 

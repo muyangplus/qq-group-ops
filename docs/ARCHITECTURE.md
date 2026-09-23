@@ -40,6 +40,7 @@ TypeScript 核心服务
   ├── services/export.ts         信息导出
   ├── services/audit.ts          审计日志
   ├── services/permissions.ts    权限模型
+  ├── services/identityMap.ts    OpenID ↔ QQ号/群号 映射（内存缓存 + 写穿透）
   ├── adapters/qqOfficial.ts     官方 REST 客户端与传输抽象
   ├── adapters/fetchTransport.ts 原生 fetch 传输
   ├── adapters/fakeQqOfficial.ts 官方 API 测试替身
@@ -49,7 +50,9 @@ TypeScript 核心服务
   ├── db/schema.ts               PostgreSQL schema
   ├── db/auditRepository.ts      审计仓储
   ├── db/joinRequestRepository.ts 入群申请仓储
-  └── db/groupConfigRepository.ts 群配置仓储
+  ├── db/groupConfigRepository.ts 群配置仓储
+  ├── db/identityBindingRepository.ts 绑定关系仓储
+  └── persistence.ts             数据库连接、迁移与仓储装配
       │
       ▼
 Web 管理 API + 管理后台（Phase 2）
@@ -63,10 +66,11 @@ Web 管理 API + 管理后台（Phase 2）
 | `src/core/` | 领域模型、枚举、通用类型、日志与接口调试包装 |
 | `src/services/` | 规则引擎、审核流程、审计、权限、活动报名、信息导出、命令 |
 | `src/db/` | PostgreSQL schema、查询抽象与仓储 |
+| `src/persistence.ts` | 数据库连接、迁移与仓储装配 |
 | `src/config.ts` | 环境变量加载与校验 |
 | `src/core/logger.ts` | 结构化日志：控制台 + 文件 |
 | `src/core/instrumentation.ts` | 官方 API、HTTP、数据库、事件网关的调试包装 |
-| `src/runtime.ts` | 运行时装配：按配置选择真实/测试 API 并连接服务 |
+| `src/runtime.ts` | 运行时装配：按配置选择真实/测试 API 并连接服务，可注入数据库仓储 |
 | `src/dev.ts` | 开发入口，默认启用 debug 日志 |
 | `src/main.ts` | 生产入口 |
 | `test/` | Vitest 单元测试与集成测试 |

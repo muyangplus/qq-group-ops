@@ -130,7 +130,7 @@
 - 背景：官方事件只提供加密 OpenID，无法直接从 QQ 号或群号换算。
 - 决策：新增 `IdentityMapService`，并提供 `/bind` 系列指令维护映射；权限和群管理命令在接收参数时自动解析 QQ号/群号。
 - 理由：管理员可以继续用熟悉的 QQ号/群号操作，同时底层仍使用官方 OpenID 调用 API。
-- 影响：当前映射保存在内存中，重启后丢失；后续需要增加 PostgreSQL 持久化。
+- 影响：映射默认只保存在内存中；配置 `DATABASE_URL` 后由 ADR-0020 提供 PostgreSQL 持久化。
 
 ## ADR-0018：强制绑定 QQ 号和群号后才能使用
 
@@ -155,3 +155,12 @@
 - 决策：复用 `GROUP_AND_C2C_EVENT` intent，同时处理 `GROUP_AT_MESSAGE_CREATE` 和 `GROUP_MESSAGE_CREATE`；由群管理员在机器人资料页开启“接收所有消息”。
 - 理由：官方已提供群消息全量模式，代码侧无需额外协议分支。
 - 影响：开启前只有 @ 消息会触发；开启后非 @ 的 `/` 指令也会被识别和处理。
+
+## ADR-0020：绑定关系持久化到 PostgreSQL
+
+- 状态：已采纳
+- 背景：`/bind` 维护的 OpenID ↔ QQ号/群号映射原本只存在内存中，进程重启后丢失，用户需要反复重新绑定。
+- 决策：新增 `identity_bindings` 表与 `PostgresIdentityBindingRepository`；`IdentityMapService` 改为「内存缓存 + 写穿透」，启动时 `reload()` 载入全部绑定，写入失败时回滚内存并返回错误；`DATABASE_URL` 未配置时退化为纯内存模式并输出警告，已配置但连接失败则启动失败（避免静默降级）。
+- 理由：读取路径保持同步，不阻塞事件处理；写路径显式 `await`，保证用户看到“已绑定”时数据确已落库；表结构使用 `(kind, official_id)` 主键和 `(kind, external_id)` 唯一索引，保证一一映射。
+- 影响：`AdminCommandService.handle` 变为 `async`；`/bind` 成功回复会追加“（已保存到数据库）”；权限配置（`/perm`）仍为内存态，后续需要同样的仓储化。
+

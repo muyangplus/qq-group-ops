@@ -22,11 +22,11 @@ export class AdminCommandService {
     private readonly identityMap?: IdentityMapService,
   ) {}
 
-  public handle(
+  public async handle(
     groupId: string | undefined,
     userId: string,
     text: string,
-  ): CommandResult {
+  ): Promise<CommandResult> {
     const parts = text.trim().split(/\s+/u).filter((part) => part.length > 0);
     if (parts.length === 0) {
       return { ok: false, text: this.buildHelp(groupId, userId) };
@@ -99,11 +99,11 @@ export class AdminCommandService {
     }
   }
 
-  private handleBind(
+  private async handleBind(
     groupId: string | undefined,
     userId: string,
     parts: readonly string[],
-  ): CommandResult {
+  ): Promise<CommandResult> {
     const target = normalize(parts[1]);
     if (!target) {
       return {
@@ -122,9 +122,20 @@ export class AdminCommandService {
       if (!qq) {
         return { ok: false, text: "用法：/bind qq <QQ号>" };
       }
-      this.identityMap?.bindUser(userId, qq);
+      try {
+        await this.identityMap?.bindUser(userId, qq);
+      } catch (error) {
+        log.error("bind user qq failed", {
+          userId,
+          error: formatError(error),
+        });
+        return { ok: false, text: bindingFailureText() };
+      }
       log.info("bound user qq", { userId, qq });
-      return { ok: true, text: `已绑定：userId ${userId} ↔ QQ ${qq}` };
+      return {
+        ok: true,
+        text: `已绑定：userId ${userId} ↔ QQ ${qq}${bindingSavedSuffix(this.identityMap)}`,
+      };
     }
 
     if (target === "group") {
@@ -141,9 +152,23 @@ export class AdminCommandService {
       ) {
         return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
       }
-      this.identityMap?.bindGroup(groupId, groupNumber);
+      try {
+        await this.identityMap?.bindGroup(groupId, groupNumber);
+      } catch (error) {
+        log.error("bind group number failed", {
+          groupId,
+          userId,
+          error: formatError(error),
+        });
+        return { ok: false, text: bindingFailureText() };
+      }
       log.info("bound group number", { groupId, groupNumber, userId });
-      return { ok: true, text: `已绑定：group_openid ${groupId} ↔ 群号 ${groupNumber}` };
+      return {
+        ok: true,
+        text:
+          `已绑定：group_openid ${groupId} ↔ 群号 ${groupNumber}` +
+          bindingSavedSuffix(this.identityMap),
+      };
     }
 
     if (target === "user") {
@@ -155,9 +180,21 @@ export class AdminCommandService {
       if (!officialId || !qq) {
         return { ok: false, text: "用法：/bind user <userId> <QQ号>" };
       }
-      this.identityMap?.bindUser(officialId, qq);
+      try {
+        await this.identityMap?.bindUser(officialId, qq);
+      } catch (error) {
+        log.error("bind user failed", {
+          officialId,
+          operator: userId,
+          error: formatError(error),
+        });
+        return { ok: false, text: bindingFailureText() };
+      }
       log.info("bound user qq", { officialId, qq, operator: userId });
-      return { ok: true, text: `已绑定：userId ${officialId} ↔ QQ ${qq}` };
+      return {
+        ok: true,
+        text: `已绑定：userId ${officialId} ↔ QQ ${qq}${bindingSavedSuffix(this.identityMap)}`,
+      };
     }
 
     if (target === "groupid") {
@@ -169,7 +206,16 @@ export class AdminCommandService {
       if (!officialId || !groupNumber) {
         return { ok: false, text: "用法：/bind groupid <group_openid> <群号>" };
       }
-      this.identityMap?.bindGroup(officialId, groupNumber);
+      try {
+        await this.identityMap?.bindGroup(officialId, groupNumber);
+      } catch (error) {
+        log.error("bind group failed", {
+          officialId,
+          operator: userId,
+          error: formatError(error),
+        });
+        return { ok: false, text: bindingFailureText() };
+      }
       log.info("bound group number", {
         officialId,
         groupNumber,
@@ -177,7 +223,9 @@ export class AdminCommandService {
       });
       return {
         ok: true,
-        text: `已绑定：group_openid ${officialId} ↔ 群号 ${groupNumber}`,
+        text:
+          `已绑定：group_openid ${officialId} ↔ 群号 ${groupNumber}` +
+          bindingSavedSuffix(this.identityMap),
       };
     }
 
@@ -673,4 +721,16 @@ function normalize(value: string | undefined): string {
 
 function formatList(values: readonly string[]): string {
   return values.length > 0 ? values.join(", ") : "（空）";
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function bindingFailureText(): string {
+  return "绑定失败：数据库写入异常，请查看服务端日志后重试。";
+}
+
+function bindingSavedSuffix(identityMap?: IdentityMapService): string {
+  return identityMap?.persistent ? "（已保存到数据库）" : "";
 }

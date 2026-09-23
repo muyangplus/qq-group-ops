@@ -7,9 +7,9 @@
 - 当前阶段：**Node.js / TypeScript 重写完成，官方 WebSocket 网关已鉴权成功，MVP 核心进行中**
 - 已验证：官方 WebSocket 网关已收到 `Hello` 并完成 `READY` 鉴权。
 - 技术路线：**仅使用 QQ 官方开放平台 API**，不使用 OneBot、NapCat、Lagrange 等个人号协议端。
-- 已实现：配置、结构化调试日志（控制台 + 文件 + auto 彩色）、领域模型、规则引擎、审计日志、权限模型、权限自助查询、超管权限配置、OpenID ↔ QQ号/群号映射、动态权限帮助、私信指令、全量消息模式诊断、多群配置、入群审核状态机、入群申请同步、消息审核执行、事件路由、事件网关抽象、官方 WebSocket 协议网关、官方事件映射器、自动重连网关、原生 WebSocket 工厂、`/test` 自检指令、运行时装配、PostgreSQL schema/迁移/连接池适配与审计/入群申请/群配置仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
-- 待实现：映射与权限持久化、真实环境联调、自动重连与 Resume 恢复、PostgreSQL 生产连接与迁移命令、Web 管理后台、内容安全与 AI 辅助。
-- 测试：Vitest，共 149 个测试。
+- 已实现：配置、结构化调试日志（控制台 + 文件 + auto 彩色）、领域模型、规则引擎、审计日志、权限模型、权限自助查询、超管权限配置、OpenID ↔ QQ号/群号映射、绑定关系 PostgreSQL 持久化、动态权限帮助、私信指令、全量消息模式诊断、多群配置、入群审核状态机、入群申请同步、消息审核执行、事件路由、事件网关抽象、官方 WebSocket 协议网关、官方事件映射器、自动重连网关、原生 WebSocket 工厂、`/test` 自检指令、运行时装配、PostgreSQL schema/迁移/连接池适配与审计/入群申请/群配置/绑定关系仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
+- 待实现：权限配置持久化、审计与入群申请持久化接线、真实环境联调、自动重连与 Resume 恢复、Web 管理后台、内容安全与 AI 辅助。
+- 测试：Vitest，共 173 个测试。
 
 ## 技术栈
 
@@ -22,7 +22,7 @@
 | 类型检查 | TypeScript `tsc --noEmit` |
 | 构建 | TypeScript `tsc` |
 | HTTP 客户端 | 原生 `fetch` + 可替换 transport |
-| 数据库 | PostgreSQL（schema 与审计仓储已定义，生产接入待完成） |
+| 数据库 | PostgreSQL 16（绑定关系已持久化，其余服务逐阶段接线） |
 | 部署 | Docker Compose |
 | 许可证 | Apache-2.0 |
 
@@ -41,6 +41,7 @@
 - 私信指令支持（群管理指令需提供 `group_openid` 或已绑定群号）
 - `/bind` 绑定 QQ号 / 群号
 - 强制绑定 QQ 号和群号后才能使用（`/help`、`/bind` 除外）
+- 绑定关系写入 PostgreSQL，进程重启后不丢失
 - 支持直接用 QQ号 / 群号执行权限和群管理命令
 - `/test` 机器人自检指令
 - 多群统一默认配置 + 单群覆盖
@@ -83,6 +84,9 @@ corepack enable
 pnpm install
 cp .env.example .env
 # 然后按需填写 .env
+
+# 可选但推荐：启动本地 PostgreSQL 供绑定关系持久化
+pnpm db:up
 ```
 
 如果默认 npm 源不可用，可使用镜像：
@@ -101,11 +105,14 @@ pnpm install --registry=https://registry.npmmirror.com
 
 ```bash
 pnpm dev         # 本地开发入口
+pnpm db:up       # 用 Docker Compose 只启动 PostgreSQL
 pnpm test        # 运行 Vitest
 pnpm typecheck   # TypeScript 类型检查
 pnpm build       # 编译到 dist/
 pnpm start       # 运行编译后的入口
 ```
+
+`DATABASE_URL` 配置后，启动会自动建表并从数据库载入绑定关系；留空则退化为内存模式，绑定关系重启后丢失。
 
 ## 项目结构
 
@@ -116,8 +123,10 @@ pnpm start       # 运行编译后的入口
 ├── src/
 │   ├── adapters/            # 官方 API 客户端、fetch transport、测试替身
 │   ├── core/                # 领域模型与枚举
+│   ├── db/                  # PostgreSQL schema、迁移、查询抽象与仓储
 │   ├── services/            # 规则、审核、权限、活动、导出、命令
 │   ├── config.ts            # 环境配置
+│   ├── persistence.ts       # 数据库连接与仓储装配
 │   └── main.ts              # 入口
 ├── test/                    # Vitest 测试
 ├── package.json

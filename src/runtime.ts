@@ -10,6 +10,7 @@ import {
   instrumentTransport,
 } from "./core/instrumentation.js";
 import { getLogger } from "./core/logger.js";
+import type { IdentityBindingRepository } from "./db/identityBindingRepository.js";
 import { AdminCommandService } from "./services/adminCommands.js";
 import { InMemoryAuditLog } from "./services/audit.js";
 import { EventRouter } from "./services/eventRouter.js";
@@ -32,13 +33,21 @@ export interface Runtime {
   router: EventRouter;
 }
 
-export function createRuntime(settings: Settings = loadSettings()): Runtime {
+export interface RuntimeDependencies {
+  /** 注入后，OpenID ↔ QQ号 / 群号 绑定会写穿透到数据库。 */
+  identityBindings?: IdentityBindingRepository;
+}
+
+export function createRuntime(
+  settings: Settings = loadSettings(),
+  dependencies: RuntimeDependencies = {},
+): Runtime {
   const api = instrumentQQOfficialAPI(createApi(settings), getLogger("runtime"));
   const auditLog = new InMemoryAuditLog();
   const joinAudit = new JoinAuditService(auditLog);
   const configStore = new GroupConfigStore({ groupId: "__default__" });
   const groupMessageMode = new GroupMessageModeRegistry();
-  const identityMap = new IdentityMapService();
+  const identityMap = new IdentityMapService(dependencies.identityBindings);
   const permissions = new PermissionService({
     superAdminIds: new Set(settings.adminUserIds),
   });

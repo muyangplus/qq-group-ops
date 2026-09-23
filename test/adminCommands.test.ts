@@ -7,17 +7,19 @@ import { GroupConfigStore } from "../src/services/groupConfig.js";
 import { IdentityMapService } from "../src/services/identityMap.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
 import { PermissionService } from "../src/services/permissions.js";
+import { FakeIdentityBindingRepository } from "./helpers/fakeIdentityBindingRepository.js";
 
-describe("AdminCommandService", () => {
+describe("AdminCommandService", async () => {
   let auditLog: InMemoryAuditLog;
   let joinAudit: JoinAuditService;
   let configStore: GroupConfigStore;
   let identityMap: IdentityMapService;
+  let permissions: PermissionService;
   let service: AdminCommandService;
 
   beforeEach(() => {
     auditLog = new InMemoryAuditLog();
-    const permissions = new PermissionService({
+    permissions = new PermissionService({
       superAdminIds: new Set(["root"]),
       groupAdminIds: new Map([["g1", new Set(["admin"])]]),
       moderatorIds: new Map([["g1", new Set(["mod"])]]),
@@ -44,8 +46,8 @@ describe("AdminCommandService", () => {
     );
   });
 
-  it("shows only permitted commands in help", () => {
-    const member = service.handle("g1", "member", "/help");
+  it("shows only permitted commands in help", async () => {
+    const member = await service.handle("g1", "member", "/help");
     expect(member.ok).toBe(true);
     expect(member.text).toContain("/help");
     expect(member.text).toContain("/bind qq");
@@ -54,210 +56,210 @@ describe("AdminCommandService", () => {
     expect(member.text).not.toContain("/approve");
     expect(member.text).not.toContain("/perm");
 
-    const mod = service.handle("g1", "mod", "/help");
+    const mod = await service.handle("g1", "mod", "/help");
     expect(mod.text).toContain("/pending");
     expect(mod.text).toContain("/test");
     expect(mod.text).not.toContain("/approve");
     expect(mod.text).not.toContain("/perm");
 
-    const admin = service.handle("g1", "admin", "/help");
+    const admin = await service.handle("g1", "admin", "/help");
     expect(admin.text).toContain("/approve");
     expect(admin.text).not.toContain("/perm");
 
-    const root = service.handle("g1", "root", "/help");
+    const root = await service.handle("g1", "root", "/help");
     expect(root.text).toContain("/perm");
     expect(root.text).toContain("/whois");
   });
 
-  it("shows binding help when user is not bound", () => {
-    const result = service.handle("g1", "unbound", "/help");
+  it("shows binding help when user is not bound", async () => {
+    const result = await service.handle("g1", "unbound", "/help");
     expect(result.text).toContain("/bind qq");
     expect(result.text).not.toContain("/myperm");
   });
 
-  it("shows group binding help when group is not bound", () => {
-    const result = service.handle("g2", "root", "/help");
+  it("shows group binding help when group is not bound", async () => {
+    const result = await service.handle("g2", "root", "/help");
     expect(result.text).toContain("/bind group");
     expect(result.text).not.toContain("/myperm");
   });
 
-  it("rejects unknown commands", () => {
-    const result = service.handle("g1", "member", "/unknown");
+  it("rejects unknown commands", async () => {
+    const result = await service.handle("g1", "member", "/unknown");
     expect(result.ok).toBe(false);
     expect(result.text).toContain("未知指令");
   });
 
-  it("requires permission for pending", () => {
-    const result = service.handle("g1", "member", "/pending");
+  it("requires permission for pending", async () => {
+    const result = await service.handle("g1", "member", "/pending");
     expect(result.ok).toBe(false);
     expect(result.text).toContain("权限不足");
   });
 
-  it("lists pending requests for the group", () => {
+  it("lists pending requests for the group", async () => {
     joinAudit.submit("g1", "u1", "想加入", "r1");
     joinAudit.submit("g2", "u2", "其他群", "r2");
-    const result = service.handle("g1", "mod", "/pending");
+    const result = await service.handle("g1", "mod", "/pending");
     expect(result.ok).toBe(true);
     expect(result.text).toContain("r1");
     expect(result.text).not.toContain("r2");
   });
 
-  it("approves requests", () => {
+  it("approves requests", async () => {
     joinAudit.submit("g1", "u1", "想加入", "r1");
-    const result = service.handle("g1", "admin", "/approve r1");
+    const result = await service.handle("g1", "admin", "/approve r1");
     expect(result.ok).toBe(true);
     expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Approved);
   });
 
-  it("rejects requests with reason", () => {
+  it("rejects requests with reason", async () => {
     joinAudit.submit("g1", "u1", "想加入", "r1");
-    const result = service.handle("g1", "admin", "/reject r1 资料不完整");
+    const result = await service.handle("g1", "admin", "/reject r1 资料不完整");
     expect(result.ok).toBe(true);
     expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Rejected);
     expect(auditLog.all().at(-1)?.reason).toBe("资料不完整");
   });
 
-  it("reports invalid request ids", () => {
-    const result = service.handle("g1", "admin", "/approve missing");
+  it("reports invalid request ids", async () => {
+    const result = await service.handle("g1", "admin", "/approve missing");
     expect(result.ok).toBe(false);
     expect(result.text).toContain("审批失败");
   });
 
-  it("shows rules", () => {
-    const result = service.handle("g1", "mod", "/rules");
+  it("shows rules", async () => {
+    const result = await service.handle("g1", "mod", "/rules");
     expect(result.ok).toBe(true);
     expect(result.text).toContain("广告");
   });
 
-  it("shows status", () => {
-    const result = service.handle("g1", "mod", "/status");
+  it("shows status", async () => {
+    const result = await service.handle("g1", "mod", "/status");
     expect(result.ok).toBe(true);
     expect(result.text).toContain("全量消息模式");
     expect(result.text).toContain("禁言时长");
   });
 
-  it("responds to /test for reviewers", () => {
-    const result = service.handle("g1", "mod", "/test");
+  it("responds to /test for reviewers", async () => {
+    const result = await service.handle("g1", "mod", "/test");
     expect(result.ok).toBe(true);
     expect(result.text).toContain("测试成功");
     expect(result.text).toContain("待审批申请");
   });
 
-  it("requires permission for /test", () => {
-    const result = service.handle("g1", "member", "/test");
+  it("requires permission for /test", async () => {
+    const result = await service.handle("g1", "member", "/test");
     expect(result.ok).toBe(false);
     expect(result.text).toContain("权限不足");
   });
 
-  it("requires group binding before using group commands", () => {
-    const result = service.handle("g2", "root", "/status");
+  it("requires group binding before using group commands", async () => {
+    const result = await service.handle("g2", "root", "/status");
     expect(result.ok).toBe(false);
     expect(result.text).toContain("请先绑定本群");
   });
 
-  it("shows own permissions", () => {
-    const result = service.handle("g1", "member", "/myperm");
+  it("shows own permissions", async () => {
+    const result = await service.handle("g1", "member", "/myperm");
     expect(result.ok).toBe(true);
     expect(result.text).toContain("你的权限等级：member");
     expect(result.text).toContain("配置权限：false");
   });
 
-  it("allows super admin to list and grant permissions", () => {
-    const list = service.handle("g1", "root", "/perm list");
+  it("allows super admin to list and grant permissions", async () => {
+    const list = await service.handle("g1", "root", "/perm list");
     expect(list.ok).toBe(true);
     expect(list.text).toContain("超级管理员：root");
 
-    const grant = service.handle("g1", "root", "/perm grant mod u3");
+    const grant = await service.handle("g1", "root", "/perm grant mod u3");
     expect(grant.ok).toBe(true);
     expect(grant.text).toContain("u3");
 
-    const memberPermission = service.handle("g1", "u3", "/myperm");
+    const memberPermission = await service.handle("g1", "u3", "/myperm");
     expect(memberPermission.text).toContain("你的权限等级：moderator");
 
-    const revoke = service.handle("g1", "root", "/perm revoke mod u3");
+    const revoke = await service.handle("g1", "root", "/perm revoke mod u3");
     expect(revoke.ok).toBe(true);
   });
 
-  it("denies permission configuration to non-super-admin", () => {
-    const result = service.handle("g1", "admin", "/perm list");
+  it("denies permission configuration to non-super-admin", async () => {
+    const result = await service.handle("g1", "admin", "/perm list");
     expect(result.ok).toBe(false);
     expect(result.text).toContain("仅超级管理员");
   });
 
-  it("supports private binding commands", () => {
-    const result = service.handle(undefined, "member", "/bind qq 999999");
+  it("supports private binding commands", async () => {
+    const result = await service.handle(undefined, "member", "/bind qq 999999");
     expect(result.ok).toBe(true);
     expect(identityMap.getQq("member")).toBe("999999");
   });
 
-  it("requires group_openid for group commands in private", () => {
-    const missing = service.handle(undefined, "root", "/pending");
+  it("requires group_openid for group commands in private", async () => {
+    const missing = await service.handle(undefined, "root", "/pending");
     expect(missing.ok).toBe(false);
     expect(missing.text).toContain("group_openid");
 
-    const withGroup = service.handle(undefined, "root", "/pending g1");
+    const withGroup = await service.handle(undefined, "root", "/pending g1");
     expect(withGroup.ok).toBe(true);
   });
 
-  it("configures group permissions from private with group_openid", () => {
-    const grant = service.handle(undefined, "root", "/perm grant mod g1 u4");
+  it("configures group permissions from private with group_openid", async () => {
+    const grant = await service.handle(undefined, "root", "/perm grant mod g1 u4");
     expect(grant.ok).toBe(true);
     expect(grant.text).toContain("u4");
 
-    const groupPermission = service.handle("g1", "u4", "/myperm");
+    const groupPermission = await service.handle("g1", "u4", "/myperm");
     expect(groupPermission.text).toContain("你的权限等级：moderator");
   });
 
-  it("binds and resolves user QQ numbers", () => {
-    const bind = service.handle("g1", "member", "/bind qq 123456");
+  it("binds and resolves user QQ numbers", async () => {
+    const bind = await service.handle("g1", "member", "/bind qq 123456");
     expect(bind.ok).toBe(true);
     expect(identityMap.resolveUserId("123456")).toBe("member");
   });
 
-  it("binds current group number and resolves it", () => {
-    const bind = service.handle("g1", "admin", "/bind group 654321");
+  it("binds current group number and resolves it", async () => {
+    const bind = await service.handle("g1", "admin", "/bind group 654321");
     expect(bind.ok).toBe(true);
     expect(identityMap.resolveGroupId("654321")).toBe("g1");
 
-    const status = service.handle(undefined, "root", "/status 654321");
+    const status = await service.handle(undefined, "root", "/status 654321");
     expect(status.ok).toBe(true);
     expect(status.text).toContain("群号：654321");
   });
 
-  it("resolves QQ numbers when granting permissions", () => {
-    service.handle("g1", "member", "/bind qq 123456");
-    const grant = service.handle("g1", "root", "/perm grant mod 123456");
+  it("resolves QQ numbers when granting permissions", async () => {
+    await service.handle("g1", "member", "/bind qq 123456");
+    const grant = await service.handle("g1", "root", "/perm grant mod 123456");
     expect(grant.ok).toBe(true);
     expect(identityMap.resolveUserId("123456")).toBe("member");
 
-    const permission = service.handle("g1", "member", "/myperm");
+    const permission = await service.handle("g1", "member", "/myperm");
     expect(permission.text).toContain("你的权限等级：moderator");
   });
 
-  it("allows super admin to bind arbitrary ids and query mappings", () => {
-    const userBind = service.handle(
+  it("allows super admin to bind arbitrary ids and query mappings", async () => {
+    const userBind = await service.handle(
       undefined,
       "root",
       "/bind user openid-user 111111",
     );
     expect(userBind.ok).toBe(true);
-    const groupBind = service.handle(
+    const groupBind = await service.handle(
       undefined,
       "root",
       "/bind groupid openid-group 222222",
     );
     expect(groupBind.ok).toBe(true);
 
-    const whoisUser = service.handle(undefined, "root", "/whois 111111");
+    const whoisUser = await service.handle(undefined, "root", "/whois 111111");
     expect(whoisUser.ok).toBe(true);
     expect(whoisUser.text).toContain("openid-user");
-    const whoisGroup = service.handle(undefined, "root", "/whois 222222");
+    const whoisGroup = await service.handle(undefined, "root", "/whois 222222");
     expect(whoisGroup.ok).toBe(true);
     expect(whoisGroup.text).toContain("openid-group");
   });
 
-  it("denies arbitrary binding to non-super-admin", () => {
-    const result = service.handle(
+  it("denies arbitrary binding to non-super-admin", async () => {
+    const result = await service.handle(
       undefined,
       "admin",
       "/bind user openid-user 111111",
@@ -266,20 +268,62 @@ describe("AdminCommandService", () => {
     expect(result.text).toContain("仅超级管理员");
   });
 
-  it("requires QQ binding before using commands", () => {
-    const denied = service.handle("g1", "unbound", "/myperm");
+  it("requires QQ binding before using commands", async () => {
+    const denied = await service.handle("g1", "unbound", "/myperm");
     expect(denied.ok).toBe(false);
     expect(denied.text).toContain("请先绑定 QQ 号");
 
-    const bind = service.handle("g1", "unbound", "/bind qq 999999");
+    const bind = await service.handle("g1", "unbound", "/bind qq 999999");
     expect(bind.ok).toBe(true);
 
-    const allowed = service.handle("g1", "unbound", "/myperm");
+    const allowed = await service.handle("g1", "unbound", "/myperm");
     expect(allowed.ok).toBe(true);
   });
 
-  it("rejects unbound group numbers in private", () => {
-    const result = service.handle(undefined, "root", "/pending 999999");
+  it("rejects unbound group numbers in private", async () => {
+    const result = await service.handle(undefined, "root", "/pending 999999");
     expect(result.ok).toBe(false);
+  });
+
+  it("surfaces persistence failures and keeps the previous binding", async () => {
+    const repository = new FakeIdentityBindingRepository();
+    const map = new IdentityMapService(repository);
+    await map.bindUser("member", "10001");
+    const localService = new AdminCommandService(
+      permissions,
+      joinAudit,
+      configStore,
+      undefined,
+      map,
+    );
+
+    repository.failNextBind = true;
+    const result = await localService.handle("g1", "member", "/bind qq 999999");
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("绑定失败");
+    expect(map.getQq("member")).toBe("10001");
+    expect(map.resolveUserId("999999")).toBeUndefined();
+  });
+
+  it("marks persisted bindings when a repository is attached", async () => {
+    const repository = new FakeIdentityBindingRepository();
+    const map = new IdentityMapService(repository);
+    await map.bindUser("member", "10001");
+    const localService = new AdminCommandService(
+      permissions,
+      joinAudit,
+      configStore,
+      undefined,
+      map,
+    );
+
+    const result = await localService.handle("g1", "member", "/bind qq 10002");
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("已保存到数据库");
+    expect(repository.bindings).toEqual([
+      { kind: "user", officialId: "member", externalId: "10002" },
+    ]);
   });
 });

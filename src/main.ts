@@ -6,6 +6,7 @@ import { instrumentEventGateway } from "./core/instrumentation.js";
 import { closeLogging, configureLogging, getLogger } from "./core/logger.js";
 import { loadEnvFile } from "./env.js";
 import { attachGateway } from "./gatewayRunner.js";
+import { connectPersistence } from "./persistence.js";
 import { createRuntime } from "./runtime.js";
 
 async function main(): Promise<void> {
@@ -19,12 +20,20 @@ async function main(): Promise<void> {
   });
   const log = getLogger("main");
 
-  const runtime = createRuntime(settings);
+  const persistence = await connectPersistence(settings);
+  const runtime = createRuntime(
+    settings,
+    persistence ? { identityBindings: persistence.identityBindings } : {},
+  );
+  if (persistence) {
+    await runtime.identityMap.reload();
+  }
 
   log.info("qq-group-ops Node.js runtime");
   log.info("configuration loaded", {
     qqCredentialsConfigured: hasQqCredentials(settings),
     runtimeMode: runtime.mode,
+    persistenceEnabled: Boolean(persistence),
     rawMessageRetentionDays: settings.rawMessageRetentionDays,
     auditLogRetentionDays: settings.auditLogRetentionDays,
     logLevel: settings.logLevel,
@@ -33,6 +42,7 @@ async function main(): Promise<void> {
 
   if (runtime.mode === "fake") {
     log.warn("fake mode: official WebSocket gateway not started");
+    await persistence?.close();
     await closeLogging();
     return;
   }
@@ -64,6 +74,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (): Promise<void> => {
     await gateway.stop();
+    await persistence?.close();
     await closeLogging();
     process.exit(0);
   };

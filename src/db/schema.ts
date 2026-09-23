@@ -45,4 +45,16 @@ CREATE TABLE IF NOT EXISTS group_keywords (
   keyword TEXT NOT NULL,
   PRIMARY KEY (group_id, keyword)
 );
+
+CREATE TABLE IF NOT EXISTS identity_bindings (
+  kind TEXT NOT NULL CHECK (kind IN ('user', 'group')),
+  official_id TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (kind, official_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS identity_bindings_kind_external_idx
+  ON identity_bindings (kind, external_id);
 `.trim();
