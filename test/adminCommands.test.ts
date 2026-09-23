@@ -306,7 +306,7 @@ describe("AdminCommandService", async () => {
     expect(map.resolveUserId("999999")).toBeUndefined();
   });
 
-  it("marks persisted bindings when a repository is attached", async () => {
+  it("writes bindings through to the repository", async () => {
     const repository = new FakeIdentityBindingRepository();
     const map = new IdentityMapService(repository);
     await map.bindUser("member", "10001");
@@ -321,7 +321,7 @@ describe("AdminCommandService", async () => {
     const result = await localService.handle("g1", "member", "/bind qq 10002");
 
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("已保存到数据库");
+    expect(result.text).toContain("已绑定");
     expect(repository.bindings).toEqual([
       { kind: "user", officialId: "member", externalId: "10002" },
     ]);

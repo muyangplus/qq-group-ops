@@ -109,7 +109,6 @@ for (const driver of TEST_DATABASES) {
           content: "/bind qq 123456",
         });
         expect(bind.ok).toBe(true);
-        expect(bind.text).toContain("已保存到数据库");
         await first.flush();
 
         const restarted = createPersistentRuntime(await database.restart());

@@ -162,7 +162,7 @@
 - 背景：`/bind` 维护的 OpenID ↔ QQ号/群号映射原本只存在内存中，进程重启后丢失，用户需要反复重新绑定。
 - 决策：新增 `identity_bindings` 表与 `PostgresIdentityBindingRepository`；`IdentityMapService` 改为「内存缓存 + 写穿透」，启动时 `reload()` 载入全部绑定，写入失败时回滚内存并返回错误；`DATABASE_URL` 未配置时退化为纯内存模式并输出警告，已配置但连接失败则启动失败（避免静默降级）。
 - 理由：读取路径保持同步，不阻塞事件处理；写路径显式 `await`，保证用户看到“已绑定”时数据确已落库；表结构使用 `(kind, official_id)` 主键和 `(kind, external_id)` 唯一索引，保证一一映射。
-- 影响：`AdminCommandService.handle` 变为 `async`；`/bind` 成功回复会追加“（已保存到数据库）”；其余状态由 ADR-0021 统一持久化。
+- 影响：`AdminCommandService.handle` 变为 `async`；`/bind` 会等待写库完成并反馈明确结果；其余状态由 ADR-0021 统一持久化。
 
 ## ADR-0021：全部状态写穿透持久化
 

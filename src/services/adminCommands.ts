@@ -134,7 +134,7 @@ export class AdminCommandService {
       log.info("bound user qq", { userId, qq });
       return {
         ok: true,
-        text: `已绑定：userId ${userId} ↔ QQ ${qq}${bindingSavedSuffix(this.identityMap)}`,
+        text: `已绑定：userId ${userId} ↔ QQ ${qq}`,
       };
     }
 
@@ -165,9 +165,7 @@ export class AdminCommandService {
       log.info("bound group number", { groupId, groupNumber, userId });
       return {
         ok: true,
-        text:
-          `已绑定：group_openid ${groupId} ↔ 群号 ${groupNumber}` +
-          bindingSavedSuffix(this.identityMap),
+        text: `已绑定：group_openid ${groupId} ↔ 群号 ${groupNumber}`,
       };
     }
 
@@ -193,7 +191,7 @@ export class AdminCommandService {
       log.info("bound user qq", { officialId, qq, operator: userId });
       return {
         ok: true,
-        text: `已绑定：userId ${officialId} ↔ QQ ${qq}${bindingSavedSuffix(this.identityMap)}`,
+        text: `已绑定：userId ${officialId} ↔ QQ ${qq}`,
       };
     }
 
@@ -223,9 +221,7 @@ export class AdminCommandService {
       });
       return {
         ok: true,
-        text:
-          `已绑定：group_openid ${officialId} ↔ 群号 ${groupNumber}` +
-          bindingSavedSuffix(this.identityMap),
+        text: `已绑定：group_openid ${officialId} ↔ 群号 ${groupNumber}`,
       };
     }
 
@@ -729,8 +725,4 @@ function formatError(error: unknown): string {
 
 function bindingFailureText(): string {
   return "绑定失败：数据库写入异常，请查看服务端日志后重试。";
-}
-
-function bindingSavedSuffix(identityMap?: IdentityMapService): string {
-  return identityMap?.persistent ? "（已保存到数据库）" : "";
 }
