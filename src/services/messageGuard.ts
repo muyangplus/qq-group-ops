@@ -32,6 +32,11 @@ export interface MessageGuardResult {
 
 export class MessageGuardService {
   private readonly auditLog: AuditLog;
+  /** 按群缓存的规则引擎，避免每条消息都重建；关键词变化时自动失效。 */
+  private readonly engines = new Map<
+    string,
+    { keywordsKey: string; engine: RuleEngine }
+  >();
 
   public constructor(
     private readonly api: QQOfficialAPI,
@@ -42,6 +47,22 @@ export class MessageGuardService {
     this.auditLog = auditLog;
   }
 
+  /**
+   * 群配置里的关键词会转换成规则，与静态规则合并后用于本群。
+   * 关键词命中默认动作是警告，内容取该群的 warningMessage。
+   */
+  private engineFor(config: EffectiveGroupConfig): RuleEngine {
+    const keywordsKey = config.keywords.join("\u0000");
+    const cached = this.engines.get(config.groupId);
+    if (cached && cached.keywordsKey === keywordsKey) {
+      return cached.engine;
+    }
+    const keywordEngine = RuleEngine.fromKeywords(config.keywords);
+    const engine = new RuleEngine([...this.rules.rules, ...keywordEngine.rules]);
+    this.engines.set(config.groupId, { keywordsKey, engine });
+    return engine;
+  }
+
   public async handleMessage(message: IncomingMessage): Promise<MessageGuardResult> {
     const config = this.configStore.get(message.groupId);
     if (!config.enabled || !config.wordFilterEnabled) {
@@ -49,12 +70,13 @@ export class MessageGuardService {
       return this.result(message, ModerationAction.Allow, [], false, "disabled");
     }
 
-    const matches = this.rules.evaluate(message.content);
+    const engine = this.engineFor(config);
+    const matches = engine.evaluate(message.content);
     if (matches.length === 0) {
       return this.result(message, ModerationAction.Allow, [], false, "no_match");
     }
 
-    const action = this.rules.highestAction(message.content);
+    const action = engine.highestAction(message.content);
     log.info("rule matched", {
       groupId: message.groupId,
       userId: message.userId,

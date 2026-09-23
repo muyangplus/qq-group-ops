@@ -83,3 +83,84 @@ describe("MessageGuardService", () => {
     expect(api.sentMessages).toEqual([]);
   });
 });
+
+describe("MessageGuardService keyword rules", () => {
+  let api: FakeQQOfficialAPI;
+  let auditLog: AuditLogStore;
+  let configStore: GroupConfigStore;
+  let service: MessageGuardService;
+
+  beforeEach(() => {
+    api = new FakeQQOfficialAPI();
+    auditLog = new AuditLogStore();
+    configStore = new GroupConfigStore({ groupId: "__default__" });
+    // 静态规则为空，验证审核能力完全来自群配置关键词
+    service = new MessageGuardService(api, new RuleEngine(), configStore, auditLog);
+  });
+
+  it("uses group keywords to warn and audits the match", async () => {
+    configStore.setOverride({ groupId: "g1", keywords: ["广告"] });
+
+    const result = await service.handleMessage(
+      newIncomingMessage("g1", "u1", "m1", "这是广告内容"),
+    );
+
+    expect(result.action).toBe(ModerationAction.Warn);
+    expect(result.executed).toBe(true);
+    expect(api.sentMessages).toHaveLength(1);
+    expect(api.sentMessages[0]?.content).toContain("请遵守群规");
+    expect(auditLog.all()[0]?.reason).toBe("命中关键词：广告");
+  });
+
+  it("uses the group warning message", async () => {
+    configStore.setOverride({
+      groupId: "g1",
+      keywords: ["广告"],
+      warningMessage: "本群禁止广告，请撤回。",
+    });
+
+    await service.handleMessage(newIncomingMessage("g1", "u1", "m1", "广告"));
+
+    expect(api.sentMessages[0]?.content).toBe("本群禁止广告，请撤回。");
+  });
+
+  it("keeps keywords per group", async () => {
+    configStore.setOverride({ groupId: "g1", keywords: ["广告"] });
+
+    const other = await service.handleMessage(
+      newIncomingMessage("g2", "u1", "m2", "广告"),
+    );
+
+    expect(other.action).toBe(ModerationAction.Allow);
+    expect(other.detail).toBe("no_match");
+    expect(api.sentMessages).toEqual([]);
+  });
+
+  it("picks up keyword changes without restarting", async () => {
+    const before = await service.handleMessage(
+      newIncomingMessage("g1", "u1", "m1", "刷屏"),
+    );
+    expect(before.action).toBe(ModerationAction.Allow);
+
+    configStore.setOverride({ groupId: "g1", keywords: ["刷屏"] });
+    const after = await service.handleMessage(
+      newIncomingMessage("g1", "u2", "m2", "刷屏"),
+    );
+    expect(after.action).toBe(ModerationAction.Warn);
+  });
+
+  it("skips groups with the word filter disabled", async () => {
+    configStore.setOverride({
+      groupId: "g1",
+      keywords: ["广告"],
+      wordFilterEnabled: false,
+    });
+
+    const result = await service.handleMessage(
+      newIncomingMessage("g1", "u1", "m1", "广告"),
+    );
+
+    expect(result.action).toBe(ModerationAction.Allow);
+    expect(result.detail).toBe("disabled");
+  });
+});
