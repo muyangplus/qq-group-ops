@@ -3,6 +3,7 @@ import { getLogger } from "../core/logger.js";
 import type { GroupConfigStore } from "./groupConfig.js";
 import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
 import type { IdentityMapService } from "./identityMap.js";
+import type { JoinApprovalService } from "./joinApproval.js";
 import type { JoinAuditService } from "./joinAudit.js";
 import type { PermissionService } from "./permissions.js";
 
@@ -18,6 +19,7 @@ export class AdminCommandService {
     private readonly permissions: PermissionService,
     private readonly joinAudit: JoinAuditService,
     private readonly configStore: GroupConfigStore,
+    private readonly joinApproval: JoinApprovalService,
     private readonly groupMessageMode?: GroupMessageModeRegistry,
     private readonly identityMap?: IdentityMapService,
   ) {}
@@ -562,11 +564,11 @@ export class AdminCommandService {
     return { ok: true, text: lines.join("\n") };
   }
 
-  private handleApprove(
+  private async handleApprove(
     groupId: string | undefined,
     userId: string,
     parts: readonly string[],
-  ): CommandResult {
+  ): Promise<CommandResult> {
     const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
     const requestId = groupId ? parts[1]?.trim() : parts[2]?.trim();
     if (!targetGroupId || !requestId) {
@@ -583,20 +585,20 @@ export class AdminCommandService {
       if (request.groupId !== targetGroupId) {
         return { ok: false, text: "申请不属于该群。" };
       }
-      this.joinAudit.approve(requestId, userId);
+      await this.joinApproval.approve(targetGroupId, requestId, userId);
     } catch (error) {
-      log.warn("approve failed", { requestId, error: String(error) });
-      return { ok: false, text: `审批失败：${String(error)}` };
+      log.warn("approve failed", { requestId, error: formatError(error) });
+      return { ok: false, text: `审批失败：${formatError(error)}` };
     }
     log.info("approved join request", { requestId, userId });
     return { ok: true, text: `已通过入群申请 ${requestId}。` };
   }
 
-  private handleReject(
+  private async handleReject(
     groupId: string | undefined,
     userId: string,
     parts: readonly string[],
-  ): CommandResult {
+  ): Promise<CommandResult> {
     const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
     const requestId = groupId ? parts[1]?.trim() : parts[2]?.trim();
     if (!targetGroupId || !requestId) {
@@ -616,10 +618,10 @@ export class AdminCommandService {
       if (request.groupId !== targetGroupId) {
         return { ok: false, text: "申请不属于该群。" };
       }
-      this.joinAudit.reject(requestId, userId, reason);
+      await this.joinApproval.reject(targetGroupId, requestId, userId, reason);
     } catch (error) {
-      log.warn("reject failed", { requestId, error: String(error) });
-      return { ok: false, text: `审批失败：${String(error)}` };
+      log.warn("reject failed", { requestId, error: formatError(error) });
+      return { ok: false, text: `审批失败：${formatError(error)}` };
     }
     log.info("rejected join request", {
       requestId,

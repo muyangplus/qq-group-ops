@@ -10,6 +10,8 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
   public readonly removedMembers: Array<[string, string]> = [];
   public readonly joinRequests = new Map<string, Record<string, unknown>>();
   public readonly joinRequestReviews: Array<[string, string, boolean, string]> = [];
+  /** 置为 true 后 approveJoinRequest 抛出错误，便于测试失败路径。 */
+  public failJoinRequestApprovals = false;
 
   public async getAccessToken(): Promise<string> {
     return "fake-token";
@@ -61,6 +63,9 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
     approve: boolean,
     reason = "",
   ): Promise<void> {
+    if (this.failJoinRequestApprovals) {
+      throw new Error("fake approval failure");
+    }
     this.joinRequestReviews.push([groupId, memberOpenid, approve, reason]);
   }
 

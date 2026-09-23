@@ -2,6 +2,7 @@ import type { ModerationAction } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import { newIncomingMessage } from "../core/models.js";
 import type { AdminCommandService } from "./adminCommands.js";
+import type { JoinApprovalService } from "./joinApproval.js";
 import type { JoinAuditService } from "./joinAudit.js";
 import type { MessageGuardService } from "./messageGuard.js";
 
@@ -57,6 +58,7 @@ export class EventRouter {
     private readonly messageGuard: MessageGuardService,
     private readonly joinAudit: JoinAuditService,
     private readonly adminCommands: AdminCommandService,
+    private readonly joinApproval?: JoinApprovalService,
   ) {}
 
   public async handle(event: QQEvent): Promise<EventRouterResult> {
@@ -102,7 +104,15 @@ export class EventRouter {
             event.reason ?? "",
             event.requestId,
           );
-          return { kind: "join_request", ok: true, detail: "queued" };
+          const autoApproved = await this.joinApproval?.autoApproveIfEnabled(
+            event.groupId,
+            event.requestId,
+          );
+          return {
+            kind: "join_request",
+            ok: true,
+            detail: autoApproved ? "auto_approved" : "queued",
+          };
         } catch (error) {
           return { kind: "join_request", ok: false, detail: String(error) };
         }

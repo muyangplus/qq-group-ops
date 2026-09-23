@@ -30,6 +30,7 @@ import { ExportService } from "./services/export.js";
 import { GroupConfigStore } from "./services/groupConfig.js";
 import { GroupMessageModeRegistry } from "./services/groupMessageMode.js";
 import { IdentityMapService } from "./services/identityMap.js";
+import { JoinApprovalService } from "./services/joinApproval.js";
 import { JoinAuditService } from "./services/joinAudit.js";
 import { MessageGuardService } from "./services/messageGuard.js";
 import { RuleEngine } from "./services/moderation.js";
@@ -104,10 +105,12 @@ export function createRuntime(
     configStore,
     auditLog,
   );
+  const joinApproval = new JoinApprovalService(api, joinAudit, configStore);
   const adminCommands = new AdminCommandService(
     permissions,
     joinAudit,
     configStore,
+    joinApproval,
     groupMessageMode,
     identityMap,
   );
@@ -133,7 +136,7 @@ export function createRuntime(
     activity,
     exportService,
     writeQueue,
-    router: new EventRouter(messageGuard, joinAudit, adminCommands),
+    router: new EventRouter(messageGuard, joinAudit, adminCommands, joinApproval),
     load,
     flush: () => writeQueue.flush(),
   };

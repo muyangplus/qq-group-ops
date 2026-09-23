@@ -1,10 +1,12 @@
 import { describe, expect, it, beforeEach } from "vitest";
 
+import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { JoinRequestStatus } from "../src/core/enums.js";
 import { AdminCommandService } from "../src/services/adminCommands.js";
 import { AuditLogStore } from "../src/services/audit.js";
 import { GroupConfigStore } from "../src/services/groupConfig.js";
 import { IdentityMapService } from "../src/services/identityMap.js";
+import { JoinApprovalService } from "../src/services/joinApproval.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
 import { PermissionService } from "../src/services/permissions.js";
 import { FakeIdentityBindingRepository } from "./helpers/fakeIdentityBindingRepository.js";
@@ -15,6 +17,8 @@ describe("AdminCommandService", async () => {
   let configStore: GroupConfigStore;
   let identityMap: IdentityMapService;
   let permissions: PermissionService;
+  let api: FakeQQOfficialAPI;
+  let joinApproval: JoinApprovalService;
   let service: AdminCommandService;
 
   beforeEach(() => {
@@ -29,6 +33,8 @@ describe("AdminCommandService", async () => {
       groupId: "__default__",
       keywords: ["广告"],
     });
+    api = new FakeQQOfficialAPI();
+    joinApproval = new JoinApprovalService(api, joinAudit, configStore);
     identityMap = new IdentityMapService();
     identityMap.bindUser("member", "10001");
     identityMap.bindUser("mod", "10002");
@@ -41,6 +47,7 @@ describe("AdminCommandService", async () => {
       permissions,
       joinAudit,
       configStore,
+      joinApproval,
       undefined,
       identityMap,
     );
@@ -109,6 +116,7 @@ describe("AdminCommandService", async () => {
     const result = await service.handle("g1", "admin", "/approve r1");
     expect(result.ok).toBe(true);
     expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Approved);
+    expect(api.joinRequestReviews).toEqual([["g1", "u1", true, ""]]);
   });
 
   it("rejects requests with reason", async () => {
@@ -117,6 +125,20 @@ describe("AdminCommandService", async () => {
     expect(result.ok).toBe(true);
     expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Rejected);
     expect(auditLog.all().at(-1)?.reason).toBe("资料不完整");
+    expect(api.joinRequestReviews).toEqual([
+      ["g1", "u1", false, "资料不完整"],
+    ]);
+  });
+
+  it("keeps the request pending when the official approval fails", async () => {
+    joinAudit.submit("g1", "u1", "想加入", "r1");
+    api.failJoinRequestApprovals = true;
+
+    const result = await service.handle("g1", "admin", "/approve r1");
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("审批失败");
+    expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Pending);
   });
 
   it("reports invalid request ids", async () => {
@@ -293,6 +315,7 @@ describe("AdminCommandService", async () => {
       permissions,
       joinAudit,
       configStore,
+      joinApproval,
       undefined,
       map,
     );
@@ -314,6 +337,7 @@ describe("AdminCommandService", async () => {
       permissions,
       joinAudit,
       configStore,
+      joinApproval,
       undefined,
       map,
     );

@@ -6,6 +6,7 @@ import { AdminCommandService } from "../src/services/adminCommands.js";
 import { AuditLogStore } from "../src/services/audit.js";
 import { EventRouter } from "../src/services/eventRouter.js";
 import { GroupConfigStore } from "../src/services/groupConfig.js";
+import { JoinApprovalService } from "../src/services/joinApproval.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
 import { MessageGuardService } from "../src/services/messageGuard.js";
 import { RuleEngine } from "../src/services/moderation.js";
@@ -14,6 +15,7 @@ import { PermissionService } from "../src/services/permissions.js";
 describe("EventRouter", () => {
   let api: FakeQQOfficialAPI;
   let joinAudit: JoinAuditService;
+  let configStore: GroupConfigStore;
   let router: EventRouter;
 
   beforeEach(() => {
@@ -24,7 +26,7 @@ describe("EventRouter", () => {
       groupAdminIds: new Map([["g1", new Set(["admin"])]]),
       moderatorIds: new Map([["g1", new Set(["mod"])]]),
     });
-    const configStore = new GroupConfigStore({ groupId: "__default__" });
+    configStore = new GroupConfigStore({ groupId: "__default__" });
     const rules = new RuleEngine([
       { ruleId: "warn", pattern: "广告", action: ModerationAction.Warn },
     ]);
@@ -34,12 +36,14 @@ describe("EventRouter", () => {
       configStore,
       auditLog,
     );
+    const joinApproval = new JoinApprovalService(api, joinAudit, configStore);
     const adminCommands = new AdminCommandService(
       permissions,
       joinAudit,
       configStore,
+      joinApproval,
     );
-    router = new EventRouter(messageGuard, joinAudit, adminCommands);
+    router = new EventRouter(messageGuard, joinAudit, adminCommands, joinApproval);
   });
 
   it("routes group messages through the guard service", async () => {
@@ -65,7 +69,27 @@ describe("EventRouter", () => {
     });
     expect(result.kind).toBe("join_request");
     expect(result.ok).toBe(true);
+    expect(result.detail).toBe("queued");
     expect(joinAudit.pending("g1")).toHaveLength(1);
+    expect(api.joinRequestReviews).toEqual([]);
+  });
+
+  it("auto approves join requests when the group config enables it", async () => {
+    configStore.setOverride({ groupId: "g1", autoApproveJoin: true });
+
+    const result = await router.handle({
+      type: "join_request",
+      groupId: "g1",
+      userId: "u1",
+      requestId: "r1",
+      reason: "想加入",
+    });
+
+    expect(result.detail).toBe("auto_approved");
+    expect(api.joinRequestReviews).toEqual([
+      ["g1", "u1", true, "自动通过（群配置）"],
+    ]);
+    expect(joinAudit.get("r1").status).toBe("approved");
   });
 
   it("routes admin commands", async () => {
