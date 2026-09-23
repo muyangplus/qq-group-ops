@@ -86,6 +86,19 @@ export const SETTING_FIELDS = [
 
 export type GroupSettingKey = (typeof SETTING_FIELDS)[number];
 
+/**
+ * 所有会真正写入数据库的配置字段（`group_configs` 列 + `group_settings` 键值）。
+ *
+ * 新增规则字段时必须加进 `SQL_FIELDS` 或 `SETTING_FIELDS`，否则只会留在内存里；
+ * `test/groupConfig.test.ts` 会用这份清单校验「配置字段 = 可持久化字段」。
+ */
+export const PERSISTED_CONFIG_FIELDS = [
+  ...SQL_FIELDS,
+  ...SETTING_FIELDS,
+] as const satisfies readonly (keyof GroupConfigOverride)[];
+
+export type PersistedConfigField = (typeof PERSISTED_CONFIG_FIELDS)[number];
+
 const DEFAULT_CONFIG: EffectiveGroupConfig = {
   groupId: DEFAULT_GROUP_ID,
   enabled: true,

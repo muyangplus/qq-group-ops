@@ -54,7 +54,7 @@ export function buildJoinRequestCard(
   }
   lines.push(
     "",
-    `请审核：点击下方按钮，或发送 \`${approveCommand}\` / \`${rejectCommand}\``,
+    `请审核：点击下方按钮，或发送 ${approveCommand} / ${rejectCommand}`,
   );
 
   const markdown = lines.join("\n");

@@ -979,4 +979,41 @@ describe("AdminCommandService", async () => {
     expect(topic.ok).toBe(false);
     expect(topic.text).toContain("权限不足");
   });
+
+  it("lets a global super admin read group command help in private", async () => {
+    for (const topic of [
+      "rules",
+      "approve",
+      "reject",
+      "notify",
+      "pending",
+      "sync",
+      "audit",
+      "status",
+      "test",
+    ]) {
+      const result = await service.handle(undefined, "root", `/help ${topic}`);
+      expect(result.ok, `${topic}: ${result.text}`).toBe(true);
+      expect(result.text).toContain(`/${topic} —`);
+      expect(result.text).not.toContain("权限不足");
+    }
+  });
+
+  it("still denies group command help to users without any role", async () => {
+    const result = await service.handle(undefined, "member", "/help rules");
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("权限不足");
+  });
+
+  it("shows global rules when a super admin runs /rules in private", async () => {
+    const result = await service.handle(undefined, "root", "/rules");
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("全局");
+  });
+
+  it("keeps asking for a group id when /rules is used in private without super admin", async () => {
+    const result = await service.handle(undefined, "admin", "/rules");
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("group_openid");
+  });
 });

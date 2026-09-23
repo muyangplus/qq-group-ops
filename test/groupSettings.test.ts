@@ -1,73 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { JoinDecisionMode, KeywordPunish } from "../src/core/enums.js";
-import type { GroupConfigOverride } from "../src/services/groupConfig.js";
 import { GroupConfigStore, DEFAULT_GROUP_ID } from "../src/services/groupConfig.js";
-import type { GroupConfigRepository } from "../src/db/groupConfigRepository.js";
-import type {
-  GroupSetting,
-  GroupSettingsRepository,
-} from "../src/db/groupSettingsRepository.js";
-
-/** 只实现被用到的 SQL 仓储方法，用于断言「扩展字段不会写 group_configs」。 */
-class FakeGroupConfigRepository implements GroupConfigRepository {
-  public readonly saved: GroupConfigOverride[] = [];
-  public readonly keywords = new Map<string, string[]>();
-
-  public async loadOverride(groupId: string): Promise<GroupConfigOverride | null> {
-    return this.saved.find((item) => item.groupId === groupId) ?? null;
-  }
-
-  public async saveOverride(override: GroupConfigOverride): Promise<void> {
-    this.saved.push(override);
-  }
-
-  public async deleteOverride(groupId: string): Promise<void> {
-    const index = this.saved.findIndex((item) => item.groupId === groupId);
-    if (index >= 0) {
-      this.saved.splice(index, 1);
-    }
-  }
-
-  public async loadKeywords(groupId: string): Promise<string[]> {
-    return this.keywords.get(groupId) ?? [];
-  }
-
-  public async replaceKeywords(
-    groupId: string,
-    keywords: readonly string[],
-  ): Promise<void> {
-    this.keywords.set(groupId, [...keywords]);
-  }
-
-  public async findAll(): Promise<GroupConfigOverride[]> {
-    return this.saved.map((item) => ({ ...item }));
-  }
-}
-
-class FakeGroupSettingsRepository implements GroupSettingsRepository {
-  public readonly rows = new Map<string, GroupSetting>();
-
-  public async save(setting: GroupSetting): Promise<void> {
-    this.rows.set(`${setting.groupId}\u0000${setting.key}`, { ...setting });
-  }
-
-  public async remove(groupId: string, key: string): Promise<void> {
-    this.rows.delete(`${groupId}\u0000${key}`);
-  }
-
-  public async removeAll(groupId: string): Promise<void> {
-    for (const key of [...this.rows.keys()]) {
-      if (key.startsWith(`${groupId}\u0000`)) {
-        this.rows.delete(key);
-      }
-    }
-  }
-
-  public async findAll(): Promise<GroupSetting[]> {
-    return [...this.rows.values()].map((row) => ({ ...row }));
-  }
-}
+import {
+  FakeGroupConfigRepository,
+  FakeGroupSettingsRepository,
+} from "./helpers/fakeGroupConfigRepositories.js";
 
 describe("GroupConfigStore extended settings", () => {
   it("persists and reloads extended settings for a group", async () => {
@@ -114,7 +52,7 @@ describe("GroupConfigStore extended settings", () => {
     await store.flush();
 
     // 只改扩展字段时不能写整行快照，否则会把已有的列清成 NULL
-    expect(sql.saved).toEqual([]);
+    expect(sql.overrides.size).toBe(0);
     expect(settings.rows.size).toBe(1);
   });
 
@@ -127,8 +65,8 @@ describe("GroupConfigStore extended settings", () => {
     store.setOverride({ groupId: "g1", autoApproveJoin: true });
     await store.flush();
 
-    expect(sql.saved).toHaveLength(1);
-    expect(sql.saved[0]?.autoApproveJoin).toBe(true);
+    expect(sql.overrides.size).toBe(1);
+    expect(sql.overrides.get("g1")?.autoApproveJoin).toBe(true);
     // 同一次合并里仍然保留扩展字段（内存态）
     expect(store.get("g1").keywordRecall).toBe(true);
   });

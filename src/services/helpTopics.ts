@@ -30,6 +30,10 @@ const GROUP_ADMIN_ONLY = "群管理员或以上";
 const SUPER_ADMIN_ONLY = "仅全局超级管理员";
 
 function isModerator(context: HelpContext): boolean {
+  // 全局超管在私信里没有群上下文，也要能看到群级指令的帮助
+  if (context.permissions.isSuperAdmin(context.userId)) {
+    return true;
+  }
   return context.groupId
     ? context.permissions.canReviewContent(context.userId, context.groupId)
     : context.permissions.hasAnyGroupRole(
@@ -39,6 +43,9 @@ function isModerator(context: HelpContext): boolean {
 }
 
 function isGroupAdmin(context: HelpContext): boolean {
+  if (context.permissions.isSuperAdmin(context.userId)) {
+    return true;
+  }
   return context.groupId
     ? context.permissions.canApproveJoin(context.userId, context.groupId)
     : context.permissions.hasAnyGroupRole(

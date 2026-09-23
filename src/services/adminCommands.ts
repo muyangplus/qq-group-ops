@@ -980,6 +980,10 @@ export class AdminCommandService {
 
     const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
     if (!targetGroupId) {
+      // 私信里不带群号：超级管理员直接看全局默认规则（等价 /rules all）
+      if (!parts[1] && this.permissions.isSuperAdmin(userId)) {
+        return this.handleGlobalRulesView(userId);
+      }
       return {
         ok: false,
         text: "该指令需要在群内使用，或在私信中提供 group_openid。用法：/rules <group_openid>",

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_GROUP_ID, GroupConfigStore } from "../src/services/groupConfig.js";
+import {
+  DEFAULT_GROUP_ID,
+  GroupConfigStore,
+  PERSISTED_CONFIG_FIELDS,
+} from "../src/services/groupConfig.js";
 
 describe("GroupConfigStore", () => {
   function createStore(): GroupConfigStore {
@@ -71,6 +75,20 @@ describe("GroupConfigStore", () => {
     store.setOverride({ groupId: "g1", keywords: ["本群词"] });
     expect(store.get("g1").keywords).toEqual(["本群词"]);
     expect(store.get("g1").autoApproveJoin).toBe(true);
+  });
+
+  it("persists every configuration field (no memory-only fields)", () => {
+    const config = new GroupConfigStore({ groupId: DEFAULT_GROUP_ID }).default;
+    const configFields = Object.keys(config).filter((key) => key !== "groupId");
+    const persisted = PERSISTED_CONFIG_FIELDS as readonly string[];
+
+    // 每个生效配置字段都必须能落库，否则重启后会被静默重置
+    expect(configFields.filter((key) => !persisted.includes(key))).toEqual([]);
+    // 反向：持久化清单里不能有已经不存在的字段
+    expect(persisted.filter((key) => !configFields.includes(key))).toEqual([]);
+    expect(new Set(PERSISTED_CONFIG_FIELDS).size).toBe(
+      PERSISTED_CONFIG_FIELDS.length,
+    );
   });
 
   it("keeps the global config out of listOverrides and can reset it", () => {
