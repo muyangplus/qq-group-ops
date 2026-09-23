@@ -170,8 +170,76 @@ describe("acceptance dry run (sqlite)", () => {
     }
   });
 
-  it("shows limited help for unbound users", async () => {
+  it("applies global rules to groups without their own configuration", async () => {
     const database = await createSqliteTestDatabase();
+    try {
+      const runtime = createPersistentRuntime(database.queryable, "root");
+      await runtime.load();
+      await runtime.identityMap.bindUser("root", "10001");
+      await runtime.identityMap.bindGroup("g1", "654321");
+
+      const global = await runtime.router.handle({
+        type: "admin_command",
+        groupId: "g1",
+        userId: "root",
+        text: "/rules set all keywords 全局违禁词",
+      });
+      expect(global.ok).toBe(true);
+      expect(runtime.configStore.default.keywords).toEqual(["全局违禁词"]);
+
+      // 未单独配置的群继承全局关键词
+      const inherited = await runtime.router.handle({
+        type: "group_message",
+        groupId: "g1",
+        userId: "member-openid",
+        messageId: "m1",
+        content: "这里包含全局违禁词",
+      });
+      expect(inherited.action).toBe(ModerationAction.Warn);
+
+      // 群内单独配置关键词后以群配置为准
+      await runtime.router.handle({
+        type: "admin_command",
+        groupId: "g1",
+        userId: "root",
+        text: "/rules set keywords 本群违禁词",
+      });
+      const globalWordNowAllowed = await runtime.router.handle({
+        type: "group_message",
+        groupId: "g1",
+        userId: "member-openid",
+        messageId: "m2",
+        content: "这里包含全局违禁词",
+      });
+      expect(globalWordNowAllowed.action).toBe(ModerationAction.Allow);
+
+      const groupWord = await runtime.router.handle({
+        type: "group_message",
+        groupId: "g1",
+        userId: "member-openid",
+        messageId: "m3",
+        content: "这里包含本群违禁词",
+      });
+      expect(groupWord.action).toBe(ModerationAction.Warn);
+
+      // 全局规则持久化，重启后仍然生效
+      await runtime.flush();
+      const restarted = createPersistentRuntime(
+        await database.restart(),
+        "root",
+      );
+      await restarted.load();
+      expect(restarted.configStore.default.keywords).toEqual(["全局违禁词"]);
+      expect(restarted.configStore.get("brand-new-group").keywords).toEqual([
+        "全局违禁词",
+      ]);
+      expect(restarted.configStore.get("g1").keywords).toEqual(["本群违禁词"]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("shows limited help for unbound users", async () => {    const database = await createSqliteTestDatabase();
     try {
       const runtime = createPersistentRuntime(database.queryable, "root");
       await runtime.load();
@@ -192,8 +260,7 @@ describe("acceptance dry run (sqlite)", () => {
     }
   });
 
-  it("restores approved requests, audit records and keywords after restart", async () => {
-    const database = await createSqliteTestDatabase();
+  it("restores approved requests, audit records and keywords after restart", async () => {    const database = await createSqliteTestDatabase();
     try {
       const runtime = createPersistentRuntime(database.queryable, "root");
       await runtime.load();

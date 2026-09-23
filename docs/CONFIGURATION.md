@@ -160,6 +160,22 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 - 关键词会去重、去空白并按字典序保存，保证重启前后顺序一致。
 - 禁言动作使用官方 `restrict_chat_setting`（最长 30 天，机器人需为群管理员）。
 - 踢人动作使用官方 `batch_remove_members`，**该接口仅白名单机器人可用**，未开通时会返回错误码 11253。
+
+### 全局规则（`all`）
+
+超管可以把任一字段配置成全局默认，语法是 `/rules set all <字段> <值>`；未单独覆盖该字段的群会继承，已覆盖的群以自己的配置为准（**按字段继承**）。
+
+```text
+/rules all                          # 查看全局默认规则（仅超管）
+/rules set all keywords 广告,刷屏    # 全局关键词
+/rules set all warning 本群禁止广告。 # 全局警告文案
+/rules set all autoApprove off
+/rules set all keywords clear       # 清空全局关键词
+```
+
+- `all` 的别名：`global`、`default`、`全局`、`默认`；
+- 全局规则只存一行：`group_configs` 中 `group_id = __default__` 的完整快照 + `group_keywords` 中 `group_id = __default__` 的关键词；
+- 每次全局修改都会写入**完整快照**，因此多次局部修改不会互相覆盖；重启后由 `GroupConfigStore.load()` 合并回全局默认。
 - 入群申请审批：
 
 ```text

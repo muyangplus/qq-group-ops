@@ -285,6 +285,26 @@
   - `gatewayRunner` 的回复发送从「直接 await」改为「容错发送」；
   - 新增测试覆盖配额计数/过期/淘汰、客户端第 6 次拒绝、事件处理器抛错不影响连接、回复失败不影响事件。
 
+## ADR-0028：全局规则使用 `__default__` 行复用群配置存储
+
+- 状态：已采纳
+- 背景：原先 `GroupConfigStore` 的默认配置只来自构造函数（硬编码 `DEFAULT_CONFIG`），`setOverride` 明确拒绝 `__default__`，因此无法配置「所有群共享的默认规则」——多群部署时每加一个群都要重复配置一遍。
+- 决策：把 `__default__` 作为合法的全局作用域，复用现有存储与合并逻辑：
+  1. `DEFAULT_GROUP_ID = "__default__"` 成为公开常量，`runtime` 也使用它初始化默认配置；
+  2. `setOverride({ groupId: "__default__", ... })` 不再抛错，而是把局部字段合并进**当前全局默认**；
+  3. 全局修改持久化为**完整快照**（写全 `group_configs` 的所有列），避免多次局部修改在数据库里互相覆盖；
+  4. `load()` 把 `__default__` 行合并回全局默认配置，其余行仍是单群覆盖；
+  5. 保留 `builtinConfig`（构造函数/内置默认值），`removeOverride("__default__")` 即恢复内置默认；`builtinDefault` 供 `warning clear` 这类「恢复默认」语义使用；
+  6. 指令层：`/rules all` 查看、`/rules set all <字段> <值>` 修改，`all` 的别名为 `global` / `default` / `全局` / `默认`；**仅超级管理员可用**（全局配置影响所有群，属于平台级配置）；
+  7. 继承按字段进行：群覆盖了 `keywords` 就用自己的关键词，但仍继承全局的 `autoApprove` 等未覆盖字段；`listOverrides()` 不包含全局行。
+- 理由：复用 `group_configs` / `group_keywords` 两张表与既有的写穿透、合并、排序逻辑，零 schema 变更即可获得全局能力；把全局配置放在 `__default__` 行也让备份/迁移与单群配置完全一致。
+- 影响：
+  - `GroupConfigStore` 新增 `DEFAULT_GROUP_ID`、`builtinDefault`，`default` 改为返回当前生效的全局配置；
+  - 行为变更：`setOverride("__default__")` 从抛错变为生效（原有测试相应改写）；
+  - 单群配置与全局配置的优先级为：群覆盖 > 全局默认 > 内置默认；
+  - 全局规则的写穿透使用独立的队列标签（`group-config.default.save` / `group-config.default.keywords`），便于日志排查。
+
+
 
 
 

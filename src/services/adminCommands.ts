@@ -1,7 +1,12 @@
 import { PermissionLevel } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import type { AuditLog } from "./audit.js";
-import type { GroupConfigOverride, GroupConfigStore } from "./groupConfig.js";
+import {
+  DEFAULT_GROUP_ID,
+  type EffectiveGroupConfig,
+  type GroupConfigOverride,
+  type GroupConfigStore,
+} from "./groupConfig.js";
 import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
 import type { IdentityMapService } from "./identityMap.js";
 import type { JoinApprovalService } from "./joinApproval.js";
@@ -399,6 +404,8 @@ export class AdminCommandService {
       lines.push("/perm revoke admin [group_openid|群号] <userId|QQ号> - 撤销群管理员");
       lines.push("/perm grant mod [group_openid|群号] <userId|QQ号> - 授予审核员");
       lines.push("/perm revoke mod [group_openid|群号] <userId|QQ号> - 撤销审核员");
+      lines.push("/rules all - 查看全局默认规则");
+      lines.push("/rules set all <字段> <值> - 修改全局默认规则");
     }
     if (!canModerate && !canAdmin && !isSuper) {
       lines.push("当前没有更多可执行的管理指令。");
@@ -712,6 +719,9 @@ export class AdminCommandService {
     if (action === "set" || action === "设置") {
       return this.handleRulesSet(groupId, userId, parts);
     }
+    if (isGlobalTarget(parts[1])) {
+      return this.handleGlobalRulesView(userId);
+    }
 
     const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
     if (!targetGroupId) {
@@ -726,12 +736,24 @@ export class AdminCommandService {
     return { ok: true, text: this.formatRules(targetGroupId) };
   }
 
+  /** 全局规则：仅超级管理员可查看。 */
+  private handleGlobalRulesView(userId: string): CommandResult {
+    if (!this.permissions.isSuperAdmin(userId)) {
+      return { ok: false, text: GLOBAL_RULES_DENIED };
+    }
+    return { ok: true, text: this.formatGlobalRules() };
+  }
+
   private async handleRulesSet(
     groupId: string | undefined,
     userId: string,
     parts: readonly string[],
   ): Promise<CommandResult> {
     const args = parts.slice(2);
+    if (isGlobalTarget(args[0])) {
+      return this.handleGlobalRulesSet(userId, args.slice(1));
+    }
+
     const targetGroupId = groupId ?? this.resolveTargetGroupId(undefined, args[0]);
     const field = groupId ? args[0] : args[1];
     const valueParts = groupId ? args.slice(1) : args.slice(2);
@@ -769,20 +791,48 @@ export class AdminCommandService {
     };
   }
 
+  /** 全局规则：仅超级管理员可修改。 */
+  private async handleGlobalRulesSet(
+    userId: string,
+    args: readonly string[],
+  ): Promise<CommandResult> {
+    if (!this.permissions.isSuperAdmin(userId)) {
+      return { ok: false, text: GLOBAL_RULES_DENIED };
+    }
+    const field = args[0];
+    const valueParts = args.slice(1);
+    if (!field || valueParts.length === 0) {
+      return { ok: false, text: GLOBAL_RULES_SET_USAGE };
+    }
+
+    const value = valueParts.join(" ").trim();
+    let override: GroupConfigOverride;
+    try {
+      override = parseRuleSetting(DEFAULT_GROUP_ID, field, value, this.configStore);
+    } catch (error) {
+      return { ok: false, text: `设置失败：${formatError(error)}` };
+    }
+
+    this.configStore.setOverride(override);
+    log.info("global rules updated", { userId, field: normalize(field) });
+    return {
+      ok: true,
+      text: `已更新全局规则（影响所有未单独覆盖的群）。\n\n${this.formatGlobalRules()}`,
+    };
+  }
+
   private formatRules(targetGroupId: string): string {
-    const config = this.configStore.get(targetGroupId);
-    const keywords = config.keywords.length > 0 ? config.keywords.join("、") : "（未配置）";
-    return [
+    return formatEffectiveConfig(
+      this.configStore.get(targetGroupId),
       `群 ${targetGroupId} 规则配置：`,
-      `启用：${config.enabled}`,
-      `关键词过滤：${config.wordFilterEnabled}`,
-      `关键词：${keywords}`,
-      `入群审核：${config.joinAuditEnabled}`,
-      `自动通过：${config.autoApproveJoin}`,
-      `导出功能：${config.exportEnabled}`,
-      `警告文案：${config.warningMessage}`,
-      `禁言时长：${config.muteDurationSeconds} 秒`,
-    ].join("\n");
+    );
+  }
+
+  private formatGlobalRules(): string {
+    return formatEffectiveConfig(
+      this.configStore.default,
+      "全局默认规则（未单独配置的群继承）：",
+    );
   }
 
   private handleAudit(
@@ -889,9 +939,7 @@ function bindingFailureText(): string {
   return "绑定失败：数据库写入异常，请查看服务端日志后重试。";
 }
 
-const RULES_SET_USAGE = [
-  "用法：/rules set <字段> <值>",
-  "字段：",
+const RULE_FIELDS_HELP = [
   "  keywords 广告,刷屏 / keywords clear",
   "  warning <文案> / warning clear",
   "  muteDuration <秒>",
@@ -900,15 +948,55 @@ const RULES_SET_USAGE = [
   "  autoApprove on|off",
   "  export on|off",
   "  enabled on|off",
+];
+
+const RULES_SET_USAGE = [
+  "用法：/rules set <字段> <值>",
+  "字段：",
+  ...RULE_FIELDS_HELP,
   "私信中使用：/rules set <group_openid> <字段> <值>",
 ].join("\n");
+
+const GLOBAL_RULES_SET_USAGE = [
+  "用法：/rules set all <字段> <值>（仅超级管理员）",
+  "字段：",
+  ...RULE_FIELDS_HELP,
+].join("\n");
+
+const GLOBAL_RULES_DENIED =
+  "权限不足：全局规则仅超级管理员可以查看与修改。";
 
 const MAX_MUTE_DURATION_SECONDS = 30 * 24 * 60 * 60;
 const MAX_AUDIT_LIMIT = 50;
 const DEFAULT_AUDIT_LIMIT = 10;
+const GLOBAL_TARGETS = new Set(["all", "global", "default", "全局", "默认"]);
 const TOGGLE_ON = new Set(["on", "true", "1", "yes", "y", "开", "启用", "是"]);
 const TOGGLE_OFF = new Set(["off", "false", "0", "no", "n", "关", "关闭", "否"]);
 const CLEAR_WORDS = new Set(["clear", "清空", "默认", "reset"]);
+
+/** `/rules all`、`/rules 全局`、`/rules set default ...` 都指向全局规则。 */
+function isGlobalTarget(value: string | undefined): boolean {
+  return GLOBAL_TARGETS.has(normalize(value));
+}
+
+function formatEffectiveConfig(
+  config: EffectiveGroupConfig,
+  header: string,
+): string {
+  const keywords =
+    config.keywords.length > 0 ? config.keywords.join("、") : "（未配置）";
+  return [
+    header,
+    `启用：${config.enabled}`,
+    `关键词过滤：${config.wordFilterEnabled}`,
+    `关键词：${keywords}`,
+    `入群审核：${config.joinAuditEnabled}`,
+    `自动通过：${config.autoApproveJoin}`,
+    `导出功能：${config.exportEnabled}`,
+    `警告文案：${config.warningMessage}`,
+    `禁言时长：${config.muteDurationSeconds} 秒`,
+  ].join("\n");
+}
 
 function parseRuleSetting(
   groupId: string,
@@ -935,7 +1023,11 @@ function parseRuleSetting(
     case "警告":
       return {
         groupId,
-        warningMessage: cleared ? configStore.default.warningMessage : value,
+        warningMessage: cleared
+          ? groupId === DEFAULT_GROUP_ID
+            ? configStore.builtinDefault.warningMessage
+            : configStore.default.warningMessage
+          : value,
       };
     case "muteduration":
     case "mute":

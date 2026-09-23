@@ -27,7 +27,7 @@ import { AdminCommandService } from "./services/adminCommands.js";
 import { AuditLogStore } from "./services/audit.js";
 import { EventRouter } from "./services/eventRouter.js";
 import { ExportService } from "./services/export.js";
-import { GroupConfigStore } from "./services/groupConfig.js";
+import { GroupConfigStore, DEFAULT_GROUP_ID } from "./services/groupConfig.js";
 import { GroupMessageModeRegistry } from "./services/groupMessageMode.js";
 import { IdentityMapService } from "./services/identityMap.js";
 import { JoinApprovalService } from "./services/joinApproval.js";
@@ -84,7 +84,7 @@ export function createRuntime(
     writeQueue,
   );
   const configStore = new GroupConfigStore(
-    { groupId: "__default__" },
+    { groupId: DEFAULT_GROUP_ID },
     repositories.groupConfigs,
     writeQueue,
   );

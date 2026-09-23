@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { GroupConfigStore } from "../src/services/groupConfig.js";
+import { DEFAULT_GROUP_ID, GroupConfigStore } from "../src/services/groupConfig.js";
 
 describe("GroupConfigStore", () => {
   function createStore(): GroupConfigStore {
@@ -54,10 +54,37 @@ describe("GroupConfigStore", () => {
     expect(config.autoApproveJoin).toBe(true);
   });
 
-  it("rejects overriding the default group id", () => {
+  it("updates the global default config through the default group id", () => {
     const store = createStore();
-    expect(() => store.setOverride({ groupId: "__default__" })).toThrow(
-      /cannot override/u,
-    );
+    store.setOverride({ groupId: DEFAULT_GROUP_ID, keywords: ["全局词"] });
+    store.setOverride({ groupId: DEFAULT_GROUP_ID, autoApproveJoin: true });
+
+    expect(store.default.keywords).toEqual(["全局词"]);
+    expect(store.default.autoApproveJoin).toBe(true);
+
+    // 没有单独配置的群继承全局规则
+    const inherited = store.get("g9");
+    expect(inherited.keywords).toEqual(["全局词"]);
+    expect(inherited.autoApproveJoin).toBe(true);
+
+    // 单独配置过的群以自己的配置优先，未覆盖的字段仍继承全局
+    store.setOverride({ groupId: "g1", keywords: ["本群词"] });
+    expect(store.get("g1").keywords).toEqual(["本群词"]);
+    expect(store.get("g1").autoApproveJoin).toBe(true);
+  });
+
+  it("keeps the global config out of listOverrides and can reset it", () => {
+    const store = createStore();
+    store.setOverride({ groupId: DEFAULT_GROUP_ID, keywords: ["全局词"] });
+    store.setOverride({ groupId: "g1", autoApproveJoin: true });
+
+    expect(store.listOverrides().map((item) => item.groupId)).toEqual(["g1"]);
+
+    store.removeOverride(DEFAULT_GROUP_ID);
+
+    expect(store.default.keywords).toEqual(["广告"]);
+    expect(store.default.autoApproveJoin).toBe(false);
+    // 单群覆盖不受影响
+    expect(store.get("g1").autoApproveJoin).toBe(true);
   });
 });

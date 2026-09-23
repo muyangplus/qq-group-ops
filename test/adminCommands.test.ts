@@ -451,6 +451,69 @@ describe("AdminCommandService", async () => {
     expect(configStore.get("g1").muteDurationSeconds).toBe(30 * 24 * 60 * 60);
   });
 
+  it("lets a super admin view and update global rules with /rules all", async () => {
+    const view = await service.handle("g1", "root", "/rules all");
+    expect(view.ok).toBe(true);
+    expect(view.text).toContain("全局默认规则");
+
+    const set = await service.handle(
+      "g1",
+      "root",
+      "/rules set all keywords 全局违禁词",
+    );
+    expect(set.ok).toBe(true);
+    expect(set.text).toContain("已更新全局规则");
+    expect(configStore.default.keywords).toEqual(["全局违禁词"]);
+
+    // 未单独配置的群继承全局关键词
+    expect(configStore.get("g-other").keywords).toEqual(["全局违禁词"]);
+    // 已在群内配置过关键词的群保持自己的配置
+    await service.handle("g1", "admin", "/rules set keywords 本群词");
+    expect(configStore.get("g1").keywords).toEqual(["本群词"]);
+    expect(configStore.get("g1").autoApproveJoin).toBe(false);
+  });
+
+  it("accepts the 全局 alias for global rules", async () => {
+    const set = await service.handle("g1", "root", "/rules set 全局 autoApprove on");
+    expect(set.ok).toBe(true);
+    expect(configStore.default.autoApproveJoin).toBe(true);
+
+    const view = await service.handle(undefined, "root", "/rules 全局");
+    expect(view.ok).toBe(true);
+    expect(view.text).toContain("全局默认规则");
+  });
+
+  it("denies global rules to non super admins", async () => {
+    const view = await service.handle("g1", "admin", "/rules all");
+    expect(view.ok).toBe(false);
+    expect(view.text).toContain("仅超级管理员");
+
+    const set = await service.handle(
+      "g1",
+      "admin",
+      "/rules set all keywords 全局违禁词",
+    );
+    expect(set.ok).toBe(false);
+    expect(set.text).toContain("仅超级管理员");
+    expect(configStore.default.keywords).toEqual(["广告"]);
+  });
+
+  it("requires a field and value for global rules", async () => {
+    const result = await service.handle("g1", "root", "/rules set all");
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("/rules set all <字段> <值>");
+  });
+
+  it("resets global warning text to the builtin default with clear", async () => {
+    await service.handle("g1", "root", "/rules set all warning 全局警告");
+    expect(configStore.default.warningMessage).toBe("全局警告");
+
+    await service.handle("g1", "root", "/rules set all warning clear");
+    expect(configStore.default.warningMessage).toBe(
+      "请遵守群规，不要发送违规内容。",
+    );
+  });
+
   it("rejects invalid /rules set values", async () => {
     const toggle = await service.handle("g1", "admin", "/rules set autoApprove maybe");
     expect(toggle.ok).toBe(false);

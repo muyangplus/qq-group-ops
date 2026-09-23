@@ -9,7 +9,7 @@
 - 技术路线：**仅使用 QQ 官方开放平台 API**，不使用 OneBot、NapCat、Lagrange 等个人号协议端。
 - 已实现：配置、结构化调试日志（控制台 + 文件 + auto 彩色）、领域模型、规则引擎、审计日志、权限模型、权限自助查询、超管权限配置、OpenID ↔ QQ号/群号映射、全状态持久化（SQLite 默认 / PostgreSQL 可选：绑定关系、权限、审计、入群申请、群配置、全量消息模式、活动报名）、数据保留清理（审计与已审批申请，启动 + 每 24 小时）、动态权限帮助、私信指令、全量消息模式诊断、多群配置、入群审核状态机、入群审批调用官方接口（含自动通过）、官方申请同步（`/sync`）、群配置关键词驱动的消息审核、`/rules set` 群规则配置、`/audit` 审计查询、官方禁言/踢人接口（请求体已按官方文档核对）、事件路由、事件网关抽象、官方 WebSocket 协议网关（自动重连 + Resume 会话恢复 + 心跳 ACK 超时检测 + 指数退避 + 限流冷却）、官方事件映射器、原生 WebSocket 工厂、access token 与网关地址持久化缓存、出站消息节流与 22009 重试、被动回复配额拦截、401 自动刷新、事件与回复失败容错、`/test` 自检指令、运行时装配、数据库 schema/迁移/方言适配与全部仓储、管理员命令、活动报名、信息导出、官方 API 客户端与测试替身。
 - 待实现：真实环境联调、Web 管理后台、内容安全与 AI 辅助。
-- 测试：Vitest，共 308 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
+- 测试：Vitest，共 315 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
 
 ## 技术栈
 
@@ -121,8 +121,10 @@ pnpm start       # 运行编译后的入口
 
 | 操作 | 指令 | 需要权限 |
 |---|---|---|
-| 查看规则 | `/rules` | 审核员（moderator，`/perm grant mod`）及以上 |
-| 修改规则 | `/rules set ...` | 群管理员（admin，`/perm grant admin`）及以上 |
+| 查看本群规则 | `/rules` | 审核员（moderator，`/perm grant mod`）及以上 |
+| 修改本群规则 | `/rules set ...` | 群管理员（admin，`/perm grant admin`）及以上 |
+| 查看全局规则 | `/rules all` | 超级管理员 |
+| 修改全局规则 | `/rules set all ...` | 超级管理员 |
 
 前置条件（强制绑定，见 [配置说明](docs/CONFIGURATION.md)）：
 
@@ -226,7 +228,47 @@ pnpm start       # 运行编译后的入口
 
 > 当前版本关键词命中的动作固定为「警告」，禁言/踢人动作需要在 `src/services/moderation.ts` 的规则引擎中配置动作后才会用到这个时长，因此 `muteDuration` 属于预留配置。
 
-### 6. 一次性配好（推荐流程）
+### 6. 全局规则（`all`）
+
+上面所有字段都可以配置成**全局默认规则**，语法是在字段前加 `all`。未单独配置过的群会继承全局规则；只要某个群设置过该字段，就以该群自己的配置为准。
+
+```text
+/rules all                              # 查看全局默认规则
+/rules set all keywords 广告,刷屏        # 全局关键词
+/rules set all warning 本群禁止广告。    # 全局警告文案
+/rules set all wordFilter on
+/rules set all joinAudit on
+/rules set all autoApprove off
+/rules set all muteDuration 600
+/rules set all enabled on
+/rules set all keywords clear           # 清空全局关键词
+```
+
+说明：
+
+- `all` 也可以写成 `global` / `default` / `全局` / `默认`，例如 `/rules 全局`、`/rules set 全局 keywords 广告`；
+- **全局规则仅超级管理员可以查看与修改**（群管理员只能改自己群的规则）；
+- 全局规则持久化在数据库里（`group_configs` 中 `group_id = __default__` 的那一行 + `group_keywords`），重启不丢；
+- 群内执行时会照常要求「本群已绑定」；私信中直接执行即可（需要超级管理员且已绑定 QQ 号）；
+- 继承是**按字段**生效的：例如全局设了 `keywords 广告`，某群只设了 `autoApprove on`，那么该群仍然是「全局关键词 + 自己的 autoApprove」。
+
+继承与覆盖示例：
+
+```text
+# 1. 超管设置全局关键词
+/rules set all keywords 广告
+
+# 2. 未配置过的群：命中「广告」会被警告
+# 3. 群 A 单独配置了自己的关键词
+/rules set keywords 本群违禁词
+#    → 群 A 只认「本群违禁词」，不再继承全局的「广告」
+
+# 4. 查看全局与单群
+/rules all
+/rules
+```
+
+### 7. 一次性配好（推荐流程）
 
 群内依次执行：
 
@@ -261,13 +303,13 @@ pnpm start       # 运行编译后的入口
 /rules set autoApprove on
 ```
 
-### 7. 验证是否生效
+### 8. 验证是否生效
 
 1. 在群里发一条包含关键词的消息，机器人应回复你配置的警告文案；
 2. `/audit` 查看最近记录，应出现 `moderation:warn`，reason 为 `命中关键词：<关键词>`；
 3. `/status` 查看该群运行状态（启用、过滤、全量消息模式等）。
 
-### 8. 字段速查表
+### 9. 字段速查表
 
 | 字段 | 别名 | 取值 | 说明 |
 |---|---|---|---|
@@ -280,18 +322,27 @@ pnpm start       # 运行编译后的入口
 | `export` | `导出` | on / off | 导出开关（当前仅存储展示） |
 | `enabled` | `启用` | on / off | 本群机器人总开关 |
 
-### 9. 常见报错
+作用域写法：
+
+| 写法 | 作用 | 需要权限 |
+|---|---|---|
+| `/rules set <字段> <值>` | 当前群 | 群管理员 |
+| `/rules set <group_openid\|群号> <字段> <值>` | 指定群（私信） | 群管理员 |
+| `/rules set all <字段> <值>`（或 `global`/`default`/`全局`/`默认`） | 全局默认，所有未单独覆盖的群继承 | 超级管理员 |
+
+### 10. 常见报错
 
 | 提示 | 原因与处理 |
 |---|---|
 | `权限不足：需要群管理员或以上权限。` | `/rules set` 需要群管理员或超管；`/rules` 只需审核员及以上 |
+| `权限不足：全局规则仅超级管理员可以查看与修改。` | `/rules all`、`/rules set all ...` 仅超管可用 |
 | `请先绑定 QQ 号：/bind qq <QQ号>` | 先绑定自己的 QQ 号 |
 | `请先绑定本群：/bind group <群号>` | 群管理员先在群里绑定群号 |
 | `设置失败：未知字段：xxx` | 字段名写错，对照上面的速查表 |
 | `设置失败：xxx 需要 on 或 off` | 开关只能填 on/off 及其同义写法 |
 | `设置失败：禁言时长需要非负整数（秒）` | `muteDuration` 只能填数字 |
-| `私信中设置规则需要提供已绑定的 group_openid 或群号。` | 私信里必须写群号或 `group_openid`，且该群已绑定 |
-| 配了关键词但没反应 | 检查 `/rules` 里 `启用` 与 `关键词过滤` 是否为 `true`；非 @ 的普通消息还需要群管理员在机器人资料页开启「接收所有消息」 |
+| `私信中设置规则需要提供已绑定的 group_openid 或群号。` | 私信里必须写群号或 `group_openid`（全局规则写 `all`） |
+| 配了关键词但没反应 | 检查 `/rules`（或 `/rules all`）里 `启用` 与 `关键词过滤` 是否为 `true`；非 @ 的普通消息还需要群管理员在机器人资料页开启「接收所有消息」 |
 
 更多细节见 [配置说明](docs/CONFIGURATION.md) 与 [真实环境验收清单](docs/ACCEPTANCE.md)。
 

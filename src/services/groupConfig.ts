@@ -40,8 +40,11 @@ export interface GroupConfigOverride {
   warningMessage?: string;
 }
 
+/** 全局默认配置使用的保留 group id。 */
+export const DEFAULT_GROUP_ID = "__default__";
+
 const DEFAULT_CONFIG: EffectiveGroupConfig = {
-  groupId: "__default__",
+  groupId: DEFAULT_GROUP_ID,
   enabled: true,
   joinAuditEnabled: true,
   autoApproveJoin: false,
@@ -54,24 +57,28 @@ const DEFAULT_CONFIG: EffectiveGroupConfig = {
 };
 
 export class GroupConfigStore {
-  private readonly defaultConfig: EffectiveGroupConfig;
+  /** 构造函数（或内置默认值）提供的初始配置，用于 reset 与 reload 的基准。 */
+  private readonly builtinConfig: EffectiveGroupConfig;
+  /** 当前生效的全局默认配置：builtin + 持久化的全局覆盖。 */
+  private defaultConfig: EffectiveGroupConfig;
   private readonly overrides = new Map<string, GroupConfigOverride>();
   private readonly repository: GroupConfigRepository | undefined;
   private readonly queue: WriteQueue | undefined;
 
   public constructor(
-    defaultConfig: GroupConfig = { groupId: "__default__" },
+    defaultConfig: GroupConfig = { groupId: DEFAULT_GROUP_ID },
     repository?: GroupConfigRepository,
     queue?: WriteQueue,
   ) {
-    this.defaultConfig = {
+    this.builtinConfig = {
       ...DEFAULT_CONFIG,
       ...defaultConfig,
-      groupId: "__default__",
+      groupId: DEFAULT_GROUP_ID,
       keywords: normalizeKeywords(
         defaultConfig.keywords ?? DEFAULT_CONFIG.keywords,
       ),
     };
+    this.defaultConfig = cloneConfig(this.builtinConfig);
     this.repository = repository;
     this.queue = repository ? (queue ?? new WriteQueue()) : undefined;
   }
@@ -80,13 +87,26 @@ export class GroupConfigStore {
     return this.repository !== undefined;
   }
 
+  /**
+   * 从数据库载入配置。
+   *
+   * `__default__` 行代表全局规则，会合并进全局默认配置；其余行是单群覆盖。
+   */
   public async load(): Promise<void> {
     if (!this.repository) {
       return;
     }
     const overrides = await this.repository.findAll();
     this.overrides.clear();
+    this.defaultConfig = cloneConfig(this.builtinConfig);
     for (const override of overrides) {
+      if (override.groupId === DEFAULT_GROUP_ID) {
+        this.defaultConfig = mergeIntoDefault(
+          this.defaultConfig,
+          normalizeOverride(override),
+        );
+        continue;
+      }
       this.overrides.set(override.groupId, normalizeOverride(override));
     }
   }
@@ -95,8 +115,14 @@ export class GroupConfigStore {
     await this.queue?.flush();
   }
 
+  /** 当前生效的全局默认配置。 */
   public get default(): EffectiveGroupConfig {
-    return { ...this.defaultConfig };
+    return cloneConfig(this.defaultConfig);
+  }
+
+  /** 内置初始配置（不含持久化的全局覆盖），用于重置全局规则。 */
+  public get builtinDefault(): EffectiveGroupConfig {
+    return cloneConfig(this.builtinConfig);
   }
 
   public get(groupId: string): EffectiveGroupConfig {
@@ -121,14 +147,16 @@ export class GroupConfigStore {
   }
 
   /**
-   * 局部更新单群配置。
+   * 局部更新配置。
    *
-   * 传入的字段会与已有覆盖合并，因此 `/rules set keywords ...` 之后的
-   * `/rules set autoApprove on` 不会把关键词重置掉。
+   * - `groupId` 为普通群时更新单群覆盖，会与已有覆盖合并，
+   *   因此 `/rules set keywords ...` 之后的 `/rules set autoApprove on` 不会把关键词重置掉；
+   * - `groupId` 为 `__default__` 时更新**全局默认规则**，影响所有未单独覆盖该字段的群。
    */
   public setOverride(override: GroupConfigOverride): void {
-    if (override.groupId === "__default__") {
-      throw new Error("cannot override the default group id");
+    if (override.groupId === DEFAULT_GROUP_ID) {
+      this.setDefaultOverride(override);
+      return;
     }
     const existing = this.overrides.get(override.groupId);
     const merged = normalizeOverride({
@@ -151,7 +179,34 @@ export class GroupConfigStore {
     }
   }
 
+  /** 全局规则始终持久化完整快照，避免多次局部更新互相覆盖。 */
+  private setDefaultOverride(override: GroupConfigOverride): void {
+    this.defaultConfig = mergeIntoDefault(
+      this.defaultConfig,
+      normalizeOverride(override),
+    );
+    const repository = this.repository;
+    if (repository) {
+      const snapshot = defaultSnapshot(this.defaultConfig);
+      this.queue?.enqueue("group-config.default.save", () =>
+        repository.saveOverride(snapshot),
+      );
+      if (override.keywords !== undefined) {
+        const keywords = [...this.defaultConfig.keywords];
+        this.queue?.enqueue("group-config.default.keywords", () =>
+          repository.replaceKeywords(DEFAULT_GROUP_ID, keywords),
+        );
+      }
+    }
+  }
+
+  /**
+   * 移除覆盖：单群回落到全局默认；`__default__` 回落到内置初始配置。
+   */
   public removeOverride(groupId: string): void {
+    if (groupId === DEFAULT_GROUP_ID) {
+      this.defaultConfig = cloneConfig(this.builtinConfig);
+    }
     this.overrides.delete(groupId);
     const repository = this.repository;
     if (repository) {
@@ -184,4 +239,48 @@ function normalizeOverride(override: GroupConfigOverride): GroupConfigOverride {
     return { ...override };
   }
   return { ...override, keywords: normalizeKeywords(override.keywords) };
+}
+
+function cloneConfig(config: EffectiveGroupConfig): EffectiveGroupConfig {
+  return { ...config, keywords: [...config.keywords] };
+}
+
+/** 把局部覆盖合并到全局默认配置上。 */
+function mergeIntoDefault(
+  base: EffectiveGroupConfig,
+  override: GroupConfigOverride,
+): EffectiveGroupConfig {
+  return {
+    groupId: DEFAULT_GROUP_ID,
+    enabled: override.enabled ?? base.enabled,
+    joinAuditEnabled: override.joinAuditEnabled ?? base.joinAuditEnabled,
+    autoApproveJoin: override.autoApproveJoin ?? base.autoApproveJoin,
+    keywords:
+      override.keywords !== undefined
+        ? normalizeKeywords(override.keywords)
+        : base.keywords,
+    wordFilterEnabled: override.wordFilterEnabled ?? base.wordFilterEnabled,
+    exportEnabled: override.exportEnabled ?? base.exportEnabled,
+    rawMessageRetentionDays:
+      override.rawMessageRetentionDays ?? base.rawMessageRetentionDays,
+    muteDurationSeconds:
+      override.muteDurationSeconds ?? base.muteDurationSeconds,
+    warningMessage: override.warningMessage ?? base.warningMessage,
+  };
+}
+
+/** 全局规则的持久化快照：所有字段都写全，避免局部更新覆盖历史值。 */
+function defaultSnapshot(config: EffectiveGroupConfig): GroupConfigOverride {
+  return {
+    groupId: DEFAULT_GROUP_ID,
+    enabled: config.enabled,
+    joinAuditEnabled: config.joinAuditEnabled,
+    autoApproveJoin: config.autoApproveJoin,
+    keywords: [...config.keywords],
+    wordFilterEnabled: config.wordFilterEnabled,
+    exportEnabled: config.exportEnabled,
+    rawMessageRetentionDays: config.rawMessageRetentionDays,
+    muteDurationSeconds: config.muteDurationSeconds,
+    warningMessage: config.warningMessage,
+  };
 }
