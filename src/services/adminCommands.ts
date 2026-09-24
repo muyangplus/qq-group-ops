@@ -558,7 +558,30 @@ export class AdminCommandService {
     topicQuery?: string,
   ): CardResult {
     const access = resolveMenuAccess(this.menuContext(groupId, userId));
+    /** 完整指令列表卡（正文沿用 buildHelp，含未绑定/未绑群提示）。 */
+    const listCard = (): CardResult => {
+      const card = renderCard({
+        title: "全部可用指令",
+        lines: this.buildHelp(groupId, userId).split("\n"),
+        rows: [[viewButton("home", "返回帮助", "help", "home")]],
+        footer: ["某个指令的详细用法：/help <指令>"],
+      });
+      return { ok: true, text: card.text, rich: card };
+    };
+    const isBound = this.identityMap
+      ? Boolean(this.identityMap.getQq(userId))
+      : true;
+    const groupBound =
+      groupId === undefined || !this.identityMap
+        ? true
+        : Boolean(this.identityMap.getGroupNumber(groupId));
+
     if (!topicQuery) {
+      // 未绑定 QQ 号 / 本群未绑定：直接给完整列表卡，正文里带绑定提示
+      if (!isBound || !groupBound) {
+        return listCard();
+      }
+      // 伞形卡：只给分类入口，完整列表在 `/help all`（避免一张卡 30 行）
       const menuRow: CardButton[] = [
         viewButton("sys", "系统菜单", "menu", "open", "sys"),
       ];
@@ -568,23 +591,29 @@ export class AdminCommandService {
       if (access.isSuperAdmin) {
         menuRow.push(viewButton("super", "超管菜单", "menu", "open", "super"));
       }
-      const topicRow: CardButton[] = [
-        viewButton("topic-rules", "群规则", "help", "topic", "rules"),
-        viewButton("topic-approve", "审批", "help", "topic", "approve"),
-        viewButton("topic-bind", "绑定", "help", "topic", "bind"),
-        viewButton("topic-menu", "菜单", "help", "topic", "menu"),
-      ];
-      if (access.isSuperAdmin) {
-        topicRow.push(viewButton("topic-perm", "权限", "help", "topic", "perm"));
-      }
       const card = renderCard({
         title: "指令帮助",
-        lines: this.buildHelp(groupId, userId).split("\n"),
-        rows: [menuRow, topicRow],
-        buttonHint: "常用入口：",
-        footer: ["查看某个指令的详细用法：/help <指令>"],
+        lines: [
+          "按分类查看你有权限使用的指令。",
+          "完整指令列表：/help all",
+        ],
+        rows: [
+          menuRow,
+          [
+            viewButton("all", "全部指令", "help", "list"),
+            viewButton("topic-rules", "群规则", "help", "topic", "rules"),
+            viewButton("topic-approve", "审批", "help", "topic", "approve"),
+            viewButton("topic-bind", "绑定", "help", "topic", "bind"),
+          ],
+        ],
+        buttonHint: "请选择分类：",
+        footer: ["某个指令的详细用法：/help <指令>"],
       });
       return { ok: true, text: card.text, rich: card };
+    }
+
+    if (topicQuery === "all" || topicQuery === "全部") {
+      return listCard();
     }
 
     const topic = findHelpTopic(topicQuery);
@@ -700,6 +729,7 @@ export class AdminCommandService {
     groupId: string | undefined,
     userId: string,
     parts: readonly string[],
+    notice?: string,
   ): CardResult {
     const { page, rest } = extractPageToken(parts);
     const targetGroupId = this.resolveTargetGroupId(groupId, rest[0]);
@@ -728,7 +758,10 @@ export class AdminCommandService {
     if (pending.length === 0) {
       return cardFromText(
         "待审批入群申请",
-        `群 ${groupLabel}：当前没有待审批入群申请。`,
+        [
+          ...(notice ? [notice] : []),
+          `群 ${groupLabel}：当前没有待审批入群申请。`,
+        ].join("\n"),
         {
           rows: [
             [viewButton("refresh", "刷新", "pending", "page", targetGroupId, 1)],
@@ -749,6 +782,7 @@ export class AdminCommandService {
     const lines = [
       `**群**：${groupLabel}`,
       `**待审批**：${pending.length} 条 · 第 ${current} / ${pageCount} 页`,
+      ...(notice ? [`**结果**：${escapeCardText(notice)}`] : []),
     ];
     const rows: CardButton[][] = [];
     for (const request of slice) {
@@ -771,18 +805,24 @@ export class AdminCommandService {
         }
       }
       rows.push([
-        actionButton(`approve-${code}`, "通过", `/approve ${code}`, {
+        // 「通过」是固定动作（无需参数）→ 回调自动完成，并回一张刷新后的列表
+        {
+          ...viewButton(
+            `approve-${code}`,
+            "通过",
+            "pending",
+            "approve",
+            targetGroupId,
+            request.requestId,
+            current,
+          ),
           style: 1,
-          modal: {
-            content: "确认通过该入群申请？",
-            confirmText: "通过",
-            cancelText: "取消",
-          },
-        }),
+        },
+        // 「拒绝」支持可选原因 → 保留指令按钮，用户可在发送前补上原因
         actionButton(`reject-${code}`, "拒绝", `/reject ${code}`, {
           style: 3,
           modal: {
-            content: "确认拒绝该入群申请？",
+            content: "确认拒绝该入群申请？（可先补上原因）",
             confirmText: "拒绝",
             cancelText: "取消",
           },
@@ -823,6 +863,59 @@ export class AdminCommandService {
   }
 
   /**
+   * 回调：固定动作「通过入群申请」。
+   *
+   * 无需参数，因此走回调自动完成：校验权限 → 调官方审批接口 → 回一张**刷新后的**列表卡
+   * （带「已通过 #短码」结果行）。拒绝因为支持可选原因，仍然是指令按钮。
+   */
+  public async approveCard(
+    targetGroupId: string,
+    requestId: string,
+    userId: string,
+    page = 1,
+  ): Promise<CardResult> {
+    const back = viewButton("back", "返回待审批", "pending", "page", targetGroupId, page);
+    if (!this.permissions.canApproveJoin(userId, targetGroupId)) {
+      const card = renderCard({
+        title: "权限不足",
+        lines: ["通过入群申请需要群管理员或以上权限。"],
+        rows: [[back]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    try {
+      const request = this.joinAudit.get(requestId);
+      if (request.groupId !== targetGroupId) {
+        const card = renderCard({
+          title: "审批失败",
+          lines: ["申请不属于该群。"],
+          rows: [[back]],
+        });
+        return { ok: false, text: card.text, rich: card };
+      }
+      await this.joinApproval.approve(targetGroupId, requestId, userId);
+    } catch (error) {
+      log.warn("approve via callback failed", {
+        requestId,
+        error: formatError(error),
+      });
+      const card = renderCard({
+        title: "审批失败",
+        lines: [formatError(error)],
+        rows: [[back]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    log.info("approved join request via callback", { requestId, userId });
+    return this.pendingCard(
+      undefined,
+      userId,
+      ["pending", targetGroupId, `+${page}`],
+      `已通过 ${this.displayRequest(requestId)} · 操作人：${this.displayUser(userId)}`,
+    );
+  }
+
+  /**
    * `/rules [群号|#群短码]`：群规则卡。
    *
    * 查看是回调；开关类改动是**指令按钮**（`/rules set <字段> <值>`），
@@ -832,6 +925,7 @@ export class AdminCommandService {
     groupId: string | undefined,
     userId: string,
     parts: readonly string[],
+    notice?: string,
   ): CardResult {
     if (isGlobalTarget(parts[1])) {
       return this.globalRulesCard(userId);
@@ -866,41 +960,70 @@ export class AdminCommandService {
       this.permissions.isSuperAdmin(userId);
     const rows: CardButton[][] = [];
     if (canManage) {
+      const toggle = (
+        id: string,
+        label: string,
+        field: string,
+        enabled: boolean,
+      ): CardButton => ({
+        ...viewButton(
+          id,
+          `${label} ${enabled ? "关" : "开"}`,
+          "rules",
+          "toggle",
+          targetGroupId,
+          field,
+          enabled ? "off" : "on",
+        ),
+      });
+      /** 枚举值：点击即自动切到该值，当前值用 ● 与高亮样式标出。 */
+      const choice = (
+        id: string,
+        label: string,
+        field: string,
+        value: string,
+        current: string,
+      ): CardButton => ({
+        ...viewButton(
+          id,
+          `${current === value ? "● " : ""}${label}`,
+          "rules",
+          "toggle",
+          targetGroupId,
+          field,
+          value,
+        ),
+        ...(current === value ? { style: 4 as CardButtonStyle } : {}),
+      });
+      // 开关类：点击即自动切换（含自动通过，结果卡片会标明操作人）
       rows.push([
-        actionButton(
-          "wordFilter",
-          `消息过滤 ${config.wordFilterEnabled ? "关" : "开"}`,
-          `/rules set wordFilter ${config.wordFilterEnabled ? "off" : "on"}`,
-        ),
-        actionButton(
-          "joinAudit",
-          `入群审核 ${config.joinAuditEnabled ? "关" : "开"}`,
-          `/rules set joinAudit ${config.joinAuditEnabled ? "off" : "on"}`,
-        ),
-        actionButton(
-          "keywordRecall",
-          `撤回 ${config.keywordRecall ? "关" : "开"}`,
-          `/rules set keywordRecall ${config.keywordRecall ? "off" : "on"}`,
-        ),
+        toggle("wordFilter", "消息过滤", "wordFilter", config.wordFilterEnabled),
+        toggle("joinAudit", "入群审核", "joinAudit", config.joinAuditEnabled),
+        toggle("keywordRecall", "撤回", "keywordRecall", config.keywordRecall),
       ]);
       rows.push([
-        actionButton(
-          "autoApprove",
-          `自动通过 ${config.autoApproveJoin ? "关" : "开"}`,
-          `/rules set autoApprove ${config.autoApproveJoin ? "off" : "on"}`,
-          {
-            modal: {
-              content: "确认切换自动通过入群？",
-              confirmText: "确认",
-              cancelText: "取消",
-            },
-          },
-        ),
-        actionButton(
+        toggle("autoApprove", "自动通过", "autoApprove", config.autoApproveJoin),
+        toggle(
           "notifyAutoApproved",
-          `自动通知 ${config.notifyAutoApproved ? "关" : "开"}`,
-          `/rules set notifyAutoApproved ${config.notifyAutoApproved ? "off" : "on"}`,
+          "自动通知",
+          "notifyAutoApproved",
+          config.notifyAutoApproved,
         ),
+      ]);
+      // 枚举值：入群决策 5 选 1
+      rows.push([
+        choice("decision-manual", "人工", "joinDecision", "manual", config.joinDecision),
+        choice("decision-auto", "全自动通过", "joinDecision", "auto_approve", config.joinDecision),
+        choice("decision-match", "命中通过", "joinDecision", "approve_on_match", config.joinDecision),
+        choice("decision-reject", "命中拒绝", "joinDecision", "reject_on_match", config.joinDecision),
+        choice("decision-mismatch", "未命中拒绝", "joinDecision", "reject_on_mismatch", config.joinDecision),
+      ]);
+      // 枚举值：关键词命中处罚 4 选 1
+      rows.push([
+        choice("punish-none", "仅警告", "keywordPunish", "none", config.keywordPunish),
+        choice("punish-mute", "禁言", "keywordPunish", "mute", config.keywordPunish),
+        choice("punish-kick", "移出", "keywordPunish", "kick", config.keywordPunish),
+        choice("punish-blacklist", "移出拉黑", "keywordPunish", "kick_blacklist", config.keywordPunish),
       ]);
     }
     const lastRow: CardButton[] = [
@@ -912,14 +1035,61 @@ export class AdminCommandService {
     }
     rows.push(lastRow);
 
-    return cardFromText("群规则", this.formatRules(targetGroupId), {
-      rows,
-      buttonHint: canManage ? "快捷开关（点击=发送指令）：" : "相关入口：",
-      footer: [
-        `本群：${this.displayGroup(targetGroupId)}`,
-        "修改规则需要群管理员或以上权限；完整字段用法：/help rules",
-      ],
+    return cardFromText(
+      "群规则",
+      notice
+        ? `**结果**：${escapeCardText(notice)}\n\n${this.formatRules(targetGroupId)}`
+        : this.formatRules(targetGroupId),
+      {
+        rows,
+        buttonHint: canManage ? "快捷开关与枚举（点击即生效）：" : "相关入口：",
+        footer: [
+          `本群：${this.displayGroup(targetGroupId)}`,
+          "手动切换：/rules set <字段> on|off（wordFilter / joinAudit / keywordRecall / autoApprove / notifyAutoApproved）",
+          "入群决策：/rules set joinDecision manual|auto_approve|approve_on_match|reject_on_match|reject_on_mismatch",
+          "命中处罚：/rules set keywordPunish none|mute|kick|kick_blacklist",
+          "完整字段用法：/help rules",
+        ],
+      },
+    );
+  }
+
+  /** 回调：规则开关/枚举切换（固定动作 → 自动执行并回刷新后的规则卡）。 */
+  public async toggleRulesCard(
+    targetGroupId: string,
+    field: string,
+    value: string,
+    userId: string,
+  ): Promise<CardResult> {
+    const result = await this.handleRulesSet(undefined, userId, [
+      "rules",
+      "set",
+      targetGroupId,
+      field,
+      value,
+    ]);
+    if (!result.ok) {
+      const card = renderCard({
+        title: "规则未修改",
+        lines: result.text.split("\n"),
+        rows: [
+          [viewButton("back", "返回规则", "rules", "view", targetGroupId)],
+        ],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    log.info("rule updated via callback", {
+      targetGroupId,
+      field,
+      value,
+      userId,
     });
+    return this.rulesCard(
+      undefined,
+      userId,
+      ["rules", targetGroupId],
+      `已更新：${field} = ${value} · 操作人：${this.displayUser(userId)}`,
+    );
   }
 
   /** `/rules all`：全局默认规则卡（仅超级管理员）。 */

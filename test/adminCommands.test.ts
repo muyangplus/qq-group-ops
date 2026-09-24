@@ -96,7 +96,8 @@ describe("AdminCommandService", async () => {
   });
 
   it("shows only permitted commands in help", async () => {
-    const member = await service.handle("g1", "member", "/help");
+    // /help 现在是伞形卡，完整列表在 /help all
+    const member = await service.handle("g1", "member", "/help all");
     expect(member.ok).toBe(true);
     expect(member.text).toContain("/help");
     expect(member.text).toContain("/bind qq");
@@ -105,17 +106,17 @@ describe("AdminCommandService", async () => {
     expect(member.text).not.toContain("/approve");
     expect(member.text).not.toContain("/perm");
 
-    const mod = await service.handle("g1", "mod", "/help");
+    const mod = await service.handle("g1", "mod", "/help all");
     expect(mod.text).toContain("/pending");
     expect(mod.text).toContain("/test");
     expect(mod.text).not.toContain("/approve");
     expect(mod.text).not.toContain("/perm");
 
-    const admin = await service.handle("g1", "admin", "/help");
+    const admin = await service.handle("g1", "admin", "/help all");
     expect(admin.text).toContain("/approve");
     expect(admin.text).not.toContain("/perm");
 
-    const root = await service.handle("g1", "root", "/help");
+    const root = await service.handle("g1", "root", "/help all");
     expect(root.text).toContain("/perm");
     expect(root.text).toContain("/whois");
   });
@@ -273,10 +274,10 @@ describe("AdminCommandService", async () => {
   });
 
   it("only lists /testmenu in super admin help", async () => {
-    const root = await service.handle("g1", "root", "/help");
+    const root = await service.handle("g1", "root", "/help all");
     expect(root.text).toContain("/testmenu");
 
-    const member = await service.handle("g1", "member", "/help");
+    const member = await service.handle("g1", "member", "/help all");
     expect(member.text).not.toContain("/testmenu");
   });
 
@@ -1082,7 +1083,7 @@ describe("AdminCommandService", async () => {
   });
 
   it("mentions /notify in the admin help and help topic", async () => {
-    const help = await service.handle("g1", "admin", "/help");
+    const help = await service.handle("g1", "admin", "/help all");
     expect(help.text).toContain("/notify");
 
     const topic = await service.handle("g1", "admin", "/help notify");
@@ -1186,11 +1187,10 @@ describe("AdminCommandService", async () => {
     expect(result.text).toContain("真实申请 ID：r1");
   });
 
-  it("renders /help as a card with callback entries", async () => {
-    const result = await service.handle("g1", "root", "/help");
-
-    expect(result.ok).toBe(true);
-    const buttons = (result.rich?.keyboard?.content.rows ?? []).flatMap(
+  it("renders /help as an umbrella card and /help all as the full list", async () => {
+    const umbrella = await service.handle("g1", "root", "/help");
+    expect(umbrella.ok).toBe(true);
+    const buttons = (umbrella.rich?.keyboard?.content.rows ?? []).flatMap(
       (row) => row.buttons,
     );
     // 标准：导航 / 查看类按钮用回调
@@ -1198,9 +1198,16 @@ describe("AdminCommandService", async () => {
       type: 1,
       data: "cb:menu:open:sys",
     });
-    // 纯文本降级仍包含完整指令列表
-    expect(result.text).toContain("可用指令：");
-    expect(result.text).toContain("/menu");
+    expect(buttons.find((button) => button.id === "all")?.action).toMatchObject({
+      type: 1,
+      data: "cb:help:list",
+    });
+    // 伞形卡本身是短的，完整列表在二级卡
+    expect(umbrella.rich?.markdown).not.toContain("可用指令：");
+
+    const list = await service.handle("g1", "root", "/help all");
+    expect(list.text).toContain("可用指令：");
+    expect(list.text).toContain("/menu");
   });
 
   it("renders /help <topic> with a related entry", async () => {
@@ -1250,9 +1257,14 @@ describe("AdminCommandService", async () => {
     expect(
       firstButtons.filter((button) => button.id.startsWith("approve-")),
     ).toHaveLength(3);
+    // 「通过」是固定动作 → 回调自动完成；「拒绝」支持可选原因 → 指令按钮
     expect(firstButtons.find((button) => button.id === "approve-r1")?.action).toMatchObject({
+      type: 1,
+      data: "cb:pending:approve:g1:r1:1",
+    });
+    expect(firstButtons.find((button) => button.id === "reject-r1")?.action).toMatchObject({
       type: 2,
-      data: "/approve r1",
+      data: "/reject r1",
     });
     // 翻页是回调
     expect(firstButtons.find((button) => button.id === "next")?.action).toMatchObject({
@@ -1274,22 +1286,61 @@ describe("AdminCommandService", async () => {
     expect(secondButtons.some((button) => button.id === "next")).toBe(false);
   });
 
-  it("renders /rules as a card with toggle command buttons", async () => {
+  it("renders /rules as a card with callback switches and enums", async () => {
     const result = await service.handle("g1", "admin", "/rules");
 
     expect(result.ok).toBe(true);
     const buttons = (result.rich?.keyboard?.content.rows ?? []).flatMap(
       (row) => row.buttons,
     );
-    // 开关是执行动作 → 指令按钮，与手输指令同一条路径
+    // 开关类 → 回调自动切换
     expect(
       buttons.find((button) => button.id === "wordFilter")?.action,
-    ).toMatchObject({ type: 2, data: "/rules set wordFilter off" });
+    ).toMatchObject({ type: 1, data: "cb:rules:toggle:g1:wordFilter:off" });
+    // 枚举值 → 回调直接切到该值；当前值带 ● 标记
+    expect(
+      buttons.find((button) => button.id === "decision-match")?.action,
+    ).toMatchObject({
+      type: 1,
+      data: "cb:rules:toggle:g1:joinDecision:approve_on_match",
+    });
+    expect(buttons.find((button) => button.id === "decision-manual")?.label).toBe(
+      "● 人工",
+    );
     // 帮助是查看 → 回调
     expect(buttons.find((button) => button.id === "help")?.action).toMatchObject({
       type: 1,
       data: "cb:help:topic:rules",
     });
+    // 纯文本降级给出等价的手动指令
+    expect(result.text).toContain("/rules set joinDecision");
+    expect(result.text).toContain("/rules set keywordPunish");
+  });
+
+  it("completes approvals via callback with operator feedback", async () => {
+    joinAudit.submit("g1", "u1", "理由", "r1");
+
+    const result = await service.approveCard("g1", "r1", "admin");
+
+    expect(result.ok).toBe(true);
+    expect(result.rich.markdown).toContain("已通过");
+    // 回调自动完成必须有反馈，并标明是谁操作的
+    expect(result.rich.markdown).toContain("操作人：");
+    expect(joinAudit.get("r1")?.status).toBe(JoinRequestStatus.Approved);
+  });
+
+  it("toggles rules via callback with operator feedback", async () => {
+    const result = await service.toggleRulesCard(
+      "g1",
+      "wordFilter",
+      "off",
+      "admin",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.rich.markdown).toContain("已更新：wordFilter = off");
+    expect(result.rich.markdown).toContain("操作人：");
+    expect(configStore.get("g1").wordFilterEnabled).toBe(false);
   });
 
   it("resolves #group and #user short codes in commands", async () => {

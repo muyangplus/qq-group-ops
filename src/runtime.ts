@@ -220,7 +220,12 @@ export function createRuntime(
         if (!userId) {
           return undefined;
         }
-        const topic = parsed.action === "topic" ? parsed.args[0] : undefined;
+        const topic =
+          parsed.action === "topic"
+            ? parsed.args[0]
+            : parsed.action === "list"
+              ? "all"
+              : undefined;
         return adminCommands.helpCard(event.groupId, userId, topic).rich;
       },
     ],
@@ -244,6 +249,19 @@ export function createRuntime(
         if (!userId) {
           return undefined;
         }
+        if (parsed.action === "approve") {
+          const [targetGroupId, requestId, page] = parsed.args;
+          if (!targetGroupId || !requestId) {
+            return undefined;
+          }
+          const card = await adminCommands.approveCard(
+            targetGroupId,
+            requestId,
+            userId,
+            Number.parseInt(page ?? "1", 10) || 1,
+          );
+          return card.rich;
+        }
         return adminCommands.pendingCard(event.groupId, userId, [
           "pending",
           ...pageTargets(parsed.args),
@@ -257,6 +275,19 @@ export function createRuntime(
         const userId = event.userId;
         if (!userId) {
           return undefined;
+        }
+        if (parsed.action === "toggle") {
+          const [targetGroupId, field, value] = parsed.args;
+          if (!targetGroupId || !field || !value) {
+            return undefined;
+          }
+          const card = await adminCommands.toggleRulesCard(
+            targetGroupId,
+            field,
+            value,
+            userId,
+          );
+          return card.rich;
         }
         const parts =
           parsed.action === "all"
