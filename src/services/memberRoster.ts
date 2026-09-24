@@ -129,6 +129,33 @@ export class MemberRoster {
     return this.classInfo.get(className);
   }
 
+  /** 班级库里出现的所有学院（去重排序），用于 `/profile set` 自动识别与别名表。 */
+  public listColleges(): string[] {
+    const colleges = new Set<string>();
+    for (const info of this.classInfo.values()) {
+      if (info.college.length > 0) {
+        colleges.add(info.college);
+      }
+    }
+    return [...colleges].sort((a, b) => b.length - a.length);
+  }
+
+  /** 班级库里出现的所有专业（去重排序）。 */
+  public listMajors(): string[] {
+    return [...this.majors];
+  }
+
+  /** 找出文本里出现的学院名（最长优先）。 */
+  public findCollegeIn(text: string): string | undefined {
+    const compact = compactText(text);
+    for (const college of this.listColleges()) {
+      if (compact.includes(compactText(college))) {
+        return college;
+      }
+    }
+    return undefined;
+  }
+
   /** 在入群答案里找出班级名；会忽略空白差异。 */
   public findClassIn(text: string): ClassMatch | undefined {
     const compact = compactText(text);

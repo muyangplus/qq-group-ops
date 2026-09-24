@@ -1,4 +1,4 @@
-﻿import { PermissionLevel } from "../core/enums.js";
+import { PermissionLevel } from "../core/enums.js";
 import type { EffectiveGroupConfig, GroupConfigStore } from "./groupConfig.js";
 import type { IdentityMapService } from "./identityMap.js";
 import type { PermissionService } from "./permissions.js";
@@ -86,7 +86,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "  /help <指令>          查看某个指令的详细用法（如 /help rules）",
       "",
       "可用主题（按你的权限显示）：",
-      "  help menu bind myperm rules perm pending sync approve reject audit status test whois",
+      "  help menu profile activity bind myperm rules perm pending sync approve reject audit status test whois",
       "",
       "输出形式：",
       "  · 所有指令回复都是菜单式卡片（Markdown + 按钮），按钮不可用时自动降级为纯文本；",
@@ -226,6 +226,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     body: () => [
       "用法：",
       "  /profile                                 查看个人资料",
+      "  /profile set <班级> <姓名> <11位学号>      智能识别：顺序随意、分隔符随意",
       "  /profile set name <姓名>                  姓名",
       "  /profile set id <11位学号>                学号（前两位必须是 22-26，决定年级）",
       "  /profile set class <班级>                 班级（必须在班级库里，自动带出学院）",
@@ -234,7 +235,17 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "  /profile set <字段> clear                 清除单个字段",
       "  /profile clear                            清空整份资料",
       "",
+      "智能识别（一条消息填完）：",
+      "  /profile set 材化2211 张三 22123456789",
+      "  /profile set 张三-22123456789-材化2211",
+      "  /profile set 22123456789+材化2211+张三",
+      "  /profile set 材化2211张三22123456789     ← 完全不带分隔符也能识别",
+      "  /profile set 班级=材化2211 姓名=张三 学号=22123456789",
+      "",
       "说明：",
+      "  · 识别规则：11 位数字=学号；能在班级库匹配到的班级名=班级；剩余 2-4 个汉字=姓名；",
+      "    也支持手填学院（学院名能在班级库里匹配到）与「年级=2023」",
+      "  · 识别到多个班级/姓名，或存在认不出的内容时**不会写入**，会列出识别结果并提示改用 字段=值",
       "  · 学号必须是 11 位数字，例如 22123456789；前两位 22/23/24/25/26 对应年级",
       "  · 班级必须在 data/class-index.json 的 classes 里，学院会从班级库自动带出",
       "  · 报名活动前要求「姓名 + 学号 + 班级」齐全",
@@ -377,6 +388,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "用法：",
       "  /whois                              不带参数：群聊查当前群，私聊查你自己",
       "  /whois <QQ号|userId|群号|group_openid|#短码>",
+      "  /whois profile <QQ号|userId|#短码>   查个人资料（姓名/学号/班级/学院/年级）",
       "",
       "示例：",
       "  /whois                  → 当前群 / 你自己的映射（含短码）",
@@ -386,7 +398,9 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "",
       "说明：",
       "  · 查入群申请短码时会给完整详情：群、申请人、理由、状态、申请/处理时间与处理人；",
-      "  · 过期的申请仍可用 /whois 追溯（只是不再出现在 /pending 里）。",
+      "  · 过期的申请仍可用 /whois 追溯（只是不再出现在 /pending 里）；",
+      "  · /whois profile 查的是「QQ ↔ 个人资料」的关系：userId、QQ号、短码 + 姓名/学号/班级/学院/年级，",
+      "    仅超级管理员可用（资料属个人信息，不开放给群管理员）。",
     ],
   },
   {
@@ -410,7 +424,8 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "权限与手输完全一致），翻页用「上一页 / 下一页」按钮；按钮不可用时用 `+页码` 手动翻页。",
       "卡片会列出申请短码（形如 #M7K2Q9）、申请人展示名与入群理由；审批用 /approve、/reject。",
       "所有用户可见输出只显示短码/QQ号/群号，不暴露内部系统 id；/whois #短码 可由超管还原真实 id。",
-      "开通 /notify 后，新申请会自动私聊推送给审核员（带快捷按钮）。",      "申请有有效期（默认 7 天，可由超管用 JOIN_REQUEST_TTL_DAYS 调整）：过期或被官方列表对账判定",
+      "开通 /notify 后，新申请会自动私聊推送给审核员（带快捷按钮）。",
+      "申请有有效期（默认 7 天，可由超管用 JOIN_REQUEST_TTL_DAYS 调整）：过期或被官方列表对账判定",
       "散失的申请会自动标记为 expired，不再出现在待审批里；/audit 与 /whois 仍可追溯。",
     ],
   },

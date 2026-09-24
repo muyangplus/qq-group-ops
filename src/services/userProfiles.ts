@@ -87,6 +87,11 @@ export class UserProfileService {
     return this.roster !== undefined;
   }
 
+  /** 只读暴露班级库，供智能解析等外部逻辑复用。 */
+  public get rosterRef(): MemberRoster | undefined {
+    return this.roster;
+  }
+
   public async load(): Promise<void> {
     if (!this.repository) {
       return;

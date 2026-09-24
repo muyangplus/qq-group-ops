@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { JoinRequestStatus } from "../src/core/enums.js";
@@ -18,6 +18,7 @@ import {
 } from "../src/services/notifications.js";
 import { PermissionService } from "../src/services/permissions.js";
 import { ShortCodeService } from "../src/services/shortCodes.js";
+import { UserProfileService } from "../src/services/userProfiles.js";
 import { FakeIdentityBindingRepository } from "./helpers/fakeIdentityBindingRepository.js";
 
 describe("AdminCommandService", async () => {
@@ -47,6 +48,46 @@ describe("AdminCommandService", async () => {
       notifications,
       display: new DisplayNameService(identityMap, shortCodes),
     });
+  }
+
+  /** 同时装配短码展示与个人资料的替身。 */
+  function withProfiles(): {
+    svc: AdminCommandService;
+    profiles: UserProfileService;
+  } {
+    shortCodes = new ShortCodeService();
+    const profiles = new UserProfileService();
+    profiles.setRoster(
+      MemberRoster.fromIndex({
+        classes: ["材化2211", "环工2414"],
+        majors: ["材料化学", "环境工程"],
+        classInfo: {
+          材化2211: {
+            major: "材料化学",
+            college: "化学与生命科学学院",
+            year: "2022",
+          },
+          环工2414: {
+            major: "环境工程",
+            college: "环境科学与工程学院",
+            year: "2024",
+          },
+        },
+      }),
+    );
+    const svc = new AdminCommandService({
+      permissions,
+      joinAudit,
+      configStore,
+      joinApproval,
+      joinSync,
+      auditLog,
+      identityMap,
+      notifications,
+      userProfiles: profiles,
+      display: new DisplayNameService(identityMap, shortCodes),
+    });
+    return { svc, profiles };
   }
 
   function scopedShortCodeLabel(
@@ -1602,5 +1643,142 @@ describe("AdminCommandService", async () => {
     );
     expect(status.ok).toBe(true);
     expect(status.text).toContain("群 777777 状态：");
+  });
+
+  it("parses a one-shot /profile set in any order and separator", async () => {
+    const { svc, profiles } = withProfiles();
+
+    const result = await svc.handle(
+      "g1",
+      "member",
+      "/profile set 22123456789 材化2211 张三",
+    );
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("已更新：");
+    expect(result.text).toContain("识别到：");
+    expect(profiles.get("member")).toMatchObject({
+      name: "张三",
+      studentId: "22123456789",
+      className: "材化2211",
+      college: "化学与生命科学学院",
+      year: "2022",
+    });
+
+    // 无分隔符 + 顺序颠倒
+    const compact = await svc.handle(
+      "g1",
+      "mod",
+      "/profile set 环工2414李四24123456789",
+    );
+    expect(compact.ok).toBe(true);
+    expect(profiles.get("mod")).toMatchObject({
+      name: "李四",
+      studentId: "24123456789",
+      className: "环工2414",
+      college: "环境科学与工程学院",
+      year: "2024",
+    });
+
+    // `字段=值` 显式写法
+    const explicit = await svc.handle(
+      "g1",
+      "admin",
+      "/profile set 班级=材化2211 姓名=王五 学号=22123456789",
+    );
+    expect(explicit.ok).toBe(true);
+    expect(profiles.get("admin")).toMatchObject({
+      name: "王五",
+      className: "材化2211",
+    });
+  });
+
+  it("refuses an ambiguous or unparsable /profile set without writing", async () => {
+    const { svc, profiles } = withProfiles();
+
+    const ambiguous = await svc.handle(
+      "g1",
+      "member",
+      "/profile set 材化2211 环工2414 张三",
+    );
+    expect(ambiguous.ok).toBe(false);
+    expect(ambiguous.text).toContain("多个班级");
+    expect(ambiguous.text).toContain("材化2211");
+    expect(ambiguous.text).toContain("环工2414");
+    expect(profiles.get("member")).toBeUndefined();
+
+    const leftover = await svc.handle(
+      "g1",
+      "member",
+      "/profile set 材化2211 张三 abc",
+    );
+    expect(leftover.ok).toBe(false);
+    expect(leftover.text).toContain("无法识别");
+    expect(profiles.get("member")).toBeUndefined();
+
+    // 班级不在班级库里 → 整体不写入
+    const unknownClass = await svc.handle(
+      "g1",
+      "member",
+      "/profile set 班级=材化9999 姓名=张三",
+    );
+    expect(unknownClass.ok).toBe(false);
+    expect(unknownClass.text).toContain("不在班级库中");
+    expect(profiles.get("member")).toBeUndefined();
+
+    const empty = await svc.handle("g1", "member", "/profile set");
+    expect(empty.ok).toBe(false);
+    expect(empty.text).toContain("用法");
+  });
+
+  it("keeps the positional /profile set form working", async () => {
+    const { svc, profiles } = withProfiles();
+
+    const result = await svc.handle("g1", "member", "/profile set class 材化2211");
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("已更新：班级");
+    expect(profiles.get("member")).toMatchObject({
+      className: "材化2211",
+      college: "化学与生命科学学院",
+      year: "2022",
+    });
+
+    const cleared = await svc.handle("g1", "member", "/profile set class clear");
+    expect(cleared.ok).toBe(true);
+    expect(profiles.get("member")?.className).toBe("");
+  });
+
+  it("shows profile + QQ mapping via /whois profile", async () => {
+    const { svc, profiles } = withProfiles();
+    await svc.handle("g1", "member", "/profile set 22123456789 材化2211 张三");
+
+    const byQq = await svc.handle("g1", "root", "/whois profile 10001");
+    expect(byQq.ok).toBe(true);
+    expect(byQq.text).toContain("类型：用户资料");
+    expect(byQq.text).toContain("QQ：10001");
+    expect(byQq.text).toContain("姓名：张三");
+    expect(byQq.text).toContain("学号：22123456789");
+    expect(byQq.text).toContain("班级：材化2211");
+    expect(byQq.text).toContain("学院：化学与生命科学学院");
+
+    // 未绑定 QQ 的用户：短码也能查到
+    profiles.set("ghost", "name", "赵六");
+    const code = scopedShortCodeLabel("user", "ghost");
+    const byCode = await svc.handle("g1", "root", `/whois profile ${code}`);
+    expect(byCode.ok).toBe(true);
+    expect(byCode.text).toContain(`短码：${code}`);
+    expect(byCode.text).toContain("QQ：（未绑定）");
+    expect(byCode.text).toContain("姓名：赵六");
+
+    // 未填写资料 / 未知映射 / 权限
+    const blank = await svc.handle("g1", "root", "/whois profile 10002");
+    expect(blank.text).toContain("个人资料：尚未填写");
+
+    const missing = await svc.handle("g1", "root", "/whois profile nope");
+    expect(missing.ok).toBe(false);
+    expect(missing.text).toContain("未找到");
+
+    const denied = await svc.handle("g1", "admin", "/whois profile 10001");
+    expect(denied.ok).toBe(false);
+    expect(denied.text).toContain("权限不足");
   });
 });

@@ -1,4 +1,4 @@
-﻿import { PermissionLevel } from "../core/enums.js";
+import { PermissionLevel } from "../core/enums.js";
 import type { KeyboardModal } from "../adapters/qqOfficial.js";
 import { encodeCallback, extractPageToken, pageCallback } from "./callbackData.js";
 import {
@@ -48,9 +48,11 @@ import { EXPIRY_ACTOR_ID, type JoinAuditService, type JoinRequest } from "./join
 import type { JoinRequestSyncService } from "./joinAuditSync.js";
 import { NOTIFY_SCOPE_ALL, type NotificationService } from "./notifications.js";
 import type { PermissionService } from "./permissions.js";
+import { formatParseNotes, parseProfileInput } from "./profileParser.js";
 import {
   normalizeYear,
   UserProfileError,
+  yearFromStudentId,
   type UserProfileField,
   type UserProfileService,
 } from "./userProfiles.js";
@@ -559,6 +561,9 @@ export class AdminCommandService {
     if (!this.identityMap) {
       return { ok: false, text: "映射服务未启用。" };
     }
+    if (normalize(parts[1]) === "profile" || normalize(parts[1]) === "资料") {
+      return this.handleWhoisProfile(parts.slice(2));
+    }
     const input = parts[1]?.trim();
     if (!input) {
       // 不带参数：直接查当前上下文 —— 群聊查当前群，私聊查你自己
@@ -667,7 +672,56 @@ export class AdminCommandService {
         text: `类型：群\n群 ID：${resolvedGroupId}\n群号：${groupNumber}${shortCode}`,
       };
     }
-    return { ok: false, text: "未找到映射。" };
+    return { ok: false, text: `未找到映射。\n\n${WHOIS_USAGE}` };
+  }
+
+  /** 把 QQ号 / userId / `#短码` 解析成 userId（仅用户类）。 */
+  private resolveWhoisTargetUserId(target: string): string | undefined {
+    if (target.startsWith("#")) {
+      const code = this.display?.resolveCode(target);
+      return code && code.kind === "user" ? code.targetId : undefined;
+    }
+    return this.identityMap?.resolveUserId(target);
+  }
+
+  /** `/whois profile <QQ号|userId|#短码>`：QQ↔userId↔短码 + 个人资料（仅超级管理员）。 */
+  private handleWhoisProfile(parts: readonly string[]): CommandResult {
+    const target = parts[0]?.trim();
+    if (!target) {
+      return { ok: false, text: WHOIS_USAGE };
+    }
+    const resolvedUserId = this.resolveWhoisTargetUserId(target);
+    if (!resolvedUserId) {
+      return {
+        ok: false,
+        text: `未找到该用户的映射。支持：QQ号 / userId / #用户短码。\n\n${WHOIS_USAGE}`,
+      };
+    }
+    const lines = ["类型：用户资料"];
+    const qq = this.identityMap?.getQq(resolvedUserId) ?? "（未绑定）";
+    lines.push(`userId：${resolvedUserId}`, `QQ：${qq}`);
+    if (this.display) {
+      lines.push(`短码：${this.display.user(resolvedUserId)}`);
+    }
+    const profile = this.userProfiles?.get(resolvedUserId);
+    if (!this.userProfiles) {
+      lines.push("", "个人资料服务未启用。");
+      return { ok: true, text: lines.join("\n") };
+    }
+    if (!profile) {
+      lines.push("", "个人资料：尚未填写");
+      return { ok: true, text: lines.join("\n") };
+    }
+    const grade =
+      profile.studentId && profile.year ? `（${profile.year} 级）` : "";
+    lines.push(
+      "",
+      `姓名：${profile.name || "（未填）"}`,
+      `学号：${profile.studentId || "（未填）"}${grade}`,
+      `班级：${profile.className || "（未填）"}`,
+      `学院：${profile.college || "（未填）"}`,
+    );
+    return { ok: true, text: lines.join("\n") };
   }
 
   /**
@@ -2446,8 +2500,11 @@ export class AdminCommandService {
     }
     if (action === "set" || action === "设置") {
       const field = PROFILE_FIELD_ALIASES[normalize(parts[2])];
+      if (!field) {
+        return this.updateProfileSmart(userId, parts.slice(2).join(" "));
+      }
       const value = parts.slice(3).join(" ").trim();
-      if (!field || value.length === 0) {
+      if (value.length === 0) {
         return { ok: false, text: PROFILE_USAGE };
       }
       if (CLEAR_WORDS.has(value.toLowerCase())) {
@@ -2472,6 +2529,79 @@ export class AdminCommandService {
       return { ok: true, text: "已清空个人资料。" };
     }
     return { ok: false, text: PROFILE_USAGE };
+  }
+
+  /**
+   * 智能 `/profile set`：一次给班级/姓名/学号，顺序与分隔符随意。
+   * 有歧义或残留时整体不写入，只回报识别结果，让用户改用 `字段=值`。
+   */
+  private updateProfileSmart(userId: string, raw: string): CommandResult {
+    const profiles = this.userProfiles;
+    if (!profiles) {
+      return { ok: false, text: "个人资料服务未启用。" };
+    }
+    const parsed = parseProfileInput(raw, { roster: profiles.rosterRef });
+    if (parsed.error) {
+      return {
+        ok: false,
+        text: `${parsed.error}\n\n${formatParseNotes(parsed)}\n\n${PROFILE_USAGE}`,
+      };
+    }
+    if (parsed.fields.name === undefined
+      && parsed.fields.studentId === undefined
+      && parsed.fields.className === undefined
+      && parsed.fields.college === undefined
+      && parsed.fields.year === undefined) {
+      return { ok: false, text: PROFILE_USAGE };
+    }
+    // 先整体校验再写入，避免"写一半失败"。
+    try {
+      if (parsed.fields.studentId !== undefined) {
+        yearFromStudentId(parsed.fields.studentId);
+      }
+      if (parsed.fields.className !== undefined) {
+        const roster = profiles.rosterRef;
+        if (!roster) {
+          throw new UserProfileError("班级库未加载，请联系管理员");
+        }
+        if (!roster.hasClass(parsed.fields.className)) {
+          throw new UserProfileError(`班级「${parsed.fields.className}」不在班级库中`);
+        }
+      }
+      if (parsed.fields.name !== undefined) {
+        const name = parsed.fields.name.replace(/\s+/gu, "");
+        if (name.length === 0 || name.length > 20) {
+          throw new UserProfileError("姓名需要 1-20 个字符（不含空格）");
+        }
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        text: `设置失败：${formatError(error)}\n\n${formatParseNotes(parsed)}`,
+      };
+    }
+    // 学号先写（确定年级），班级再写（自动带出学院/年级），显式学院/年级最后覆盖，姓名垫底。
+    const order: UserProfileField[] = ["studentId", "className", "college", "year", "name"];
+    const applied: string[] = [];
+    for (const key of order) {
+      const value = parsed.fields[key];
+      if (value === undefined) {
+        continue;
+      }
+      try {
+        profiles.set(userId, key, value);
+      } catch (error) {
+        return { ok: false, text: `设置失败：${formatError(error)}` };
+      }
+      applied.push(PROFILE_FIELD_LABELS[key]);
+    }
+    const lines = [`已更新：${applied.join("、")}`];
+    const notes = formatParseNotes(parsed);
+    if (notes.length > 0) {
+      lines.push(notes);
+    }
+    lines.push("", this.formatProfile(userId));
+    return { ok: true, text: lines.join("\n") };
   }
 
   private formatProfile(userId: string): string {
@@ -3376,9 +3506,17 @@ const PROFILE_FIELD_LABELS: Record<UserProfileField, string> = {
   year: "年级",
 };
 
+const WHOIS_USAGE = [
+  "用法（仅超级管理员）：",
+  "  /whois                                    当前上下文（群聊=本群，私聊=你自己）",
+  "  /whois <QQ号|userId|#短码>                 查用户或群的映射",
+  "  /whois profile <QQ号|userId|#短码>         查个人资料（姓名/学号/班级/学院/年级）",
+].join("\n");
+
 const PROFILE_USAGE = [
   "用法：",
   "  /profile                                 查看个人资料",
+  "  /profile set <班级> <姓名> <11位学号>      智能识别，顺序随意、分隔符随意",
   "  /profile set name <姓名>                  姓名",
   "  /profile set id <11位学号>                学号（前两位决定年级：22-26）",
   "  /profile set class <班级>                 班级（必须在班级库里，自动带出学院）",
@@ -3386,6 +3524,10 @@ const PROFILE_USAGE = [
   "  /profile set year <年级>                  年级（可手动覆盖，如 2022 或 22）",
   "  /profile set <字段> clear                 清除单个字段",
   "  /profile clear                            清空整份资料",
+  "",
+  "智能识别支持：空格 / - / + / 分隔，如 材化2211 张三 20220123456",
+  "或 张三-材化2211-20220123456；也可用 班级=材化2211 明确指定。",
+  "识别不确定时不会写入，会列出识别结果并提示改用 字段=值。",
 ].join("\n");
 
 const ACTIVITY_USAGE = [
