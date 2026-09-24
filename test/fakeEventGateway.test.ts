@@ -73,7 +73,10 @@ describe("FakeEventGateway", () => {
     });
 
     expect(api.sentMessages).toHaveLength(1);
-    expect(api.sentMessages[0]?.content).toContain("测试成功");
+    // /test 现在是卡片：正文在 markdown 里（纯文本降级在 text）
+    expect(
+      String(api.sentMessages[0]?.markdown ?? api.sentMessages[0]?.content),
+    ).toContain("测试成功");
     expect(api.sentMessages[0]?.msgId).toBe("m1");
   });
 

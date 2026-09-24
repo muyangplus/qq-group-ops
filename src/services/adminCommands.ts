@@ -1010,9 +1010,212 @@ export class AdminCommandService {
   }
 
   /**
+   * `/audit [群号|#群短码] [每页数量] [+页码]`：审计记录卡。
+   *
+   * 正文沿用原格式（时间 / 动作 / 状态 / 操作人 / 对象），翻页为回调，
+   * 纯文本降级给出 `/audit +<页码>`。
+   */
+  public auditCard(
+    targetGroupId: string,
+    userId: string,
+    page = 1,
+    limit = 20,
+  ): CardResult {
+    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
+      const card = renderCard({
+        title: "权限不足",
+        lines: ["需要审核员或以上权限。"],
+        rows: [[viewButton("help", "指令帮助", "help", "home")]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    const groupLabel = this.displayGroup(targetGroupId);
+    const size = limit > 0 ? limit : 20;
+    // 最新的记录在前
+    const all = this.auditLog.findByGroup(targetGroupId).slice().reverse();
+    if (all.length === 0) {
+      return cardFromText("审计记录", `群 ${groupLabel}：暂无审计记录。`, {
+        rows: [
+          [viewButton("refresh", "刷新", "audit", "page", targetGroupId, size, 1)],
+        ],
+        footer: [`本群：${groupLabel}`],
+      });
+    }
+    const pageCount = Math.max(1, Math.ceil(all.length / size));
+    const current = Math.min(Math.max(page, 1), pageCount);
+    const slice = all.slice((current - 1) * size, current * size);
+    const lines = [
+      `**群**：${groupLabel}`,
+      `**审计记录**：${all.length} 条 · 第 ${current} / ${pageCount} 页（每页 ${size}）`,
+    ];
+    for (const record of slice) {
+      const target = record.targetUserId
+        ? ` → ${this.displayUser(record.targetUserId)}`
+        : "";
+      lines.push(
+        `${formatTime(record.createdAt)} ${record.action} ${record.status}${
+          record.actorId ? ` by ${this.displayUser(record.actorId)}` : ""
+        }${target}`,
+      );
+    }
+    const paging: CardButton[] = [];
+    if (current > 1) {
+      paging.push(
+        viewButton("prev", "上一页", "audit", "page", targetGroupId, size, current - 1),
+      );
+    }
+    if (current < pageCount) {
+      paging.push(
+        viewButton("next", "下一页", "audit", "page", targetGroupId, size, current + 1),
+      );
+    }
+    paging.push(
+      viewButton("refresh", "刷新", "audit", "page", targetGroupId, size, current),
+    );
+    const footer: string[] = [];
+    if (current < pageCount) {
+      footer.push(`下一页：/audit +${current + 1}`);
+    }
+    if (current > 1) {
+      footer.push(`上一页：/audit +${current - 1}`);
+    }
+    footer.push(`本群：${groupLabel}`);
+    return cardFromText("审计记录", lines.join("\n"), {
+      rows: [paging],
+      buttonHint: "翻页：",
+      footer,
+    });
+  }
+
+  /** `/test`：自检结果卡 + 常用入口。 */
+  public testCard(groupId: string | undefined, userId: string): CardResult {
+    if (!this.permissions.canReviewContent(userId, groupId ?? "")) {
+      log.warn("test permission denied", { groupId, userId });
+      const card = renderCard({
+        title: "权限不足",
+        lines: ["需要审核员或以上权限。"],
+        rows: [[viewButton("help", "指令帮助", "help", "home")]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    log.info("test command", { groupId, userId });
+    const rows: CardButton[][] = [];
+    if (groupId) {
+      rows.push([
+        viewButton("refresh", "刷新", "test", "view", groupId),
+        viewButton("pending", "待审批", "pending", "page", groupId, 1),
+        viewButton("rules", "群规则", "rules", "view", groupId),
+      ]);
+    } else {
+      rows.push([viewButton("help", "指令帮助", "help", "home")]);
+    }
+    const lines = [
+      "测试成功：机器人已响应。",
+      groupId ? `**群**：${this.displayGroup(groupId)}` : "**当前会话**：私聊",
+      `**用户**：${this.displayUser(userId)}`,
+    ];
+    if (groupId) {
+      lines.push(`**待审批申请**：${this.joinAudit.pending(groupId).length}`);
+      lines.push(
+        `**全量消息模式**：${this.groupMessageMode?.get(groupId) ?? "unknown"}`,
+      );
+    }
+    return cardFromText("自检结果", lines.join("\n"), {
+      rows,
+      buttonHint: "常用入口：",
+      footer: ["机器人状态异常时：查看日志 logs/qq-group-ops.log"],
+    });
+  }
+
+  /**
+   * `/sync [群号|#群短码]` 与 `cb:sync:run`：同步官方待审批申请。
+   *
+   * 属于固定动作（无需参数），因此既能用指令触发，也能用回调自动完成；
+   * 结果卡标明**操作人**，并给出「查看待审批」入口。
+   */
+  public async syncCard(
+    targetGroupId: string,
+    userId: string,
+  ): Promise<CardResult> {
+    const back = viewButton(
+      "pending",
+      "查看待审批",
+      "pending",
+      "page",
+      targetGroupId,
+      1,
+    );
+    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
+      const card = renderCard({
+        title: "权限不足",
+        lines: ["需要审核员或以上权限。"],
+        rows: [[back]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    let pending;
+    try {
+      pending = await this.joinSync.syncGroup(targetGroupId);
+    } catch (error) {
+      log.warn("join sync failed", {
+        groupId: targetGroupId,
+        error: formatError(error),
+      });
+      const card = renderCard({
+        title: "同步失败",
+        lines: [
+          `操作人：${this.displayUser(userId)}`,
+          formatError(error),
+        ],
+        rows: [[back]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    await this.notifyPending(targetGroupId, pending).catch(() => undefined);
+    const operator = `操作人：${this.displayUser(userId)}`;
+    const lines = [
+      `**群**：${this.displayGroup(targetGroupId)}`,
+      `**结果**：已同步官方待审批申请，当前待审批 ${pending.length} 条 · ${operator}`,
+    ];
+    for (const request of pending.slice(0, 5)) {
+      const reason = request.reason ? ` 理由：${request.reason}` : "";
+      lines.push(
+        `- ${escapeCardText(this.displayRequest(request.requestId))} 用户：${escapeCardText(this.displayUser(request.userId))}${escapeCardText(reason)}`,
+      );
+    }
+    if (pending.length > 5) {
+      lines.push("（仅显示前 5 条，点下方按钮查看全部）");
+    }
+    return cardFromText("同步结果", lines.join("\n"), {
+      rows: [[back]],
+      footer: ["手动同步：/sync", "待审批列表每页 3 条，可翻页"],
+    });
+  }
+
+  /** 审批结果卡（通过 / 拒绝），标明操作人并给回列表入口。 */
+  private approvalResultCard(
+    targetGroupId: string,
+    userId: string,
+    message: string,
+    ok: boolean,
+  ): CardResult {
+    const card = renderCard({
+      title: ok ? "审批结果" : "审批失败",
+      lines: [message, `操作人：${this.displayUser(userId)}`],
+      rows: [
+        [
+          viewButton("back", "返回待审批", "pending", "page", targetGroupId, 1),
+          viewButton("audit", "查看审计", "audit", "page", targetGroupId, 20, 1),
+        ],
+      ],
+      footer: ["手动审批：/approve <申请ID> · /reject <申请ID> [原因]"],
+    });
+    return { ok, text: card.text, rich: card };
+  }
+  /**
    * 子卡：开关设置 / 入群决策 / 命中处罚。
    *
-   * 全部是**回调按钮**（开关与枚举都能自动完成），布局按标准：开关一行 2 个、每行最多 3 个。
+   * 全部是**回调按钮**（开关与枚举都能自动完成）。
    */
   public rulesPanelCard(
     panel: string,
@@ -1589,40 +1792,17 @@ export class AdminCommandService {
   ): Promise<CommandResult> {
     const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
     if (!targetGroupId) {
-      return {
-        ok: false,
-        text: "该指令需要在群内使用，或在私信中提供群号 / #群短码。用法：/sync [#群短码|群号]",
-      };
-    }
-    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
-      return { ok: false, text: "权限不足：需要审核员或以上权限。" };
-    }
-    let pending;
-    try {
-      pending = await this.joinSync.syncGroup(targetGroupId);
-    } catch (error) {
-      log.warn("join sync failed", {
-        groupId: targetGroupId,
-        error: formatError(error),
+      const card = renderCard({
+        title: "同步官方申请",
+        lines: [
+          "该指令需要在群内使用，或在私信中提供群号 / #群短码。",
+          "用法：/sync [#群短码|群号]",
+        ],
+        rows: [[viewButton("help", "指令帮助", "help", "home")]],
       });
-      return { ok: false, text: `同步失败：${formatError(error)}` };
+      return { ok: false, text: card.text, rich: card };
     }
-    if (pending.length === 0) {
-      return { ok: true, text: "已同步官方待审批申请：当前没有待审批申请。" };
-    }
-    // 同步补齐的申请也走推送（投递表去重，已经推过的人不会再收到）。
-    await this.notifyPending(targetGroupId, pending);
-    const lines = [`已同步官方待审批申请，当前待审批 ${pending.length} 条：`];
-    for (const request of pending.slice(0, 5)) {
-      const reason = request.reason ? ` 理由：${request.reason}` : "";
-      lines.push(
-        `- ${this.displayRequest(request.requestId)} 用户：${this.displayUser(request.userId)}${reason}`,
-      );
-    }
-    if (pending.length > 5) {
-      lines.push(`（仅显示前 5 条，使用 /pending 查看全部）`);
-    }
-    return { ok: true, text: lines.join("\n") };
+    return this.syncCard(targetGroupId, userId);
   }
 
   /**
@@ -2336,10 +2516,12 @@ export class AdminCommandService {
       return { ok: false, text: `审批失败：${formatError(error)}` };
     }
     log.info("approved join request", { requestId, userId });
-    return {
-      ok: true,
-      text: `已通过入群申请 ${this.displayRequest(requestId)}。`,
-    };
+    return this.approvalResultCard(
+      targetGroupId,
+      userId,
+      `已通过入群申请 ${this.displayRequest(requestId)}。`,
+      true,
+    );
   }
 
   private async handleReject(
@@ -2380,10 +2562,12 @@ export class AdminCommandService {
       userId,
       hasReason: reason.length > 0,
     });
-    return {
-      ok: true,
-      text: `已拒绝入群申请 ${this.displayRequest(requestId)}。`,
-    };
+    return this.approvalResultCard(
+      targetGroupId,
+      userId,
+      `已拒绝入群申请 ${this.displayRequest(requestId)}。`,
+      true,
+    );
   }
 
   private async handleRules(
@@ -2502,37 +2686,21 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
+    const { page, rest } = extractPageToken(parts);
+    const targetGroupId = this.resolveTargetGroupId(groupId, rest[0]);
     if (!targetGroupId) {
-      return {
-        ok: false,
-        text: "该指令需要在群内使用，或在私信中提供群号 / #群短码。用法：/audit [数量]",
-      };
+      const card = renderCard({
+        title: "审计记录",
+        lines: [
+          "该指令需要在群内使用，或在私信中提供群号 / #群短码。",
+          "用法：/audit [群号|#群短码] [每页数量] [+页码]",
+        ],
+        rows: [[viewButton("help", "指令帮助", "help", "home")]],
+      });
+      return { ok: false, text: card.text, rich: card };
     }
-    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
-      return { ok: false, text: "权限不足：需要审核员或以上权限。" };
-    }
-    const limitArgument = groupId ? parts[1] : parts[2];
-    const limit = clampLimit(limitArgument);
-    const records = this.auditLog
-      .findByGroup(targetGroupId)
-      .slice(-limit)
-      .reverse();
-    if (records.length === 0) {
-      return { ok: true, text: "暂无审计记录。" };
-    }
-    const lines = [`最近 ${records.length} 条审计记录：`];
-    for (const record of records) {
-      const target = record.targetUserId
-        ? ` → ${this.displayUser(record.targetUserId)}`
-        : "";
-      lines.push(
-        `${formatTime(record.createdAt)} ${record.action} ${record.status}${
-          record.actorId ? ` by ${this.displayUser(record.actorId)}` : ""
-        }${target}`,
-      );
-    }
-    return { ok: true, text: lines.join("\n") };
+    const limit = clampLimit(groupId !== undefined ? rest[0] : rest[1]);
+    return this.auditCard(targetGroupId, userId, page, limit);
   }
 
   private handleStatus(
@@ -2544,20 +2712,7 @@ export class AdminCommandService {
   }
 
   private handleTest(groupId: string | undefined, userId: string): CommandResult {
-    if (!this.permissions.canReviewContent(userId, groupId ?? "")) {
-      log.warn("test permission denied", { groupId, userId });
-      return { ok: false, text: "权限不足：需要审核员或以上权限。" };
-    }
-    log.info("test command", { groupId, userId });
-    const lines = [
-      "测试成功：机器人已响应。",
-      groupId ? `群：${this.displayGroup(groupId)}` : "当前会话：私聊",
-      `用户：${this.displayUser(userId)}`,
-    ];
-    if (groupId) {
-      lines.push(`待审批申请：${this.joinAudit.pending(groupId).length}`);
-    }
-    return { ok: true, text: lines.join("\n") };
+    return this.testCard(groupId, userId);
   }
 }
 

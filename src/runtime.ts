@@ -304,6 +304,47 @@ export function createRuntime(
         return adminCommands.rulesCard(event.groupId, userId, parts).rich;
       },
     ],
+    [
+      "audit",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        const [targetGroupId, limit, page] = parsed.args;
+        if (!targetGroupId) {
+          return undefined;
+        }
+        return adminCommands.auditCard(
+          targetGroupId,
+          userId,
+          Number.parseInt(page ?? "1", 10) || 1,
+          Number.parseInt(limit ?? "20", 10) || 20,
+        ).rich;
+      },
+    ],
+    [
+      "test",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        return adminCommands.testCard(event.groupId, userId).rich;
+      },
+    ],
+    [
+      "sync",
+      async (parsed, event) => {
+        const userId = event.userId;
+        const targetGroupId = parsed.args[0] ?? event.groupId;
+        if (!userId || !targetGroupId) {
+          return undefined;
+        }
+        const card = await adminCommands.syncCard(targetGroupId, userId);
+        return card.rich;
+      },
+    ],
     ["testmenu", (parsed, event) => testMenu.render(parsed, event)],
   ]);
   const interactionHandler = new CallbackRouter({

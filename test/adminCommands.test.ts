@@ -1391,6 +1391,68 @@ describe("AdminCommandService", async () => {
     expect(configStore.get("g1").wordFilterEnabled).toBe(false);
   });
 
+  it("renders /audit as a paged card with a +page fallback", async () => {
+    for (let index = 1; index <= 25; index += 1) {
+      auditLog.append({
+        recordId: `a${index}`,
+        groupId: "g1",
+        actorId: "member",
+        targetUserId: undefined,
+        action: "moderation:warn",
+        status: "executed",
+        reason: "",
+        createdAt: new Date(2026, 0, 1, 0, index),
+      });
+    }
+
+    // 默认每页 10 条 → 25 条共 3 页
+    const first = await service.handle("g1", "mod", "/audit");
+    expect(first.ok).toBe(true);
+    expect(first.rich?.markdown).toContain("第 1 / 3 页");
+    const buttons = (first.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(buttons.find((button) => button.id === "next")?.action).toMatchObject({
+      type: 1,
+      data: "cb:audit:page:g1:10:2",
+    });
+    expect(first.text).toContain("下一页：/audit +2");
+
+    const second = await service.handle("g1", "mod", "/audit +2");
+    expect(second.rich?.markdown).toContain("第 2 / 3 页");
+  });
+
+  it("renders /test as a card with refresh and quick entries", async () => {
+    const result = await service.handle("g1", "mod", "/test");
+
+    expect(result.ok).toBe(true);
+    expect(result.rich?.markdown).toContain("测试成功");
+    const buttons = (result.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(
+      buttons.find((button) => button.id === "refresh")?.action,
+    ).toMatchObject({ type: 1, data: "cb:test:view:g1" });
+  });
+
+  it("reports the sync operator in the result card", async () => {
+    const result = await service.syncCard("g1", "mod");
+
+    expect(result.ok).toBe(true);
+    expect(result.rich.markdown).toContain("操作人：");
+    expect(result.rich.markdown).toContain("待审批");
+  });
+
+  it("reports the operator in approval result cards", async () => {
+    joinAudit.submit("g1", "u1", "理由", "r1");
+
+    const result = await service.handle("g1", "admin", "/approve r1");
+
+    expect(result.ok).toBe(true);
+    expect(result.rich?.markdown).toContain("已通过入群申请");
+    expect(result.rich?.markdown).toContain("操作人：");
+  });
+
   it("resolves #group and #user short codes in commands", async () => {
     const scoped = withShortCodes();
     identityMap.bindGroup("g2", "777777");
