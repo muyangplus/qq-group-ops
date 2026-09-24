@@ -136,7 +136,7 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 
 | 能力 | 全局超管 | 本群超管 | 群管理员 | 审核员 | 成员 |
 |---|---|---|---|---|---|
-| `/perm`、`/rules all`、`/bind user\|groupid`、`/whois` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `/perm`、`/rules all`、`/bind user\|groupid`、`/whois`、`/alias` | ✅ | ❌ | ❌ | ❌ | ❌ |
 | `/approve`、`/reject`、`/rules set`、`/bind group`、`/notify` | ✅ | ✅（本群） | ✅（本群） | ❌ | ❌ |
 | `/pending`、`/sync`、`/audit`、`/test`、`/rules`、`/status` | ✅ | ✅（本群） | ✅（本群） | ✅（本群） | ❌ |
 | `/myperm`、`/help` | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -303,7 +303,7 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 系统 / 管理 / 超
 /menu admin     管理菜单：待审批 / 同步 / 规则 / 审计 / 状态 / 自检（审核员及以上）
 /menu review    审核操作：/approve、/reject 的用法（群管理员及以上）
 /menu ops       活动运营：活动创建/开停/名单、/export（群管理员及以上）
-/menu super     超管菜单：/perm、/rules all、/whois、/bind user|groupid（仅全局超管）
+/menu super     超管菜单：/perm、/rules all、/whois、/alias、/bind user|groupid（仅全局超管）
 ```
 
 要点：
@@ -456,6 +456,23 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 系统 / 管理 / 超
 - 班级库缺失时 **拒绝** 设置班级（不会静默存一个查不到的班级）；
 - 报名活动前要求「姓名 + 学号 + 班级」齐全。
 
+### `/alias`（班级 / 学院 / 专业别名表）
+
+```text
+/alias                                          查看别名表（卡片）
+/alias set <别名> <规范名>                       新增/覆盖（类型自动判定）
+/alias del <别名>                               删除
+```
+
+- 仅**全局超级管理员**；入口在 `/menu super`，详细用法 `/help alias`；
+- 规范名必须来自 `data/class-index.json`（班级 / 学院 / 专业之一），类型由目标自动判定，
+  不需要用户指定；别名不能与规范名完全相同；
+- 别名用于：
+  - `/profile set` 的智能识别（别名先展开成规范名，再走班级/学院匹配，专业别名不参与）；
+  - 入群审核的「班级+姓名」匹配（回答里写别名也能命中班级，自定义正则仍匹配原始回答）；
+- 匹配忽略空白差异、**长别名优先**（`环工2214` 不会被 `环工` 切碎）；
+- 全局生效；存储：`class_aliases`（`alias` 主键 + `target` + `kind` + `updated_at`）。
+
 ### `/activity`（活动发布 / 报名 / 管理）
 
 ```text
@@ -545,6 +562,7 @@ pnpm db:up     # docker compose --profile postgres up -d db
 | `notification_deliveries` | 推送投递记录（去重与排查） | `NotificationService` |
 | `short_codes` | 随机短码 → 内部 id 映射（申请/用户/群） | `ShortCodeService` |
 | `user_profiles` | 个人资料（姓名/学号/班级/学院/年级） | `UserProfileService` |
+| `class_aliases` | 班级/学院/专业别名 → 规范名 | `ClassAliasService` |
 | `activity_details` | 活动短码/群号/链接/学院年级限制 | `ActivityService` |
 | `group_message_modes` | 全量消息模式诊断 | `GroupMessageModeRegistry` |
 | `activities` / `activity_registrations` | 活动与报名 | `ActivityService` |
