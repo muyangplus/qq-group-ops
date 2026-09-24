@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
@@ -127,6 +127,10 @@
 - **无法自动修改群成员昵称/群名片**：官方开放平台「群聊管理」接口中没有该能力，已核对接口列表。入群审核识别到的「班级+姓名」会展示在 `/pending` 审核意见与日志中，供人工改名；若官方后续开放该接口，可在 `JoinRuleEvaluator` 输出之上直接接入。
 
 ### 变更
+
+- `/whois` 不带参数时直接查当前上下文：**群聊返回当前群的映射，私聊返回你自己的映射**
+  （都带绑定的群号/QQ号与短码）；带参数的行为不变，仍然只显示短码/QQ号/群号，真实系统
+  id 只有 `/whois` 会展示。帮助主题与 README/CONFIGURATION 已同步。
 
 - **新增个人资料 `/profile`**：班级/学院/姓名/学号，持久化到新表 `user_profiles`。
   - 学号必须 11 位、前两位 22-26（决定年级）；班级必须存在于 `class-index.json`，保存班级自动带出学院；学院/年级可手动覆盖；

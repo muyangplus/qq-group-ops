@@ -461,6 +461,16 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 
 `/pending`、`/sync`、推送卡片、`/audit`、`/status`、`/perm list`、`/rules`、`/notify`、`/test` 都只出现 QQ号 / 群号 / 短码；只有 `/whois` 会显示真实系统 id。
 
+`/whois` 不带参数时直接查当前上下文：**群聊查当前群、私聊查你自己**（同样显示绑定的群号/QQ号与短码）：
+
+```text
+/whois
+类型：群（当前群）
+群 ID：0123456789ABCDEF0123456789ABCDEF
+群号：654321
+短码：#A7K2Q9
+```
+
 ## 个人资料（`/profile`）
 
 活动报名、身份核对都基于个人资料。用户自己填写、随时查看：

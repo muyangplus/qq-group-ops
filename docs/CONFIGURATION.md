@@ -386,7 +386,8 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 系统 / 管理 / 超
 /bind group <群号>                      # 群管理员绑定当前群
 /bind user <userId> <QQ号>              # 超管绑定任意用户
 /bind groupid <group_openid> <群号>     # 超管绑定任意群
-/whois <QQ号|userId|群号|group_openid>  # 超管查询映射
+/whois                                  # 超管查询映射：群聊=当前群，私聊=你自己
+/whois <QQ号|userId|群号|group_openid>  # 超管查询指定目标
 ```
 
 绑定后可以直接用 QQ号/群号执行命令：
@@ -404,7 +405,7 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 系统 / 管理 / 超
 - 入群申请 → 一律显示申请短码，替代又长又难读的 `join_request_id`；
 - 覆盖范围：`/pending`、`/sync`、推送卡片与纯文本降级、`/audit`、`/status`、`/test`、`/myperm`、`/perm list`、`/notify` 状态、`/rules` 标题、`/bind` 成功回复；
 - 命令参数同时接受群号/QQ号与短码：`/status 654321`、`/approve #M7K2Q9`、`/rules set #G7K2Q9 keywords 广告` 都能执行；完整 `join_request_id` 仍然兼容；
-- **唯一例外是 `/whois`**（超管）：`/whois #M7K2Q9` 会显示短码对应的类型与真实系统 id，`/whois <QQ号>` 显示对应 `userId` 与短码；
+- **唯一例外是 `/whois`**（超管）：`/whois #M7K2Q9` 会显示短码对应的类型与真实系统 id，`/whois <QQ号>` 显示对应 `userId` 与短码；**不带参数时直接查当前上下文**（群聊=当前群、私聊=你自己）；
 - 短码持久化在 `short_codes` 表（`code` 主键 + `(kind, target_id)` 唯一），重启后同一 id 复用同一短码。
 
 强制绑定规则：
