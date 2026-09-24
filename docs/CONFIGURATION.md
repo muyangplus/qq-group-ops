@@ -1,4 +1,4 @@
-# Configuration
+﻿# Configuration
 
 本文说明 QQ Group Ops 当前支持的环境变量。项目使用 `.env` 加载配置；仓库只提交 `.env.example`。
 
@@ -577,12 +577,17 @@ pnpm db:up     # docker compose --profile postgres up -d db
 |---|---|---|
 | `RAW_MESSAGE_RETENTION_DAYS` | 否 | 消息原文保留天数；`0` 表示不保存（见下方说明） |
 | `AUDIT_LOG_RETENTION_DAYS` | 否 | 审计记录保留天数，默认 `180`；`0` 表示不清理 |
+| `JOIN_REQUEST_TTL_DAYS` | 否 | 待审批入群申请有效期（天），默认 `7`；超过即标记 `expired`（不删数据，`/whois` 可追溯），`0` 表示不自动过期 |
 
 清理行为（`RetentionService`）：
 
 - 启动时执行一次，之后每 24 小时执行一次；
 - 删除早于 `AUDIT_LOG_RETENTION_DAYS` 的审计记录；
-- 删除早于同一保留期、且**已审批**的入群申请；待审批申请永不清理；
+- **先把过期的待审批申请标记为 `expired`**（有效期 = `JOIN_REQUEST_TTL_DAYS`，默认 7 天）：
+  标记后不再出现在 `/pending`、推送与统计里，但 `/audit` 记 `expire_join_request`、`/whois` 仍可追溯；
+- 删除早于同一保留期、且**已审批**的入群申请；未过期的待审批申请不清理；
+- `/sync` 会与官方列表对账：官方已不再返回、且已存在超过 1 小时的本地待审批也标记为过期；
+- 查询 `/pending` 时还会做一次懒清理，保证卡片里不出现过期项。
 - 清理同时作用于内存缓存与数据库，避免启动全量载入导致内存无限增长。
 
 `RAW_MESSAGE_RETENTION_DAYS` 目前是「无数据可清理」的状态：项目默认不保存消息原文，只保存审核结果与规则命中信息。保留该变量是为了后续需要短期留存原文时使用。
