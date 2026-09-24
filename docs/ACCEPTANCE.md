@@ -147,8 +147,8 @@ B/C/D/G 组的核心链路（审批闭环、关键词警告/处罚与审计、�
 | J6 | 按钮未开通 | 在未开通自定义按钮的机器人上发 `/menu` | 自动降级为 Markdown / 纯文本，正文列出同样的指令，功能不丢 |
 | J7 | 私信首次推送 | 用一个全新用户首次私信机器人 | 收到一次主菜单；再发消息不再重复推送（正式启动入库，重启也不重复） |
 | J8 | dev 内存态 | `pnpm dev` 启动后首次私信，重启进程再私信 | 重启后会再收到一次（`MENU_FIRST_PUSH` 未设置时 dev 默认 memory） |
-| J9 | 回调翻页 | 超管发 `/testmenu`，点「下一页」 | 客户端 loading 结束后收到第 2 页卡片；日志出现 `INTERACTION_CREATE`、`respondInteraction`、`page_2` |
-| J10 | 回调兜底 | 点按钮后看日志与聊天 | 若回包或被动发送失败，机器人仍主动发出目标页；日志有 `interaction ack failed` / `active_fallback` |
+| J9 | 回调翻页 | 超管发 `/testmenu`，点「下一页」 | 客户端 loading 结束后收到第 2 页卡片；日志出现 `INTERACTION_CREATE`、`respondInteraction ok`、`page_2` |
+| J10 | 回调兜底 | 点按钮后看日志与聊天 | 发送失败时机器人仍主动发出目标页（`active_fallback`）；键盘不会被误判禁用（后续页仍有按钮） |
 | J11 | 非超管点击 | 让普通成员点卡片上的按钮 | 回包并提示「仅全局超级管理员可以翻页」，不翻页 |
 
 ## 9. 验收记录模板

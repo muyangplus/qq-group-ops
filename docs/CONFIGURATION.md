@@ -328,8 +328,9 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 系统 / 管理 / 超
   `GROUP_MEMBER_EVENT | GROUP_AND_C2C_EVENT | INTERACTION_EVENT`（重启后生效）；
 - 收到 `INTERACTION_CREATE`（`type=11` 消息按钮）后必须调 `PUT /interactions/{id}` 回包
   （请求体只有 `{ code }`），否则客户端会一直 loading 直到超时；同一 id 只能回一次；
-- 官方**没有更新原消息的接口**：翻页是用 interaction id 当 `msg_id` **被动回复新的一页**，
-  失败会自动降级为主动发送；
+- 官方**没有更新原消息的接口**：翻页是回包后由机器人**主动发送**新的一页；
+- **不能**把 interaction id 当 `msg_id` 发被动消息：真机实测群聊返回
+  `400 请求参数msg_id无效或越权`，所以代码不再走被动通道（避免每翻一页白等十几秒）；
 - 双通道兜底：卡片正文与第二行按钮保留 `/testmenu <页码>`。
 
 ### 私信指令
