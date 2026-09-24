@@ -40,6 +40,11 @@
 **回调 renderer 内部必须重新做权限校验**；回调按钮没有可复制的指令，
 因此正文/底部必须给出等价的手动指令（见第 4 节降级要求）。
 
+**固定指令的一键入口**：用 `encodeCallback("cmd", "run", "/<指令>")` 把一条**不带参数**的固定指令
+包装成回调（例如 `cb:cmd:run:/myperm`）。它复用 `AdminCommandService.handle`，权限、审计、
+二次确认与手输完全一致；菜单里 `/myperm`、`/profile`、`/audit`、`/notify`、`/perm list` 等
+入口都用这一招接入，新指令无需额外 renderer。
+
 ## 3. 分页
 
 - 列表类指令必须分页：默认每页 10 条；条目多行时按需减少（如 `/pending` 每页 3 条）。
