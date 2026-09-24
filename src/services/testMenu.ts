@@ -1,34 +1,29 @@
-import type { QQOfficialAPI } from "../adapters/qqOfficial.js";
 import { getLogger } from "../core/logger.js";
+import { pageArg, pageCallback, parseCallback, type ParsedCallback } from "./callbackData.js";
 import { renderCard, type CardButton } from "./cardTemplate.js";
 import type { InteractionEvent } from "./eventRouter.js";
 import type { PermissionService } from "./permissions.js";
-import type {
-  RichMessage,
-  RichMessageSender,
-  RichSendResult,
-} from "./richMessages.js";
+import type { RichMessage } from "./richMessages.js";
 
 const log = getLogger("test-menu");
 
 /**
  * `/testmenu`：官方**回调按钮**翻页试验（仅全局超级管理员）。
  *
- * 官方能力边界（已核对文档）：
+ * 官方能力边界（已核对文档 + 真机验证）：
  * - 回调按钮 `action.type = 1`：点击后官方推 `INTERACTION_CREATE`（`type=11`），
  *   `data.resolved.button_data` 带回按钮定义里的 `data`；
  * - 收到互动事件后**必须**调 `PUT /interactions/{id}` 回应，否则客户端一直 loading 到超时；
- * - **没有"更新原消息"的接口**，也**不能**把互动事件的 `id` 当 `msg_id` 发被动消息
+ * - **没有「更新原消息」的接口**，也**不能**把互动事件的 `id` 当 `msg_id` 发被动消息
  *   （真机实测群聊返回 `400 请求参数msg_id无效或越权`），所以翻页只能是"回包之后
  *   再发一条新消息"：旧卡片会留在聊天记录里，这是官方能力限制，不是实现取巧；
- * - 弹窗确认/指令按钮与回调按钮可以混在同一个键盘里。
+ * - 双通道兜底：卡片正文与第二行按钮给出 `/testmenu <页码>`。
  *
- * 双通道设计：回调按钮翻页为主；卡片正文与第二行按钮给出 `/testmenu <页码>`，
- * 便于回调未开通时手动翻页。回调发送失败时 `RichMessageSender` 会自动改用主动发送。
+ * 按钮类型遵循 `docs/CARD-STANDARD.md`：导航用回调（`cb:testmenu:page:N`），
+ * 手动翻页用指令按钮（`/testmenu N`）。
  */
+export const TEST_MENU_NAMESPACE = "testmenu";
 export const TEST_MENU_PAGE_COUNT = 3;
-/** 回调按钮 data 前缀：`testmenu:page:2`。 */
-export const TEST_MENU_CALLBACK_PREFIX = "testmenu:page:";
 
 export function clampTestMenuPage(page: number): number {
   if (!Number.isFinite(page)) {
@@ -38,18 +33,22 @@ export function clampTestMenuPage(page: number): number {
 }
 
 export function testMenuCallbackData(page: number): string {
-  return `${TEST_MENU_CALLBACK_PREFIX}${clampTestMenuPage(page)}`;
+  return pageCallback(TEST_MENU_NAMESPACE, clampTestMenuPage(page));
 }
 
-/** 解析回调数据：是 `/testmenu` 的回调才返回页码。 */
+/** 解析回调数据：是 `/testmenu` 的翻页回调才返回页码。 */
 export function parseTestMenuCallback(
   data: string | undefined,
 ): number | undefined {
-  if (!data || !data.startsWith(TEST_MENU_CALLBACK_PREFIX)) {
+  const parsed = parseCallback(data);
+  if (!parsed || parsed.namespace !== TEST_MENU_NAMESPACE) {
     return undefined;
   }
-  const page = Number.parseInt(data.slice(TEST_MENU_CALLBACK_PREFIX.length), 10);
-  return Number.isNaN(page) ? undefined : clampTestMenuPage(page);
+  if (parsed.action !== "page") {
+    return undefined;
+  }
+  const page = pageArg(parsed.args);
+  return page === undefined ? undefined : clampTestMenuPage(page);
 }
 
 /** 渲染第 `page` 页（自动收敛到 1-3）。 */
@@ -57,15 +56,15 @@ export function buildTestMenuCard(page: number): RichMessage {
   const current = clampTestMenuPage(page);
   const rows: CardButton[][] = [];
 
-  const callbackRow: CardButton[] = [];
+  const navigationRow: CardButton[] = [];
   if (current > 1) {
-    callbackRow.push(callbackButton("prev", "上一页", current - 1));
+    navigationRow.push(navigationButton("prev", "上一页", current - 1));
   }
   if (current < TEST_MENU_PAGE_COUNT) {
-    callbackRow.push(callbackButton("next", "下一页", current + 1));
+    navigationRow.push(navigationButton("next", "下一页", current + 1));
   }
-  callbackRow.push(callbackButton("home", "返回第 1 页", 1));
-  rows.push(callbackRow);
+  navigationRow.push(navigationButton("home", "返回第 1 页", 1));
+  rows.push(navigationRow);
 
   // 双通道：键盘能用但互动事件没开通时，至少还能用指令按钮翻页
   if (current < TEST_MENU_PAGE_COUNT) {
@@ -95,7 +94,7 @@ export function buildTestMenuCard(page: number): RichMessage {
   });
 }
 
-function callbackButton(
+function navigationButton(
   id: string,
   label: string,
   page: number,
@@ -110,98 +109,41 @@ function callbackButton(
 }
 
 export interface TestMenuDependencies {
-  api: QQOfficialAPI;
-  sender: RichMessageSender;
   permissions: PermissionService;
 }
 
-export interface InteractionOutcome {
-  handled: boolean;
-  detail: string;
-}
-
+/**
+ * `/testmenu` 的回调 renderer（见 `docs/CARD-STANDARD.md`）。
+ *
+ * 回包与发送由 `CallbackRouter` 统一负责，这里只做权限校验 + 渲染卡片；
+ * 非超管点击（卡片可能被转发）返回一张说明卡片，而不是静默失败。
+ */
 export class TestMenuService {
-  private readonly api: QQOfficialAPI;
-  private readonly sender: RichMessageSender;
   private readonly permissions: PermissionService;
 
   public constructor(dependencies: TestMenuDependencies) {
-    this.api = dependencies.api;
-    this.sender = dependencies.sender;
     this.permissions = dependencies.permissions;
   }
 
-  /** 处理按钮回调：回包 + 把目标页作为新消息发出去。 */
-  public async handle(event: InteractionEvent): Promise<InteractionOutcome> {
-    const page = parseTestMenuCallback(event.buttonData);
-    if (page === undefined) {
-      // 不是本菜单的回调也要回包，否则客户端一直 loading
-      const acked = await this.ack(event.interactionId);
-      return {
-        handled: false,
-        detail: acked ? "unknown_callback" : "unknown_callback_ack_failed",
-      };
-    }
-
-    const acked = await this.ack(event.interactionId);
-    const suffix = acked ? "" : "_ack_failed";
-    if (!event.userId) {
-      return { handled: false, detail: `missing_user${suffix}` };
-    }
-    if (!this.permissions.isSuperAdmin(event.userId)) {
-      // 卡片可能被转发到别的群，点的人不一定有权限：回包并说明原因
-      await this.reply(event, {
-        markdown: "仅全局超级管理员可以翻页：/testmenu",
-        text: "仅全局超级管理员可以翻页：/testmenu",
-      });
-      return { handled: true, detail: `permission_denied${suffix}` };
-    }
-
-    const mode = await this.reply(event, buildTestMenuCard(page));
-    return { handled: true, detail: `page_${page}_${mode}${suffix}` };
-  }
-
-  /** 回应互动事件；失败只记日志（客户端可能一直 loading，但卡片仍会发出去）。 */
-  private async ack(interactionId: string): Promise<boolean> {
-    try {
-      await this.api.respondInteraction(interactionId, 0);
-      return true;
-    } catch (error) {
-      log.warn("interaction ack failed", {
-        interactionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return false;
-    }
-  }
-
-  /**
-   * 回复目标页：**主动发送**新的一页。
-   *
-   * 实测（真机日志）：群聊里**不能**把 interaction id 当 `msg_id` 发被动消息，官方返回
-   * `400 请求参数msg_id无效或越权`（虽然互动事件文档写着 id 用于被动消息发送）；
-   * 而被动失败还会走一大圈重试，用户要等十几秒才看到新页。
-   * 所以这里回包后直接主动发送 —— 与"回调失败后自动发送新卡片"的兜底行为一致，
-   * 通路依赖 `RichMessageSender` 的「Markdown+按钮 → Markdown → 纯文本」降级。
-   */
-  private async reply(
+  public async render(
+    parsed: ParsedCallback,
     event: InteractionEvent,
-    card: RichMessage,
-  ): Promise<string> {
-    if (event.groupId) {
-      return describeSend(await this.sender.sendToGroup(event.groupId, card));
+  ): Promise<RichMessage | undefined> {
+    if (parsed.namespace !== TEST_MENU_NAMESPACE || parsed.action !== "page") {
+      return undefined;
     }
-    if (event.userId) {
-      return describeSend(await this.sender.sendToUser(event.userId, card));
+    const page = pageArg(parsed.args);
+    const userId = event.userId;
+    if (page === undefined || !userId) {
+      return undefined;
     }
-    return "no_target";
+    if (!this.permissions.isSuperAdmin(userId)) {
+      log.debug("testmenu callback denied", { userId });
+      return renderCard({
+        title: "权限不足",
+        lines: ["仅全局超级管理员可以翻页：/testmenu"],
+      });
+    }
+    return buildTestMenuCard(page);
   }
-}
-
-/** 把发送结果压成一句可写进日志/返回值的说明（含降级原因）。 */
-function describeSend(result: RichSendResult): string {
-  if (!result.ok) {
-    return "failed";
-  }
-  return result.detail.length > 0 ? `${result.mode}+${result.detail}` : result.mode;
 }

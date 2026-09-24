@@ -1,4 +1,13 @@
 import { PermissionLevel } from "../core/enums.js";
+import type { KeyboardModal } from "../adapters/qqOfficial.js";
+import { encodeCallback, extractPageToken, pageCallback } from "./callbackData.js";
+import {
+  escapeCardText,
+  quoteCardLines,
+  renderCard,
+  type CardButton,
+  type CardButtonStyle,
+} from "./cardTemplate.js";
 import {
   JoinDecisionMode,
   KeywordPunish,
@@ -26,6 +35,7 @@ import {
   buildMenu,
   buildUnknownCommandMenu,
   findMenuSection,
+  resolveMenuAccess,
   type MenuContext,
 } from "./menu.js";
 import type { RichMessage } from "./richMessages.js";
@@ -52,6 +62,16 @@ export interface CommandResult {
   text: string;
   /** 富回复（Markdown + 按钮 + 纯文本降级）；缺省时只发 text。 */
   rich?: RichMessage | undefined;
+}
+
+/**
+ * 卡片标准下的指令结果（见 `docs/CARD-STANDARD.md`）：**所有指令都必须给出卡片**，
+ * 因此 `rich` 在这里是必填的，回调 renderer 可以直接拿它发送。
+ */
+export interface CardResult {
+  ok: boolean;
+  text: string;
+  rich: RichMessage;
 }
 
 export interface AdminCommandServiceOptions {
@@ -514,6 +534,415 @@ export class AdminCommandService {
     return buildMenu("main", this.menuContext(groupId, userId)).message;
   }
 
+  /** 回调 renderer 用：渲染菜单的某一级（`cb:menu:open:<section>`）。 */
+  public menuMessage(
+    section: string | undefined,
+    groupId: string | undefined,
+    userId: string,
+  ): RichMessage {
+    return buildMenu(
+      findMenuSection(section) ?? "main",
+      this.menuContext(groupId, userId),
+    ).message;
+  }
+
+  /**
+   * `/help [主题]`：指令列表卡 / 主题详情卡。
+   *
+   * 正文沿用原来的帮助文本（纯文本降级因此与旧输出等价），按钮按标准分类：
+   * 菜单入口与主题查看都是**回调**（点击即出卡），无需用户再发指令。
+   */
+  public helpCard(
+    groupId: string | undefined,
+    userId: string,
+    topicQuery?: string,
+  ): CardResult {
+    const access = resolveMenuAccess(this.menuContext(groupId, userId));
+    if (!topicQuery) {
+      const menuRow: CardButton[] = [
+        viewButton("sys", "系统菜单", "menu", "open", "sys"),
+      ];
+      if (access.canModerate) {
+        menuRow.push(viewButton("admin", "管理菜单", "menu", "open", "admin"));
+      }
+      if (access.isSuperAdmin) {
+        menuRow.push(viewButton("super", "超管菜单", "menu", "open", "super"));
+      }
+      const topicRow: CardButton[] = [
+        viewButton("topic-rules", "群规则", "help", "topic", "rules"),
+        viewButton("topic-approve", "审批", "help", "topic", "approve"),
+        viewButton("topic-bind", "绑定", "help", "topic", "bind"),
+        viewButton("topic-menu", "菜单", "help", "topic", "menu"),
+      ];
+      if (access.isSuperAdmin) {
+        topicRow.push(viewButton("topic-perm", "权限", "help", "topic", "perm"));
+      }
+      const card = renderCard({
+        title: "指令帮助",
+        lines: this.buildHelp(groupId, userId).split("\n"),
+        rows: [menuRow, topicRow],
+        buttonHint: "常用入口：",
+        footer: ["查看某个指令的详细用法：/help <指令>"],
+      });
+      return { ok: true, text: card.text, rich: card };
+    }
+
+    const topic = findHelpTopic(topicQuery);
+    if (!topic) {
+      const card = renderCard({
+        title: "指令帮助",
+        lines: [
+          `未找到「${topicQuery}」的帮助。`,
+          "用法：/help <指令>，例如 /help rules、/help bind、/help perm",
+          "",
+          ...this.buildHelp(groupId, userId).split("\n"),
+        ],
+        rows: [[viewButton("home", "返回帮助", "help", "home")]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+
+    const context = {
+      permissions: this.permissions,
+      configStore: this.configStore,
+      identityMap: this.identityMap,
+      groupId,
+      userId,
+    };
+    if (!topic.allows(context)) {
+      const card = renderCard({
+        title: "权限不足",
+        lines: [
+          `/${topic.name} 需要${topic.requirement}。`,
+          "权限由全局超级管理员通过 /perm 配置。",
+        ],
+        rows: [[viewButton("home", "返回帮助", "help", "home")]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+
+    const rows: CardButton[] = [viewButton("home", "返回帮助", "help", "home")];
+    if (topic.name === "rules" && groupId) {
+      rows.unshift(
+        viewButton("view", "查看当前规则", "rules", "view", groupId),
+      );
+    }
+    if (topic.name === "menu") {
+      rows.unshift(viewButton("menu", "打开菜单", "menu", "open", "main"));
+    }
+    const card = renderCard({
+      title: `/${topic.name} · ${topic.title}`,
+      lines: this.renderHelpTopic(topic, context).split("\n"),
+      rows: [rows],
+      buttonHint: "相关入口：",
+    });
+    return { ok: true, text: card.text, rich: card };
+  }
+
+  /** `/status <群号|#群短码>`：运行状态卡 + 常用入口。 */
+  public statusCard(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): CardResult {
+    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
+    if (!targetGroupId) {
+      const card = renderCard({
+        title: "运行状态",
+        lines: [
+          "该指令需要在群内使用，或在私信中提供群号 / #群短码。",
+          "用法：/status <群号|#群短码>",
+        ],
+        rows: [[viewButton("help", "指令帮助", "help", "home")]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
+      const card = renderCard({
+        title: "权限不足",
+        lines: ["需要审核员或以上权限。"],
+        rows: [[viewButton("help", "指令帮助", "help", "home")]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    const config = this.configStore.get(targetGroupId);
+    const text = [
+      `群 ${this.displayGroup(targetGroupId)} 状态：`,
+      `机器人启用：${config.enabled}`,
+      `消息过滤：${config.wordFilterEnabled}`,
+      `全量消息模式：${this.groupMessageMode?.get(targetGroupId) ?? "unknown"}`,
+      `入群审核：${config.joinAuditEnabled}`,
+      `导出功能：${config.exportEnabled}`,
+      `禁言时长：${config.muteDurationSeconds} 秒`,
+    ].join("\n");
+    return cardFromText("运行状态", text, {
+      rows: [
+        [
+          viewButton("refresh", "刷新", "status", "view", targetGroupId),
+          viewButton("pending", "待审批", "pending", "page", targetGroupId, 1),
+          viewButton("rules", "群规则", "rules", "view", targetGroupId),
+          viewButton("help", "指令帮助", "help", "home"),
+        ],
+        [actionButton("test", "自检", "/test")],
+      ],
+      buttonHint: "常用入口：",
+      footer: [`刷新：/status`, `本群：${this.displayGroup(targetGroupId)}`],
+    });
+  }
+
+  /**
+   * `/pending [群号|#群短码] [+页码]`：待审批列表卡。
+   *
+   * 每页 3 条（含审核意见会占多行），每条给「通过 / 拒绝」**指令按钮**（走正常审批权限
+   * 与二次确认），翻页用**回调按钮**；纯文本降级给出 `/pending +<页码>` 指令。
+   */
+  public pendingCard(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): CardResult {
+    const { page, rest } = extractPageToken(parts);
+    const targetGroupId = this.resolveTargetGroupId(groupId, rest[0]);
+    if (!targetGroupId) {
+      const card = renderCard({
+        title: "待审批入群申请",
+        lines: [
+          "该指令需要在群内使用，或在私信中提供群号 / #群短码。",
+          "用法：/pending <群号|#群短码> [+页码]",
+        ],
+        rows: [[viewButton("help", "指令帮助", "help", "home")]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
+      const card = renderCard({
+        title: "权限不足",
+        lines: ["需要审核员或以上权限。"],
+        rows: [[viewButton("help", "指令帮助", "help", "home")]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+
+    const groupLabel = this.displayGroup(targetGroupId);
+    const pending = this.joinAudit.pending(targetGroupId);
+    if (pending.length === 0) {
+      return cardFromText(
+        "待审批入群申请",
+        `群 ${groupLabel}：当前没有待审批入群申请。`,
+        {
+          rows: [
+            [viewButton("refresh", "刷新", "pending", "page", targetGroupId, 1)],
+          ],
+          footer: [`本群：${groupLabel}`],
+        },
+      );
+    }
+
+    const pageSize = 3;
+    const pageCount = Math.max(1, Math.ceil(pending.length / pageSize));
+    const current = Math.min(Math.max(page, 1), pageCount);
+    const slice = pending.slice((current - 1) * pageSize, current * pageSize);
+    const config = this.configStore.get(targetGroupId);
+    const withOpinion =
+      config.joinReviewOpinion && this.joinRules !== undefined;
+
+    const lines = [
+      `**群**：${groupLabel}`,
+      `**待审批**：${pending.length} 条 · 第 ${current} / ${pageCount} 页`,
+    ];
+    const rows: CardButton[][] = [];
+    for (const request of slice) {
+      const code = this.displayRequest(request.requestId);
+      lines.push(
+        "",
+        `**${escapeCardText(code)}** · 申请人：${escapeCardText(this.displayUser(request.userId))}`,
+        `理由：${escapeCardText(request.reason) || "（未填写）"}`,
+      );
+      if (withOpinion) {
+        const evaluation = this.joinRules?.evaluate(request.reason, {
+          mode: config.joinDecision,
+          requireClass: config.joinRequireClass,
+          requireName: config.joinRequireName,
+          answerPattern: config.joinAnswerPattern,
+          opinionEnabled: true,
+        });
+        if (evaluation?.opinion) {
+          lines.push(...quoteCardLines(evaluation.opinion));
+        }
+      }
+      rows.push([
+        actionButton(`approve-${code}`, "通过", `/approve ${code}`, {
+          style: 1,
+          modal: {
+            content: "确认通过该入群申请？",
+            confirmText: "通过",
+            cancelText: "取消",
+          },
+        }),
+        actionButton(`reject-${code}`, "拒绝", `/reject ${code}`, {
+          style: 3,
+          modal: {
+            content: "确认拒绝该入群申请？",
+            confirmText: "拒绝",
+            cancelText: "取消",
+          },
+        }),
+      ]);
+    }
+
+    const paging: CardButton[] = [];
+    if (current > 1) {
+      paging.push(
+        viewButton("prev", "上一页", "pending", "page", targetGroupId, current - 1),
+      );
+    }
+    if (current < pageCount) {
+      paging.push(
+        viewButton("next", "下一页", "pending", "page", targetGroupId, current + 1),
+      );
+    }
+    paging.push(
+      viewButton("refresh", "刷新", "pending", "page", targetGroupId, current),
+    );
+    rows.push(paging);
+
+    const footer: string[] = [];
+    if (current < pageCount) {
+      footer.push(`下一页：/pending +${current + 1}`);
+    }
+    if (current > 1) {
+      footer.push(`上一页：/pending +${current - 1}`);
+    }
+    footer.push("审批：/approve <申请ID> · /reject <申请ID> [原因]");
+
+    return cardFromText("待审批入群申请", lines.join("\n"), {
+      rows,
+      buttonHint: "点击审批：",
+      footer,
+    });
+  }
+
+  /**
+   * `/rules [群号|#群短码]`：群规则卡。
+   *
+   * 查看是回调；开关类改动是**指令按钮**（`/rules set <字段> <值>`），
+   * 与手输指令走同一条权限与持久化路径。
+   */
+  public rulesCard(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): CardResult {
+    if (isGlobalTarget(parts[1])) {
+      return this.globalRulesCard(userId);
+    }
+    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
+    if (!targetGroupId) {
+      if (!parts[1] && this.permissions.isSuperAdmin(userId)) {
+        return this.globalRulesCard(userId);
+      }
+      const card = renderCard({
+        title: "群规则",
+        lines: [
+          "该指令需要在群内使用，或在私信中提供群号 / #群短码。",
+          "用法：/rules <群号|#群短码>；全局默认规则：/rules all",
+        ],
+        rows: [[viewButton("help", "指令帮助", "help", "home")]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
+      const card = renderCard({
+        title: "权限不足",
+        lines: ["需要审核员或以上权限（查看）／群管理员或以上（修改）。"],
+        rows: [[viewButton("help", "指令帮助", "help", "home")]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+
+    const config = this.configStore.get(targetGroupId);
+    const canManage =
+      this.permissions.canManageRules(userId, targetGroupId) ||
+      this.permissions.isSuperAdmin(userId);
+    const rows: CardButton[][] = [];
+    if (canManage) {
+      rows.push([
+        actionButton(
+          "wordFilter",
+          `消息过滤 ${config.wordFilterEnabled ? "关" : "开"}`,
+          `/rules set wordFilter ${config.wordFilterEnabled ? "off" : "on"}`,
+        ),
+        actionButton(
+          "joinAudit",
+          `入群审核 ${config.joinAuditEnabled ? "关" : "开"}`,
+          `/rules set joinAudit ${config.joinAuditEnabled ? "off" : "on"}`,
+        ),
+        actionButton(
+          "keywordRecall",
+          `撤回 ${config.keywordRecall ? "关" : "开"}`,
+          `/rules set keywordRecall ${config.keywordRecall ? "off" : "on"}`,
+        ),
+      ]);
+      rows.push([
+        actionButton(
+          "autoApprove",
+          `自动通过 ${config.autoApproveJoin ? "关" : "开"}`,
+          `/rules set autoApprove ${config.autoApproveJoin ? "off" : "on"}`,
+          {
+            modal: {
+              content: "确认切换自动通过入群？",
+              confirmText: "确认",
+              cancelText: "取消",
+            },
+          },
+        ),
+        actionButton(
+          "notifyAutoApproved",
+          `自动通知 ${config.notifyAutoApproved ? "关" : "开"}`,
+          `/rules set notifyAutoApproved ${config.notifyAutoApproved ? "off" : "on"}`,
+        ),
+      ]);
+    }
+    const lastRow: CardButton[] = [
+      viewButton("view", "刷新", "rules", "view", targetGroupId),
+      viewButton("help", "规则帮助", "help", "topic", "rules"),
+    ];
+    if (this.permissions.isSuperAdmin(userId)) {
+      lastRow.unshift(viewButton("global", "全局规则", "rules", "all"));
+    }
+    rows.push(lastRow);
+
+    return cardFromText("群规则", this.formatRules(targetGroupId), {
+      rows,
+      buttonHint: canManage ? "快捷开关（点击=发送指令）：" : "相关入口：",
+      footer: [
+        `本群：${this.displayGroup(targetGroupId)}`,
+        "修改规则需要群管理员或以上权限；完整字段用法：/help rules",
+      ],
+    });
+  }
+
+  /** `/rules all`：全局默认规则卡（仅超级管理员）。 */
+  private globalRulesCard(userId: string): CardResult {
+    if (!this.permissions.isSuperAdmin(userId)) {
+      const card = renderCard({
+        title: "权限不足",
+        lines: [GLOBAL_RULES_DENIED],
+        rows: [[viewButton("help", "指令帮助", "help", "home")]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    return cardFromText("全局规则（默认）", this.formatGlobalRules(), {
+      rows: [
+        [
+          viewButton("refresh", "刷新", "rules", "all"),
+          viewButton("help", "规则帮助", "help", "topic", "rules"),
+        ],
+      ],
+      footer: ["修改全局规则：/rules set all <字段> <值>"],
+    });
+  }
+
   /**
    * `/testmenu [页码]`：官方回调按钮翻页试验（仅全局超级管理员）。
    *
@@ -617,39 +1046,7 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const query = parts[1];
-    if (!query) {
-      return { ok: true, text: this.buildHelp(groupId, userId) };
-    }
-
-    const topic = findHelpTopic(query);
-    if (!topic) {
-      return {
-        ok: false,
-        text:
-          `未找到「${query}」的帮助。\n` +
-          `用法：/help <指令>，例如 /help rules、/help bind、/help perm\n\n` +
-          this.buildHelp(groupId, userId),
-      };
-    }
-
-    const context = {
-      permissions: this.permissions,
-      configStore: this.configStore,
-      identityMap: this.identityMap,
-      groupId,
-      userId,
-    };
-    if (!topic.allows(context)) {
-      return {
-        ok: false,
-        text:
-          `权限不足：/${topic.name} 需要${topic.requirement}。\n` +
-          `权限由全局超级管理员通过 /perm 配置。`,
-      };
-    }
-
-    return { ok: true, text: this.renderHelpTopic(topic, context) };
+    return this.helpCard(groupId, userId, parts[1]);
   }
 
   private renderHelpTopic(
@@ -1660,43 +2057,7 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
-    if (!targetGroupId) {
-      return {
-        ok: false,
-        text: "该指令需要在群内使用，或在私信中提供群号 / #群短码。用法：/pending <群号|#群短码>",
-      };
-    }
-    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
-      return { ok: false, text: "权限不足：需要审核员或以上权限。" };
-    }
-    const pending = this.joinAudit.pending(targetGroupId);
-    if (pending.length === 0) {
-      return { ok: true, text: "当前没有待审批入群申请。" };
-    }
-    const lines = ["待审批入群申请："];
-    const config = this.configStore.get(targetGroupId);
-    const withOpinion =
-      config.joinReviewOpinion && this.joinRules !== undefined;
-    pending.forEach((request, index) => {
-      const reason = request.reason ? ` 理由：${request.reason}` : "";
-      lines.push(
-        `${index + 1}. ${this.displayRequest(request.requestId)} 用户：${this.displayUser(request.userId)}${reason}`,
-      );
-      if (withOpinion) {
-        const evaluation = this.joinRules?.evaluate(request.reason, {
-          mode: config.joinDecision,
-          requireClass: config.joinRequireClass,
-          requireName: config.joinRequireName,
-          answerPattern: config.joinAnswerPattern,
-          opinionEnabled: true,
-        });
-        if (evaluation?.opinion) {
-          lines.push(indentBlock(evaluation.opinion, "   "));
-        }
-      }
-    });
-    return { ok: true, text: lines.join("\n") };
+    return this.pendingCard(groupId, userId, parts);
   }
 
   private async handleApprove(
@@ -1789,25 +2150,7 @@ export class AdminCommandService {
     if (action === "set" || action === "设置") {
       return this.handleRulesSet(groupId, userId, parts);
     }
-    if (isGlobalTarget(parts[1])) {
-      return this.handleGlobalRulesView(userId);
-    }
-
-    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
-    if (!targetGroupId) {
-      // 私信里不带群号：超级管理员直接看全局默认规则（等价 /rules all）
-      if (!parts[1] && this.permissions.isSuperAdmin(userId)) {
-        return this.handleGlobalRulesView(userId);
-      }
-      return {
-        ok: false,
-        text: "该指令需要在群内使用，或在私信中提供群号 / #群短码。用法：/rules <群号|#群短码>",
-      };
-    }
-    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
-      return { ok: false, text: "权限不足：需要审核员或以上权限。" };
-    }
-    return { ok: true, text: this.formatRules(targetGroupId) };
+    return this.rulesCard(groupId, userId, parts);
   }
 
   /** 全局规则：仅超级管理员可查看。 */
@@ -1952,31 +2295,7 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
-    if (!targetGroupId) {
-      return {
-        ok: false,
-        text: "该指令需要在群内使用，或在私信中提供群号 / #群短码。用法：/status <群号|#群短码>",
-      };
-    }
-    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
-      return { ok: false, text: "权限不足：需要审核员或以上权限。" };
-    }
-    const config = this.configStore.get(targetGroupId);
-    return {
-      ok: true,
-      text: [
-        `群 ${this.displayGroup(targetGroupId)} 状态：`,
-        `机器人启用：${config.enabled}`,
-        `消息过滤：${config.wordFilterEnabled}`,
-        `全量消息模式：${this.groupMessageMode?.get(targetGroupId) ?? "unknown"}`,
-        `入群审核：${config.joinAuditEnabled}`,
-        `导出功能：${config.exportEnabled}`,
-        `禁言时长：${config.muteDurationSeconds} 秒`,
-      ]
-        .filter((line): line is string => line !== undefined)
-        .join("\n"),
-    };
+    return this.statusCard(groupId, userId, parts);
   }
 
   private handleTest(groupId: string | undefined, userId: string): CommandResult {
@@ -1999,6 +2318,62 @@ export class AdminCommandService {
 
 function normalize(value: string | undefined): string {
   return (value ?? "").toLowerCase();
+}
+
+/** 查看/导航类按钮（标准：点击即回包 + 重发卡片）。 */
+function viewButton(
+  id: string,
+  label: string,
+  namespace: string,
+  action: string,
+  ...args: readonly (string | number)[]
+): CardButton {
+  return {
+    id,
+    label,
+    callbackData: encodeCallback(namespace, action, ...args),
+  };
+}
+
+/** 执行动作类按钮（标准：点击=发送指令，与手输同一条权限/审计路径）。 */
+function actionButton(
+  id: string,
+  label: string,
+  command: string,
+  options: { style?: CardButtonStyle; modal?: KeyboardModal } = {},
+): CardButton {
+  return {
+    id,
+    label,
+    command,
+    ...(options.style !== undefined ? { style: options.style } : {}),
+    ...(options.modal !== undefined ? { modal: options.modal } : {}),
+  };
+}
+
+/**
+ * 把已有文本结果包成卡片：正文行沿用原文本，因此**纯文本降级与旧输出等价**，
+ * 按钮只是在此之上加的可选交互。
+ */
+function cardFromText(
+  title: string,
+  text: string,
+  options: {
+    rows?: readonly (readonly CardButton[])[];
+    buttonHint?: string;
+    footer?: readonly string[];
+  } = {},
+): CardResult {
+  const rich = renderCard({
+    title,
+    lines: text.split("\n"),
+    ...(options.rows ? { rows: options.rows } : {}),
+    ...(options.buttonHint !== undefined
+      ? { buttonHint: options.buttonHint }
+      : {}),
+    ...(options.footer ? { footer: options.footer } : {}),
+  });
+  return { ok: true, text: rich.text, rich };
 }
 
 function indentBlock(text: string, prefix: string): string {

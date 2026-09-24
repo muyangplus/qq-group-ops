@@ -31,6 +31,11 @@ import type { PermissionRepository } from "./db/permissionRepository.js";
 import type { ShortCodeRepository } from "./db/shortCodeRepository.js";
 import type { UserProfileRepository } from "./db/userProfileRepository.js";
 import { WriteQueue } from "./db/writeQueue.js";
+import { pageArg, pageTargets } from "./services/callbackData.js";
+import {
+  CallbackRouter,
+  type CallbackRenderer,
+} from "./services/callbackRouter.js";
 import { ActivityService } from "./services/activity.js";
 import { ActivityCardService } from "./services/activityCards.js";
 import { AdminCommandService } from "./services/adminCommands.js";
@@ -151,11 +156,7 @@ export function createRuntime(
     repositories.activityDetails,
   );
   const activityCards = new ActivityCardService(richMessages, display);
-  const testMenu = new TestMenuService({
-    api,
-    sender: richMessages,
-    permissions,
-  });
+  const testMenu = new TestMenuService({ permissions });
   const userProfiles = new UserProfileService(repositories.userProfiles, writeQueue);
   const exportService = new ExportService(permissions, auditLog);
   const joinRules = new JoinRuleEvaluator();
@@ -200,6 +201,77 @@ export function createRuntime(
     notifications,
   });
   const menuState = createFirstMenuPushState(settings, repositories.menuDeliveries, writeQueue);
+  // 回调 renderer 表：导航/查看类按钮点击后由此渲染新卡片（见 docs/CARD-STANDARD.md）
+  const callbackRenderers = new Map<string, CallbackRenderer>([
+    [
+      "menu",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        return adminCommands.menuMessage(parsed.args[0], event.groupId, userId);
+      },
+    ],
+    [
+      "help",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        const topic = parsed.action === "topic" ? parsed.args[0] : undefined;
+        return adminCommands.helpCard(event.groupId, userId, topic).rich;
+      },
+    ],
+    [
+      "status",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        return adminCommands.statusCard(event.groupId, userId, [
+          "status",
+          ...parsed.args,
+        ]).rich;
+      },
+    ],
+    [
+      "pending",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        return adminCommands.pendingCard(event.groupId, userId, [
+          "pending",
+          ...pageTargets(parsed.args),
+          `+${pageArg(parsed.args) ?? 1}`,
+        ]).rich;
+      },
+    ],
+    [
+      "rules",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        const parts =
+          parsed.action === "all"
+            ? ["rules", "all"]
+            : ["rules", ...parsed.args];
+        return adminCommands.rulesCard(event.groupId, userId, parts).rich;
+      },
+    ],
+    ["testmenu", (parsed, event) => testMenu.render(parsed, event)],
+  ]);
+  const interactionHandler = new CallbackRouter({
+    api,
+    sender: richMessages,
+    renderers: callbackRenderers,
+  });
   const load = async (): Promise<void> => {
     await identityMap.reload();
     await auditLog.load();
@@ -245,7 +317,7 @@ export function createRuntime(
       adminCommands,
       joinApproval,
       notifications,
-      testMenu,
+      interactionHandler,
     ),
     load,
     flush: () => writeQueue.flush(),

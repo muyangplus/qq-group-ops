@@ -1186,6 +1186,112 @@ describe("AdminCommandService", async () => {
     expect(result.text).toContain("真实申请 ID：r1");
   });
 
+  it("renders /help as a card with callback entries", async () => {
+    const result = await service.handle("g1", "root", "/help");
+
+    expect(result.ok).toBe(true);
+    const buttons = (result.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    // 标准：导航 / 查看类按钮用回调
+    expect(buttons.find((button) => button.id === "sys")?.action).toMatchObject({
+      type: 1,
+      data: "cb:menu:open:sys",
+    });
+    // 纯文本降级仍包含完整指令列表
+    expect(result.text).toContain("可用指令：");
+    expect(result.text).toContain("/menu");
+  });
+
+  it("renders /help <topic> with a related entry", async () => {
+    const result = await service.handle("g1", "mod", "/help rules");
+
+    expect(result.ok).toBe(true);
+    expect(result.rich?.markdown).toContain("/rules — 群规则配置");
+    const buttons = (result.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(buttons.find((button) => button.id === "view")?.action).toMatchObject({
+      type: 1,
+      data: "cb:rules:view:g1",
+    });
+  });
+
+  it("renders /status as a card with refresh and action buttons", async () => {
+    const result = await service.handle("g1", "mod", "/status");
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("全量消息模式");
+    const buttons = (result.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(
+      buttons.find((button) => button.id === "refresh")?.action,
+    ).toMatchObject({ type: 1, data: "cb:status:view:g1" });
+    // 执行动作（自检）用指令按钮
+    expect(buttons.find((button) => button.id === "test")?.action).toMatchObject({
+      type: 2,
+      data: "/test",
+    });
+  });
+
+  it("renders /pending as a paged card with approve/reject buttons", async () => {
+    for (let index = 1; index <= 5; index += 1) {
+      joinAudit.submit("g1", `u${index}`, `理由${index}`, `r${index}`);
+    }
+
+    const first = await service.handle("g1", "mod", "/pending");
+    expect(first.ok).toBe(true);
+    expect(first.rich?.markdown).toContain("第 1 / 2 页");
+    const firstButtons = (first.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    // 每页 3 条，每条一个「通过」+「拒绝」指令按钮
+    expect(
+      firstButtons.filter((button) => button.id.startsWith("approve-")),
+    ).toHaveLength(3);
+    expect(firstButtons.find((button) => button.id === "approve-r1")?.action).toMatchObject({
+      type: 2,
+      data: "/approve r1",
+    });
+    // 翻页是回调
+    expect(firstButtons.find((button) => button.id === "next")?.action).toMatchObject({
+      type: 1,
+      data: "cb:pending:page:g1:2",
+    });
+    // 纯文本降级必须能翻页
+    expect(first.text).toContain("下一页：/pending +2");
+
+    const second = await service.handle("g1", "mod", "/pending +2");
+    expect(second.rich?.markdown).toContain("第 2 / 2 页");
+    const secondButtons = (second.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(secondButtons.find((button) => button.id === "prev")?.action).toMatchObject({
+      type: 1,
+      data: "cb:pending:page:g1:1",
+    });
+    expect(secondButtons.some((button) => button.id === "next")).toBe(false);
+  });
+
+  it("renders /rules as a card with toggle command buttons", async () => {
+    const result = await service.handle("g1", "admin", "/rules");
+
+    expect(result.ok).toBe(true);
+    const buttons = (result.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    // 开关是执行动作 → 指令按钮，与手输指令同一条路径
+    expect(
+      buttons.find((button) => button.id === "wordFilter")?.action,
+    ).toMatchObject({ type: 2, data: "/rules set wordFilter off" });
+    // 帮助是查看 → 回调
+    expect(buttons.find((button) => button.id === "help")?.action).toMatchObject({
+      type: 1,
+      data: "cb:help:topic:rules",
+    });
+  });
+
   it("resolves #group and #user short codes in commands", async () => {
     const scoped = withShortCodes();
     identityMap.bindGroup("g2", "777777");
