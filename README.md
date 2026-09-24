@@ -11,7 +11,7 @@
 - 待实现：真实环境联调、Web 管理后台、内容安全与 AI 辅助。
 - 交互菜单：QQ 端 `/menu` 三级菜单（系统 / 管理 / 超管），按权限过滤入口，按钮即指令、自动三级降级；空 `@机器人`、未知指令、私信首次交互都会回到菜单主入口。
 - 回调链路：新增 `INTERACTION (1<<26)` intent 与 `INTERACTION_CREATE` 事件处理，`/testmenu` 用回调按钮翻页（回包 `PUT /interactions/{id}` + 主动发送新一页；官方没有更新原卡片的能力，旧卡片会保留）。
-- 卡片标准：**所有指令输出统一为菜单式卡片**（导航/查看用回调按钮、执行动作用指令按钮、列表用回调翻页 + `+页码` 降级），规范见 [docs/CARD-STANDARD.md](docs/CARD-STANDARD.md)；样板已落地 `/help`、`/status`、`/pending`、`/rules`，其余指令按批次迁移。
+- 卡片标准：**所有指令输出统一为菜单式卡片**（导航/查看/开关/枚举用回调自动完成、需要参数或不可逆的动作用指令按钮、列表用回调翻页 + `+页码` 降级），规范见 [docs/CARD-STANDARD.md](docs/CARD-STANDARD.md)；已迁移 `/help`、`/status`、`/pending`、`/rules`、`/audit`、`/test`、`/sync`、`/approve`、`/reject`、`/notify`，其余指令按批次迁移。
 - 测试：Vitest，共 507 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
 
 ## 技术栈
@@ -303,10 +303,15 @@ QQ 端的图形化入口：**Markdown 卡片 + 按钮**，三级结构（主菜�
 已迁移的样板：
 
 ```text
-/help            指令列表卡（菜单与主题入口为按钮）；/help rules 为主题详情卡
+/help            指令列表卡（伞形；/help all 为完整列表）；/help rules 为主题详情卡
 /status          运行状态卡 + 刷新/待审批/群规则/帮助 + 自检
-/pending         待审批卡：每页 3 条，每条「通过 / 拒绝」按钮，翻页回调
-/rules           群规则卡：当前生效值 + 快捷开关（反向操作）+ 全局规则/帮助
+/pending         待审批卡：每页 3 条，每条「通过」回调自动完成、「拒绝」指令可补原因
+/rules           群规则概览 + 开关设置 / 入群决策 / 命中处罚 三个子卡（全回调自动生效）
+/audit           审计分页卡（默认每页 10 条）+ 翻页/刷新回调
+/test            自检卡 + 刷新/待审批/群规则
+/sync            同步官方申请（固定动作：指令或回调都能触发，结果带操作人）
+/approve /reject 审批结果卡（操作人 + 返回待审批 / 查看审计）
+/notify          推送订阅卡（本群/全部群开关与测试推送都是回调，结果带操作人）
 ```
 
 > 其余指令（`/audit`、`/notify`、`/myperm`、`/profile`、`/activity`、`/perm`、`/bind` 等）
