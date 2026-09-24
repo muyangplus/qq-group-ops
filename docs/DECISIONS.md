@@ -456,6 +456,23 @@
   - `NotificationService` 的三级降级逻辑迁移到 `RichMessageSender`（行为与 detail 命名保持不变，测试同步）；
   - 学号样例统一为 `22123456789` 这种「22 + 9 位」格式（不是 `2022…`）。
 
+## ADR-0038：班级数据一次加工成 JSON + SQLite，别名表全局且仅超管可维护
+
+- 状态：已采纳
+- 背景：需求三块：① `/profile set` 要能一条消息填完（顺序/分隔符随意、甚至无分隔符）；② `data/class.json` 要一次加工成"格式化数据"供 profile 模块与入群审批复用，并建立学院/班级对照；③ 需要一张"允许管理员维护的自定义别名表"，把习惯写法映射到班级库规范名；另需 `/whois` 支持查"QQ ↔ 个人资料"。
+- 决策：
+  1. **智能解析**：班级固定由"班级库最长命中"切分（`findClassIn` 忽略空白、长名优先），11 位数字=学号，剩余 2-4 连续汉字=姓名，学院可在文本里命中；**歧义或残留一律整体不写入**并列出识别结果（不猜），写入前先整体校验（学号前缀/班级存在/姓名长度）再落库；`字段=值` 作为消歧后门；
+  2. **class.json 产物**：`pnpm class:index` 同时出 JSON（运行时加载，新增 `colleges`/`collegeMajors`/`majorColleges` 对照）与 SQLite（`meta`/`colleges`/`majors`/`classes`，供离线分析与别名联查）；产物仍在 gitignored 的 `data/`，**两份都不提交**；核心逻辑抽到 `scripts/classIndex.mjs` 以便在进程内测试（避免 spawn）；
+  3. **别名表**：新表 `class_aliases(alias PK, target, kind, updated_at)`，`ClassAliasService` 内存 Map + 写穿透队列；**目标类型由规范名在班级库里的身份自动判定**，不让用户填 `kind`；别名**先展开成规范名**再交给现有匹配逻辑，因此 profile 识别与入群审核共用一套代码；
+  4. **别名范围**：**全局一份**，仅全局超级管理员可维护（用户确认）。理由：班级库本身就是全局数据，别名是它的修正视图；若做群级会在同一班级上产生互相冲突的叫法，收益低、复杂度高（需 `group_id` + 群优先覆盖语义）；
+  5. **`/whois profile`**：用**子命令**而不是改默认输出，权限收紧到全局超管（个人资料属个人信息，不开放给群管理员），支持 `QQ号 / userId / #用户短码`。
+- 理由：把"规范名"集中在班级库、"习惯写法"集中在别名表，两者都先归一化再匹配，避免在 profile 和入群审核里各写一套模糊匹配；SQLite 副本让后续离线核对与联查不必再解析 2.9 MB JSON。
+- 影响：
+  - 新表 `class_aliases`，新服务 `ClassAliasService`，新仓储 `SqlClassAliasRepository`（SQLite/PostgreSQL 同一实现）；
+  - `AdminCommandService` 新增 `/alias`（`list|set|del`），`/menu super` 与 `/help alias` 同步；`ProfileParser` 与 `JoinRuleEvaluator` 新增可选别名注入点（未注入时行为不变）；
+  - `scripts/build-class-index.mjs` 变薄，逻辑移到 `scripts/classIndex.mjs`；新增 `CLASS_INDEX_SQLITE_FILE`（`-` 跳过）；
+  - 真机功能：`/profile set` 智能识别、`/whois profile`、`/alias` 各有验收行（J21-J26）。
+
 
 
 
