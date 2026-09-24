@@ -1,7 +1,11 @@
-import type {
-  KeyboardButton,
-  KeyboardPayload,
-} from "../adapters/qqOfficial.js";
+import {
+  escapeCardText,
+  quoteCardLines,
+  renderCard,
+  type CardButton,
+  type CardSpec,
+} from "./cardTemplate.js";
+import type { RichMessage } from "./richMessages.js";
 
 /**
  * 入群申请推送卡片。
@@ -9,10 +13,12 @@ import type {
  * 官方「结构化卡片（Ark）」只支持接收、不支持机器人发送；能发送的富消息是
  * **Markdown + 内嵌按钮**（`msg_type=2` + `keyboard`），所以这里的「卡片」
  * 就是 Markdown 正文 + 底部指令按钮：
- * - 「同意」→ 发送 `/approve <group_openid> <申请ID>`
- * - 「拒绝」→ 发送 `/reject <group_openid> <申请ID> <原因>`
+ * - 「同意」→ 发送 `/approve <申请ID>`
+ * - 「拒绝」→ 发送 `/reject <申请ID> <原因>`
  * - 第二行是预设拒绝原因，一键把常用回复作为拒绝理由提交
  *
+ * 布局交给统一的 `cardTemplate` 渲染，因此与系统菜单、活动卡片保持同一套
+ * 「标题 + 正文 + 按钮 + 底部提示」结构与同一份纯文本降级。
  * 自定义按钮属于官方内邀能力（需要白名单）；未开通时推送服务会自动降级为
  * 纯 Markdown / 纯文本，不影响审核通知本身。
  */
@@ -51,15 +57,13 @@ export interface JoinRequestCardInput {
 
 export type JoinRequestDecision = "manual" | "auto_approved" | "auto_rejected";
 
+/** 渲染后的卡片：Markdown + 按钮 + 纯文本降级。 */
+export type JoinRequestCard = RichMessage;
+
 const AUTO_DECISION_LABELS: Record<"auto_approved" | "auto_rejected", string> = {
   auto_approved: "已自动通过（按入群规则）",
   auto_rejected: "已自动拒绝（按入群规则）",
 };
-
-export interface JoinRequestCard {
-  markdown: string;
-  keyboard?: KeyboardPayload | undefined;
-}
 
 /** 预设拒绝理由：一键拒绝并把原因作为官方 `reject_reason` 回给申请人。 */
 export const JOIN_REJECT_PRESETS = [
@@ -83,6 +87,15 @@ const DEFAULT_REJECT_REASON = "审核未通过";
 export function buildJoinRequestCard(
   input: JoinRequestCardInput,
 ): JoinRequestCard {
+  return renderCard(buildJoinRequestSpec(input));
+}
+
+/** 按钮不可用时的纯文本降级内容（包含同样的指令与预设拒因）。 */
+export function renderJoinRequestCardText(input: JoinRequestCardInput): string {
+  return renderCard(buildJoinRequestSpec(input)).text;
+}
+
+function buildJoinRequestSpec(input: JoinRequestCardInput): CardSpec {
   // 展示用：优先用 DisplayNameService 给的展示名（群号/QQ号/短码）
   const groupLabel = input.groupLabel ?? input.groupNumber ?? input.groupId;
   const applicantId = input.applicantLabel ?? input.applicantQq ?? input.userId;
@@ -95,169 +108,102 @@ export function buildJoinRequestCard(
       ? AUTO_DECISION_LABELS[input.decision]
       : undefined;
 
-  const applicantLabel = `${escapeText(applicantId)}${
-    input.applicantName ? `（${escapeText(input.applicantName)}）` : ""
+  const applicantLabel = `${escapeCardText(applicantId)}${
+    input.applicantName ? `（${escapeCardText(input.applicantName)}）` : ""
   }`;
   const questions = (input.questions ?? []).filter(
     (question) => question.trim().length > 0,
   );
   const lines = [
-    "## 新的入群申请",
-    `**群**：${escapeText(groupLabel)}`,
+    `**群**：${escapeCardText(groupLabel)}`,
     `**申请人**：${applicantLabel}`,
     ...(questions.length > 0
-      ? [`**入群问题**：${escapeText(questions.join(" / "))}`]
+      ? [`**入群问题**：${escapeCardText(questions.join(" / "))}`]
       : []),
-    `**回答**：${escapeText(input.reason) || "（未填写）"}`,
-    `**申请ID**：${escapeText(input.requestId)}`,
+    `**回答**：${escapeCardText(input.reason) || "（未填写）"}`,
+    `**申请ID**：${escapeCardText(input.requestId)}`,
     ...(autoDecision ? [`**处理结果**：${autoDecision}`] : []),
   ];
   if (input.opinion) {
-    lines.push("", ...toQuote(input.opinion));
+    lines.push("", ...quoteCardLines(input.opinion));
   }
 
   if (autoDecision) {
     // 机器人已经处理完了：只通知结果，不给按钮
     lines.push("", "该申请已由机器人自动处理，无需操作。");
-    return { markdown: lines.join("\n") };
+    return { title: "新的入群申请", lines };
   }
 
   if (input.withButtons === false) {
     // 没有按钮时把指令（含预设拒因）写进正文，否则这条消息无法直接审批
-    lines.push(
-      "",
-      "请审核（按钮不可用，可直接发送指令）：",
-      `同意：${approveCommand}`,
-      `拒绝：${rejectCommandFor("[原因]")}`,
-      ...JOIN_REJECT_PRESETS.map(
-        (preset) => `${preset.label}：${rejectCommandFor(preset.reason)}`,
-      ),
-    );
-    return { markdown: lines.join("\n") };
+    return {
+      title: "新的入群申请",
+      lines,
+      footer: [
+        "请审核（按钮不可用，可直接发送指令）：",
+        `同意：${approveCommand}`,
+        `拒绝：${rejectCommandFor("[原因]")}`,
+        ...JOIN_REJECT_PRESETS.map(
+          (preset) => `${preset.label}：${rejectCommandFor(preset.reason)}`,
+        ),
+      ],
+    };
   }
 
-  lines.push("", "请审核：点击下方按钮。");
-  const markdown = lines.join("\n");
+  return {
+    title: "新的入群申请",
+    lines,
+    buttonHint: "请审核：点击下方按钮。",
+    rows: [
+      [
+        {
+          id: "approve",
+          label: "同意",
+          visitedLabel: "已同意",
+          style: STYLE_PRIMARY,
+          command: approveCommand,
+          permission: { type: 0, specifyUserIds: [input.recipientId] },
+          unsupportTips: "当前 QQ 版本不支持按钮，请直接发送 /approve 指令",
+          modal: {
+            content: "确认通过该入群申请？",
+            confirmText: "通过",
+            cancelText: "取消",
+          },
+        },
+        rejectButton(input, "reject", "拒绝", DEFAULT_REJECT_REASON, rejectCommandFor),
+      ],
+      JOIN_REJECT_PRESETS.map((preset) =>
+        rejectButton(
+          input,
+          `reject-${preset.id}`,
+          preset.label,
+          preset.reason,
+          rejectCommandFor,
+        ),
+      ),
+    ],
+  };
+}
 
-  const rejectButton = (
-    id: string,
-    label: string,
-    reason: string,
-  ): KeyboardButton => ({
+function rejectButton(
+  input: JoinRequestCardInput,
+  id: string,
+  label: string,
+  reason: string,
+  rejectCommandFor: (reason: string) => string,
+): CardButton {
+  return {
     id,
     label,
     visitedLabel: "已拒绝",
     style: STYLE_DANGER,
-    action: {
-      type: 2,
-      data: rejectCommandFor(reason),
-      permission: { type: 0, specifyUserIds: [input.recipientId] },
-      enter: true,
-      reply: false,
-      unsupportTips: "当前 QQ 版本不支持按钮，请直接发送 /reject 指令",
-      modal: {
-        content: "确认拒绝该入群申请？",
-        confirmText: "拒绝",
-        cancelText: "取消",
-      },
-    },
-  });
-
-  return {
-    markdown,
-    keyboard: {
-      content: {
-        rows: [
-          {
-            buttons: [
-              {
-                id: "approve",
-                label: "同意",
-                visitedLabel: "已同意",
-                style: STYLE_PRIMARY,
-                action: {
-                  type: 2,
-                  data: approveCommand,
-                  permission: { type: 0, specifyUserIds: [input.recipientId] },
-                  enter: true,
-                  reply: false,
-                  unsupportTips: "当前 QQ 版本不支持按钮，请直接发送 /approve 指令",
-                  modal: {
-                    content: "确认通过该入群申请？",
-                    confirmText: "通过",
-                    cancelText: "取消",
-                  },
-                },
-              },
-              rejectButton("reject", "拒绝", DEFAULT_REJECT_REASON),
-            ],
-          },
-          {
-            buttons: JOIN_REJECT_PRESETS.map((preset) =>
-              rejectButton(`reject-${preset.id}`, preset.label, preset.reason),
-            ),
-          },
-        ],
-      },
+    command: rejectCommandFor(reason),
+    permission: { type: 0, specifyUserIds: [input.recipientId] },
+    unsupportTips: "当前 QQ 版本不支持按钮，请直接发送 /reject 指令",
+    modal: {
+      content: "确认拒绝该入群申请？",
+      confirmText: "拒绝",
+      cancelText: "取消",
     },
   };
-}
-
-/** 按钮不可用时的纯文本降级内容（包含同样的指令与预设拒因）。 */
-export function renderJoinRequestCardText(input: JoinRequestCardInput): string {
-  const groupLabel = input.groupLabel ?? input.groupNumber ?? input.groupId;
-  const applicantId = input.applicantLabel ?? input.applicantQq ?? input.userId;
-  const approveCommand = `/approve ${input.requestId}`;
-  const rejectTextFor = (reason: string): string =>
-    `/reject ${input.requestId} ${reason}`;
-  const autoDecision =
-    input.decision === "auto_approved" || input.decision === "auto_rejected"
-      ? AUTO_DECISION_LABELS[input.decision]
-      : undefined;
-  const lines = [
-    "【新的入群申请】",
-    `群：${groupLabel}`,
-    `申请人：${applicantId}${
-      input.applicantName ? `（${singleLine(input.applicantName)}）` : ""
-    }`,
-    `申请ID：${input.requestId}`,
-    ...(input.questions && input.questions.length > 0
-      ? [`入群问题：${input.questions.map(singleLine).join(" / ")}`]
-      : []),
-    `回答：${singleLine(input.reason) || "（未填写）"}`,
-    ...(autoDecision ? [`处理结果：${autoDecision}`] : []),
-  ];
-  if (input.opinion) {
-    lines.push("", ...input.opinion.split("\n"));
-  }
-  if (autoDecision) {
-    lines.push("", "该申请已由机器人自动处理，无需操作。");
-    return lines.join("\n");
-  }
-  lines.push(
-    "",
-    `同意：${approveCommand}`,
-    `拒绝：${rejectTextFor("[原因]")}`,
-    ...JOIN_REJECT_PRESETS.map(
-      (preset) => `${preset.label}：${rejectTextFor(preset.reason)}`,
-    ),
-  );
-  return lines.join("\n");
-}
-
-/** Markdown 转义：去掉会破坏排版的字符，并压成单行。 */
-function escapeText(text: string): string {
-  return singleLine(text)
-    .replace(/[\\`*_~#>]/gu, (char) => `\\${char}`)
-    .slice(0, 200);
-}
-
-function singleLine(text: string): string {
-  return text.replace(/\s+/gu, " ").trim();
-}
-
-function toQuote(text: string): string[] {
-  return text
-    .split("\n")
-    .map((line) => `> ${line.trim()}`.trimEnd());
 }

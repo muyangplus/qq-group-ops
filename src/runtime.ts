@@ -22,6 +22,7 @@ import type { GroupSettingsRepository } from "./db/groupSettingsRepository.js";
 import type { GroupMessageModeRepository } from "./db/groupMessageModeRepository.js";
 import type { IdentityBindingRepository } from "./db/identityBindingRepository.js";
 import type { JoinRequestRepository } from "./db/joinRequestRepository.js";
+import type { MenuDeliveryRepository } from "./db/menuDeliveryRepository.js";
 import type {
   NotificationDeliveryRepository,
   NotificationSubscriptionRepository,
@@ -37,6 +38,11 @@ import { AuditLogStore } from "./services/audit.js";
 import { DisplayNameService } from "./services/displayNames.js";
 import { EventRouter } from "./services/eventRouter.js";
 import { ExportService } from "./services/export.js";
+import {
+  MemoryFirstMenuPushState,
+  PersistentFirstMenuPushState,
+  type FirstMenuPushState,
+} from "./services/firstMenuPush.js";
 import { GroupConfigStore, DEFAULT_GROUP_ID } from "./services/groupConfig.js";
 import { GroupMessageModeRegistry } from "./services/groupMessageMode.js";
 import { IdentityMapService } from "./services/identityMap.js";
@@ -51,6 +57,7 @@ import { NotificationService } from "./services/notifications.js";
 import { PermissionService } from "./services/permissions.js";
 import { RichMessageSender } from "./services/richMessages.js";
 import { ShortCodeService } from "./services/shortCodes.js";
+import { TestMenuService } from "./services/testMenu.js";
 import { UserProfileService } from "./services/userProfiles.js";
 
 export interface Runtime {
@@ -71,6 +78,14 @@ export interface Runtime {
   display: DisplayNameService;
   writeQueue: WriteQueue;
   router: EventRouter;
+  /** 管理员指令（gatewayRunner 用它渲染首次私信的主菜单）。 */
+  adminCommands: AdminCommandService;
+  /** 富消息发送器（Markdown + 按钮，含被动回复与三级降级）。 */
+  richMessages: RichMessageSender;
+  /** 私信首次交互主菜单的去重状态（dev 内存 / 正式入库）。 */
+  menuState: FirstMenuPushState;
+  /** 回调按钮翻页试验（`/testmenu`）。 */
+  testMenu: TestMenuService;
   /** 从数据库载入全部持久化状态；未配置数据库时为空操作。 */
   load(): Promise<void>;
   /** 等待所有排队写入落库。 */
@@ -91,6 +106,7 @@ export interface RuntimeRepositories {
   notificationDeliveries?: NotificationDeliveryRepository;
   shortCodes?: ShortCodeRepository;
   userProfiles?: UserProfileRepository;
+  menuDeliveries?: MenuDeliveryRepository;
 }
 
 export interface RuntimeDependencies {
@@ -104,6 +120,7 @@ export function createRuntime(
   const repositories = dependencies.repositories ?? {};
   const writeQueue = new WriteQueue();
   const api = instrumentQQOfficialAPI(createApi(settings), getLogger("runtime"));
+  const richMessages = new RichMessageSender(api);
   const auditLog = new AuditLogStore(repositories.audit, writeQueue);
   const joinAudit = new JoinAuditService(
     auditLog,
@@ -133,7 +150,12 @@ export function createRuntime(
     writeQueue,
     repositories.activityDetails,
   );
-  const activityCards = new ActivityCardService(new RichMessageSender(api), display);
+  const activityCards = new ActivityCardService(richMessages, display);
+  const testMenu = new TestMenuService({
+    api,
+    sender: richMessages,
+    permissions,
+  });
   const userProfiles = new UserProfileService(repositories.userProfiles, writeQueue);
   const exportService = new ExportService(permissions, auditLog);
   const joinRules = new JoinRuleEvaluator();
@@ -159,7 +181,7 @@ export function createRuntime(
     display,
     configStore,
     joinRules,
-    sender: new RichMessageSender(api),
+    sender: richMessages,
   });
   const adminCommands = new AdminCommandService({
     permissions,
@@ -177,6 +199,7 @@ export function createRuntime(
     activityCards,
     notifications,
   });
+  const menuState = createFirstMenuPushState(settings, repositories.menuDeliveries, writeQueue);
   const load = async (): Promise<void> => {
     await identityMap.reload();
     await auditLog.load();
@@ -188,6 +211,7 @@ export function createRuntime(
     await notifications.load();
     await shortCodes.load();
     await userProfiles.load();
+    await menuState.load();
     // 班级库缺失时不抛错：班级类规则会自动退化为人工审核
     const roster = await MemberRoster.load(settings.classIndexFile);
     joinRules.setRoster(roster);
@@ -211,16 +235,37 @@ export function createRuntime(
     shortCodes,
     display,
     writeQueue,
+    adminCommands,
+    richMessages,
+    menuState,
+    testMenu,
     router: new EventRouter(
       messageGuard,
       joinAudit,
       adminCommands,
       joinApproval,
       notifications,
+      testMenu,
     ),
     load,
     flush: () => writeQueue.flush(),
   };
+}
+
+function createFirstMenuPushState(
+  settings: Settings,
+  repository: MenuDeliveryRepository | undefined,
+  queue: WriteQueue,
+): FirstMenuPushState {
+  if (settings.menuFirstPush === "persistent" && repository) {
+    return new PersistentFirstMenuPushState(repository, queue);
+  }
+  if (settings.menuFirstPush === "persistent" && !repository) {
+    getLogger("runtime").warn(
+      "MENU_FIRST_PUSH=persistent 但当前是纯内存数据库模式，降级为内存记录",
+    );
+  }
+  return new MemoryFirstMenuPushState();
 }
 
 function createApi(settings: Settings): QQOfficialAPI {

@@ -45,6 +45,7 @@ async function main(): Promise<void> {
             notificationDeliveries: persistence.notificationDeliveries,
             shortCodes: persistence.shortCodes,
             userProfiles: persistence.userProfiles,
+            menuDeliveries: persistence.menuDeliveries,
           },
         }
       : {},

@@ -32,6 +32,10 @@ import {
   SqlJoinRequestRepository,
   type JoinRequestRepository,
 } from "./db/joinRequestRepository.js";
+import {
+  SqlMenuDeliveryRepository,
+  type MenuDeliveryRepository,
+} from "./db/menuDeliveryRepository.js";
 import { migrate } from "./db/migrate.js";
 import {
   SqlNotificationDeliveryRepository,
@@ -76,6 +80,7 @@ export interface Persistence {
   shortCodes: ShortCodeRepository;
   userProfiles: UserProfileRepository;
   activityDetails: ActivityDetailsRepository;
+  menuDeliveries: MenuDeliveryRepository;
   close(): Promise<void>;
 }
 
@@ -173,6 +178,7 @@ interface RepositorySet {
   shortCodes: ShortCodeRepository;
   userProfiles: UserProfileRepository;
   activityDetails: ActivityDetailsRepository;
+  menuDeliveries: MenuDeliveryRepository;
 }
 
 function createRepositories(db: Queryable): RepositorySet {
@@ -190,6 +196,7 @@ function createRepositories(db: Queryable): RepositorySet {
     notificationDeliveries: new SqlNotificationDeliveryRepository(db),
     shortCodes: new SqlShortCodeRepository(db),
     userProfiles: new SqlUserProfileRepository(db),
+    menuDeliveries: new SqlMenuDeliveryRepository(db),
   };
 }
 

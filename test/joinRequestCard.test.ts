@@ -178,7 +178,8 @@ describe("join request card", () => {
     expect(text).toContain("【新的入群申请】");
     expect(text).toContain("申请ID：r1");
     expect(text).toContain("同意：/approve r1");
-    expect(text).toContain("拒绝：/reject r1 [原因]");
+    // 统一模板的纯文本降级直接列出每个按钮对应的完整指令（不再有 [原因] 占位符）
+    expect(text).toContain("拒绝：/reject r1 审核未通过");
     expect(text).toContain("拒绝：回答错误：/reject r1 请正确回答问题。");
     expect(text).toContain(
       "拒绝：班级姓名：/reject r1 请回答正确的班级姓名（如：环工2214小明）。",

@@ -20,6 +20,7 @@ type QQOfficialMethod =
   | "muteGroupMember"
   | "removeGroupMember"
   | "updateMemberBlacklist"
+  | "respondInteraction"
   | "approveJoinRequest"
   | "getJoinRequests";
 
@@ -119,6 +120,11 @@ export function instrumentQQOfficialAPI(
       log.debug("updateMemberBlacklist", { groupId, userId, add });
       await api.updateMemberBlacklist(groupId, userId, add);
       log.debug("updateMemberBlacklist ok", { groupId, userId, add });
+    },
+    respondInteraction: async (interactionId: string, code = 0) => {
+      log.debug("respondInteraction", { interactionId, code });
+      await api.respondInteraction(interactionId, code);
+      log.debug("respondInteraction ok", { interactionId, code });
     },
     approveJoinRequest: async (
       groupId: string,

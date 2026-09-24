@@ -28,6 +28,10 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
   public failJoinRequestApprovals = false;
   /** 置为 true 后 getJoinRequests 抛出错误，便于测试同步失败。 */
   public failJoinRequestList = false;
+  /** 互动事件回应记录：[interactionId, code]。 */
+  public readonly interactionResponses: Array<[string, number]> = [];
+  /** 置为 true 后 respondInteraction 抛出错误，便于测试回调失败。 */
+  public failInteractionResponses = false;
   /** 置为 true 后所有单聊消息抛出错误，便于测试推送失败。 */
   public failPrivateMessages = false;
   /** 置为 true 后 Markdown 单聊消息抛出错误（纯文本仍可发送），便于测试降级。 */
@@ -115,6 +119,16 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
     add: boolean,
   ): Promise<void> {
     this.blacklistOperations.push([groupId, userId, add ? "add" : "del"]);
+  }
+
+  public async respondInteraction(
+    interactionId: string,
+    code = 0,
+  ): Promise<void> {
+    if (this.failInteractionResponses) {
+      throw new Error("fake interaction response failure");
+    }
+    this.interactionResponses.push([interactionId, code]);
   }
 
   public async approveJoinRequest(

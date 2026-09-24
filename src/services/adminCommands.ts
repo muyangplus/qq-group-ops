@@ -22,6 +22,14 @@ import {
   type GroupConfigStore,
 } from "./groupConfig.js";
 import { findHelpTopic, type HelpTopic } from "./helpTopics.js";
+import {
+  buildMenu,
+  buildUnknownCommandMenu,
+  findMenuSection,
+  type MenuContext,
+} from "./menu.js";
+import type { RichMessage } from "./richMessages.js";
+import { buildTestMenuCard, TEST_MENU_PAGE_COUNT } from "./testMenu.js";
 import type { JoinRuleEvaluator } from "./joinRules.js";
 import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
 import type { IdentityMapService } from "./identityMap.js";
@@ -42,6 +50,8 @@ const log = getLogger("admin-commands");
 export interface CommandResult {
   ok: boolean;
   text: string;
+  /** 富回复（Markdown + 按钮 + 纯文本降级）；缺省时只发 text。 */
+  rich?: RichMessage | undefined;
 }
 
 export interface AdminCommandServiceOptions {
@@ -107,12 +117,13 @@ export class AdminCommandService {
   ): Promise<CommandResult> {
     const parts = text.trim().split(/\s+/u).filter((part) => part.length > 0);
     if (parts.length === 0) {
-      return { ok: false, text: this.buildHelp(groupId, userId) };
+      // 空内容（群里 @机器人 不带参数）等价于打开主菜单
+      return this.handleMenu(groupId, userId, ["menu"]);
     }
     const command = parts[0]!.replace(/^\//u, "").toLowerCase();
     log.debug("command", { groupId, userId, command });
 
-    const bindingExempt = new Set(["help", "帮助", "bind", "绑定"]);
+    const bindingExempt = new Set(["help", "帮助", "bind", "绑定", "menu", "菜单"]);
     // 个人资料与群绑定无关：只需要绑定自己的 QQ 号
     const groupBindingExempt = new Set([...bindingExempt, "profile", "资料"]);
     if (
@@ -144,6 +155,9 @@ export class AdminCommandService {
       case "help":
       case "帮助":
         return this.handleHelp(groupId, userId, parts);
+      case "menu":
+      case "菜单":
+        return this.handleMenu(groupId, userId, parts);
       case "myperm":
       case "我的权限":
         return this.handleMyPermission(groupId, userId);
@@ -191,8 +205,10 @@ export class AdminCommandService {
       case "test":
       case "测试":
         return this.handleTest(groupId, userId);
+      case "testmenu":
+        return this.handleTestMenu(userId, parts);
       default:
-        return { ok: false, text: `未知指令：${parts[0]}\n\n${this.buildHelp(groupId, userId)}` };
+        return this.unknownCommandResult(groupId, userId, parts[0]);
     }
   }
 
@@ -493,6 +509,109 @@ export class AdminCommandService {
    * 主题详情同样做权限过滤：无权限时只提示所需权限，不展示具体命令，
    * 与「/help 只显示有权限执行的指令」保持一致。
    */
+  /** 主菜单富消息（首次私信推送与未知指令回复复用）。 */
+  public mainMenu(groupId: string | undefined, userId: string): RichMessage {
+    return buildMenu("main", this.menuContext(groupId, userId)).message;
+  }
+
+  /**
+   * `/testmenu [页码]`：官方回调按钮翻页试验（仅全局超级管理员）。
+   *
+   * 卡片里的「上一页 / 下一页 / 返回」是回调按钮（`action.type=1`），
+   * 点击后由 `TestMenuService` 走互动事件链路被动回复新的一页；
+   * 同时保留 `/testmenu <页码>` 指令入口与「指令翻页」按钮作为双通道兜底。
+   */
+  private handleTestMenu(
+    userId: string,
+    parts: readonly string[],
+  ): CommandResult {
+    if (!this.permissions.isSuperAdmin(userId)) {
+      return {
+        ok: false,
+        text: "权限不足：/testmenu 需要全局超级管理员权限。",
+      };
+    }
+    const raw = parts[1];
+    let page = 1;
+    if (raw !== undefined) {
+      const parsed = Number.parseInt(raw, 10);
+      if (
+        Number.isNaN(parsed) ||
+        parsed < 1 ||
+        parsed > TEST_MENU_PAGE_COUNT
+      ) {
+        return {
+          ok: false,
+          text: `页码范围 1-${TEST_MENU_PAGE_COUNT}，例如 /testmenu 2`,
+        };
+      }
+      page = parsed;
+    }
+    const card = buildTestMenuCard(page);
+    return { ok: true, text: card.text, rich: card };
+  }
+
+  /** `/menu [系统|管理|超管|活动|审核|运营]`：渲染对应层级的交互菜单。 */
+  private handleMenu(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): CommandResult {
+    const query = parts[1];
+    const section = findMenuSection(query);
+    if (query !== undefined && section === undefined) {
+      const main = this.mainMenu(groupId, userId);
+      return {
+        ok: false,
+        text:
+          `未找到「${query}」菜单。\n` +
+          "用法：/menu [系统|管理|超管|活动|审核|运营]\n\n" +
+          main.text,
+        rich: main,
+      };
+    }
+    const view = buildMenu(
+      section ?? "main",
+      this.menuContext(groupId, userId),
+    );
+    return { ok: view.ok, text: view.message.text, rich: view.message };
+  }
+
+  /** 未知指令：保留原来的报错文案，同时附上菜单入口按钮。 */
+  private unknownCommandResult(
+    groupId: string | undefined,
+    userId: string,
+    command: string | undefined,
+  ): CommandResult {
+    const rich = buildUnknownCommandMenu(
+      command ?? "",
+      this.menuContext(groupId, userId),
+    );
+    return { ok: false, text: rich.text, rich };
+  }
+
+  private menuContext(groupId: string | undefined, userId: string): MenuContext {
+    const context: MenuContext = {
+      userId,
+      groupId,
+      // 与 buildHelp 保持一致：未注入身份映射时（单元测试）视为已绑定
+      bound: this.identityMap ? Boolean(this.identityMap.getQq(userId)) : true,
+      permissions: this.permissions,
+    };
+    if (this.display) {
+      context.userLabel = this.display.user(userId);
+    }
+    if (groupId !== undefined) {
+      if (this.display) {
+        context.groupLabel = this.display.group(groupId);
+      }
+      if (this.identityMap) {
+        context.groupBound = Boolean(this.identityMap.getGroupNumber(groupId));
+      }
+    }
+    return context;
+  }
+
   private handleHelp(
     groupId: string | undefined,
     userId: string,
@@ -552,6 +671,7 @@ export class AdminCommandService {
       "可用指令：",
       "/help - 显示帮助",
       "/help <指令> - 查看某个指令的详细用法，例如 /help rules、/help bind、/help perm",
+      "/menu - 打开系统菜单（系统 / 管理 / 超管），按钮点击即执行",
       "/bind qq <QQ号> - 绑定自己的 QQ 号",
     ];
     const isSuper = this.permissions.isSuperAdmin(userId);
@@ -565,6 +685,9 @@ export class AdminCommandService {
       lines.push("/bind user <userId> <QQ号> - 绑定任意用户");
       lines.push("/bind groupid <group_openid> <群号> - 绑定任意群");
       lines.push("/whois <QQ号|userId|群号|group_openid> - 查询映射");
+      lines.push(
+        `/testmenu [页码] - 回调按钮翻页试验（1-${TEST_MENU_PAGE_COUNT} 页）`,
+      );
     }
 
     const isBound = this.identityMap

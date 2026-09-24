@@ -90,9 +90,61 @@ describe("FakeEventGateway", () => {
       content: "/bind qq 123456",
     });
 
-    expect(api.sentPrivateMessages).toHaveLength(1);
-    expect(api.sentPrivateMessages[0]?.content).toContain("已绑定");
-    expect(api.sentPrivateMessages[0]?.msgId).toBe("m1");
+    // 第 1 条是指令回复（被动回复），第 2 条是首次私信交互额外推的主菜单（主动发送）
+    expect(api.sentPrivateMessages).toHaveLength(2);
+    const reply = api.sentPrivateMessages[0];
+    expect(reply?.content).toContain("已绑定");
+    expect(reply?.msgId).toBe("m1");
+
+    const menu = api.sentPrivateMessages[1];
+    expect(menu?.msgId).toBeUndefined();
+    expect(String(menu?.markdown ?? menu?.content)).toContain("系统菜单");
+  });
+
+  it("pushes the main menu only on the first private interaction", async () => {
+    const runtime = createRuntime(loadSettings({}));
+    const api = runtime.api as FakeQQOfficialAPI;
+    const gateway = new FakeEventGateway();
+    await attachGateway(runtime, gateway);
+
+    for (const messageId of ["m1", "m2"]) {
+      await gateway.emit({
+        type: "private_message",
+        userId: "u1",
+        messageId,
+        content: "/bind qq 123456",
+      });
+    }
+
+    // 2 条指令回复 + 只有一次的首次菜单
+    expect(api.sentPrivateMessages).toHaveLength(3);
+    const menus = api.sentPrivateMessages.filter((message) =>
+      String(message.markdown ?? "").includes("系统菜单"),
+    );
+    expect(menus).toHaveLength(1);
+    expect(menus[0]?.msgId).toBeUndefined();
+  });
+
+  it("returns the main menu for an empty group mention", async () => {
+    const runtime = createRuntime(loadSettings({ ADMIN_USER_IDS: "mod" }));
+    runtime.identityMap.bindUser("mod", "10001");
+    runtime.identityMap.bindGroup("g1", "654321");
+    const api = runtime.api as FakeQQOfficialAPI;
+    const gateway = new FakeEventGateway();
+    await attachGateway(runtime, gateway);
+
+    await gateway.emit({
+      type: "group_message",
+      groupId: "g1",
+      userId: "mod",
+      messageId: "m1",
+      content: "",
+    });
+
+    // 空 @机器人 → 主菜单卡片，走被动回复
+    expect(api.sentMessages).toHaveLength(1);
+    expect(String(api.sentMessages[0]?.markdown ?? "")).toContain("系统菜单");
+    expect(api.sentMessages[0]?.msgId).toBe("m1");
   });
 
   it("does not fail the event when a reply cannot be sent", async () => {

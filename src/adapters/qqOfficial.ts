@@ -131,6 +131,14 @@ export interface QQOfficialAPI {
     userId: string,
     add: boolean,
   ): Promise<void>;
+  /**
+   * 回应互动事件（官方 `PUT /interactions/{interaction_id}`）。
+   *
+   * 收到 `INTERACTION_CREATE`（`type=11` 消息按钮 / `type=12` 快捷菜单）后必须调用，
+   * 否则客户端会一直 loading 直到超时；同一 `interaction_id` 只能回应一次。
+   * `code`：0=成功（默认）、1=操作失败、2=操作频繁、3=重复操作、4=没有权限、5=仅管理员操作。
+   */
+  respondInteraction(interactionId: string, code?: number): Promise<void>;
   approveJoinRequest(
     groupId: string,
     memberOpenid: string,
@@ -169,6 +177,8 @@ export interface QQOfficialEndpoints {
   approveJoinRequest: string;
   joinRequestList: string;
   memberBlacklist: string;
+  /** 互动事件回应：`PUT /interactions/{interactionId}`。 */
+  interaction: string;
 }
 
 export const DEFAULT_ENDPOINTS: QQOfficialEndpoints = {
@@ -184,6 +194,7 @@ export const DEFAULT_ENDPOINTS: QQOfficialEndpoints = {
   approveJoinRequest: "/v2/groups/{groupId}/approval_join_request/{memberOpenid}",
   joinRequestList: "/v2/groups/{groupId}/join_request_list",
   memberBlacklist: "/v2/groups/{groupId}/member_blacklist",
+  interaction: "/interactions/{interactionId}",
 };
 
 export const DEFAULT_TOKEN_REFRESH_MARGIN_MS = 60_000;
@@ -519,6 +530,23 @@ export class QQOfficialClient implements QQOfficialAPI {
       "POST",
       fill(this.endpoints.memberBlacklist, { groupId }),
       { op: add ? "add" : "del", member_openids: [userId] },
+    );
+  }
+
+  /**
+   * 回应互动事件（官方 `PUT /interactions/{interaction_id}`）。
+   *
+   * 请求体只有 `{ code }`：0=成功、1=操作失败、2=操作频繁、3=重复操作、4=没有权限、
+   * 5=仅管理员操作。官方**没有更新原消息的接口**，回调只能让机器人被动回复新消息。
+   */
+  public async respondInteraction(
+    interactionId: string,
+    code = 0,
+  ): Promise<void> {
+    await this.request(
+      "PUT",
+      fill(this.endpoints.interaction, { interactionId }),
+      { code },
     );
   }
 

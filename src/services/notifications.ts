@@ -14,11 +14,11 @@ import type { DisplayNameService } from "./displayNames.js";
 import type { IdentityMapService } from "./identityMap.js";
 import {
   buildJoinRequestCard,
-  renderJoinRequestCardText,
   type JoinRequestCard,
   type JoinRequestCardInput,
   type JoinRequestDecision,
 } from "./joinRequestCard.js";
+import { renderCard } from "./cardTemplate.js";
 import { RichMessageSender } from "./richMessages.js";
 import {
   evaluateConfiguredJoinRules,
@@ -287,14 +287,6 @@ export class NotificationService {
       this.display?.group(groupId) ??
       this.identityMap?.getGroupNumber(groupId) ??
       groupId;
-    const markdown = [
-      "## 推送测试",
-      "能看到这张卡片说明入群申请推送通道正常。",
-      `- 群：${groupLabel}`,
-      `- 按钮测试：点击下方按钮会发送 /pending ${groupLabel}`,
-      "",
-      "同意 / 拒绝按钮只出现在真实的入群申请卡片上。",
-    ].join("\n");
     const input: JoinRequestCardInput = {
       groupId,
       groupLabel,
@@ -305,39 +297,37 @@ export class NotificationService {
       recipientId: userId,
       withButtons: this.sender.keyboardAvailable,
     };
-    const card: JoinRequestCard = {
-      markdown,
+    const pendingCommand = `/pending ${groupId}`;
+    const card: JoinRequestCard = renderCard({
+      title: "推送测试",
+      lines: [
+        "能看到这张卡片说明入群申请推送通道正常。",
+        `- 群：${groupLabel}`,
+        `- 按钮测试：点击下方按钮会发送 ${pendingCommand}`,
+        "",
+        "同意 / 拒绝按钮只出现在真实的入群申请卡片上。",
+      ],
       ...(input.withButtons === false
         ? {}
         : {
-            keyboard: {
-              content: {
-                rows: [
-                  {
-                    buttons: [
-                      {
-                        id: "pending",
-                        label: "查看待审批",
-                        style: 1,
-                        action: {
-                          type: 2 as const,
-                          data: `/pending ${groupId}`,
-                          permission: {
-                            type: 0 as const,
-                            specifyUserIds: [userId],
-                          },
-                          enter: true,
-                          reply: false,
-                          unsupportTips: "当前 QQ 版本不支持按钮",
-                        },
-                      },
-                    ],
+            rows: [
+              [
+                {
+                  id: "pending",
+                  label: "查看待审批",
+                  style: 1 as const,
+                  command: pendingCommand,
+                  permission: {
+                    type: 0 as const,
+                    specifyUserIds: [userId],
                   },
-                ],
-              },
-            },
+                  unsupportTips: "当前 QQ 版本不支持按钮",
+                },
+              ],
+            ],
+            buttonHint: "请点击按钮：",
           }),
-    };
+    });
     const outcome = await this.deliver(userId, input, card);
     if (outcome.status === NotificationDeliveryStatus.Sent) {
       return {
@@ -390,11 +380,7 @@ export class NotificationService {
     preset?: JoinRequestCard,
   ): Promise<{ status: NotificationDeliveryStatus; detail: string }> {
     const card = preset ?? buildJoinRequestCard(input);
-    const result = await this.sender.sendToUser(userId, {
-      markdown: card.markdown,
-      ...(card.keyboard ? { keyboard: card.keyboard } : {}),
-      text: renderJoinRequestCardText(input),
-    });
+    const result = await this.sender.sendToUser(userId, card);
     if (result.ok) {
       log.debug("notification delivered", {
         userId,

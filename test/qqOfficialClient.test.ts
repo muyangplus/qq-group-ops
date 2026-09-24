@@ -95,6 +95,23 @@ describe("QQOfficialClient", () => {
     expect(transport.calls[0]?.url).toContain("/v2/groups/g1/messages/m1");
   });
 
+  it("responds to interactions with the official PUT payload", async () => {
+    const transport = new FakeTransport([
+      { statusCode: 200, jsonData: {}, text: "" },
+    ]);
+    const client = new QQOfficialClient("app", "secret", {
+      token: "tok",
+      transport,
+    });
+
+    await client.respondInteraction("abc-123", 0);
+
+    expect(transport.calls).toHaveLength(1);
+    expect(transport.calls[0]?.method).toBe("PUT");
+    expect(transport.calls[0]?.url).toContain("/interactions/abc-123");
+    expect(transport.calls[0]?.json).toEqual({ code: 0 });
+  });
+
   it("approves join requests with the official payload", async () => {
     const transport = new FakeTransport([
       { statusCode: 200, jsonData: {}, text: "" },

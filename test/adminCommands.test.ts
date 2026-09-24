@@ -201,6 +201,85 @@ describe("AdminCommandService", async () => {
     expect(result.text).toContain("未知指令");
   });
 
+  it("opens the main menu for everyone", async () => {
+    const result = await service.handle("g1", "member", "/menu");
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("系统菜单");
+    expect(result.rich?.keyboard?.content.rows.length).toBeGreaterThan(0);
+    // 纯文本降级里同样能拿到指令
+    expect(result.text).toContain("/menu sys");
+  });
+
+  it("opens the main menu for empty and aliased input", async () => {
+    const empty = await service.handle("g1", "member", "   ");
+    expect(empty.ok).toBe(true);
+    expect(empty.text).toContain("系统菜单");
+
+    const alias = await service.handle("g1", "admin", "/菜单 管理菜单");
+    expect(alias.ok).toBe(true);
+    expect(alias.text).toContain("/pending");
+  });
+
+  it("lets unbound users open the menu", async () => {
+    const result = await service.handle("g1", "unbound", "/menu");
+
+    expect(result.ok).toBe(true);
+    expect(result.text).not.toContain("请先绑定 QQ 号");
+    expect(result.text).toContain("/bind qq");
+  });
+
+  it("reports unknown sub menus with the main menu", async () => {
+    const result = await service.handle("g1", "member", "/menu nope");
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("未找到「nope」菜单");
+    expect(result.text).toContain("系统菜单");
+  });
+
+  it("denies the admin menu to plain members", async () => {
+    const result = await service.handle("g1", "member", "/menu admin");
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("权限不足");
+  });
+
+  it("attaches menu buttons to unknown commands", async () => {
+    const result = await service.handle("g1", "member", "/definitely-not-a-command");
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("未知指令");
+    expect(result.rich?.keyboard?.content.rows.length).toBeGreaterThan(0);
+    expect(result.rich?.text).toContain("未知指令");
+  });
+
+  it("limits /testmenu to super admins and validates the page", async () => {
+    const denied = await service.handle("g1", "admin", "/testmenu");
+    expect(denied.ok).toBe(false);
+    expect(denied.text).toContain("权限不足");
+
+    const first = await service.handle("g1", "root", "/testmenu");
+    expect(first.ok).toBe(true);
+    expect(first.text).toContain("第 1 / 3 页");
+    expect(first.rich?.keyboard?.content.rows.length).toBeGreaterThan(0);
+
+    const second = await service.handle("g1", "root", "/testmenu 2");
+    expect(second.ok).toBe(true);
+    expect(second.text).toContain("第 2 / 3 页");
+
+    const invalid = await service.handle("g1", "root", "/testmenu 9");
+    expect(invalid.ok).toBe(false);
+    expect(invalid.text).toContain("页码范围");
+  });
+
+  it("only lists /testmenu in super admin help", async () => {
+    const root = await service.handle("g1", "root", "/help");
+    expect(root.text).toContain("/testmenu");
+
+    const member = await service.handle("g1", "member", "/help");
+    expect(member.text).not.toContain("/testmenu");
+  });
+
   it("requires permission for pending", async () => {
     const result = await service.handle("g1", "member", "/pending");
     expect(result.ok).toBe(false);

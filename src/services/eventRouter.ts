@@ -7,6 +7,7 @@ import type { JoinAuditService } from "./joinAudit.js";
 import type { JoinRequestDecision } from "./joinRequestCard.js";
 import type { MessageGuardService } from "./messageGuard.js";
 import type { NotificationService } from "./notifications.js";
+import type { RichMessage } from "./richMessages.js";
 
 const log = getLogger("event-router");
 
@@ -59,19 +60,49 @@ export interface AdminCommandEvent {
   text: string;
 }
 
+/**
+ * 互动事件（官方 `INTERACTION_CREATE`）：用户在消息里点了按钮。
+ *
+ * `interactionId` 既用于回包（`PUT /interactions/{id}`），也可以直接当 `msg_id`
+ * 发一条**被动消息** —— 这是官方唯一的"回调回复"方式（没有更新原消息的接口）。
+ */
+export interface InteractionEvent {
+  type: "interaction";
+  interactionId: string;
+  /** 互动类型：11=消息按钮点击，12=快捷菜单点击。 */
+  interactionType: number;
+  scene?: string | undefined;
+  chatType?: number | undefined;
+  /** 群聊场景的群 OpenID。 */
+  groupId?: string | undefined;
+  /** 点击者：群聊为 group_member_openid，单聊为 user_openid。 */
+  userId?: string | undefined;
+  buttonId?: string | undefined;
+  buttonData?: string | undefined;
+  messageId?: string | undefined;
+}
+
 export type QQEvent =
   | GroupMessageEvent
   | PrivateMessageEvent
   | JoinRequestEvent
-  | AdminCommandEvent;
+  | AdminCommandEvent
+  | InteractionEvent;
 
 export interface EventRouterResult {
-  kind: "message" | "private_message" | "join_request" | "command";
+  kind: "message" | "private_message" | "join_request" | "command" | "interaction";
   action?: ModerationAction;
   executed?: boolean;
   detail?: string;
   ok?: boolean;
   text?: string;
+  /** 富回复（Markdown + 按钮）；由 gatewayRunner 交给 RichMessageSender 发送。 */
+  rich?: RichMessage | undefined;
+}
+
+/** 互动事件处理器（例如 `/testmenu` 的回调翻页）。 */
+export interface InteractionHandler {
+  handle(event: InteractionEvent): Promise<{ handled: boolean; detail: string }>;
 }
 
 export class EventRouter {
@@ -81,6 +112,7 @@ export class EventRouter {
     private readonly adminCommands: AdminCommandService,
     private readonly joinApproval?: JoinApprovalService,
     private readonly notifications?: NotificationService,
+    private readonly interactionHandler?: InteractionHandler,
   ) {}
 
   public async handle(event: QQEvent): Promise<EventRouterResult> {
@@ -91,16 +123,32 @@ export class EventRouter {
     });
     switch (event.type) {
       case "group_message": {
-        if (event.content.trim().startsWith("/")) {
+        const content = event.content.trim();
+        if (content.startsWith("/")) {
           const commandResult = await this.adminCommands.handle(
             event.groupId,
             event.userId,
-            event.content,
+            content,
           );
           return {
             kind: "command",
             ok: commandResult.ok,
             text: commandResult.text,
+            rich: commandResult.rich,
+          };
+        }
+        if (content.length === 0) {
+          // 群里 @机器人 但没带内容：回主菜单（菜单渲染在指令服务里）
+          const menuResult = await this.adminCommands.handle(
+            event.groupId,
+            event.userId,
+            "/menu",
+          );
+          return {
+            kind: "command",
+            ok: menuResult.ok,
+            text: menuResult.text,
+            rich: menuResult.rich,
           };
         }
         const result = await this.messageGuard.handleMessage(
@@ -184,16 +232,32 @@ export class EventRouter {
         }
       }
       case "private_message": {
-        if (event.content.trim().startsWith("/")) {
+        const content = event.content.trim();
+        if (content.startsWith("/")) {
           const result = await this.adminCommands.handle(
             undefined,
             event.userId,
-            event.content,
+            content,
           );
           return {
             kind: "private_message",
             ok: result.ok,
             text: result.text,
+            rich: result.rich,
+          };
+        }
+        if (content.length === 0) {
+          // 私信空消息：同样回主菜单
+          const menuResult = await this.adminCommands.handle(
+            undefined,
+            event.userId,
+            "/menu",
+          );
+          return {
+            kind: "private_message",
+            ok: menuResult.ok,
+            text: menuResult.text,
+            rich: menuResult.rich,
           };
         }
         return { kind: "private_message", ok: true, text: "" };
@@ -208,7 +272,36 @@ export class EventRouter {
           kind: "command",
           ok: result.ok,
           text: result.text,
+          rich: result.rich,
         };
+      }
+      case "interaction": {
+        // 互动事件由处理器自己回包并回复（没有更新原消息的接口），这里只记录结果
+        if (!this.interactionHandler) {
+          log.debug("interaction ignored: no handler", {
+            interactionType: event.interactionType,
+          });
+          return { kind: "interaction", ok: true, detail: "no_handler" };
+        }
+        try {
+          const outcome = await this.interactionHandler.handle(event);
+          log.debug("interaction handled", {
+            interactionType: event.interactionType,
+            handled: outcome.handled,
+            detail: outcome.detail,
+          });
+          return {
+            kind: "interaction",
+            ok: outcome.handled,
+            detail: outcome.detail,
+          };
+        } catch (error) {
+          log.warn("interaction handler failed", {
+            interactionType: event.interactionType,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return { kind: "interaction", ok: false, detail: String(error) };
+        }
       }
     }
   }

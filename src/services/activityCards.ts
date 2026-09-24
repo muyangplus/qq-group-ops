@@ -1,7 +1,4 @@
-import type {
-  KeyboardButton,
-  KeyboardPayload,
-} from "../adapters/qqOfficial.js";
+import { renderCard, type CardButton } from "./cardTemplate.js";
 import type { Activity, ActivityRegistration } from "./activity.js";
 import type { DisplayNameService } from "./displayNames.js";
 import type { RichMessage, RichMessageSender, RichSendResult } from "./richMessages.js";
@@ -9,7 +6,8 @@ import type { RichMessage, RichMessageSender, RichSendResult } from "./richMessa
 /**
  * 活动卡片：Markdown 正文 + 指令按钮（报名 / 取消报名 / 详情 / 名单）。
  *
- * 与入群申请卡片共用 `RichMessageSender`，因此同样具备
+ * 布局交给统一的 `cardTemplate` 渲染，因此与系统菜单、入群申请卡片保持同一套
+ * 「标题 + 正文 + 按钮 + 底部提示」结构；发送仍走 `RichMessageSender`，具备
  * 「Markdown+按钮 → Markdown → 纯文本」三级降级。
  */
 export interface ActivityCardInput {
@@ -38,28 +36,23 @@ export class ActivityCardService {
         activity.groupId);
     const count = input.registrations.length;
     const capacity = activity.capacity ?? 0;
-    const lines = [
-      `## ${activity.title}`,
-      ...(activity.description ? [activity.description, ""] : []),
-      `- 活动群：${groupLabel}`,
-      `- 报名人数：${count}${capacity > 0 ? ` / ${capacity}` : ""}`,
-      ...formatRules(activity),
-      ...formatLinks(activity),
-      "",
-      `报名 / 取消报名：/activity join ${code(activity)} · /activity quit ${code(activity)}`,
-      `活动详情：/activity info ${code(activity)}`,
-    ];
-    const markdown = lines.join("\n");
-    const text = markdown
-      .replace(/^## /u, "【活动】")
-      .replace(/\*\*/gu, "");
-    return {
-      markdown,
-      text,
+    return renderCard({
+      title: activity.title,
+      lines: [
+        ...(activity.description ? [activity.description, ""] : []),
+        `- 活动群：${groupLabel}`,
+        `- 报名人数：${count}${capacity > 0 ? ` / ${capacity}` : ""}`,
+        ...formatRules(activity),
+        ...formatLinks(activity),
+      ],
       ...(this.sender.keyboardAvailable
-        ? { keyboard: buildKeyboard(activity) }
+        ? { rows: buildRows(activity), buttonHint: "点击下方按钮立即操作：" }
         : {}),
-    };
+      footer: [
+        `报名 / 取消报名：/activity join ${code(activity)} · /activity quit ${code(activity)}`,
+        `活动详情：/activity info ${code(activity)}`,
+      ],
+    });
   }
 
   public async publish(input: ActivityCardInput): Promise<RichSendResult> {
@@ -106,60 +99,47 @@ function formatLinks(activity: Activity): string[] {
   return [`- 相关链接：${rendered}`];
 }
 
-function buildKeyboard(activity: Activity): KeyboardPayload {
+function buildRows(activity: Activity): readonly (readonly CardButton[])[] {
   const button = (
     id: string,
     label: string,
-    data: string,
+    command: string,
     style: 0 | 1 | 3 | 4,
     confirm?: string,
-  ): KeyboardButton => ({
+  ): CardButton => ({
     id,
     label,
     visitedLabel: label,
     style,
-    action: {
-      type: 2,
-      data,
-      permission: { type: 2 },
-      enter: true,
-      reply: false,
-      unsupportTips: "当前 QQ 版本不支持按钮，请直接发送对应指令",
-      ...(confirm
-        ? {
-            modal: { content: confirm, confirmText: "确认", cancelText: "取消" },
-          }
-        : {}),
-    },
+    command,
+    permission: { type: 2 },
+    unsupportTips: "当前 QQ 版本不支持按钮，请直接发送对应指令",
+    ...(confirm
+      ? {
+          modal: { content: confirm, confirmText: "确认", cancelText: "取消" },
+        }
+      : {}),
   });
-  return {
-    content: {
-      rows: [
-        {
-          buttons: [
-            button(
-              "join",
-              "报名",
-              `/activity join ${code(activity)}`,
-              1,
-              "确认报名该活动？",
-            ),
-            button(
-              "quit",
-              "取消报名",
-              `/activity quit ${code(activity)}`,
-              3,
-              "确认取消报名？",
-            ),
-          ],
-        },
-        {
-          buttons: [
-            button("info", "活动详情", `/activity info ${code(activity)}`, 0),
-            button("signups", "报名名单", `/activity signups ${code(activity)}`, 0),
-          ],
-        },
-      ],
-    },
-  };
+  return [
+    [
+      button(
+        "join",
+        "报名",
+        `/activity join ${code(activity)}`,
+        1,
+        "确认报名该活动？",
+      ),
+      button(
+        "quit",
+        "取消报名",
+        `/activity quit ${code(activity)}`,
+        3,
+        "确认取消报名？",
+      ),
+    ],
+    [
+      button("info", "活动详情", `/activity info ${code(activity)}`, 0),
+      button("signups", "报名名单", `/activity signups ${code(activity)}`, 0),
+    ],
+  ];
 }

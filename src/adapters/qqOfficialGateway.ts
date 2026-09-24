@@ -11,6 +11,8 @@ import { getLogger } from "../core/logger.js";
 
 export const GROUP_MEMBER_EVENT = 1 << 24;
 export const GROUP_AND_C2C_EVENT = 1 << 25;
+/** 互动事件（按钮回调 INTERACTION_CREATE）：官方 intent `INTERACTION (1<<26)`。 */
+export const INTERACTION_EVENT = 1 << 26;
 
 const log = getLogger("qq-official-gateway");
 
@@ -88,7 +90,8 @@ export class QQOfficialGateway implements EventGateway {
 
   public constructor(private readonly options: QQOfficialGatewayOptions) {
     this.intents =
-      options.intents ?? GROUP_MEMBER_EVENT | GROUP_AND_C2C_EVENT;
+      options.intents ??
+      GROUP_MEMBER_EVENT | GROUP_AND_C2C_EVENT | INTERACTION_EVENT;
     this.shard = options.shard ?? [0, 1];
     this.properties = options.properties ?? {
       $os: "linux",

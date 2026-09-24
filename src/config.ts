@@ -27,6 +27,32 @@ export interface Settings {
   logColor: string;
   rawMessageRetentionDays: number;
   auditLogRetentionDays: number;
+  /** 私信首次交互主菜单的记录方式（dev 默认内存，正式默认入库）。 */
+  menuFirstPush: MenuFirstPushMode;
+}
+
+export type MenuFirstPushMode = "memory" | "persistent";
+
+/**
+ * 解析「私信首次交互推一次主菜单」的记录方式。
+ *
+ * - `memory`：只记内存，重启后可以再次验证推送（`pnpm dev` 默认）；
+ * - 其它/未设置：入库持久化，重启不重复（正式启动默认）。
+ */
+export function resolveMenuFirstPushMode(
+  value: string | undefined,
+): MenuFirstPushMode {
+  const raw = value?.trim().toLowerCase() ?? "";
+  if (raw.length === 0) {
+    return "persistent";
+  }
+  if (raw === "memory" || raw === "mem") {
+    return "memory";
+  }
+  if (raw === "persistent" || raw === "db" || raw === "database") {
+    return "persistent";
+  }
+  throw new Error(`MENU_FIRST_PUSH 只支持 memory / persistent，收到：${value}`);
 }
 
 function asBool(value: string | undefined, fallback = false): boolean {
@@ -114,6 +140,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     logColor: env.LOG_COLOR ?? "auto",
     rawMessageRetentionDays: asInt(env.RAW_MESSAGE_RETENTION_DAYS, 0),
     auditLogRetentionDays: asInt(env.AUDIT_LOG_RETENTION_DAYS, 180),
+    menuFirstPush: resolveMenuFirstPushMode(env.MENU_FIRST_PUSH),
   };
 }
 

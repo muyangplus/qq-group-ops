@@ -118,6 +118,12 @@ CREATE TABLE IF NOT EXISTS group_message_modes (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 私信「首次交互推一次主菜单」的去重记录：正式启动入库，dev 启动只记内存。
+CREATE TABLE IF NOT EXISTS menu_deliveries (
+  user_id TEXT PRIMARY KEY,
+  pushed_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS activities (
   activity_id TEXT PRIMARY KEY,
   group_id TEXT NOT NULL,

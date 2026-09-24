@@ -5,6 +5,7 @@ import {
   hasQqCredentials,
   loadSettings,
   resolveDatabaseTarget,
+  resolveMenuFirstPushMode,
 } from "../src/config.js";
 
 describe("loadSettings", () => {
@@ -21,6 +22,8 @@ describe("loadSettings", () => {
     expect(settings.logFile).toBe("logs/qq-group-ops.log");
     expect(settings.logConsole).toBe(true);
     expect(settings.logColor).toBe("auto");
+    // 正式启动默认入库持久化；dev 入口会把这个值覆盖成 memory
+    expect(settings.menuFirstPush).toBe("persistent");
   });
 
   it("loads environment values", () => {
@@ -101,5 +104,22 @@ describe("resolveDatabaseTarget", () => {
     expect(resolveDatabaseTarget("", ":memory:")).toEqual({
       driver: "memory",
     });
+  });
+});
+
+describe("resolveMenuFirstPushMode", () => {
+  it("defaults to persistent and accepts explicit modes", () => {
+    expect(resolveMenuFirstPushMode(undefined)).toBe("persistent");
+    expect(resolveMenuFirstPushMode("")).toBe("persistent");
+    expect(resolveMenuFirstPushMode("persistent")).toBe("persistent");
+    expect(resolveMenuFirstPushMode("db")).toBe("persistent");
+    expect(resolveMenuFirstPushMode("memory")).toBe("memory");
+    expect(resolveMenuFirstPushMode("MEM")).toBe("memory");
+  });
+
+  it("rejects unknown modes instead of silently falling back", () => {
+    expect(() => resolveMenuFirstPushMode("memroy")).toThrow(
+      /MENU_FIRST_PUSH/u,
+    );
   });
 });
