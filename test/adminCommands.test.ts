@@ -1532,6 +1532,25 @@ describe("AdminCommandService", async () => {
     }
   });
 
+  it("defaults /whois to the current context", async () => {
+    // 群内：不带参数 → 当前群
+    const inGroup = await service.handle("g1", "root", "/whois");
+    expect(inGroup.ok).toBe(true);
+    expect(inGroup.text).toContain("类型：群（当前群）");
+    expect(inGroup.text).toContain("654321");
+
+    // 私聊：不带参数 → 你自己
+    const inPrivate = await service.handle(undefined, "root", "/whois");
+    expect(inPrivate.ok).toBe(true);
+    expect(inPrivate.text).toContain("类型：用户（你自己）");
+    expect(inPrivate.text).toContain("10004");
+
+    // 非超管照旧被拒
+    const denied = await service.handle("g1", "member", "/whois");
+    expect(denied.ok).toBe(false);
+    expect(denied.text).toContain("仅超级管理员");
+  });
+
   it("resolves #group and #user short codes in commands", async () => {
     const scoped = withShortCodes();
     identityMap.bindGroup("g2", "777777");

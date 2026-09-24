@@ -305,14 +305,14 @@ export class AdminCommandService {
       case "查询":
         return this.cardify(
           "映射查询",
-          this.handleWhois(userId, parts),
+          this.handleWhois(groupId, userId, parts),
           [
             [
               viewButton("myperm", "我的权限", "cmd", "run", "/myperm"),
               viewButton("help", "查询帮助", "help", "topic", "whois"),
             ],
           ],
-          ["手动指令：/whois <QQ号|userId|群号|短码|group_openid>"],
+          ["手动指令：/whois [目标]（不填 = 当前群 / 你自己）"]
         );
       case "perm":
       case "权限":
@@ -516,7 +516,11 @@ export class AdminCommandService {
     };
   }
 
-  private handleWhois(userId: string, parts: readonly string[]): CommandResult {
+  private handleWhois(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): CommandResult {
     if (!this.permissions.isSuperAdmin(userId)) {
       return { ok: false, text: "权限不足：仅超级管理员可以查询映射。" };
     }
@@ -525,9 +529,25 @@ export class AdminCommandService {
     }
     const input = parts[1]?.trim();
     if (!input) {
+      // 不带参数：直接查当前上下文 —— 群聊查当前群，私聊查你自己
+      if (groupId) {
+        const groupNumber =
+          this.identityMap.getGroupNumber(groupId) ?? "（未绑定）";
+        const shortCode = this.display
+          ? `\n短码：${this.display.group(groupId)}`
+          : "";
+        return {
+          ok: true,
+          text: `类型：群（当前群）\n群 ID：${groupId}\n群号：${groupNumber}${shortCode}`,
+        };
+      }
+      const qq = this.identityMap.getQq(userId) ?? "（未绑定）";
+      const shortCode = this.display
+        ? `\n短码：${this.display.user(userId)}`
+        : "";
       return {
-        ok: false,
-        text: "用法：/whois <QQ号|userId|群号|group_openid|#短码>",
+        ok: true,
+        text: `类型：用户（你自己）\nuserId：${userId}\nQQ：${qq}${shortCode}`,
       };
     }
 

@@ -375,9 +375,11 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     allows: (context) => context.permissions.isSuperAdmin(context.userId),
     body: () => [
       "用法：",
+      "  /whois                              不带参数：群聊查当前群，私聊查你自己",
       "  /whois <QQ号|userId|群号|group_openid|#短码>",
       "",
       "示例：",
+      "  /whois                  → 当前群 / 你自己的映射（含短码）",
       "  /whois 123456789        → 返回对应的 userId",
       "  /whois A1B2C3D4...      → 返回对应的 QQ号",
       "  /whois 654321           → 返回对应的 group_openid",
