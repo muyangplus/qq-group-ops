@@ -210,6 +210,10 @@ export function createRuntime(
         if (!userId) {
           return undefined;
         }
+        // 活动层级直接用活动列表卡（带分页与操作按钮），其余层级走菜单定义
+        if (parsed.args[0] === "activity" && event.groupId) {
+          return adminCommands.activityListCard(event.groupId, userId, 1).rich;
+        }
         return adminCommands.menuMessage(parsed.args[0], event.groupId, userId);
       },
     ],
@@ -372,6 +376,40 @@ export function createRuntime(
           return card.rich;
         }
         return adminCommands.notifyCard(event.groupId, userId).rich;
+      },
+    ],
+    [
+      "activity",
+      async (parsed, event) => {
+        const userId = event.userId;
+        const group =
+          parsed.args[0] && parsed.args[0].length > 0
+            ? parsed.args[0]
+            : event.groupId;
+        if (!userId || !group) {
+          return undefined;
+        }
+        return adminCommands.activityListCard(
+          group,
+          userId,
+          Number.parseInt(parsed.args[1] ?? "1", 10) || 1,
+        ).rich;
+      },
+    ],
+    [
+      // 通用「运行固定指令」回调：cb:cmd:run:/myperm —— 走与手输完全一样的权限与审计
+      "cmd",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        const command = parsed.args.join(":").trim();
+        if (!command.startsWith("/")) {
+          return undefined;
+        }
+        const result = await adminCommands.handle(event.groupId, userId, command);
+        return result.rich;
       },
     ],
     ["testmenu", (parsed, event) => testMenu.render(parsed, event)],

@@ -1,4 +1,5 @@
 ﻿import { PermissionLevel } from "../core/enums.js";
+import { encodeCallback } from "./callbackData.js";
 import { renderCard, escapeCardText, type CardButton, type CardSpec } from "./cardTemplate.js";
 import type { PermissionService } from "./permissions.js";
 import type { RichMessage } from "./richMessages.js";
@@ -240,18 +241,18 @@ function mainCard(context: MenuContext, access: MenuAccess): CardSpec {
     lines.push("私信中操作群功能时，请在指令里带上群号。");
   }
 
-  const sections: CardButton[] = [button("sys", "系统菜单", "/menu sys")];
+  const sections: CardButton[] = [menuButton("sys", "系统菜单", "sys")];
   if (access.canModerate) {
-    sections.push(button("admin", "管理菜单", "/menu admin"));
+    sections.push(menuButton("admin", "管理菜单", "admin"));
   }
   if (access.isSuperAdmin) {
-    sections.push(button("super", "超管菜单", "/menu super"));
+    sections.push(menuButton("super", "超管菜单", "super"));
   }
 
-  const personal: CardButton[] = [button("help", "帮助", "/help")];
+  const personal: CardButton[] = [cmdButton("help", "帮助", "/help")];
   if (context.bound) {
-    personal.push(button("myperm", "我的权限", "/myperm"));
-    personal.push(button("profile", "我的资料", "/profile"));
+    personal.push(cmdButton("myperm", "我的权限", "/myperm"));
+    personal.push(cmdButton("profile", "我的资料", "/profile"));
   } else {
     personal.push(button("bind", "绑定账号", "/bind qq 你的QQ号"));
   }
@@ -261,26 +262,26 @@ function mainCard(context: MenuContext, access: MenuAccess): CardSpec {
     lines,
     rows: [sections, personal.slice(0, 3), ...(personal.length > 3 ? [personal.slice(3)] : [])],
     buttonHint: "请选择入口：",
-    footer: ["按钮点击即发送对应指令；按钮不可用时可直接输入指令。"],
+    footer: ["手动指令：/help · /menu sys · /menu admin · /menu super · /myperm · /profile"],
   };
 }
 
 function systemCard(context: MenuContext, access: MenuAccess): CardSpec {
   const rows: CardButton[][] = [
-    [button("help", "帮助", "/help"), backButton()],
+    [cmdButton("help", "帮助", "/help"), backButton()],
   ];
   if (context.bound) {
-    rows[0]!.unshift(button("myperm", "我的权限", "/myperm"));
+    rows[0]!.unshift(cmdButton("myperm", "我的权限", "/myperm"));
     rows.push([
-      button("profile", "我的资料", "/profile"),
-      button("activity", "活动报名", "/menu activity"),
+      cmdButton("profile", "我的资料", "/profile"),
+      menuButton("activity", "活动", "activity"),
     ]);
   } else {
     rows[0]!.unshift(button("bind", "绑定账号", "/bind qq 你的QQ号"));
   }
   if (access.canModerate) {
     rows[rows.length - 1]!.push(
-      button("admin", "管理菜单", "/menu admin"),
+      menuButton("admin", "管理菜单", "admin"),
     );
   }
   return {
@@ -288,7 +289,7 @@ function systemCard(context: MenuContext, access: MenuAccess): CardSpec {
     lines: ["面向所有成员的能力：帮助、绑定、个人资料与活动。"],
     rows,
     buttonHint: "请选择功能：",
-    footer: ["查看全部指令：/help；某个指令的详细用法：/help <指令>"],
+    footer: ["手动指令：/help · /bind qq <QQ号> · /myperm · /profile · /activity · /notify"],
   };
 }
 
@@ -301,11 +302,12 @@ function activityCard(context: MenuContext): CardSpec {
       "报名：/activity join #短码",
       "取消报名：/activity quit #短码",
     ],
-    rows: [[button("list", "活动列表", "/activity"), backButton()]],
+    rows: [[cmdButton("list", "活动列表", "/activity"), backButton()]],
     buttonHint: "报名与取消报名在活动卡片上有一键按钮。",
     footer: [
       "活动短码形如 #A7K2Q9，可从活动列表或活动卡片上获取。",
       "报名前需要补全个人资料：/profile",
+      "手动指令：/activity · /activity info #短码 · /activity join #短码 · /activity quit #短码",
     ],
   };
 }
@@ -313,20 +315,20 @@ function activityCard(context: MenuContext): CardSpec {
 function adminCard(context: MenuContext, access: MenuAccess): CardSpec {
   const rows: CardButton[][] = [
     [
-      button("pending", "待审批", "/pending"),
-      button("sync", "同步官方", "/sync"),
-      button("audit", "审计日志", "/audit"),
+      cmdButton("pending", "待审批", "/pending"),
+      cmdButton("sync", "同步", "/sync"),
+      cmdButton("audit", "审计", "/audit"),
     ],
     [
-      button("rules", "群规则", "/rules"),
-      button("status", "运行状态", "/status"),
-      button("test", "自检", "/test"),
+      cmdButton("rules", "群规则", "/rules"),
+      cmdButton("status", "状态", "/status"),
+      cmdButton("test", "自检", "/test"),
     ],
   ];
   const last: CardButton[] = [];
   if (access.canAdmin) {
-    last.push(button("review", "审核操作", "/menu review"));
-    last.push(button("ops", "活动运营", "/menu ops"));
+    last.push(menuButton("review", "审核操作", "review"));
+    last.push(menuButton("ops", "活动运营", "ops"));
   }
   last.push(backButton());
   rows.push(last);
@@ -339,7 +341,7 @@ function adminCard(context: MenuContext, access: MenuAccess): CardSpec {
     ],
     rows,
     buttonHint: "请选择功能：",
-    footer: ["审批需要先拿到申请ID：从 /pending 或入群推送卡片获取。"],
+    footer: ["手动指令：/pending · /sync · /audit · /rules · /status · /test"],
   };
 }
 
@@ -353,13 +355,13 @@ function reviewCard(context: MenuContext): CardSpec {
     ],
     rows: [
       [
-        button("pending", "待审批", "/pending"),
-        button("sync", "同步官方", "/sync"),
+        cmdButton("pending", "待审批", "/pending"),
+        cmdButton("sync", "同步", "/sync"),
       ],
       [menuButton("admin", "管理菜单", "admin"), backButton()],
     ],
     buttonHint: "审批动作需要带申请ID，因此这里不提供按钮。",
-    footer: ["推送卡片上的「同意 / 拒绝」按钮等价于这两条指令。"],
+    footer: ["手动指令：/pending · /sync · /approve <申请ID> · /reject <申请ID> [原因]"],
   };
 }
 
@@ -375,12 +377,13 @@ function opsCard(context: MenuContext): CardSpec {
     ],
     rows: [
       [
-        button("list", "活动列表", "/activity"),
-        button("pending", "待审批", "/pending"),
+        cmdButton("list", "活动列表", "/activity"),
+        cmdButton("pending", "待审批", "/pending"),
       ],
       [menuButton("admin", "管理菜单", "admin"), backButton()],
     ],
     buttonHint: "创建与修改活动需要带参数，请按上面的用法手输指令。",
+    footer: ["手动指令：/activity · /export · /activity create <标题>"],
   };
 }
 
@@ -398,27 +401,38 @@ function superCard(context: MenuContext): CardSpec {
     ],
     rows: [
       [
-        button("perm", "权限", "/perm list"),
-        button("rules", "全局规则", "/rules all"),
-        button("notify", "通知全部群", "/notify all on"),
+        cmdButton("perm", "权限", "/perm list"),
+        cmdButton("globalRules", "全局规则", "/rules all"),
+        cmdButton("notify", "通知订阅", "/notify"),
       ],
-      [button("pending", "待审批", "/pending"), backButton()],
+      [
+        cmdButton("testmenu", "翻页测试", "/testmenu"),
+        cmdButton("pending", "待审批", "/pending"),
+        backButton(),
+      ],
     ],
     buttonHint: "常用入口：",
-    footer: ["需要参数的指令请按上面的用法手输。"],
+    footer: ["手动指令：/perm list · /rules all · /notify · /testmenu · /whois <目标>"],
   };
 }
 
+/** 需要参数的指令：仍然用指令按钮（点击=把指令填进输入框，用户补参数后发送）。 */
 function button(id: string, label: string, command: string): CardButton {
   return { id, label, command };
 }
 
+/** 固定指令入口：用回调自动执行（标准：无需参数的固定动作走回调）。 */
+function cmdButton(id: string, label: string, command: string): CardButton {
+  return { id, label, callbackData: encodeCallback("cmd", "run", command) };
+}
+
+/** 菜单导航：用回调直接打开某个菜单层级。 */
 function menuButton(
   id: string,
   label: string,
   section: MenuSection,
 ): CardButton {
-  return { id, label, command: `/menu ${section}` };
+  return { id, label, callbackData: encodeCallback("menu", "open", section) };
 }
 
 function backButton(): CardButton {

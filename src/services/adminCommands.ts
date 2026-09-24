@@ -1075,6 +1075,94 @@ export class AdminCommandService {
   }
 
   /**
+   * `/activity [list] [群号] [+页码]`：活动列表卡。
+   *
+   * 每页 3 个活动（每个一行按钮：报名 / 详情 / 名单），翻页是回调；
+   * 手动翻页用 `/activity list +<页码>`（`+` 前缀与群号区分）。
+   */
+  public activityListCard(
+    targetGroupId: string,
+    userId: string,
+    page = 1,
+    notice?: string,
+  ): CardResult {
+    const list = this.activity!.listActivities(targetGroupId);
+    const groupLabel = this.displayGroup(targetGroupId);
+    if (list.length === 0) {
+      return cardFromText(
+        "活动列表",
+        [...(notice ? [notice] : []), `群 ${groupLabel} 还没有活动。`].join("\n"),
+        {
+          rows: [
+            [viewButton("refresh", "刷新", "activity", "page", targetGroupId, 1)],
+          ],
+          footer: [
+            "创建活动：/activity create <标题>（群管理员或以上）",
+            `本群：${groupLabel}`,
+          ],
+        },
+      );
+    }
+
+    const size = 3;
+    const pageCount = Math.max(1, Math.ceil(list.length / size));
+    const current = Math.min(Math.max(page, 1), pageCount);
+    const slice = list.slice((current - 1) * size, current * size);
+    const lines = [
+      ...(notice ? [`**结果**：${escapeCardText(notice)}`] : []),
+      `**群**：${groupLabel}`,
+      `**活动**：${list.length} 个 · 第 ${current} / ${pageCount} 页`,
+      "",
+    ];
+    const rows: CardButton[][] = [];
+    for (const activity of slice) {
+      const count = this.activity!.listRegistrations(activity.activityId).length;
+      const code = activityCode(activity);
+      lines.push(
+        `**${escapeCardText(code)}** ${escapeCardText(activity.title)} [${activity.status}] 报名 ${count}${
+          activity.capacity ? `/${activity.capacity}` : ""
+        }`,
+      );
+      rows.push([
+        actionButton(`join-${code}`, "报名", `/activity join ${code}`),
+        actionButton(`info-${code}`, "详情", `/activity info ${code}`),
+        actionButton(`signups-${code}`, "名单", `/activity signups ${code}`),
+      ]);
+    }
+
+    const paging: CardButton[] = [];
+    if (current > 1) {
+      paging.push(
+        viewButton("prev", "上一页", "activity", "page", targetGroupId, current - 1),
+      );
+    }
+    if (current < pageCount) {
+      paging.push(
+        viewButton("next", "下一页", "activity", "page", targetGroupId, current + 1),
+      );
+    }
+    paging.push(
+      viewButton("refresh", "刷新", "activity", "page", targetGroupId, current),
+    );
+    rows.push(paging);
+
+    const footer: string[] = [];
+    if (current < pageCount) {
+      footer.push(`下一页：/activity list +${current + 1}`);
+    }
+    if (current > 1) {
+      footer.push(`上一页：/activity list +${current - 1}`);
+    }
+    footer.push("报名需要资料完整：/profile");
+
+    return cardFromText("活动列表", lines.join("\n"), {
+      rows,
+      buttonHint: "点击操作：",
+      footer,
+    });
+  }
+
+  /**
    * `/notify`：入群申请推送订阅卡。
    *
    * 订阅开关是**回调**（固定动作，点击即订阅/退订并回一张带操作人的卡），
@@ -2239,15 +2327,16 @@ export class AdminCommandService {
     }
     const action = normalize(parts[1]);
     if (!action || action === "list" || action === "列表" || action === "查看") {
+      const { page, rest } = extractPageToken(parts);
       const targetGroupId =
-        this.resolveTargetGroupId(groupId, parts[2] ?? parts[1]) ?? groupId;
+        this.resolveTargetGroupId(groupId, rest[1] ?? rest[0]) ?? groupId;
       if (!targetGroupId) {
         return {
           ok: false,
-          text: "用法：/activity（群内查看本群活动），或 /activity list <群号|#群短码>",
+          text: "用法：/activity（群内查看本群活动），或 /activity list <群号|#群短码> [+页码]",
         };
       }
-      return { ok: true, text: this.formatActivityList(targetGroupId) };
+      return this.activityListCard(targetGroupId, userId, page);
     }
     if (parts[1]?.startsWith("#")) {
       return this.handleActivityInfo(userId, parts[1]);

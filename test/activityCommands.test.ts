@@ -212,8 +212,46 @@ describe("activity & profile commands", () => {
   it("lists activities for the group", async () => {
     await service.handle("g1", "admin", "/activity create 活动");
     const list = await service.handle("g1", "member", "/activity");
+
     expect(list.ok).toBe(true);
     expect(list.text).toContain("#ACT001");
     expect(list.text).toContain("活动");
+    // 卡片标准：列表是卡片，并且带操作按钮
+    expect(list.rich?.markdown).toContain("#ACT001");
+    expect(list.rich?.keyboard?.content.rows.length).toBeGreaterThan(0);
+  });
+
+  it("pages the activity list with callbacks and a +page fallback", async () => {
+    for (let index = 1; index <= 4; index += 1) {
+      await service.handle("g1", "admin", `/activity create 活动${index}`);
+    }
+
+    // 每页 3 个 → 4 个活动共 2 页
+    const first = await service.handle("g1", "member", "/activity");
+    expect(first.rich?.markdown).toContain("第 1 / 2 页");
+    const buttons = (first.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(buttons.find((button) => button.id === "next")?.action).toMatchObject({
+      type: 1,
+      data: "cb:activity:page:g1:2",
+    });
+    // 每个活动一行操作按钮：报名 / 详情 / 名单
+    expect(buttons.find((button) => button.id === "join-#ACT001")?.action).toMatchObject({
+      type: 2,
+      data: "/activity join #ACT001",
+    });
+    expect(first.text).toContain("下一页：/activity list +2");
+
+    const second = await service.handle("g1", "member", "/activity list +2");
+    expect(second.rich?.markdown).toContain("第 2 / 2 页");
+    const secondButtons = (second.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(secondButtons.find((button) => button.id === "prev")?.action).toMatchObject({
+      type: 1,
+      data: "cb:activity:page:g1:1",
+    });
+    expect(secondButtons.some((button) => button.id === "next")).toBe(false);
   });
 });

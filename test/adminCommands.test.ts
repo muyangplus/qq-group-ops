@@ -208,7 +208,15 @@ describe("AdminCommandService", async () => {
     expect(result.ok).toBe(true);
     expect(result.text).toContain("系统菜单");
     expect(result.rich?.keyboard?.content.rows.length).toBeGreaterThan(0);
-    // 纯文本降级里同样能拿到指令
+    // 菜单导航是回调按钮（点击即出下一张卡）
+    const buttons = (result.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(buttons.find((button) => button.id === "sys")?.action).toMatchObject({
+      type: 1,
+      data: "cb:menu:open:sys",
+    });
+    // 纯文本降级里有等价的手动指令
     expect(result.text).toContain("/menu sys");
   });
 

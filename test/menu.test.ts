@@ -101,9 +101,13 @@ describe("menu", () => {
         expect(row.buttons.length).toBeLessThanOrEqual(5);
         for (const button of row.buttons) {
           expect(button.label.length).toBeLessThanOrEqual(10);
-          // 菜单按钮全部是指令按钮（点击=发送指令），不需要新增事件类型
-          expect(button.action.type).toBe(2);
-          expect(button.action.data.startsWith("/")).toBe(true);
+          // 导航与固定动作走回调（type=1），需要参数的走指令按钮（type=2）
+          expect([1, 2]).toContain(button.action.type);
+          expect(
+            button.action.type === 1
+              ? button.action.data.startsWith("cb:")
+              : button.action.data.startsWith("/"),
+          ).toBe(true);
         }
       }
       expect(view.message.markdown).toContain("## ");
@@ -111,17 +115,18 @@ describe("menu", () => {
     }
   });
 
-  it("falls back to plain text with the same commands", () => {
+  it("falls back to plain text with the manual commands", () => {
     const view = buildMenu("admin", context("admin"));
+    // 导航按钮是回调（没有可复制的指令），正文/底部必须给出等价的手动指令
     expect(view.message.text).toContain("/pending");
-    expect(view.message.text).toContain("/menu review");
     expect(view.message.text).toContain("/audit");
+    expect(view.message.text).toContain("/rules");
   });
 
   it("builds an unknown-command card with menu entries", () => {
     const message = buildUnknownCommandMenu("nope", context("member"));
     expect(message.text).toContain("未知指令：nope");
-    expect(message.text).toContain("系统菜单");
+    expect(message.text).toContain("权限：");
     expect(message.markdown).toContain("## 未知指令");
     expect((message.keyboard?.content.rows ?? []).length).toBeGreaterThan(0);
   });
