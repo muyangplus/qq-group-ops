@@ -24,7 +24,7 @@ QQ Group Ops 官方接入层
   ├── adapters/qqOfficialEventMapper.ts 官方事件映射器
   ├── adapters/standardWebSocketFactory.ts 标准 WebSocket 工厂
   ├── adapters/nativeWebSocketFactory.ts   原生 WebSocket 工厂
-  ├── adapters/qqOfficialGateway.ts 官方 WebSocket 协议网关
+  ├── adapters/qqOfficialGateway.ts 官方 WebSocket 协议网关（intent 含 INTERACTION 互动事件）
   └── gatewayRunner.ts             网关到事件路由的绑定
       │
       ▼
@@ -45,7 +45,11 @@ TypeScript 核心服务
   ├── services/activity.ts       活动发布/报名/管理（短码、链接、学院年级白黑名单）
   ├── services/activityCards.ts  活动卡片（Markdown + 报名/取消/详情/名单按钮）
   ├── services/richMessages.ts   富消息发送与三级降级（Markdown+按钮 → Markdown → 文本）
-  ├── services/adminCommands.ts  管理员命令（含 /rules set、/audit、/sync）
+  ├── services/cardTemplate.ts   统一卡片模板（标题+正文+按钮行，集中校验官方限制）
+  ├── services/menu.ts           QQ 端三级交互菜单（系统/管理/超管，按权限过滤）
+  ├── services/firstMenuPush.ts  私信首次主菜单去重（dev 内存 / 正式入库）
+  ├── services/testMenu.ts       回调按钮翻页试验（互动事件回包 + 被动回复下一页）
+  ├── services/adminCommands.ts  管理员命令（含 /rules set、/audit、/sync、/menu）
   ├── services/groupConfig.ts    多群配置
   ├── services/activity.ts       活动报名
   ├── services/export.ts         信息导出
@@ -69,6 +73,7 @@ TypeScript 核心服务
   ├── db/permissionRepository.ts 权限仓储
   ├── db/groupMessageModeRepository.ts 全量消息模式仓储
   ├── db/activityRepository.ts   活动与报名仓储
+  ├── db/menuDeliveryRepository.ts 主菜单首次推送去重仓储
   └── persistence.ts             数据库连接、迁移与仓储装配
       │
       ▼

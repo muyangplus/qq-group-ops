@@ -289,6 +289,49 @@ CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json CLASS_INDE
 /audit [group_openid|群号] [数量]   # 默认 10 条，最多 50 条
 ```
 
+### 交互菜单（`/menu`）
+
+QQ 端的系统交互菜单，三级结构：主菜单 → 系统 / 管理 / 超管菜单 → 功能子菜单。
+
+```text
+/menu           主菜单：按权限显示「系统菜单 / 管理菜单 / 超管菜单」入口
+/menu sys       系统菜单：帮助 / 绑定 / 我的权限 / 个人资料 / 活动（所有人）
+/menu admin     管理菜单：待审批 / 同步 / 规则 / 审计 / 状态 / 自检（审核员及以上）
+/menu review    审核操作：/approve、/reject 的用法（群管理员及以上）
+/menu ops       活动运营：活动创建/开停/名单、/export（群管理员及以上）
+/menu super     超管菜单：/perm、/rules all、/whois、/bind user|groupid（仅全局超管）
+```
+
+要点：
+
+- 菜单按钮都是**指令按钮**（`action.type = 2`）：点击等价于发送对应指令，
+  权限校验、审计与手输完全一致，不新增任何事件类型
+  （群里点击是先把指令填进输入框，部分客户端需再按发送；单聊会直接发送，需客户端 8983+）；
+- 自定义按钮是官方**内邀白名单**能力，未开通时自动降级为纯文本菜单，正文里同样列出指令；
+- 需要参数的指令（如 `/approve <申请ID>`）在菜单正文里给用法，不提供点不动的死按钮；
+- 群里 `@机器人` 不带内容、私信里第一次与机器人交互，都会收到主菜单；
+- 私信「首次推送」的记录方式由 `MENU_FIRST_PUSH` 控制：
+  - `pnpm dev` 默认 `memory`（只记内存，重启可以再验证一次）；
+  - 正式启动默认 `persistent`（入库 `menu_deliveries`，重启不重复推送）；
+  - 想显式指定时在 `.env` 写 `MENU_FIRST_PUSH=memory|persistent`。
+
+### 回调按钮翻页（`/testmenu`）
+
+仅全局超管可用，用于验证官方回调按钮与互动事件链路：
+
+```text
+/testmenu         第 1 页
+/testmenu 2       直接跳到第 2 页（1-3）
+```
+
+- 网关 intent 现在包含 `INTERACTION (1<<26)`：
+  `GROUP_MEMBER_EVENT | GROUP_AND_C2C_EVENT | INTERACTION_EVENT`（重启后生效）；
+- 收到 `INTERACTION_CREATE`（`type=11` 消息按钮）后必须调 `PUT /interactions/{id}` 回包
+  （请求体只有 `{ code }`），否则客户端会一直 loading 直到超时；同一 id 只能回一次；
+- 官方**没有更新原消息的接口**：翻页是用 interaction id 当 `msg_id` **被动回复新的一页**，
+  失败会自动降级为主动发送；
+- 双通道兜底：卡片正文与第二行按钮保留 `/testmenu <页码>`。
+
 ### 私信指令
 
 私信支持以下指令：
