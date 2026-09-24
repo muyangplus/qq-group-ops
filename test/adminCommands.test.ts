@@ -1468,6 +1468,42 @@ describe("AdminCommandService", async () => {
     expect(result.rich?.markdown).toContain("操作人：");
   });
 
+  it("returns a card for every command output", async () => {
+    joinAudit.submit("g1", "u1", "理由", "r1");
+
+    // 卡片标准的不变量：任何指令（含用法提示与错误提示）都必须给出卡片
+    for (const command of [
+      "/help",
+      "/help nope",
+      "/menu",
+      "/menu nope",
+      "/myperm",
+      "/bind",
+      "/bind qq 10004",
+      "/whois nope",
+      "/profile",
+      "/activity",
+      "/rules",
+      "/rules all",
+      "/perm list",
+      "/pending",
+      "/sync",
+      "/notify",
+      "/audit",
+      "/status",
+      "/test",
+      "/testmenu",
+      "/approve nope",
+      "/reject nope",
+      "/definitely-not-a-command",
+    ]) {
+      const result = await service.handle("g1", "root", command);
+      expect(result.rich, command).toBeDefined();
+      expect(result.rich?.markdown.length, command).toBeGreaterThan(0);
+      expect(result.rich?.text.length, command).toBeGreaterThan(0);
+    }
+  });
+
   it("resolves #group and #user short codes in commands", async () => {
     const scoped = withShortCodes();
     identityMap.bindGroup("g2", "777777");

@@ -96,7 +96,10 @@ describe("FakeEventGateway", () => {
     // 第 1 条是指令回复（被动回复），第 2 条是首次私信交互额外推的主菜单（主动发送）
     expect(api.sentPrivateMessages).toHaveLength(2);
     const reply = api.sentPrivateMessages[0];
-    expect(reply?.content).toContain("已绑定");
+    // /bind 现在是卡片：正文在 markdown 里
+    expect(
+      String(reply?.markdown ?? reply?.content),
+    ).toContain("已绑定");
     expect(reply?.msgId).toBe("m1");
 
     const menu = api.sentPrivateMessages[1];

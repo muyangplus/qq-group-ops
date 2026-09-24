@@ -57,6 +57,28 @@ import {
 
 const log = getLogger("admin-commands");
 
+/** 通用卡片标题（未单独定制卡片的指令用）。 */
+const COMMAND_CARD_TITLES: Record<string, string> = {
+  myperm: "我的权限",
+  whois: "映射查询",
+  bind: "绑定",
+  profile: "个人资料",
+  activity: "活动",
+  perm: "权限配置",
+  notify: "入群申请推送",
+  audit: "审计记录",
+  sync: "同步官方申请",
+  approve: "审批结果",
+  reject: "审批结果",
+  test: "自检结果",
+  rules: "群规则",
+  pending: "待审批入群申请",
+  status: "运行状态",
+  help: "指令帮助",
+  menu: "系统菜单",
+  testmenu: "测试菜单",
+};
+
 export interface CommandResult {
   ok: boolean;
   text: string;
@@ -171,6 +193,49 @@ export class AdminCommandService {
       };
     }
 
+    const result = await this.dispatchCommand(command, groupId, userId, parts);
+    return this.ensureCard(command, result, groupId, userId);
+  }
+
+  /**
+   * 卡片标准兜底：**任何指令输出都必须是卡片**。
+   *
+   * 已经单独实现卡片的指令（help/status/pending/rules/audit/test/sync/审批/notify/menu…）
+   * 直接返回自己的 `rich`；其余指令（包括用法提示、错误提示）在这里包成统一卡片，
+   * 正文沿用原文本（纯文本降级等价），并附上常用入口按钮。
+   * 后续为这些指令做定制卡时，替换掉各自的 handler 即可。
+   */
+  private ensureCard(
+    command: string,
+    result: CommandResult,
+    groupId: string | undefined,
+    userId: string,
+  ): CommandResult {
+    if (result.rich) {
+      return result;
+    }
+    const title = COMMAND_CARD_TITLES[command] ?? "指令结果";
+    const nav: CardButton[] = [];
+    if (groupId) {
+      nav.push(viewButton("pending", "待审批", "pending", "page", groupId, 1));
+      nav.push(viewButton("rules", "群规则", "rules", "view", groupId));
+    }
+    nav.push(viewButton("help", "指令帮助", "help", "home"));
+    const card = cardFromText(title, result.text, {
+      rows: [nav],
+      ...(groupId ? { buttonHint: "常用入口：" } : {}),
+      footer: ["按钮不可用时可直接输入指令。"],
+    });
+    return { ok: result.ok, text: card.text, rich: card.rich };
+  }
+
+  /** 指令分发表（返回值统一交给 `ensureCard` 保证是卡片）。 */
+  private async dispatchCommand(
+    command: string,
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): Promise<CommandResult> {
     switch (command) {
       case "help":
       case "帮助":
