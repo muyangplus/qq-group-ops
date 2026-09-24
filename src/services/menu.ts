@@ -1,4 +1,4 @@
-import { PermissionLevel } from "../core/enums.js";
+﻿import { PermissionLevel } from "../core/enums.js";
 import { renderCard, escapeCardText, type CardButton, type CardSpec } from "./cardTemplate.js";
 import type { PermissionService } from "./permissions.js";
 import type { RichMessage } from "./richMessages.js";
@@ -313,7 +313,7 @@ function activityCard(context: MenuContext): CardSpec {
 function adminCard(context: MenuContext, access: MenuAccess): CardSpec {
   const rows: CardButton[][] = [
     [
-      button("pending", "待审批列表", "/pending"),
+      button("pending", "待审批", "/pending"),
       button("sync", "同步官方", "/sync"),
       button("audit", "审计日志", "/audit"),
     ],
@@ -353,7 +353,7 @@ function reviewCard(context: MenuContext): CardSpec {
     ],
     rows: [
       [
-        button("pending", "待审批列表", "/pending"),
+        button("pending", "待审批", "/pending"),
         button("sync", "同步官方", "/sync"),
       ],
       [menuButton("admin", "管理菜单", "admin"), backButton()],
@@ -376,7 +376,7 @@ function opsCard(context: MenuContext): CardSpec {
     rows: [
       [
         button("list", "活动列表", "/activity"),
-        button("pending", "待审批列表", "/pending"),
+        button("pending", "待审批", "/pending"),
       ],
       [menuButton("admin", "管理菜单", "admin"), backButton()],
     ],
@@ -398,11 +398,11 @@ function superCard(context: MenuContext): CardSpec {
     ],
     rows: [
       [
-        button("perm", "权限列表", "/perm list"),
+        button("perm", "权限", "/perm list"),
         button("rules", "全局规则", "/rules all"),
         button("notify", "通知全部群", "/notify all on"),
       ],
-      [button("pending", "待审批列表", "/pending"), backButton()],
+      [button("pending", "待审批", "/pending"), backButton()],
     ],
     buttonHint: "常用入口：",
     footer: ["需要参数的指令请按上面的用法手输。"],
@@ -422,5 +422,5 @@ function menuButton(
 }
 
 function backButton(): CardButton {
-  return menuButton("back", "返回主菜单", "main");
+  return menuButton("back", "返回", "main");
 }

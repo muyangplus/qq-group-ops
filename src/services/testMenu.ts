@@ -63,7 +63,7 @@ export function buildTestMenuCard(page: number): RichMessage {
   if (current < TEST_MENU_PAGE_COUNT) {
     navigationRow.push(navigationButton("next", "下一页", current + 1));
   }
-  navigationRow.push(navigationButton("home", "返回第 1 页", 1));
+  navigationRow.push(navigationButton("home", "返回首页", 1));
   rows.push(navigationRow);
 
   // 双通道：键盘能用但互动事件没开通时，至少还能用指令按钮翻页

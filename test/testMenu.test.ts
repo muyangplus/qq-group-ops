@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { pageCallback } from "../src/services/callbackData.js";
 import type { InteractionEvent } from "../src/services/eventRouter.js";
@@ -43,7 +43,7 @@ describe("test menu card", () => {
       buttons(card).map((button) => button.label);
 
     // 第 1 页：没有「上一页」，有「下一页」+「返回第 1 页」+ 指令兜底
-    expect(labels(first)).toEqual(["下一页", "返回第 1 页", "指令翻页 2"]);
+    expect(labels(first)).toEqual(["下一页", "返回首页", "指令翻页 2"]);
 
     // 导航是回调按钮（type=1，标准要求），手动翻页是指令按钮（type=2）
     const firstButtons = buttons(first);
@@ -59,11 +59,11 @@ describe("test menu card", () => {
     expect(labels(buildTestMenuCard(2))).toEqual([
       "上一页",
       "下一页",
-      "返回第 1 页",
+      "返回首页",
       "指令翻页 3",
     ]);
     // 第 3 页：没有「下一页」
-    expect(labels(buildTestMenuCard(3))).toEqual(["上一页", "返回第 1 页"]);
+    expect(labels(buildTestMenuCard(3))).toEqual(["上一页", "返回首页"]);
   });
 
   it("clamps pages and parses callback data", () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { NotificationDeliveryStatus } from "../src/core/enums.js";
 import {
@@ -37,8 +37,8 @@ describe("join request card", () => {
       "拒绝",
     ]);
     expect(rows[1]?.buttons.map((button) => button.label)).toEqual([
-      "拒绝：回答错误",
-      "拒绝：班级姓名",
+      "回答错误",
+      "班级姓名",
     ]);
 
     const approve = rows[0]!.buttons[0]!;
@@ -78,8 +78,8 @@ describe("join request card", () => {
       "/reject r1 请回答正确的班级姓名（如：环工2214小明）。",
     );
     expect(JOIN_REJECT_PRESETS.map((preset) => preset.label)).toEqual([
-      "拒绝：回答错误",
-      "拒绝：班级姓名",
+      "回答错误",
+      "班级姓名",
     ]);
   });
 
@@ -154,10 +154,10 @@ describe("join request card", () => {
     expect(card.markdown).toContain("同意：/approve r1");
     expect(card.markdown).toContain("拒绝：/reject r1 [原因]");
     expect(card.markdown).toContain(
-      "拒绝：回答错误：/reject r1 请正确回答问题。",
+      "回答错误：/reject r1 请正确回答问题。",
     );
     expect(card.markdown).toContain(
-      "拒绝：班级姓名：/reject r1 请回答正确的班级姓名（如：环工2214小明）。",
+      "班级姓名：/reject r1 请回答正确的班级姓名（如：环工2214小明）。",
     );
     expect(card.markdown).not.toContain("/reject 654321");
   });
@@ -180,9 +180,9 @@ describe("join request card", () => {
     expect(text).toContain("同意：/approve r1");
     // 统一模板的纯文本降级直接列出每个按钮对应的完整指令（不再有 [原因] 占位符）
     expect(text).toContain("拒绝：/reject r1 审核未通过");
-    expect(text).toContain("拒绝：回答错误：/reject r1 请正确回答问题。");
+    expect(text).toContain("回答错误：/reject r1 请正确回答问题。");
     expect(text).toContain(
-      "拒绝：班级姓名：/reject r1 请回答正确的班级姓名（如：环工2214小明）。",
+      "班级姓名：/reject r1 请回答正确的班级姓名（如：环工2214小明）。",
     );
     expect(text).toContain("建议：人工核实");
   });

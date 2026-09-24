@@ -24,13 +24,15 @@ export type CardButtonStyle = 0 | 1 | 3 | 4;
 export const CARD_BUTTON_LABEL_MAX = 10;
 /** 官方限制：整个键盘最多 5 行。 */
 export const CARD_MAX_ROWS = 5;
+/** 官方限制：一行最多 5 个按钮。 */
+export const CARD_MAX_BUTTONS_PER_ROW = 5;
 /**
- * 每行按钮数上限。
+ * 项目标准：**一行按钮文字总长 ≤ 12 字**。
  *
- * 官方允许 5 个，但实测排版会很挤（尤其是「描述 + 开/关」这类开关按钮），
- * 因此项目标准收紧到 **3 个**：开关类一行 2 个，其余一行最多 3 个。
+ * 官方允许一行 5 个按钮，但实测会非常挤；按「每行总文字量」控制比限制按钮个数更实用
+ * （开关类一行 2 个约 8-10 字，导航类一行 3 个约 8-12 字）。超过就要拆行或拆子卡。
  */
-export const CARD_MAX_BUTTONS_PER_ROW = 3;
+export const CARD_MAX_ROW_TEXT_LENGTH = 12;
 
 /** 一个按钮：`command`（指令按钮）或 `callbackData`（回调按钮）二选一。 */
 export interface CardButton {
@@ -134,6 +136,15 @@ export function buildKeyboard(
         if (row.length > CARD_MAX_BUTTONS_PER_ROW) {
           throw new Error(
             `card keyboard row ${rowIndex} accepts at most ${CARD_MAX_BUTTONS_PER_ROW} buttons`,
+          );
+        }
+        const width = row.reduce(
+          (sum, button) => sum + clampLabel(button.label).length,
+          0,
+        );
+        if (width > CARD_MAX_ROW_TEXT_LENGTH) {
+          throw new Error(
+            `card keyboard row ${rowIndex} accepts at most ${CARD_MAX_ROW_TEXT_LENGTH} label characters, got ${width}`,
           );
         }
         return {

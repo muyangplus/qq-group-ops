@@ -1349,8 +1349,12 @@ describe("AdminCommandService", async () => {
       const rows = result.rich?.keyboard?.content.rows ?? [];
       expect(rows.length, command).toBeLessThanOrEqual(5);
       for (const row of rows) {
-        // 标准：一行最多 3 个按钮；开关类一行 2 个
-        expect(row.buttons.length, `${command} row`).toBeLessThanOrEqual(3);
+        // 标准：一行按钮文字总长 ≤12 字（个数不限，官方上限 5 个）
+        const width = row.buttons.reduce(
+          (sum, button) => sum + button.label.length,
+          0,
+        );
+        expect(width, `${command} row`).toBeLessThanOrEqual(12);
         for (const button of row.buttons) {
           expect(
             button.label.length,

@@ -1094,7 +1094,7 @@ export class AdminCommandService {
       title = "群规则 · 入群决策";
       rows.push([
         choice("decision-manual", "人工", "joinDecision", "manual", config.joinDecision, true),
-        choice("decision-auto", "全自动通过", "joinDecision", "auto_approve", config.joinDecision, true),
+        choice("decision-auto", "全自动", "joinDecision", "auto_approve", config.joinDecision, true),
         choice("decision-match", "命中通过", "joinDecision", "approve_on_match", config.joinDecision, true),
       ]);
       rows.push([

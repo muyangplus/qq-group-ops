@@ -55,19 +55,31 @@ describe("cardTemplate", () => {
     ]);
     expect(() => buildKeyboard(sixRows)).toThrow(/at most 5 rows/u);
 
-    // 项目标准比官方更严：一行最多 3 个按钮（开关类一行 2 个）
-    const fourButtons = Array.from({ length: 4 }, (_value, index) => ({
+    // 官方：一行最多 5 个按钮
+    const sixButtons = Array.from({ length: 6 }, (_value, index) => ({
       id: `button-${index}`,
       label: "x",
       command: "/x",
     }));
-    expect(() => buildKeyboard([fourButtons])).toThrow(/at most 3 buttons/u);
+    expect(() => buildKeyboard([sixButtons])).toThrow(/at most 5 buttons/u);
+
+    // 项目标准：一行按钮文字总长 ≤12 字（6+7=13）
     expect(() =>
       buildKeyboard([
         [
-          { id: "a", label: "a", command: "/a" },
-          { id: "b", label: "b", command: "/b" },
-          { id: "c", label: "c", command: "/c" },
+          { id: "wide-a", label: "123456", command: "/a" },
+          { id: "wide-b", label: "1234567", command: "/b" },
+        ],
+      ]),
+    ).toThrow(/at most 12 label characters/u);
+
+    // 3 个短按钮（2+2+2=6）允许通过
+    expect(() =>
+      buildKeyboard([
+        [
+          { id: "a", label: "aa", command: "/a" },
+          { id: "b", label: "bb", command: "/b" },
+          { id: "c", label: "cc", command: "/c" },
         ],
       ]),
     ).not.toThrow();

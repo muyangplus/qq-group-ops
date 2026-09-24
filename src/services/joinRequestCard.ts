@@ -69,12 +69,12 @@ const AUTO_DECISION_LABELS: Record<"auto_approved" | "auto_rejected", string> = 
 export const JOIN_REJECT_PRESETS = [
   {
     id: "reject-answer",
-    label: "拒绝：回答错误",
+    label: "回答错误",
     reason: "请正确回答问题。",
   },
   {
     id: "reject-class",
-    label: "拒绝：班级姓名",
+    label: "班级姓名",
     reason: "请回答正确的班级姓名（如：环工2214小明）。",
   },
 ] as const;
