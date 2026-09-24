@@ -351,11 +351,15 @@ QQ 端的图形化入口：**Markdown 卡片 + 按钮**，三级结构（主菜�
 把教务导出的原始 JSON 转成机器人可用的索引：
 
 ```bash
-pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
+pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + data/class-index.sqlite
 ```
 
 - 默认只保留**年级 2022-2026**（可用 `CLASS_INDEX_YEARS=22-26` 调整，支持两位数年份）；
-- 输出 `classes`（班级名）、`majors`（专业）、`classInfo`（班级 → 专业/学院/年级）；
+- JSON 产物输出 `classes`（班级名）、`majors`（专业）、`classInfo`（班级 → 专业/学院/年级），
+  另附 `colleges`（学院）、`collegeMajors`（学院 → 专业）、`majorColleges`（专业 → 学院）三张对照关系；
+- 同时输出 **SQLite 副本** `data/class-index.sqlite`（表 `meta` / `colleges` / `majors` / `classes`），
+  供离线分析与后续别名表联查；机器人运行时读的仍是 JSON（`CLASS_INDEX_FILE`）；
+  用 `CLASS_INDEX_SQLITE_FILE=-` 可以跳过 SQLite 产物；
 - `data/` 已在 `.gitignore` 中，**真实班级数据不会提交到 Git**；
 - 索引文件路径可用 `CLASS_INDEX_FILE` 覆盖；索引缺失时班级类规则会**自动退化为人工审核**，不会误放行。
 
@@ -933,8 +937,8 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 │   └── main.ts              # 入口
 ├── test/                    # Vitest 测试
 ├── scripts/
-│   └── build-class-index.mjs # pnpm class:index：data/class.json → data/class-index.json
-├── data/                    # 本地数据（gitignored）：class.json、class-index.json、SQLite 文件
+│   └── build-class-index.mjs # pnpm class:index：data/class.json → class-index.json + .sqlite
+├── data/                    # 本地数据（gitignored）：class.json、class-index.json / .sqlite、SQLite 文件
 ├── package.json
 ├── tsconfig.json
 ├── vitest.config.ts

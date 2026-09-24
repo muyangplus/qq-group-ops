@@ -219,18 +219,22 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 
 `joinRequireClass` 匹配 `class-index.json` 的 `classes`：忽略空白、按子串包含、长班级名优先；`majors`/`college` 只用于展示与姓名排除，不参与匹配。因此班级名必须与索引一致（例如索引里是 `环境类2214`，写 `环工2214` 不会命中）。索引只在启动时加载一次，重新生成后需重启进程。
 
-班级库来自 `CLASS_INDEX_FILE`（默认 `data/class-index.json`），由 `pnpm class:index` 从 `data/class.json` 生成（默认保留 2022-2026 级，可用 `CLASS_INDEX_YEARS` 调整）。索引缺失、正则无效或规则无法判定时**一律回退人工审核**，不会误放行。原始 `data/class.json` 与生成的索引都在 `.gitignore` 中，不要提交。
+班级库来自 `CLASS_INDEX_FILE`（默认 `data/class-index.json`），由 `pnpm class:index` 从 `data/class.json` 生成（默认保留 2022-2026 级，可用 `CLASS_INDEX_YEARS` 调整）。索引缺失、正则无效或规则无法判定时**一律回退人工审核**，不会误放行。原始 `data/class.json` 与生成的索引（JSON + SQLite）都在 `.gitignore` 中，不要提交。
+
+JSON 产物除 `classes` / `majors` / `classInfo` 外，还带三张对照关系：`colleges`（学院列表）、`collegeMajors`（学院 → 专业）、`majorColleges`（专业 → 学院）；同一份数据会额外落一份 SQLite（`meta` / `colleges(name PK)` / `majors(name PK, college)` / `classes(className PK, major, college, year)`），供离线分析与别名表联查。机器人运行时读的仍然是 JSON。
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
 | `CLASS_INDEX_FILE` | 否 | 班级索引文件路径，默认 `data/class-index.json` |
 | `CLASS_RAW_FILE` | 否 | 仅 `pnpm class:index` 使用：原始教务导出 JSON，默认 `data/class.json` |
 | `CLASS_INDEX_YEARS` | 否 | 仅 `pnpm class:index` 使用：保留的年级范围，默认 `2022-2026`（也接受 `22-26`） |
+| `CLASS_INDEX_SQLITE_FILE` | 否 | 仅 `pnpm class:index` 使用：SQLite 产物路径，默认 `data/class-index.sqlite`；设 `-` 跳过 |
 
 ```bash
 pnpm class:index
 # 等价于：
-CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json CLASS_INDEX_YEARS=22-26 \
+CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json \
+  CLASS_INDEX_SQLITE_FILE=data/class-index.sqlite CLASS_INDEX_YEARS=22-26 \
   node scripts/build-class-index.mjs
 ```
 
