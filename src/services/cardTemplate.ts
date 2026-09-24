@@ -24,8 +24,13 @@ export type CardButtonStyle = 0 | 1 | 3 | 4;
 export const CARD_BUTTON_LABEL_MAX = 10;
 /** 官方限制：整个键盘最多 5 行。 */
 export const CARD_MAX_ROWS = 5;
-/** 官方限制：每行最多 5 个按钮。 */
-export const CARD_MAX_BUTTONS_PER_ROW = 5;
+/**
+ * 每行按钮数上限。
+ *
+ * 官方允许 5 个，但实测排版会很挤（尤其是「描述 + 开/关」这类开关按钮），
+ * 因此项目标准收紧到 **3 个**：开关类一行 2 个，其余一行最多 3 个。
+ */
+export const CARD_MAX_BUTTONS_PER_ROW = 3;
 
 /** 一个按钮：`command`（指令按钮）或 `callbackData`（回调按钮）二选一。 */
 export interface CardButton {

@@ -259,7 +259,7 @@ function mainCard(context: MenuContext, access: MenuAccess): CardSpec {
   return {
     title: "系统菜单",
     lines,
-    rows: [sections, personal],
+    rows: [sections, personal.slice(0, 3), ...(personal.length > 3 ? [personal.slice(3)] : [])],
     buttonHint: "请选择入口：",
     footer: ["按钮点击即发送对应指令；按钮不可用时可直接输入指令。"],
   };

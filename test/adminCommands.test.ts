@@ -1286,35 +1286,79 @@ describe("AdminCommandService", async () => {
     expect(secondButtons.some((button) => button.id === "next")).toBe(false);
   });
 
-  it("renders /rules as a card with callback switches and enums", async () => {
-    const result = await service.handle("g1", "admin", "/rules");
+  it("renders /rules as an overview card plus setting panels", async () => {
+    const overview = await service.handle("g1", "admin", "/rules");
 
-    expect(result.ok).toBe(true);
-    const buttons = (result.rich?.keyboard?.content.rows ?? []).flatMap(
+    expect(overview.ok).toBe(true);
+    const overviewButtons = (overview.rich?.keyboard?.content.rows ?? []).flatMap(
       (row) => row.buttons,
     );
-    // 开关类 → 回调自动切换
+    // 概览卡只给设置入口：开关 / 决策 / 处罚
     expect(
-      buttons.find((button) => button.id === "wordFilter")?.action,
-    ).toMatchObject({ type: 1, data: "cb:rules:toggle:g1:wordFilter:off" });
-    // 枚举值 → 回调直接切到该值；当前值带 ● 标记
+      overviewButtons.find((button) => button.id === "panel-toggle")?.action,
+    ).toMatchObject({ type: 1, data: "cb:rules:panel:g1:toggle" });
     expect(
-      buttons.find((button) => button.id === "decision-match")?.action,
+      overviewButtons.find((button) => button.id === "panel-decision")?.action,
+    ).toMatchObject({ type: 1, data: "cb:rules:panel:g1:decision" });
+    // 按钮已经表达的开关/枚举状态不再用大段文字重复
+    expect(overview.rich?.markdown).not.toContain("入群决策：");
+    expect(overview.rich?.markdown).not.toContain("命中处罚：");
+    // 按钮没覆盖的字段仍然展示
+    expect(overview.rich?.markdown).toContain("**关键词**");
+    expect(overview.rich?.markdown).toContain("**禁言时长**");
+
+    // 开关子卡：一行 2 个，点击即切换
+    const switches = service.rulesPanelCard("toggle", "g1", "admin");
+    const switchButtons = (switches.rich.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(
+      switchButtons.find((button) => button.id === "wordFilter")?.action,
+    ).toMatchObject({ type: 1, data: "cb:rules:toggle:g1:wordFilter:off:toggle" });
+    expect((switches.rich.keyboard?.content.rows ?? [])[0]?.buttons).toHaveLength(2);
+
+    // 决策子卡：枚举当前值带 ● 标记
+    const decision = service.rulesPanelCard("decision", "g1", "admin");
+    const decisionButtons = (decision.rich.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(
+      decisionButtons.find((button) => button.id === "decision-match")?.action,
     ).toMatchObject({
       type: 1,
-      data: "cb:rules:toggle:g1:joinDecision:approve_on_match",
+      data: "cb:rules:toggle:g1:joinDecision:approve_on_match:decision",
     });
-    expect(buttons.find((button) => button.id === "decision-manual")?.label).toBe(
-      "● 人工",
-    );
-    // 帮助是查看 → 回调
-    expect(buttons.find((button) => button.id === "help")?.action).toMatchObject({
-      type: 1,
-      data: "cb:help:topic:rules",
-    });
-    // 纯文本降级给出等价的手动指令
-    expect(result.text).toContain("/rules set joinDecision");
-    expect(result.text).toContain("/rules set keywordPunish");
+    expect(
+      decisionButtons.find((button) => button.id === "decision-manual")?.label,
+    ).toBe("● 人工");
+  });
+
+  it("keeps every sample card inside the layout limits", async () => {
+    joinAudit.submit("g1", "u1", "理由", "r1");
+
+    for (const command of [
+      "/menu",
+      "/help",
+      "/help all",
+      "/status",
+      "/pending",
+      "/rules",
+      "/testmenu",
+    ]) {
+      const result = await service.handle("g1", "root", command);
+      const rows = result.rich?.keyboard?.content.rows ?? [];
+      expect(rows.length, command).toBeLessThanOrEqual(5);
+      for (const row of rows) {
+        // 标准：一行最多 3 个按钮；开关类一行 2 个
+        expect(row.buttons.length, `${command} row`).toBeLessThanOrEqual(3);
+        for (const button of row.buttons) {
+          expect(
+            button.label.length,
+            `${command} ${button.label}`,
+          ).toBeLessThanOrEqual(10);
+        }
+      }
+    }
   });
 
   it("completes approvals via callback with operator feedback", async () => {

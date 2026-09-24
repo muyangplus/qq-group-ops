@@ -49,18 +49,28 @@ describe("cardTemplate", () => {
     expect(message.keyboard?.content.rows[0]?.buttons[0]?.label).toHaveLength(10);
   });
 
-  it("rejects keyboards outside the official limits", () => {
+  it("rejects keyboards outside the project limits", () => {
     const sixRows = Array.from({ length: 6 }, (_value, index) => [
       { id: `row-${index}`, label: "x", command: "/x" },
     ]);
     expect(() => buildKeyboard(sixRows)).toThrow(/at most 5 rows/u);
 
-    const sixButtons = Array.from({ length: 6 }, (_value, index) => ({
+    // 项目标准比官方更严：一行最多 3 个按钮（开关类一行 2 个）
+    const fourButtons = Array.from({ length: 4 }, (_value, index) => ({
       id: `button-${index}`,
       label: "x",
       command: "/x",
     }));
-    expect(() => buildKeyboard([sixButtons])).toThrow(/at most 5 buttons/u);
+    expect(() => buildKeyboard([fourButtons])).toThrow(/at most 3 buttons/u);
+    expect(() =>
+      buildKeyboard([
+        [
+          { id: "a", label: "a", command: "/a" },
+          { id: "b", label: "b", command: "/b" },
+          { id: "c", label: "c", command: "/c" },
+        ],
+      ]),
+    ).not.toThrow();
   });
 
   it("rejects duplicated button ids", () => {

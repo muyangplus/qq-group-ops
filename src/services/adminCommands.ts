@@ -597,15 +597,18 @@ export class AdminCommandService {
           "按分类查看你有权限使用的指令。",
           "完整指令列表：/help all",
         ],
-        rows: [
-          menuRow,
-          [
-            viewButton("all", "全部指令", "help", "list"),
-            viewButton("topic-rules", "群规则", "help", "topic", "rules"),
-            viewButton("topic-approve", "审批", "help", "topic", "approve"),
-            viewButton("topic-bind", "绑定", "help", "topic", "bind"),
-          ],
+      rows: [
+        menuRow,
+        [
+          viewButton("all", "全部指令", "help", "list"),
+          viewButton("topic-rules", "群规则", "help", "topic", "rules"),
+          viewButton("topic-approve", "审批", "help", "topic", "approve"),
         ],
+        [
+          viewButton("topic-bind", "绑定", "help", "topic", "bind"),
+          viewButton("topic-menu", "菜单", "help", "topic", "menu"),
+        ],
+      ],
         buttonHint: "请选择分类：",
         footer: ["某个指令的详细用法：/help <指令>"],
       });
@@ -710,9 +713,11 @@ export class AdminCommandService {
           viewButton("refresh", "刷新", "status", "view", targetGroupId),
           viewButton("pending", "待审批", "pending", "page", targetGroupId, 1),
           viewButton("rules", "群规则", "rules", "view", targetGroupId),
-          viewButton("help", "指令帮助", "help", "home"),
         ],
-        [actionButton("test", "自检", "/test")],
+        [
+          viewButton("help", "指令帮助", "help", "home"),
+          actionButton("test", "自检", "/test"),
+        ],
       ],
       buttonHint: "常用入口：",
       footer: [`刷新：/status`, `本群：${this.displayGroup(targetGroupId)}`],
@@ -958,72 +963,14 @@ export class AdminCommandService {
     const canManage =
       this.permissions.canManageRules(userId, targetGroupId) ||
       this.permissions.isSuperAdmin(userId);
+
+    // 概览卡：只放按钮没覆盖的信息 + 设置入口（开关/枚举在子卡里，避免卡片过挤）
     const rows: CardButton[][] = [];
     if (canManage) {
-      const toggle = (
-        id: string,
-        label: string,
-        field: string,
-        enabled: boolean,
-      ): CardButton => ({
-        ...viewButton(
-          id,
-          `${label} ${enabled ? "关" : "开"}`,
-          "rules",
-          "toggle",
-          targetGroupId,
-          field,
-          enabled ? "off" : "on",
-        ),
-      });
-      /** 枚举值：点击即自动切到该值，当前值用 ● 与高亮样式标出。 */
-      const choice = (
-        id: string,
-        label: string,
-        field: string,
-        value: string,
-        current: string,
-      ): CardButton => ({
-        ...viewButton(
-          id,
-          `${current === value ? "● " : ""}${label}`,
-          "rules",
-          "toggle",
-          targetGroupId,
-          field,
-          value,
-        ),
-        ...(current === value ? { style: 4 as CardButtonStyle } : {}),
-      });
-      // 开关类：点击即自动切换（含自动通过，结果卡片会标明操作人）
       rows.push([
-        toggle("wordFilter", "消息过滤", "wordFilter", config.wordFilterEnabled),
-        toggle("joinAudit", "入群审核", "joinAudit", config.joinAuditEnabled),
-        toggle("keywordRecall", "撤回", "keywordRecall", config.keywordRecall),
-      ]);
-      rows.push([
-        toggle("autoApprove", "自动通过", "autoApprove", config.autoApproveJoin),
-        toggle(
-          "notifyAutoApproved",
-          "自动通知",
-          "notifyAutoApproved",
-          config.notifyAutoApproved,
-        ),
-      ]);
-      // 枚举值：入群决策 5 选 1
-      rows.push([
-        choice("decision-manual", "人工", "joinDecision", "manual", config.joinDecision),
-        choice("decision-auto", "全自动通过", "joinDecision", "auto_approve", config.joinDecision),
-        choice("decision-match", "命中通过", "joinDecision", "approve_on_match", config.joinDecision),
-        choice("decision-reject", "命中拒绝", "joinDecision", "reject_on_match", config.joinDecision),
-        choice("decision-mismatch", "未命中拒绝", "joinDecision", "reject_on_mismatch", config.joinDecision),
-      ]);
-      // 枚举值：关键词命中处罚 4 选 1
-      rows.push([
-        choice("punish-none", "仅警告", "keywordPunish", "none", config.keywordPunish),
-        choice("punish-mute", "禁言", "keywordPunish", "mute", config.keywordPunish),
-        choice("punish-kick", "移出", "keywordPunish", "kick", config.keywordPunish),
-        choice("punish-blacklist", "移出拉黑", "keywordPunish", "kick_blacklist", config.keywordPunish),
+        viewButton("panel-toggle", "开关设置", "rules", "panel", targetGroupId, "toggle"),
+        viewButton("panel-decision", "入群决策", "rules", "panel", targetGroupId, "decision"),
+        viewButton("panel-punish", "命中处罚", "rules", "panel", targetGroupId, "punish"),
       ]);
     }
     const lastRow: CardButton[] = [
@@ -1035,31 +982,161 @@ export class AdminCommandService {
     }
     rows.push(lastRow);
 
+    const lines = [
+      `**关键词**：${config.keywords.length > 0 ? config.keywords.join("、") : "（未配置）"}`,
+      `**警告文案**：${config.warningMessage}`,
+      `**禁言时长**：${config.muteDurationSeconds} 秒`,
+      `**入群要求**：班级 ${config.joinRequireClass} · 姓名 ${config.joinRequireName} · 审核意见 ${config.joinReviewOpinion}`,
+      `**导出功能**：${config.exportEnabled ? "开" : "关"}（当前仅存储展示）`,
+      `**机器人启用**：${config.enabled ? "开" : "关"}`,
+    ];
+
     return cardFromText(
       "群规则",
-      notice
-        ? `**结果**：${escapeCardText(notice)}\n\n${this.formatRules(targetGroupId)}`
-        : this.formatRules(targetGroupId),
+      [
+        ...(notice ? [`**结果**：${escapeCardText(notice)}`] : []),
+        ...lines,
+      ].join("\n"),
       {
         rows,
-        buttonHint: canManage ? "快捷开关与枚举（点击即生效）：" : "相关入口：",
+        buttonHint: canManage ? "设置入口（点击即生效）：" : "相关入口：",
         footer: [
           `本群：${this.displayGroup(targetGroupId)}`,
-          "手动切换：/rules set <字段> on|off（wordFilter / joinAudit / keywordRecall / autoApprove / notifyAutoApproved）",
-          "入群决策：/rules set joinDecision manual|auto_approve|approve_on_match|reject_on_match|reject_on_mismatch",
-          "命中处罚：/rules set keywordPunish none|mute|kick|kick_blacklist",
+          "自由文本/数值仍用指令：/rules set <字段> <值>（keywords / warning / muteDuration ...）",
           "完整字段用法：/help rules",
         ],
       },
     );
   }
 
-  /** 回调：规则开关/枚举切换（固定动作 → 自动执行并回刷新后的规则卡）。 */
+  /**
+   * 子卡：开关设置 / 入群决策 / 命中处罚。
+   *
+   * 全部是**回调按钮**（开关与枚举都能自动完成），布局按标准：开关一行 2 个、每行最多 3 个。
+   */
+  public rulesPanelCard(
+    panel: string,
+    targetGroupId: string,
+    userId: string,
+    notice?: string,
+  ): CardResult {
+    const config = this.configStore.get(targetGroupId);
+    const canManage =
+      this.permissions.canManageRules(userId, targetGroupId) ||
+      this.permissions.isSuperAdmin(userId);
+    if (!canManage) {
+      const card = renderCard({
+        title: "权限不足",
+        lines: ["修改规则需要群管理员或以上权限。"],
+        rows: [[viewButton("back", "返回规则", "rules", "view", targetGroupId)]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+
+    const back = viewButton("back", "返回规则", "rules", "view", targetGroupId);
+    const toggle = (
+      id: string,
+      label: string,
+      field: string,
+      enabled: boolean,
+      inPanel: boolean,
+    ): CardButton => ({
+      ...viewButton(
+        id,
+        `${label} ${enabled ? "关" : "开"}`,
+        "rules",
+        "toggle",
+        targetGroupId,
+        field,
+        enabled ? "off" : "on",
+        ...(inPanel ? [panel] : []),
+      ),
+    });
+    const choice = (
+      id: string,
+      label: string,
+      field: string,
+      value: string,
+      current: string,
+      inPanel: boolean,
+    ): CardButton => ({
+      ...viewButton(
+        id,
+        `${current === value ? "● " : ""}${label}`,
+        "rules",
+        "toggle",
+        targetGroupId,
+        field,
+        value,
+        ...(inPanel ? [panel] : []),
+      ),
+      ...(current === value ? { style: 4 as CardButtonStyle } : {}),
+    });
+
+    const rows: CardButton[][] = [];
+    let title = "群规则";
+    if (panel === "toggle") {
+      title = "群规则 · 开关设置";
+      // 开关类：一行 2 个，描述 2-4 字 + 开/关（整行控制在 10 字内）
+      rows.push([
+        toggle("wordFilter", "过滤", "wordFilter", config.wordFilterEnabled, true),
+        toggle("joinAudit", "入群", "joinAudit", config.joinAuditEnabled, true),
+      ]);
+      rows.push([
+        toggle("keywordRecall", "撤回", "keywordRecall", config.keywordRecall, true),
+        toggle("autoApprove", "自动通过", "autoApprove", config.autoApproveJoin, true),
+      ]);
+      rows.push([
+        toggle("notifyAutoApproved", "通知", "notifyAutoApproved", config.notifyAutoApproved, true),
+        toggle("export", "导出", "export", config.exportEnabled, true),
+      ]);
+    } else if (panel === "decision") {
+      title = "群规则 · 入群决策";
+      rows.push([
+        choice("decision-manual", "人工", "joinDecision", "manual", config.joinDecision, true),
+        choice("decision-auto", "全自动通过", "joinDecision", "auto_approve", config.joinDecision, true),
+        choice("decision-match", "命中通过", "joinDecision", "approve_on_match", config.joinDecision, true),
+      ]);
+      rows.push([
+        choice("decision-reject", "命中拒绝", "joinDecision", "reject_on_match", config.joinDecision, true),
+        choice("decision-mismatch", "未命中拒绝", "joinDecision", "reject_on_mismatch", config.joinDecision, true),
+      ]);
+    } else {
+      title = "群规则 · 命中处罚";
+      rows.push([
+        choice("punish-none", "仅警告", "keywordPunish", "none", config.keywordPunish, true),
+        choice("punish-mute", "禁言", "keywordPunish", "mute", config.keywordPunish, true),
+      ]);
+      rows.push([
+        choice("punish-kick", "移出", "keywordPunish", "kick", config.keywordPunish, true),
+        choice("punish-blacklist", "移出拉黑", "keywordPunish", "kick_blacklist", config.keywordPunish, true),
+      ]);
+    }
+    rows.push([back]);
+
+    return cardFromText(
+      title,
+      [
+        ...(notice ? [`**结果**：${escapeCardText(notice)}`] : []),
+        `**当前值**：${panel === "toggle" ? "见下方按钮（显示的是「点一下会变成的结果」）" : panel === "decision" ? config.joinDecision : config.keywordPunish}`,
+        "",
+        "手动等价指令：/rules set <字段> <值>（详见 /help rules）",
+      ].join("\n"),
+      {
+        rows,
+        buttonHint: "点击即生效：",
+        footer: [`本群：${this.displayGroup(targetGroupId)}`],
+      },
+    );
+  }
+
+  /** 回调：规则开关/枚举切换（固定动作 → 自动执行并回刷新后的卡片）。 */
   public async toggleRulesCard(
     targetGroupId: string,
     field: string,
     value: string,
     userId: string,
+    panel?: string,
   ): Promise<CardResult> {
     const result = await this.handleRulesSet(undefined, userId, [
       "rules",
@@ -1068,10 +1145,11 @@ export class AdminCommandService {
       field,
       value,
     ]);
+    const notice = `已更新：${field} = ${value} · 操作人：${this.displayUser(userId)}`;
     if (!result.ok) {
       const card = renderCard({
         title: "规则未修改",
-        lines: result.text.split("\n"),
+        lines: [notice, "", ...result.text.split("\n")],
         rows: [
           [viewButton("back", "返回规则", "rules", "view", targetGroupId)],
         ],
@@ -1084,12 +1162,9 @@ export class AdminCommandService {
       value,
       userId,
     });
-    return this.rulesCard(
-      undefined,
-      userId,
-      ["rules", targetGroupId],
-      `已更新：${field} = ${value} · 操作人：${this.displayUser(userId)}`,
-    );
+    return panel
+      ? this.rulesPanelCard(panel, targetGroupId, userId, notice)
+      : this.rulesCard(undefined, userId, ["rules", targetGroupId], notice);
   }
 
   /** `/rules all`：全局默认规则卡（仅超级管理员）。 */

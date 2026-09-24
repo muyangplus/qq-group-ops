@@ -277,7 +277,7 @@ export function createRuntime(
           return undefined;
         }
         if (parsed.action === "toggle") {
-          const [targetGroupId, field, value] = parsed.args;
+          const [targetGroupId, field, value, panel] = parsed.args;
           if (!targetGroupId || !field || !value) {
             return undefined;
           }
@@ -286,8 +286,16 @@ export function createRuntime(
             field,
             value,
             userId,
+            panel,
           );
           return card.rich;
+        }
+        if (parsed.action === "panel") {
+          const [targetGroupId, panel] = parsed.args;
+          if (!targetGroupId || !panel) {
+            return undefined;
+          }
+          return adminCommands.rulesPanelCard(panel, targetGroupId, userId).rich;
         }
         const parts =
           parsed.action === "all"
