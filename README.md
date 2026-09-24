@@ -1,4 +1,4 @@
-﻿# QQ Group Ops
+# QQ Group Ops
 
 > 基于 QQ 官方开放平台 API 的开源 QQ 群管理与运营平台：群管理、审核、活动报名、信息导出。
 
@@ -480,6 +480,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 
 ```text
 /profile                             # 查看资料
+/profile set 材化2211 张三 22123456789 # 智能识别：一条消息填完（顺序/分隔符随意）
 /profile set name 张三                # 姓名
 /profile set id 22123456789           # 学号（11 位，前两位 22-26 决定年级）
 /profile set class 材化2211            # 班级（必须在 class-index.json 里）
@@ -488,6 +489,20 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json
 /profile set name clear               # 清除单个字段
 /profile clear                        # 清空整份资料
 ```
+
+智能识别（顺序随意、分隔符随意、也可以完全不带分隔符）：
+
+```text
+/profile set 材化2211 张三 22123456789
+/profile set 张三-22123456789-材化2211
+/profile set 22123456789+材化2211+张三
+/profile set 材化2211张三22123456789
+/profile set 班级=材化2211 姓名=张三 学号=22123456789   # 显式写法，用于消歧
+```
+
+识别规则：11 位数字 = 学号；能在班级库里匹配到的最长班级名 = 班级；剩余 2-4 个连续汉字 = 姓名；
+学院可手填（班级库能匹配到即可），`年级=2023` 可显式指定。
+**识别到多个班级/姓名或存在认不出的内容时整体不写入**，只回报识别结果并提示改用 `字段=值`。
 
 规则：
 
