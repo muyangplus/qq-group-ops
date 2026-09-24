@@ -108,7 +108,7 @@ describe("test menu card", () => {
 });
 
 describe("TestMenuService", () => {
-  it("acks the interaction and replies with the next page passively", async () => {
+  it("acks the interaction and sends the next page", async () => {
     const api = new FakeQQOfficialAPI();
     const service = createService(api);
 
@@ -118,28 +118,26 @@ describe("TestMenuService", () => {
     expect(outcome.detail).toContain("page_2");
     expect(api.interactionResponses).toEqual([["i1", 0]]);
     expect(api.sentMessages).toHaveLength(1);
-    // 用 interaction id 当 msg_id 走被动消息
-    expect(api.sentMessages[0]?.msgId).toBe("i1");
+    // 实测群聊不能把 interaction id 当 msg_id（400 无效或越权），所以主动发送
+    expect(api.sentMessages[0]?.msgId).toBeUndefined();
+    expect(api.sentMessages[0]?.keyboard).toBeDefined();
     expect(api.sentMessages[0]?.markdown).toContain("第 2 / 3 页");
   });
 
-  it("falls back to an active send when the passive reply fails", async () => {
+  it("keeps keyboards usable for later pages", async () => {
     const api = new FakeQQOfficialAPI();
     const service = createService(api);
-    const original = api.sendGroupMessage.bind(api);
-    api.sendGroupMessage = async (groupId, content, msgId, options) => {
-      if (msgId) {
-        throw new Error("passive reply quota exhausted");
-      }
-      return original(groupId, content, msgId, options);
-    };
 
-    const outcome = await service.handle(interactionEvent());
+    await service.handle(interactionEvent());
+    await service.handle(
+      interactionEvent({ interactionId: "i2", buttonData: "testmenu:page:3" }),
+    );
 
-    expect(outcome.handled).toBe(true);
-    expect(outcome.detail).toContain("active_fallback");
-    expect(api.sentMessages[0]?.msgId).toBeUndefined();
-    expect(api.sentMessages[0]?.markdown).toContain("第 2 / 3 页");
+    expect(api.sentMessages).toHaveLength(2);
+    // 真机回归：曾经因为把被动失败误判成「平台不支持按钮」，第 3 页丢了整个键盘
+    for (const message of api.sentMessages) {
+      expect(message.keyboard).toBeDefined();
+    }
   });
 
   it("still delivers the page when the ack fails", async () => {
@@ -197,6 +195,7 @@ describe("TestMenuService", () => {
     );
 
     expect(outcome.detail).toContain("page_2");
-    expect(api.sentPrivateMessages[0]?.msgId).toBe("i1");
+    expect(api.sentPrivateMessages[0]?.msgId).toBeUndefined();
+    expect(api.sentPrivateMessages[0]?.markdown).toContain("第 2 / 3 页");
   });
 });

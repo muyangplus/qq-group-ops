@@ -136,20 +136,18 @@ export class RichMessageSender {
         };
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
-        if (attempt.mode === "markdown+keyboard" && !this.keyboardDisabled) {
-          this.keyboardDisabled = true;
-          log.warn(
-            "custom keyboard rejected by platform, falling back to markdown/text",
-            { target, error: lastError },
-          );
-        } else {
-          log.debug("rich message attempt failed", {
-            target,
-            mode: attempt.mode,
-            passive: attempt.passive,
-            error: lastError,
-          });
+        // 只有「主动发送也带不上按钮」才能断定平台不支持自定义按钮。
+        // 被动回复失败往往只是 msg_id 无效/越权（实测：群聊里把 interaction id 当
+        // msg_id 会返回 400），把它当成键盘被拒会让后续卡片全部丢按钮。
+        if (attempt.mode === "markdown+keyboard" && !attempt.passive) {
+          this.disableKeyboard(target, lastError);
         }
+        log.debug("rich message attempt failed", {
+          target,
+          mode: attempt.mode,
+          passive: attempt.passive,
+          error: lastError,
+        });
       }
     }
     log.warn("rich message delivery failed", {
@@ -158,6 +156,18 @@ export class RichMessageSender {
       passiveFirst: Boolean(msgId),
     });
     return { ok: false, detail: lastError, mode: "none" };
+  }
+
+  /** 记住「平台不支持自定义按钮」；只记一次，避免每条消息都白试。 */
+  private disableKeyboard(target: "user" | "group", error: string): void {
+    if (this.keyboardDisabled) {
+      return;
+    }
+    this.keyboardDisabled = true;
+    log.warn(
+      "custom keyboard rejected by platform, falling back to markdown/text",
+      { target, error },
+    );
   }
 
   private sendOnce(

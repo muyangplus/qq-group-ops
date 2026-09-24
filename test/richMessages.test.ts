@@ -54,6 +54,10 @@ describe("RichMessageSender", () => {
     expect(result.detail).toContain("active_fallback");
     expect(api.sentMessages).toHaveLength(1);
     expect(api.sentMessages[0]?.msgId).toBeUndefined();
+    // 关键回归：被动失败（msg_id 无效/越权）不代表平台不支持按钮，
+    // 不能把 keyboardDisabled 置真，否则后续所有卡片都会丢按钮
+    expect(sender.keyboardAvailable).toBe(true);
+    expect(api.sentMessages[0]?.keyboard).toBeDefined();
   });
 
   it("stops using the keyboard after the platform rejects it", async () => {

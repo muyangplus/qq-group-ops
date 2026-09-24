@@ -175,26 +175,23 @@ export class TestMenuService {
   }
 
   /**
-   * 回复目标页：用 interaction id 当 `msg_id` 走被动消息；
-   * `RichMessageSender` 内部会在被动失败时自动改用主动发送（用户仍能看到新卡片）。
+   * 回复目标页：**主动发送**新的一页。
+   *
+   * 实测（真机日志）：群聊里**不能**把 interaction id 当 `msg_id` 发被动消息，官方返回
+   * `400 请求参数msg_id无效或越权`（虽然互动事件文档写着 id 用于被动消息发送）；
+   * 而被动失败还会走一大圈重试，用户要等十几秒才看到新页。
+   * 所以这里回包后直接主动发送 —— 与"回调失败后自动发送新卡片"的兜底行为一致，
+   * 通路依赖 `RichMessageSender` 的「Markdown+按钮 → Markdown → 纯文本」降级。
    */
   private async reply(
     event: InteractionEvent,
     card: RichMessage,
   ): Promise<string> {
     if (event.groupId) {
-      return describeSend(
-        await this.sender.replyToGroup(event.groupId, card, {
-          msgId: event.interactionId,
-        }),
-      );
+      return describeSend(await this.sender.sendToGroup(event.groupId, card));
     }
     if (event.userId) {
-      return describeSend(
-        await this.sender.replyToUser(event.userId, card, {
-          msgId: event.interactionId,
-        }),
-      );
+      return describeSend(await this.sender.sendToUser(event.userId, card));
     }
     return "no_target";
   }
