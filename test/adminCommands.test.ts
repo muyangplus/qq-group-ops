@@ -1024,7 +1024,7 @@ describe("AdminCommandService", async () => {
 
     const status = await service.handle("g1", "admin", "/notify");
     // 群号已绑定 → 只显示群号
-    expect(status.text).toContain("群 654321：已开启");
+    expect(status.text).toContain("当前群：已开启（654321）");
     expect(status.text).not.toContain("（g1）");
 
     const off = await service.handle("g1", "admin", "/notify off");
@@ -1069,7 +1069,22 @@ describe("AdminCommandService", async () => {
     expect(result.ok).toBe(true);
     expect(result.text).toContain("可审批的群：654321");
     expect(result.text).not.toContain("（g1）");
-    expect(result.text).toContain("用法：");
+    // 卡片化后用法写在底部提示里
+    expect(result.text).toContain("/notify all on|off");
+  });
+
+  it("toggles push subscriptions by callback with operator feedback", async () => {
+    const on = await service.notifyToggleCard("g1", true, "admin");
+
+    expect(on.ok).toBe(true);
+    expect(notifications.isSubscribed("admin", "g1")).toBe(true);
+    // 回调自动完成必须有反馈，并标明操作人
+    expect(on.rich.markdown).toContain("结果");
+    expect(on.rich.markdown).toContain("操作人：");
+
+    const off = await service.notifyToggleCard("g1", false, "admin");
+    expect(off.ok).toBe(true);
+    expect(notifications.isSubscribed("admin", "g1")).toBe(false);
   });
 
   it("sends a push test card", async () => {

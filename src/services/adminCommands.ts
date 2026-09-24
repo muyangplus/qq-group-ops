@@ -1010,6 +1010,136 @@ export class AdminCommandService {
   }
 
   /**
+   * `/notify`：入群申请推送订阅卡。
+   *
+   * 订阅开关是**回调**（固定动作，点击即订阅/退订并回一张带操作人的卡），
+   * 「测试推送」也是回调（固定动作，触发一次自检卡片）。
+   */
+  public notifyCard(
+    groupId: string | undefined,
+    userId: string,
+    notice?: string,
+  ): CardResult {
+    if (!this.notifications) {
+      const card = renderCard({
+        title: "入群申请推送",
+        lines: ["推送服务未启用。"],
+        rows: [[viewButton("help", "指令帮助", "help", "home")]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    const scopes = this.notifications.listScopes(userId);
+    const allOn = scopes.includes(NOTIFY_SCOPE_ALL);
+    const lines = [
+      ...(notice ? [`**结果**：${escapeCardText(notice)}`] : []),
+      `**全部群**：${allOn ? "已开启" : "未开启"}`,
+    ];
+    if (groupId) {
+      lines.push(
+        `**当前群**：${scopes.includes(groupId) ? "已开启" : "未开启"}（${this.groupLabel(groupId)}）`,
+      );
+    }
+    for (const scope of scopes.filter((item) => item !== NOTIFY_SCOPE_ALL)) {
+      lines.push(`**已订阅**：群 ${this.groupLabel(scope)}`);
+    }
+    const reviewable = this.permissions.listReviewableGroups(userId);
+    lines.push(
+      reviewable.length > 0
+        ? `**可审批的群**：${reviewable.map((id) => this.groupLabel(id)).join("、")}`
+        : "**可审批的群**：无（入群审批需要群管理员或以上权限）",
+    );
+    lines.push("", "订阅后：有新的待人工处理申请会私聊推送卡片，可直接点按钮审批。");
+
+    const rows: CardButton[][] = [];
+    const switchRow: CardButton[] = [];
+    if (groupId) {
+      switchRow.push(
+        viewButton(
+          "thisGroup",
+          `本群 ${scopes.includes(groupId) ? "关" : "开"}`,
+          "notify",
+          "toggle",
+          groupId,
+          scopes.includes(groupId) ? "off" : "on",
+        ),
+      );
+    }
+    switchRow.push(
+      viewButton(
+        "allGroups",
+        `全部群 ${allOn ? "关" : "开"}`,
+        "notify",
+        "toggle",
+        NOTIFY_SCOPE_ALL,
+        allOn ? "off" : "on",
+      ),
+    );
+    rows.push(switchRow);
+    rows.push([
+      viewButton("test", "测试推送", "notify", "test", groupId ?? ""),
+      viewButton("refresh", "刷新", "notify", "view"),
+    ]);
+
+    return cardFromText("入群申请推送", lines.join("\n"), {
+      rows,
+      buttonHint: "点击即生效：",
+      footer: [
+        "手动等价指令：/notify on|off · /notify all on|off · /notify <群号> on|off · /notify test",
+      ],
+    });
+  }
+
+  /** 回调：订阅开关（固定动作 → 自动生效并回刷新后的卡片）。 */
+  public async notifyToggleCard(
+    scope: string,
+    enabled: boolean,
+    userId: string,
+  ): Promise<CardResult> {
+    if (!this.notifications) {
+      return this.notifyCard(undefined, userId);
+    }
+    const result = this.applyNotify(userId, scope, enabled);
+    const groupContext = scope === NOTIFY_SCOPE_ALL ? undefined : scope;
+    if (!result.ok) {
+      const card = renderCard({
+        title: "推送未修改",
+        lines: [result.text],
+        rows: [
+          [
+            viewButton(
+              "back",
+              "返回推送设置",
+              "notify",
+              "view",
+            ),
+          ],
+        ],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    log.info("notify scope updated via callback", { scope, enabled, userId });
+    return this.notifyCard(
+      groupContext,
+      userId,
+      `${result.text.split("\n")[0]} · 操作人：${this.displayUser(userId)}`,
+    );
+  }
+
+  /** 回调：测试推送（固定动作 → 直接给自己发一张测试卡并回结果）。 */
+  public async notifyTestCard(
+    groupId: string | undefined,
+    userId: string,
+  ): Promise<CardResult> {
+    if (!this.notifications) {
+      return this.notifyCard(groupId, userId);
+    }
+    const result = await this.notifications.sendTestCard(userId, groupId);
+    const notice = `${result.text.split("\n")[0]} · 操作人：${this.displayUser(userId)}`;
+    const card = this.notifyCard(groupId, userId, notice);
+    return { ...card, ok: result.ok };
+  }
+
+  /**
    * `/audit [群号|#群短码] [每页数量] [+页码]`：审计记录卡。
    *
    * 正文沿用原格式（时间 / 动作 / 状态 / 操作人 / 对象），翻页为回调，
@@ -1821,30 +1951,29 @@ export class AdminCommandService {
     }
     const arg1 = normalize(parts[1]);
     if (!arg1) {
-      return { ok: true, text: this.renderNotifyStatus(userId, groupId) };
+      return this.notifyCard(groupId, userId);
     }
     if (arg1 === "test" || arg1 === "测试") {
-      const result = await this.notifications.sendTestCard(userId, groupId);
-      return { ok: result.ok, text: result.text };
+      return this.notifyTestCard(groupId, userId);
     }
     if (isToggleValue(arg1)) {
       // 群内：订阅本群；私信：订阅全部群
       const scope = groupId ?? NOTIFY_SCOPE_ALL;
-      return this.applyNotify(userId, scope, isToggleOn(arg1));
+      return this.notifyToggleCard(scope, isToggleOn(arg1), userId);
     }
     if (isAllScope(arg1)) {
       const action = normalize(parts[2]);
       if (!isToggleValue(action)) {
-        return { ok: false, text: NOTIFY_USAGE };
+        return this.notifyCard(groupId, userId, NOTIFY_USAGE);
       }
-      return this.applyNotify(userId, NOTIFY_SCOPE_ALL, isToggleOn(action));
+      return this.notifyToggleCard(NOTIFY_SCOPE_ALL, isToggleOn(action), userId);
     }
     const targetGroupId = this.resolveTargetGroupId(undefined, parts[1]);
     const action = normalize(parts[2]);
     if (!targetGroupId || !isToggleValue(action)) {
-      return { ok: false, text: NOTIFY_USAGE };
+      return this.notifyCard(groupId, userId, NOTIFY_USAGE);
     }
-    return this.applyNotify(userId, targetGroupId, isToggleOn(action));
+    return this.notifyToggleCard(targetGroupId, isToggleOn(action), userId);
   }
 
   private applyNotify(

@@ -345,6 +345,35 @@ export function createRuntime(
         return card.rich;
       },
     ],
+    [
+      "notify",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        if (parsed.action === "toggle") {
+          const [scope, value] = parsed.args;
+          if (!scope || (value !== "on" && value !== "off")) {
+            return undefined;
+          }
+          const card = await adminCommands.notifyToggleCard(
+            scope,
+            value === "on",
+            userId,
+          );
+          return card.rich;
+        }
+        if (parsed.action === "test") {
+          const card = await adminCommands.notifyTestCard(
+            parsed.args[0] ?? event.groupId,
+            userId,
+          );
+          return card.rich;
+        }
+        return adminCommands.notifyCard(event.groupId, userId).rich;
+      },
+    ],
     ["testmenu", (parsed, event) => testMenu.render(parsed, event)],
   ]);
   const interactionHandler = new CallbackRouter({
