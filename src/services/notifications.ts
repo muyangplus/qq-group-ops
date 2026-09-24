@@ -277,19 +277,16 @@ export class NotificationService {
       preferredGroupId && this.permissions.canApproveJoin(userId, preferredGroupId)
         ? preferredGroupId
         : this.permissions.listReviewableGroups(userId)[0];
-    if (!groupId) {
-      return {
-        ok: false,
-        text: "你还没有可审批的群，无法发送测试卡片（入群审批需要群管理员或以上权限）。",
-      };
-    }
-    const groupLabel =
-      this.display?.group(groupId) ??
-      this.identityMap?.getGroupNumber(groupId) ??
-      groupId;
+    // 没有可用的群也要能自检：测试的是**私聊推送通道**，不依赖具体群
+    // （全局超管可能没有被显式授予任何群角色，私聊里也就没有"可审批的群"）。
+    const groupLabel = groupId
+      ? (this.display?.group(groupId) ??
+        this.identityMap?.getGroupNumber(groupId) ??
+        groupId)
+      : undefined;
     const input: JoinRequestCardInput = {
-      groupId,
-      groupLabel,
+      groupId: groupId ?? "",
+      groupLabel: groupLabel ?? "（未指定群）",
       requestId: "TEST",
       userId,
       applicantLabel: this.display?.user(userId) ?? userId,
@@ -297,17 +294,19 @@ export class NotificationService {
       recipientId: userId,
       withButtons: this.sender.keyboardAvailable,
     };
-    const pendingCommand = `/pending ${groupId}`;
+    const pendingCommand = groupId ? `/pending ${groupId}` : undefined;
     const card: JoinRequestCard = renderCard({
       title: "推送测试",
       lines: [
         "能看到这张卡片说明入群申请推送通道正常。",
-        `- 群：${groupLabel}`,
-        `- 按钮测试：点击下方按钮会发送 ${pendingCommand}`,
+        ...(groupLabel ? [`- 群：${groupLabel}`] : []),
+        ...(pendingCommand
+          ? [`- 按钮测试：点击下方按钮会发送 ${pendingCommand}`]
+          : ["- 还没有可审批的群：先在群里把自己设为群管理员或本群超管，才有待审批按钮"]),
         "",
         "同意 / 拒绝按钮只出现在真实的入群申请卡片上。",
       ],
-      ...(input.withButtons === false
+      ...(input.withButtons === false || !pendingCommand
         ? {}
         : {
             rows: [

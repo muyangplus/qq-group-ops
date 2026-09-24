@@ -1,4 +1,4 @@
-﻿import { FetchTransport } from "./adapters/fetchTransport.js";
+import { FetchTransport } from "./adapters/fetchTransport.js";
 import { FakeQQOfficialAPI } from "./adapters/fakeQqOfficial.js";
 import {
   FileBotCacheStore,
@@ -265,6 +265,7 @@ export function createRuntime(
             requestId,
             userId,
             Number.parseInt(page ?? "1", 10) || 1,
+            event.groupId,
           );
           return card.rich;
         }
@@ -293,6 +294,7 @@ export function createRuntime(
             value,
             userId,
             panel,
+            event.groupId,
           );
           return card.rich;
         }
@@ -347,7 +349,11 @@ export function createRuntime(
         if (!userId || !targetGroupId) {
           return undefined;
         }
-        const card = await adminCommands.syncCard(targetGroupId, userId);
+        const card = await adminCommands.syncCard(
+          targetGroupId,
+          userId,
+          event.groupId,
+        );
         return card.rich;
       },
     ],
@@ -367,6 +373,7 @@ export function createRuntime(
             scope,
             value === "on",
             userId,
+            event.groupId,
           );
           return card.rich;
         }
@@ -374,6 +381,7 @@ export function createRuntime(
           const card = await adminCommands.notifyTestCard(
             parsed.args[0] ?? event.groupId,
             userId,
+            event.groupId,
           );
           return card.rich;
         }

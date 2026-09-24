@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { NotificationDeliveryStatus } from "../src/core/enums.js";
@@ -300,11 +300,15 @@ describe("NotificationService", () => {
     expect(buttons[0]!.action.data).toBe("/pending g1");
   });
 
-  it("refuses a test card when the user has no reviewable group", async () => {
-    const { notifications } = await createHarness();
+  it("still sends a channel-only test card without a reviewable group", async () => {
+    const { notifications, api } = await createHarness();
     const result = await notifications.sendTestCard("stranger");
-    expect(result.ok).toBe(false);
-    expect(result.text).toContain("没有可审批的群");
+    // 测试的是私聊推送通道，不依赖具体群：没有可审批的群也要能自检
+    expect(result.ok).toBe(true);
+    expect(api.sentPrivateMessages).toHaveLength(1);
+    const card = String(api.sentPrivateMessages[0]?.markdown ?? "");
+    expect(card).toContain("推送测试");
+    expect(card).toContain("还没有可审批的群");
   });
 
   it("unsubscribes and remembers the state", async () => {

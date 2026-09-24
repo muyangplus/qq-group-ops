@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import {
   MENU_SECTIONS,
@@ -115,12 +115,12 @@ describe("menu", () => {
     }
   });
 
-  it("falls back to plain text with the manual commands", () => {
+  it("does not repeat manual commands on menu cards", () => {
     const view = buildMenu("admin", context("admin"));
-    // 导航按钮是回调（没有可复制的指令），正文/底部必须给出等价的手动指令
-    expect(view.message.text).toContain("/pending");
-    expect(view.message.text).toContain("/audit");
-    expect(view.message.text).toContain("/rules");
+    // 菜单卡只做导航：不再罗列手动指令（指令列表统一在 /help）
+    expect(view.message.text).not.toContain("手动指令");
+    expect(view.message.text).toContain("管理菜单");
+    expect((view.message.keyboard?.content.rows ?? []).length).toBeGreaterThan(0);
   });
 
   it("builds an unknown-command card with menu entries", () => {

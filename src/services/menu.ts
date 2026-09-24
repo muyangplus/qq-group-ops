@@ -262,7 +262,6 @@ function mainCard(context: MenuContext, access: MenuAccess): CardSpec {
     lines,
     rows: [sections, personal.slice(0, 3), ...(personal.length > 3 ? [personal.slice(3)] : [])],
     buttonHint: "请选择入口：",
-    footer: ["手动指令：/help · /menu sys · /menu admin · /menu super · /myperm · /profile"],
   };
 }
 
@@ -289,7 +288,6 @@ function systemCard(context: MenuContext, access: MenuAccess): CardSpec {
     lines: ["面向所有成员的能力：帮助、绑定、个人资料与活动。"],
     rows,
     buttonHint: "请选择功能：",
-    footer: ["手动指令：/help · /bind qq <QQ号> · /myperm · /profile · /activity · /notify"],
   };
 }
 
@@ -307,7 +305,6 @@ function activityCard(context: MenuContext): CardSpec {
     footer: [
       "活动短码形如 #A7K2Q9，可从活动列表或活动卡片上获取。",
       "报名前需要补全个人资料：/profile",
-      "手动指令：/activity · /activity info #短码 · /activity join #短码 · /activity quit #短码",
     ],
   };
 }
@@ -341,7 +338,6 @@ function adminCard(context: MenuContext, access: MenuAccess): CardSpec {
     ],
     rows,
     buttonHint: "请选择功能：",
-    footer: ["手动指令：/pending · /sync · /audit · /rules · /status · /test"],
   };
 }
 
@@ -361,7 +357,7 @@ function reviewCard(context: MenuContext): CardSpec {
       [menuButton("admin", "管理菜单", "admin"), backButton()],
     ],
     buttonHint: "审批动作需要带申请ID，因此这里不提供按钮。",
-    footer: ["手动指令：/pending · /sync · /approve <申请ID> · /reject <申请ID> [原因]"],
+
   };
 }
 
@@ -383,7 +379,6 @@ function opsCard(context: MenuContext): CardSpec {
       [menuButton("admin", "管理菜单", "admin"), backButton()],
     ],
     buttonHint: "创建与修改活动需要带参数，请按上面的用法手输指令。",
-    footer: ["手动指令：/activity · /export · /activity create <标题>"],
   };
 }
 
@@ -412,7 +407,6 @@ function superCard(context: MenuContext): CardSpec {
       ],
     ],
     buttonHint: "常用入口：",
-    footer: ["手动指令：/perm list · /rules all · /notify · /testmenu · /whois <目标>"],
   };
 }
 

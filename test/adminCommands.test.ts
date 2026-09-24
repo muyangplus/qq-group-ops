@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+﻿import { describe, expect, it, beforeEach } from "vitest";
 
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { JoinRequestStatus } from "../src/core/enums.js";
@@ -216,8 +216,8 @@ describe("AdminCommandService", async () => {
       type: 1,
       data: "cb:menu:open:sys",
     });
-    // 纯文本降级里有等价的手动指令
-    expect(result.text).toContain("/menu sys");
+    // 菜单卡不再罗列手动指令（指令列表统一在 /help）
+    expect(result.text).not.toContain("手动指令");
   });
 
   it("opens the main menu for empty and aliased input", async () => {
@@ -227,7 +227,14 @@ describe("AdminCommandService", async () => {
 
     const alias = await service.handle("g1", "admin", "/菜单 管理菜单");
     expect(alias.ok).toBe(true);
-    expect(alias.text).toContain("/pending");
+    expect(alias.rich?.markdown).toContain("管理菜单");
+    const aliasButtons = (alias.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(aliasButtons.find((button) => button.id === "pending")?.action).toMatchObject({
+      type: 1,
+      data: "cb:cmd:run:/pending",
+    });
   });
 
   it("lets unbound users open the menu", async () => {
@@ -1077,18 +1084,17 @@ describe("AdminCommandService", async () => {
     expect(result.ok).toBe(true);
     expect(result.text).toContain("可审批的群：654321");
     expect(result.text).not.toContain("（g1）");
-    // 卡片化后用法写在底部提示里
-    expect(result.text).toContain("/notify all on|off");
   });
 
   it("toggles push subscriptions by callback with operator feedback", async () => {
-    const on = await service.notifyToggleCard("g1", true, "admin");
+    const on = await service.notifyToggleCard("g1", true, "admin", "g1");
 
     expect(on.ok).toBe(true);
     expect(notifications.isSubscribed("admin", "g1")).toBe(true);
-    // 回调自动完成必须有反馈，并标明操作人
+    // 回调自动完成必须有反馈，并在开头单独一行 @ 操作人
     expect(on.rich.markdown).toContain("结果");
-    expect(on.rich.markdown).toContain("操作人：");
+    expect(on.rich.markdown).toContain("<@!admin>");
+    expect(on.rich.markdown).not.toContain("操作人：");
 
     const off = await service.notifyToggleCard("g1", false, "admin");
     expect(off.ok).toBe(true);
@@ -1391,13 +1397,19 @@ describe("AdminCommandService", async () => {
   it("completes approvals via callback with operator feedback", async () => {
     joinAudit.submit("g1", "u1", "理由", "r1");
 
-    const result = await service.approveCard("g1", "r1", "admin");
+    const result = await service.approveCard("g1", "r1", "admin", 1, "g1");
 
     expect(result.ok).toBe(true);
     expect(result.rich.markdown).toContain("已通过");
-    // 回调自动完成必须有反馈，并标明是谁操作的
-    expect(result.rich.markdown).toContain("操作人：");
+    // 反馈在开头**单独一行** @ 操作人，不再内联「操作人：…」
+    expect(result.rich.markdown.split("\n")[1]).toBe("<@!admin>");
+    expect(result.rich.markdown).not.toContain("操作人：");
     expect(joinAudit.get("r1")?.status).toBe(JoinRequestStatus.Approved);
+
+    // 私聊回复不 @（操作人就是接收者本人）
+    joinAudit.submit("g1", "u2", "理由2", "r2");
+    const inPrivate = await service.approveCard("g1", "r2", "admin");
+    expect(inPrivate.rich.markdown).not.toContain("<@!");
   });
 
   it("toggles rules via callback with operator feedback", async () => {
@@ -1406,11 +1418,14 @@ describe("AdminCommandService", async () => {
       "wordFilter",
       "off",
       "admin",
+      undefined,
+      "g1",
     );
 
     expect(result.ok).toBe(true);
     expect(result.rich.markdown).toContain("已更新：wordFilter = off");
-    expect(result.rich.markdown).toContain("操作人：");
+    expect(result.rich.markdown.split("\n")[1]).toBe("<@!admin>");
+    expect(result.rich.markdown).not.toContain("操作人：");
     expect(configStore.get("g1").wordFilterEnabled).toBe(false);
   });
 
@@ -1459,10 +1474,11 @@ describe("AdminCommandService", async () => {
   });
 
   it("reports the sync operator in the result card", async () => {
-    const result = await service.syncCard("g1", "mod");
+    const result = await service.syncCard("g1", "mod", "g1");
 
     expect(result.ok).toBe(true);
-    expect(result.rich.markdown).toContain("操作人：");
+    expect(result.rich.markdown).toContain("<@!mod>");
+    expect(result.rich.markdown).not.toContain("操作人：");
     expect(result.rich.markdown).toContain("待审批");
   });
 
@@ -1473,7 +1489,8 @@ describe("AdminCommandService", async () => {
 
     expect(result.ok).toBe(true);
     expect(result.rich?.markdown).toContain("已通过入群申请");
-    expect(result.rich?.markdown).toContain("操作人：");
+    expect(result.rich?.markdown).toContain("<@!admin>");
+    expect(result.rich?.markdown).not.toContain("操作人：");
   });
 
   it("returns a card for every command output", async () => {
@@ -1527,8 +1544,8 @@ describe("AdminCommandService", async () => {
         (result.rich?.keyboard?.content.rows ?? []).length,
         command,
       ).toBeGreaterThan(0);
-      // 底部必须有手动指令（回调按钮没有可复制指令）
-      expect(result.text, command).toContain("手动指令：");
+      // 非 help 卡片不再罗列手动指令
+      expect(result.text, command).not.toContain("手动指令");
     }
   });
 

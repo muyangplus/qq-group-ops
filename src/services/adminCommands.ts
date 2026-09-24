@@ -230,6 +230,38 @@ export class AdminCommandService {
   }
 
   /**
+   * 结果反馈里的操作人提及：**群内**用 QQ 提及单独一行（`<@!userId>`），私聊不显示
+   * （私聊里操作人就是接收者本人）。提及必须原样输出，不能做 markdown 转义。
+   */
+  private mention(replyGroupId: string | undefined, userId: string): string {
+    return replyGroupId ? `<@!${userId}>\n` : "";
+  }
+
+  /**
+   * 把反馈文案渲染成卡片行：如果第一行是提及（`<@!...>`），保持它单独成行且不转义，
+   * 其余内容作为「**结果**：…」展示。
+   */
+  private renderNotice(notice: string | undefined): string[] {
+    if (!notice) {
+      return [];
+    }
+    const [first = "", ...rest] = notice.split("\n");
+    const lines: string[] = [];
+    let body = first;
+    if (body.startsWith("<@!")) {
+      lines.push(body);
+      body = rest.shift() ?? "";
+    }
+    if (body.length > 0) {
+      lines.push(`**结果**：${escapeCardText(body)}`);
+    }
+    for (const line of rest) {
+      lines.push(escapeCardText(line));
+    }
+    return lines;
+  }
+
+  /**
    * 定制卡包装：用指定标题、按钮与页脚包装已有指令结果。
    *
    * 正文沿用 `result.text`，因此**纯文本降级与旧输出等价**；已经自带卡片的直接返回。
@@ -286,7 +318,7 @@ export class AdminCommandService {
               viewButton("help", "指令帮助", "help", "home"),
             ],
           ],
-          ["手动指令：/myperm · /profile · /activity · /help"],
+          ["详细用法：/help"],
         );
       case "bind":
       case "绑定":
@@ -299,7 +331,7 @@ export class AdminCommandService {
               viewButton("help", "绑定帮助", "help", "topic", "bind"),
             ],
           ],
-          ["手动指令：/bind qq <QQ号> · /bind group <群号>"],
+          ["详细用法：/help"],
         );
       case "whois":
       case "查询":
@@ -312,7 +344,7 @@ export class AdminCommandService {
               viewButton("help", "查询帮助", "help", "topic", "whois"),
             ],
           ],
-          ["手动指令：/whois [目标]（不填 = 当前群 / 你自己）"]
+          ["详细用法：/help"],
         );
       case "perm":
       case "权限":
@@ -325,7 +357,7 @@ export class AdminCommandService {
               viewButton("myperm", "我的权限", "cmd", "run", "/myperm"),
             ],
           ],
-          ["手动指令：/perm list · /perm grant <角色> <userId|QQ号> · /perm revoke <角色> <userId|QQ号>"],
+          ["详细用法：/help"],
         );
       case "pending":
       case "待审批":
@@ -349,7 +381,7 @@ export class AdminCommandService {
               viewButton("help", "资料帮助", "help", "topic", "profile"),
             ],
           ],
-          ["手动指令：/profile set <字段> <值> · /profile clear"],
+          ["详细用法：/help"],
         );
       case "activity":
       case "活动":
@@ -920,7 +952,7 @@ export class AdminCommandService {
         ],
       ],
       buttonHint: "常用入口：",
-      footer: [`刷新：/status`, `本群：${this.displayGroup(targetGroupId)}`],
+      footer: [`本群：${this.displayGroup(targetGroupId)}`],
     });
   }
 
@@ -964,7 +996,7 @@ export class AdminCommandService {
       return cardFromText(
         "待审批入群申请",
         [
-          ...(notice ? [notice] : []),
+          ...this.renderNotice(notice),
           `群 ${groupLabel}：当前没有待审批入群申请。`,
         ].join("\n"),
         {
@@ -987,7 +1019,7 @@ export class AdminCommandService {
     const lines = [
       `**群**：${groupLabel}`,
       `**待审批**：${pending.length} 条 · 第 ${current} / ${pageCount} 页`,
-      ...(notice ? [`**结果**：${escapeCardText(notice)}`] : []),
+      ...this.renderNotice(notice),
     ];
     const rows: CardButton[][] = [];
     for (const request of slice) {
@@ -1058,7 +1090,7 @@ export class AdminCommandService {
     if (current > 1) {
       footer.push(`上一页：/pending +${current - 1}`);
     }
-    footer.push("审批：/approve <申请ID> · /reject <申请ID> [原因]");
+
 
     return cardFromText("待审批入群申请", lines.join("\n"), {
       rows,
@@ -1078,6 +1110,7 @@ export class AdminCommandService {
     requestId: string,
     userId: string,
     page = 1,
+    replyGroupId?: string,
   ): Promise<CardResult> {
     const back = viewButton("back", "返回待审批", "pending", "page", targetGroupId, page);
     if (!this.permissions.canApproveJoin(userId, targetGroupId)) {
@@ -1116,7 +1149,7 @@ export class AdminCommandService {
       undefined,
       userId,
       ["pending", targetGroupId, `+${page}`],
-      `已通过 ${this.displayRequest(requestId)} · 操作人：${this.displayUser(userId)}`,
+      `${this.mention(replyGroupId, userId)}已通过 ${this.displayRequest(requestId)}`,
     );
   }
 
@@ -1194,7 +1227,7 @@ export class AdminCommandService {
     return cardFromText(
       "群规则",
       [
-        ...(notice ? [`**结果**：${escapeCardText(notice)}`] : []),
+        ...this.renderNotice(notice),
         ...lines,
       ].join("\n"),
       {
@@ -1202,7 +1235,7 @@ export class AdminCommandService {
         buttonHint: canManage ? "设置入口（点击即生效）：" : "相关入口：",
         footer: [
           `本群：${this.displayGroup(targetGroupId)}`,
-          "自由文本/数值仍用指令：/rules set <字段> <值>（keywords / warning / muteDuration ...）",
+
           "完整字段用法：/help rules",
         ],
       },
@@ -1226,7 +1259,7 @@ export class AdminCommandService {
     if (list.length === 0) {
       return cardFromText(
         "活动列表",
-        [...(notice ? [notice] : []), `群 ${groupLabel} 还没有活动。`].join("\n"),
+        [...this.renderNotice(notice), `群 ${groupLabel} 还没有活动。`].join("\n"),
         {
           rows: [
             [viewButton("refresh", "刷新", "activity", "page", targetGroupId, 1)],
@@ -1244,7 +1277,7 @@ export class AdminCommandService {
     const current = Math.min(Math.max(page, 1), pageCount);
     const slice = list.slice((current - 1) * size, current * size);
     const lines = [
-      ...(notice ? [`**结果**：${escapeCardText(notice)}`] : []),
+      ...this.renderNotice(notice),
       `**群**：${groupLabel}`,
       `**活动**：${list.length} 个 · 第 ${current} / ${pageCount} 页`,
       "",
@@ -1288,7 +1321,7 @@ export class AdminCommandService {
     if (current > 1) {
       footer.push(`上一页：/activity list +${current - 1}`);
     }
-    footer.push("报名需要资料完整：/profile");
+
 
     return cardFromText("活动列表", lines.join("\n"), {
       rows,
@@ -1319,7 +1352,7 @@ export class AdminCommandService {
     const scopes = this.notifications.listScopes(userId);
     const allOn = scopes.includes(NOTIFY_SCOPE_ALL);
     const lines = [
-      ...(notice ? [`**结果**：${escapeCardText(notice)}`] : []),
+      ...this.renderNotice(notice),
       `**全部群**：${allOn ? "已开启" : "未开启"}`,
     ];
     if (groupId) {
@@ -1371,9 +1404,7 @@ export class AdminCommandService {
     return cardFromText("入群申请推送", lines.join("\n"), {
       rows,
       buttonHint: "点击即生效：",
-      footer: [
-        "手动等价指令：/notify on|off · /notify all on|off · /notify <群号> on|off · /notify test",
-      ],
+
     });
   }
 
@@ -1382,6 +1413,7 @@ export class AdminCommandService {
     scope: string,
     enabled: boolean,
     userId: string,
+    replyGroupId?: string,
   ): Promise<CardResult> {
     if (!this.notifications) {
       return this.notifyCard(undefined, userId);
@@ -1409,7 +1441,7 @@ export class AdminCommandService {
     return this.notifyCard(
       groupContext,
       userId,
-      `${result.text.split("\n")[0]} · 操作人：${this.displayUser(userId)}`,
+      `${this.mention(replyGroupId, userId)}${result.text.split("\n")[0]}`,
     );
   }
 
@@ -1417,12 +1449,13 @@ export class AdminCommandService {
   public async notifyTestCard(
     groupId: string | undefined,
     userId: string,
+    replyGroupId?: string,
   ): Promise<CardResult> {
     if (!this.notifications) {
       return this.notifyCard(groupId, userId);
     }
     const result = await this.notifications.sendTestCard(userId, groupId);
-    const notice = `${result.text.split("\n")[0]} · 操作人：${this.displayUser(userId)}`;
+    const notice = `${this.mention(replyGroupId, userId)}${result.text.split("\n")[0]}`;
     const card = this.notifyCard(groupId, userId, notice);
     return { ...card, ok: result.ok };
   }
@@ -1554,6 +1587,7 @@ export class AdminCommandService {
   public async syncCard(
     targetGroupId: string,
     userId: string,
+    replyGroupId?: string,
   ): Promise<CardResult> {
     const back = viewButton(
       "pending",
@@ -1582,7 +1616,9 @@ export class AdminCommandService {
       const card = renderCard({
         title: "同步失败",
         lines: [
-          `操作人：${this.displayUser(userId)}`,
+          ...(this.mention(replyGroupId, userId).trimEnd()
+            ? [this.mention(replyGroupId, userId).trimEnd()]
+            : []),
           formatError(error),
         ],
         rows: [[back]],
@@ -1590,10 +1626,11 @@ export class AdminCommandService {
       return { ok: false, text: card.text, rich: card };
     }
     await this.notifyPending(targetGroupId, pending).catch(() => undefined);
-    const operator = `操作人：${this.displayUser(userId)}`;
+    const operator = this.mention(replyGroupId, userId).trimEnd();
     const lines = [
+      ...(operator ? [operator] : []),
       `**群**：${this.displayGroup(targetGroupId)}`,
-      `**结果**：已同步官方待审批申请，当前待审批 ${pending.length} 条 · ${operator}`,
+      `**结果**：已同步官方待审批申请，当前待审批 ${pending.length} 条`,
     ];
     for (const request of pending.slice(0, 5)) {
       const reason = request.reason ? ` 理由：${request.reason}` : "";
@@ -1606,7 +1643,7 @@ export class AdminCommandService {
     }
     return cardFromText("同步结果", lines.join("\n"), {
       rows: [[back]],
-      footer: ["手动同步：/sync", "待审批列表每页 3 条，可翻页"],
+      footer: ["待审批列表每页 3 条，可翻页"],
     });
   }
 
@@ -1616,17 +1653,23 @@ export class AdminCommandService {
     userId: string,
     message: string,
     ok: boolean,
+    replyGroupId?: string,
   ): CardResult {
     const card = renderCard({
       title: ok ? "审批结果" : "审批失败",
-      lines: [message, `操作人：${this.displayUser(userId)}`],
+      lines: [
+        ...(this.mention(replyGroupId, userId).trimEnd()
+          ? [this.mention(replyGroupId, userId).trimEnd()]
+          : []),
+        message,
+      ],
       rows: [
         [
           viewButton("back", "返回待审批", "pending", "page", targetGroupId, 1),
           viewButton("audit", "查看审计", "audit", "page", targetGroupId, 20, 1),
         ],
       ],
-      footer: ["手动审批：/approve <申请ID> · /reject <申请ID> [原因]"],
+
     });
     return { ok, text: card.text, rich: card };
   }
@@ -1738,10 +1781,10 @@ export class AdminCommandService {
     return cardFromText(
       title,
       [
-        ...(notice ? [`**结果**：${escapeCardText(notice)}`] : []),
+        ...this.renderNotice(notice),
         `**当前值**：${panel === "toggle" ? "见下方按钮（显示的是「点一下会变成的结果」）" : panel === "decision" ? config.joinDecision : config.keywordPunish}`,
         "",
-        "手动等价指令：/rules set <字段> <值>（详见 /help rules）",
+
       ].join("\n"),
       {
         rows,
@@ -1758,6 +1801,7 @@ export class AdminCommandService {
     value: string,
     userId: string,
     panel?: string,
+    replyGroupId?: string,
   ): Promise<CardResult> {
     const result = await this.handleRulesSet(undefined, userId, [
       "rules",
@@ -1766,7 +1810,7 @@ export class AdminCommandService {
       field,
       value,
     ]);
-    const notice = `已更新：${field} = ${value} · 操作人：${this.displayUser(userId)}`;
+    const notice = `${this.mention(replyGroupId, userId)}已更新：${field} = ${value}`;
     if (!result.ok) {
       const card = renderCard({
         title: "规则未修改",
@@ -2220,7 +2264,7 @@ export class AdminCommandService {
       });
       return { ok: false, text: card.text, rich: card };
     }
-    return this.syncCard(targetGroupId, userId);
+    return this.syncCard(targetGroupId, userId, groupId);
   }
 
   /**
@@ -2242,26 +2286,26 @@ export class AdminCommandService {
       return this.notifyCard(groupId, userId);
     }
     if (arg1 === "test" || arg1 === "测试") {
-      return this.notifyTestCard(groupId, userId);
+      return this.notifyTestCard(groupId, userId, groupId);
     }
     if (isToggleValue(arg1)) {
       // 群内：订阅本群；私信：订阅全部群
       const scope = groupId ?? NOTIFY_SCOPE_ALL;
-      return this.notifyToggleCard(scope, isToggleOn(arg1), userId);
+      return this.notifyToggleCard(scope, isToggleOn(arg1), userId, groupId);
     }
     if (isAllScope(arg1)) {
       const action = normalize(parts[2]);
       if (!isToggleValue(action)) {
         return this.notifyCard(groupId, userId, NOTIFY_USAGE);
       }
-      return this.notifyToggleCard(NOTIFY_SCOPE_ALL, isToggleOn(action), userId);
+      return this.notifyToggleCard(NOTIFY_SCOPE_ALL, isToggleOn(action), userId, groupId);
     }
     const targetGroupId = this.resolveTargetGroupId(undefined, parts[1]);
     const action = normalize(parts[2]);
     if (!targetGroupId || !isToggleValue(action)) {
       return this.notifyCard(groupId, userId, NOTIFY_USAGE);
     }
-    return this.notifyToggleCard(targetGroupId, isToggleOn(action), userId);
+    return this.notifyToggleCard(targetGroupId, isToggleOn(action), userId, groupId);
   }
 
   private applyNotify(
@@ -2939,6 +2983,7 @@ export class AdminCommandService {
       userId,
       `已通过入群申请 ${this.displayRequest(requestId)}。`,
       true,
+      groupId,
     );
   }
 
@@ -2985,6 +3030,7 @@ export class AdminCommandService {
       userId,
       `已拒绝入群申请 ${this.displayRequest(requestId)}。`,
       true,
+      groupId,
     );
   }
 
