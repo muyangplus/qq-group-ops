@@ -49,6 +49,8 @@ TypeScript 核心服务
   ├── services/menu.ts           QQ 端三级交互菜单（系统/管理/超管，按权限过滤）
   ├── services/firstMenuPush.ts  私信首次主菜单去重（dev 内存 / 正式入库）
   ├── services/testMenu.ts       回调按钮翻页试验（互动事件回包 + 被动回复下一页）
+  ├── services/callbackData.ts   回调 data 编码/解析（cb:<namespace>:<action>[:args]）
+  ├── services/callbackRouter.ts 互动事件总入口：回包 → renderer 渲染 → 主动发送
   ├── services/adminCommands.ts  管理员命令（含 /rules set、/audit、/sync、/menu）
   ├── services/groupConfig.ts    多群配置
   ├── services/activity.ts       活动报名
