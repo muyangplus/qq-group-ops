@@ -1512,6 +1512,26 @@ describe("AdminCommandService", async () => {
     }
   });
 
+  it("gives tailored cards to the remaining commands", async () => {
+    const cases: Array<[string, string]> = [
+      ["/myperm", "我的权限"],
+      ["/bind", "绑定"],
+      ["/whois nope", "映射查询"],
+      ["/perm list", "权限配置"],
+      ["/profile", "个人资料"],
+    ];
+    for (const [command, title] of cases) {
+      const result = await service.handle("g1", "root", command);
+      expect(result.rich?.markdown, command).toContain(title);
+      expect(
+        (result.rich?.keyboard?.content.rows ?? []).length,
+        command,
+      ).toBeGreaterThan(0);
+      // 底部必须有手动指令（回调按钮没有可复制指令）
+      expect(result.text, command).toContain("手动指令：");
+    }
+  });
+
   it("resolves #group and #user short codes in commands", async () => {
     const scoped = withShortCodes();
     identityMap.bindGroup("g2", "777777");

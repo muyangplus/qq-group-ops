@@ -1,4 +1,4 @@
-import { PermissionLevel } from "../core/enums.js";
+﻿import { PermissionLevel } from "../core/enums.js";
 import type { KeyboardModal } from "../adapters/qqOfficial.js";
 import { encodeCallback, extractPageToken, pageCallback } from "./callbackData.js";
 import {
@@ -229,6 +229,37 @@ export class AdminCommandService {
     return { ok: result.ok, text: card.text, rich: card.rich };
   }
 
+  /**
+   * 定制卡包装：用指定标题、按钮与页脚包装已有指令结果。
+   *
+   * 正文沿用 `result.text`，因此**纯文本降级与旧输出等价**；已经自带卡片的直接返回。
+   * 这样给某条指令做"定制布局"时不需要改它的业务逻辑。
+   */
+  private cardify(
+    title: string,
+    result: CommandResult,
+    rows: readonly (readonly CardButton[])[],
+    footer: readonly string[] = ["按钮不可用时可直接输入指令。"],
+    buttonHint = "相关入口：",
+  ): CommandResult {
+    if (result.rich) {
+      return result;
+    }
+    const card = cardFromText(title, result.text, { rows, footer, buttonHint });
+    return { ok: result.ok, text: card.text, rich: card.rich };
+  }
+
+  /** 定制卡包装（异步结果版：handler 是 async 时用）。 */
+  private async cardifyAsync(
+    title: string,
+    result: Promise<CommandResult>,
+    rows: readonly (readonly CardButton[])[],
+    footer?: readonly string[],
+    buttonHint?: string,
+  ): Promise<CommandResult> {
+    return this.cardify(title, await result, rows, footer, buttonHint);
+  }
+
   /** 指令分发表（返回值统一交给 `ensureCard` 保证是卡片）。 */
   private async dispatchCommand(
     command: string,
@@ -245,16 +276,57 @@ export class AdminCommandService {
         return this.handleMenu(groupId, userId, parts);
       case "myperm":
       case "我的权限":
-        return this.handleMyPermission(groupId, userId);
+        return this.cardify(
+          "我的权限",
+          this.handleMyPermission(groupId, userId),
+          [
+            [
+              viewButton("profile", "我的资料", "cmd", "run", "/profile"),
+              viewButton("activity", "活动", "activity", "page", groupId ?? "", 1),
+              viewButton("help", "指令帮助", "help", "home"),
+            ],
+          ],
+          ["手动指令：/myperm · /profile · /activity · /help"],
+        );
       case "bind":
       case "绑定":
-        return this.handleBind(groupId, userId, parts);
+        return this.cardifyAsync(
+          "绑定",
+          this.handleBind(groupId, userId, parts),
+          [
+            [
+              viewButton("myperm", "我的权限", "cmd", "run", "/myperm"),
+              viewButton("help", "绑定帮助", "help", "topic", "bind"),
+            ],
+          ],
+          ["手动指令：/bind qq <QQ号> · /bind group <群号>"],
+        );
       case "whois":
       case "查询":
-        return this.handleWhois(userId, parts);
+        return this.cardify(
+          "映射查询",
+          this.handleWhois(userId, parts),
+          [
+            [
+              viewButton("myperm", "我的权限", "cmd", "run", "/myperm"),
+              viewButton("help", "查询帮助", "help", "topic", "whois"),
+            ],
+          ],
+          ["手动指令：/whois <QQ号|userId|群号|短码|group_openid>"],
+        );
       case "perm":
       case "权限":
-        return this.handlePermissionConfig(groupId, userId, parts);
+        return this.cardify(
+          "权限配置",
+          this.handlePermissionConfig(groupId, userId, parts),
+          [
+            [
+              viewButton("help", "权限帮助", "help", "topic", "perm"),
+              viewButton("myperm", "我的权限", "cmd", "run", "/myperm"),
+            ],
+          ],
+          ["手动指令：/perm list · /perm grant <角色> <userId|QQ号> · /perm revoke <角色> <userId|QQ号>"],
+        );
       case "pending":
       case "待审批":
         return this.handlePending(groupId, userId, parts);
@@ -268,7 +340,17 @@ export class AdminCommandService {
         return this.handleNotify(groupId, userId, parts);
       case "profile":
       case "资料":
-        return this.handleProfile(userId, parts);
+        return this.cardify(
+          "个人资料",
+          this.handleProfile(userId, parts),
+          [
+            [
+              viewButton("activity", "活动", "activity", "page", groupId ?? "", 1),
+              viewButton("help", "资料帮助", "help", "topic", "profile"),
+            ],
+          ],
+          ["手动指令：/profile set <字段> <值> · /profile clear"],
+        );
       case "activity":
       case "活动":
         return this.handleActivity(groupId, userId, parts);
