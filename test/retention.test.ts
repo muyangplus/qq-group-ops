@@ -123,8 +123,29 @@ describe("RetentionService", () => {
       auditRecordsRemoved: 0,
       joinRequestsRemoved: 0,
       notificationsRemoved: 0,
+      joinRequestsExpired: 0,
     });
     expect(auditLog.all()).toHaveLength(1);
+  });
+
+  it("expires pending join requests past the TTL", async () => {
+    const auditLog = new AuditLogStore();
+    const joinAudit = new JoinAuditService(auditLog);
+    joinAudit.submit("g1", "u1", "待审批", "pending");
+
+    // 把“现在”往后拨 8 天，默认 TTL 7 天
+    const service = new RetentionService(auditLog, joinAudit, {
+      auditLogRetentionDays: 180,
+      joinRequestRetentionDays: 180,
+      joinRequestTtlDays: 7,
+      clock: () => utcNow().getTime() + 8 * DAY_MS,
+    });
+
+    const result = await service.runOnce();
+
+    expect(result.joinRequestsExpired).toBe(1);
+    expect(joinAudit.pending("g1")).toEqual([]);
+    expect(joinAudit.get("pending").status).toBe(JoinRequestStatus.Expired);
   });
 
   it("schedules periodic runs and stops cleanly", async () => {

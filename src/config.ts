@@ -1,4 +1,4 @@
-export const DEFAULT_SQLITE_PATH = "data/qq-group-ops.db";
+﻿export const DEFAULT_SQLITE_PATH = "data/qq-group-ops.db";
 export const DEFAULT_BOT_CACHE_FILE = "data/qq-bot-cache.json";
 export const DEFAULT_CLASS_INDEX_FILE = "data/class-index.json";
 
@@ -29,6 +29,8 @@ export interface Settings {
   auditLogRetentionDays: number;
   /** 私信首次交互主菜单的记录方式（dev 默认内存，正式默认入库）。 */
   menuFirstPush: MenuFirstPushMode;
+  /** 待审批入群申请的有效期（天）；0 表示不自动过期（默认 7）。 */
+  joinRequestTtlDays: number;
 }
 
 export type MenuFirstPushMode = "memory" | "persistent";
@@ -141,6 +143,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     rawMessageRetentionDays: asInt(env.RAW_MESSAGE_RETENTION_DAYS, 0),
     auditLogRetentionDays: asInt(env.AUDIT_LOG_RETENTION_DAYS, 180),
     menuFirstPush: resolveMenuFirstPushMode(env.MENU_FIRST_PUSH),
+    joinRequestTtlDays: asInt(env.JOIN_REQUEST_TTL_DAYS, 7),
   };
 }
 

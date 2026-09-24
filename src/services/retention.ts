@@ -17,6 +17,11 @@ export interface RetentionOptions {
   auditLogRetentionDays: number;
   /** 已审批入群申请的保留天数；<= 0 表示不清理。 */
   joinRequestRetentionDays: number;
+  /**
+   * 待审批入群申请的有效期（天）；超过即标记为 `expired`（不删除，仍可 /whois 追溯）。
+   * `<= 0` 表示不自动过期。
+   */
+  joinRequestTtlDays?: number;
   /** 清理周期，默认 24 小时。 */
   intervalMs?: number;
   clock?: () => number;
@@ -27,6 +32,8 @@ export interface RetentionRunResult {
   auditRecordsRemoved: number;
   joinRequestsRemoved: number;
   notificationsRemoved: number;
+  /** 本次被标记为过期的待审批申请数。 */
+  joinRequestsExpired: number;
 }
 
 /**
@@ -63,8 +70,13 @@ export class RetentionService {
       auditRecordsRemoved: 0,
       joinRequestsRemoved: 0,
       notificationsRemoved: 0,
+      joinRequestsExpired: 0,
     };
 
+    // 先收敛过期申请：过期的待审批申请不再出现在 /pending、推送与统计里
+    if ((this.options.joinRequestTtlDays ?? 0) > 0) {
+      result.joinRequestsExpired = this.joinAudit.expireStalePending(now);
+    }
     if (this.options.auditLogRetentionDays > 0) {
       const cutoff = new Date(
         now - this.options.auditLogRetentionDays * DAY_MS,
@@ -84,7 +96,8 @@ export class RetentionService {
     if (
       result.auditRecordsRemoved > 0 ||
       result.joinRequestsRemoved > 0 ||
-      result.notificationsRemoved > 0
+      result.notificationsRemoved > 0 ||
+      result.joinRequestsExpired > 0
     ) {
       log.info("retention cleanup finished", { ...result });
     } else {

@@ -53,6 +53,7 @@ export class JoinRequestSyncService {
     const rawRequests = await this.api.getJoinRequests(groupId);
     log.debug("sync start", { groupId, remoteCount: rawRequests.length });
     let added = 0;
+    const remoteIds = new Set<string>();
     for (const item of rawRequests) {
       const requestId = firstString(
         item,
@@ -77,6 +78,7 @@ export class JoinRequestSyncService {
       if (!requestId || !userId) {
         continue;
       }
+      remoteIds.add(requestId);
       try {
         this.joinAudit.submit(groupId, userId, reason, requestId);
         added += 1;
@@ -84,8 +86,16 @@ export class JoinRequestSyncService {
         // 已同步过的申请不重复写入。
       }
     }
+    // 对账：官方列表已不再返回、且已存在一段时间的本地待审批申请 → 标记过期
+    const expired = this.joinAudit.expireMissingFromRemote(groupId, remoteIds);
     const pending = this.joinAudit.pending(groupId);
-    log.info("sync done", { groupId, remoteCount: rawRequests.length, added, pending: pending.length });
+    log.info("sync done", {
+      groupId,
+      remoteCount: rawRequests.length,
+      added,
+      expired,
+      pending: pending.length,
+    });
     return pending;
   }
 }

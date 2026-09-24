@@ -1,4 +1,4 @@
-import { FetchTransport } from "./adapters/fetchTransport.js";
+﻿import { FetchTransport } from "./adapters/fetchTransport.js";
 import { FakeQQOfficialAPI } from "./adapters/fakeQqOfficial.js";
 import {
   FileBotCacheStore,
@@ -132,6 +132,8 @@ export function createRuntime(
     repositories.joinRequests,
     writeQueue,
   );
+  // 待审批申请有效期（0 天 = 不自动过期）
+  joinAudit.setPendingTtlMs(settings.joinRequestTtlDays * 24 * 60 * 60 * 1_000);
   const configStore = new GroupConfigStore(
     { groupId: DEFAULT_GROUP_ID },
     repositories.groupConfigs,

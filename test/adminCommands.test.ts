@@ -1551,6 +1551,27 @@ describe("AdminCommandService", async () => {
     expect(denied.text).toContain("仅超级管理员");
   });
 
+  it("shows join request details for a /whois short code", async () => {
+    const scoped = withShortCodes();
+    joinAudit.submit("g1", "u1", "环工2214小明", "r1");
+    const code = scopedShortCodeLabel("join_request", "r1");
+
+    const result = await scoped.handle("g1", "root", `/whois ${code}`);
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("类型：入群申请");
+    expect(result.text).toContain("申请人：");
+    expect(result.text).toContain("理由：环工2214小明");
+    expect(result.text).toContain("状态：pending");
+    expect(result.text).toContain("本地队列：待审批中");
+
+    // 处理过之后不再进队列，但 /whois 仍能查到详情
+    joinAudit.approve("r1", "admin");
+    const after = await scoped.handle("g1", "root", `/whois ${code}`);
+    expect(after.text).toContain("状态：approved");
+    expect(after.text).toContain("已不在队列");
+  });
+
   it("resolves #group and #user short codes in commands", async () => {
     const scoped = withShortCodes();
     identityMap.bindGroup("g2", "777777");

@@ -1,4 +1,4 @@
-import { PermissionLevel } from "../core/enums.js";
+﻿import { PermissionLevel } from "../core/enums.js";
 import type { EffectiveGroupConfig, GroupConfigStore } from "./groupConfig.js";
 import type { IdentityMapService } from "./identityMap.js";
 import type { PermissionService } from "./permissions.js";
@@ -383,6 +383,10 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "  /whois 123456789        → 返回对应的 userId",
       "  /whois A1B2C3D4...      → 返回对应的 QQ号",
       "  /whois 654321           → 返回对应的 group_openid",
+      "",
+      "说明：",
+      "  · 查入群申请短码时会给完整详情：群、申请人、理由、状态、申请/处理时间与处理人；",
+      "  · 过期的申请仍可用 /whois 追溯（只是不再出现在 /pending 里）。",
     ],
   },
   {
@@ -406,7 +410,8 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "权限与手输完全一致），翻页用「上一页 / 下一页」按钮；按钮不可用时用 `+页码` 手动翻页。",
       "卡片会列出申请短码（形如 #M7K2Q9）、申请人展示名与入群理由；审批用 /approve、/reject。",
       "所有用户可见输出只显示短码/QQ号/群号，不暴露内部系统 id；/whois #短码 可由超管还原真实 id。",
-      "开通 /notify 后，新申请会自动私聊推送给审核员（带快捷按钮）。",
+      "开通 /notify 后，新申请会自动私聊推送给审核员（带快捷按钮）。",      "申请有有效期（默认 7 天，可由超管用 JOIN_REQUEST_TTL_DAYS 调整）：过期或被官方列表对账判定",
+      "散失的申请会自动标记为 expired，不再出现在待审批里；/audit 与 /whois 仍可追溯。",
     ],
   },
   {

@@ -23,6 +23,8 @@ export const AuditStatus = {
   AutoApproved: "auto_approved",
   AutoRejected: "auto_rejected",
   Executed: "executed",
+  /** 入群申请超过有效期、或被官方列表对账判定散失后自动过期。 */
+  Expired: "expired",
 } as const;
 export type AuditStatus = (typeof AuditStatus)[keyof typeof AuditStatus];
 

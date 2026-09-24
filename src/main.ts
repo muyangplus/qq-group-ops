@@ -1,4 +1,4 @@
-import { NativeWebSocketFactory } from "./adapters/nativeWebSocketFactory.js";
+﻿import { NativeWebSocketFactory } from "./adapters/nativeWebSocketFactory.js";
 import { QQOfficialEventMapper } from "./adapters/qqOfficialEventMapper.js";
 import { QQOfficialGateway } from "./adapters/qqOfficialGateway.js";
 import { isRateLimitedError } from "./adapters/qqOfficial.js";
@@ -60,6 +60,7 @@ async function main(): Promise<void> {
     {
       auditLogRetentionDays: settings.auditLogRetentionDays,
       joinRequestRetentionDays: settings.auditLogRetentionDays,
+      joinRequestTtlDays: settings.joinRequestTtlDays,
     },
     runtime.notifications,
   );

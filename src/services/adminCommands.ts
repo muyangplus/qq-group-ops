@@ -44,7 +44,7 @@ import type { JoinRuleEvaluator } from "./joinRules.js";
 import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
 import type { IdentityMapService } from "./identityMap.js";
 import type { JoinApprovalService } from "./joinApproval.js";
-import type { JoinAuditService, JoinRequest } from "./joinAudit.js";
+import { EXPIRY_ACTOR_ID, type JoinAuditService, type JoinRequest } from "./joinAudit.js";
 import type { JoinRequestSyncService } from "./joinAuditSync.js";
 import { NOTIFY_SCOPE_ALL, type NotificationService } from "./notifications.js";
 import type { PermissionService } from "./permissions.js";
@@ -556,10 +556,43 @@ export class AdminCommandService {
     if (code) {
       const label = `#${code.code}`;
       if (code.kind === "join_request") {
-        return {
-          ok: true,
-          text: `类型：入群申请\n短码：${label}\n真实申请 ID：${code.targetId}`,
-        };
+        const lines = [
+          "类型：入群申请",
+          `短码：${label}`,
+          `真实申请 ID：${code.targetId}`,
+        ];
+        if (this.joinAudit.has(code.targetId)) {
+          const request = this.joinAudit.get(code.targetId);
+          lines.push(
+            `群：${this.displayGroup(request.groupId)}`,
+            `申请人：${this.displayUser(request.userId)}`,
+            `理由：${request.reason || "（未填写）"}`,
+            `状态：${request.status}`,
+            `申请时间：${formatTime(request.createdAt)}`,
+          );
+          if (request.reviewedAt) {
+            lines.push(`处理时间：${formatTime(request.reviewedAt)}`);
+          }
+          if (request.reviewerId) {
+            lines.push(
+              `处理人：${
+                request.reviewerId === EXPIRY_ACTOR_ID
+                  ? "系统（自动过期）"
+                  : request.reviewerId === "bot:auto"
+                    ? "机器人（按入群规则自动处理）"
+                    : this.displayUser(request.reviewerId)
+              }`,
+            );
+          }
+          lines.push(
+            request.status === "pending"
+              ? "本地队列：待审批中"
+              : "本地队列：已不在队列（/pending 不会显示）",
+          );
+        } else {
+          lines.push("本地队列：无记录（可能已被保留策略清理）");
+        }
+        return { ok: true, text: lines.join("\n") };
       }
       if (code.kind === "user") {
         const qq = this.identityMap.getQq(code.targetId);
