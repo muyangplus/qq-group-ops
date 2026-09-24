@@ -1,4 +1,4 @@
-﻿import { NativeWebSocketFactory } from "./adapters/nativeWebSocketFactory.js";
+import { NativeWebSocketFactory } from "./adapters/nativeWebSocketFactory.js";
 import { QQOfficialEventMapper } from "./adapters/qqOfficialEventMapper.js";
 import { QQOfficialGateway } from "./adapters/qqOfficialGateway.js";
 import { isRateLimitedError } from "./adapters/qqOfficial.js";
@@ -45,6 +45,7 @@ async function main(): Promise<void> {
             notificationDeliveries: persistence.notificationDeliveries,
             shortCodes: persistence.shortCodes,
             userProfiles: persistence.userProfiles,
+            classAliases: persistence.classAliases,
             menuDeliveries: persistence.menuDeliveries,
           },
         }

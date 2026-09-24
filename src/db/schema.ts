@@ -112,6 +112,14 @@ CREATE TABLE IF NOT EXISTS short_codes (
   UNIQUE (kind, target_id)
 );
 
+-- 班级/学院/专业别名表：把习惯写法映射到班级库里的规范名（全局生效，人工维护）。
+CREATE TABLE IF NOT EXISTS class_aliases (
+  alias TEXT PRIMARY KEY,
+  target TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('class', 'college', 'major')),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS group_message_modes (
   group_id TEXT PRIMARY KEY,
   mode TEXT NOT NULL CHECK (mode IN ('all', 'at_only')),

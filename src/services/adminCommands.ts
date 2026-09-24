@@ -46,6 +46,10 @@ import type { IdentityMapService } from "./identityMap.js";
 import type { JoinApprovalService } from "./joinApproval.js";
 import { EXPIRY_ACTOR_ID, type JoinAuditService, type JoinRequest } from "./joinAudit.js";
 import type { JoinRequestSyncService } from "./joinAuditSync.js";
+import {
+  CLASS_ALIAS_KIND_LABELS,
+  type ClassAliasService,
+} from "./classAliases.js";
 import { NOTIFY_SCOPE_ALL, type NotificationService } from "./notifications.js";
 import type { PermissionService } from "./permissions.js";
 import { formatParseNotes, parseProfileInput } from "./profileParser.js";
@@ -113,6 +117,8 @@ export interface AdminCommandServiceOptions {
   display?: DisplayNameService | undefined;
   /** 个人资料（班级/学院/姓名/学号）。 */
   userProfiles?: UserProfileService | undefined;
+  /** 班级/学院/专业别名表（全局超管维护）。 */
+  classAliases?: ClassAliasService | undefined;
   /** 活动发布/报名/管理。 */
   activity?: ActivityService | undefined;
   /** 活动卡片渲染与发送。 */
@@ -133,6 +139,7 @@ export class AdminCommandService {
   private readonly identityMap: IdentityMapService | undefined;
   private readonly display: DisplayNameService | undefined;
   private readonly userProfiles: UserProfileService | undefined;
+  private readonly classAliases: ClassAliasService | undefined;
   private readonly activity: ActivityService | undefined;
   private readonly activityCards: ActivityCardService | undefined;
   private readonly notifications: NotificationService | undefined;
@@ -149,6 +156,7 @@ export class AdminCommandService {
     this.identityMap = options.identityMap;
     this.display = options.display;
     this.userProfiles = options.userProfiles;
+    this.classAliases = options.classAliases;
     this.activity = options.activity;
     this.activityCards = options.activityCards;
     this.notifications = options.notifications;
@@ -334,6 +342,19 @@ export class AdminCommandService {
             ],
           ],
           ["详细用法：/help"],
+        );
+      case "alias":
+      case "别名":
+        return this.cardify(
+          "班级别名表",
+          this.aliasCard(userId, parts),
+          [
+            [
+              viewButton("refresh", "刷新列表", "cmd", "run", "/alias"),
+              viewButton("help", "查询帮助", "help", "topic", "alias"),
+            ],
+          ],
+          ["按钮不可用时可直接输入指令。"],
         );
       case "whois":
       case "查询":
@@ -673,6 +694,72 @@ export class AdminCommandService {
       };
     }
     return { ok: false, text: `未找到映射。\n\n${WHOIS_USAGE}` };
+  }
+
+  // -------------------------------------------------------------- /alias
+
+  /** `/alias list|set|del`：班级/学院/专业别名（仅全局超管）。 */
+  private aliasCard(userId: string, parts: readonly string[]): CommandResult {
+    const aliases = this.classAliases;
+    if (!aliases) {
+      return { ok: false, text: "别名表未启用。" };
+    }
+    if (!this.permissions.isSuperAdmin(userId)) {
+      return { ok: false, text: "权限不足：仅全局超级管理员可以维护别名表。" };
+    }
+    const action = normalize(parts[1]);
+    if (!action || action === "list" || action === "列表" || action === "查看") {
+      const entries = aliases.list();
+      if (entries.length === 0) {
+        return { ok: true, text: `别名表为空。\n\n${ALIAS_USAGE}` };
+      }
+      const lines = [`别名表（共 ${entries.length} 条）：`];
+      for (const entry of entries) {
+        lines.push(
+          `  ${entry.alias} → ${entry.target}（${CLASS_ALIAS_KIND_LABELS[entry.kind]}）`,
+        );
+      }
+      lines.push("", ALIAS_USAGE);
+      return { ok: true, text: lines.join("\n") };
+    }
+    if (
+      action === "set" ||
+      action === "设置" ||
+      action === "add" ||
+      action === "添加"
+    ) {
+      const alias = parts[2]?.trim();
+      const target = parts.slice(3).join(" ").trim();
+      if (!alias || !target) {
+        return { ok: false, text: ALIAS_USAGE };
+      }
+      try {
+        const entry = aliases.set(alias, target);
+        return {
+          ok: true,
+          text:
+            `已保存别名：${entry.alias} → ${entry.target}` +
+            `（${CLASS_ALIAS_KIND_LABELS[entry.kind]}）\n\n${ALIAS_USAGE}`,
+        };
+      } catch (error) {
+        return { ok: false, text: `保存失败：${formatError(error)}` };
+      }
+    }
+    if (
+      action === "del" ||
+      action === "delete" ||
+      action === "remove" ||
+      action === "删除"
+    ) {
+      const alias = parts.slice(2).join(" ").trim();
+      if (!alias) {
+        return { ok: false, text: ALIAS_USAGE };
+      }
+      return aliases.remove(alias)
+        ? { ok: true, text: `已删除别名：${alias}\n\n${ALIAS_USAGE}` }
+        : { ok: false, text: `别名「${alias}」不存在。\n\n${ALIAS_USAGE}` };
+    }
+    return { ok: false, text: ALIAS_USAGE };
   }
 
   /** 把 QQ号 / userId / `#短码` 解析成 userId（仅用户类）。 */
@@ -2540,7 +2627,10 @@ export class AdminCommandService {
     if (!profiles) {
       return { ok: false, text: "个人资料服务未启用。" };
     }
-    const parsed = parseProfileInput(raw, { roster: profiles.rosterRef });
+    const parsed = parseProfileInput(raw, {
+      roster: profiles.rosterRef,
+      aliases: this.classAliases,
+    });
     if (parsed.error) {
       return {
         ok: false,
@@ -3505,6 +3595,18 @@ const PROFILE_FIELD_LABELS: Record<UserProfileField, string> = {
   college: "学院",
   year: "年级",
 };
+
+const ALIAS_USAGE = [
+  "用法（仅全局超级管理员）：",
+  "  /alias                            查看别名表",
+  "  /alias set <别名> <规范名>         新增/覆盖（目标必须是班级库里的班级/学院/专业）",
+  "  /alias del <别名>                 删除",
+  "",
+  "示例：",
+  "  /alias set 环工2214 环境类2214",
+  "  /alias set 化生学院 化学与生命科学学院",
+  "说明：目标类型由规范名自动判定；别名会用于 /profile set 智能识别与入群审核的班级匹配。",
+].join("\n");
 
 const WHOIS_USAGE = [
   "用法（仅超级管理员）：",

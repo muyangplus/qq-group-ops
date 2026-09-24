@@ -7,6 +7,7 @@ import {
   PermissionLevel,
 } from "../src/core/enums.js";
 import { utcNow } from "../src/core/models.js";
+import { MemberRoster } from "../src/services/memberRoster.js";
 import { createPersistentRuntime } from "./helpers/persistenceRuntime.js";
 import { TEST_DATABASES } from "./helpers/testDatabases.js";
 
@@ -65,6 +66,21 @@ for (const driver of TEST_DATABASES) {
         first.userProfiles.set("u1", "name", "小明");
         first.userProfiles.set("u1", "studentId", "22123456789");
         first.userProfiles.set("u1", "college", "化学与生命科学学院");
+        // 别名：显式注入班级库（CI 里没有 data/class-index.json），再写一条
+        first.classAliases.setRoster(
+          MemberRoster.fromIndex({
+            classes: ["环境类2214"],
+            majors: ["环境工程"],
+            classInfo: {
+              环境类2214: {
+                major: "环境工程",
+                college: "环境科学与工程学院",
+                year: "2022",
+              },
+            },
+          }),
+        );
+        first.classAliases.set("环工2214", "环境类2214");
         first.activity.createActivity({
           groupId: "g1",
           title: "迎新晚会",
@@ -99,6 +115,11 @@ for (const driver of TEST_DATABASES) {
           studentId: "22123456789",
           college: "化学与生命科学学院",
           year: "2022",
+        });
+        // 别名表也会恢复（全局超管维护，重启不丢）
+        expect(restarted.classAliases.get("环工2214")).toMatchObject({
+          target: "环境类2214",
+          kind: "class",
         });
         const restoredActivity = restarted.activity.findByCode("#ACT777");
         expect(restoredActivity).toMatchObject({

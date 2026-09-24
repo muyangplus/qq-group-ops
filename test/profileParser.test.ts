@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { ClassAliasService } from "../src/services/classAliases.js";
 import { MemberRoster } from "../src/services/memberRoster.js";
 import {
   formatParseNotes,
@@ -142,5 +143,49 @@ describe("parseProfileInput", () => {
     expect(notes).toContain("班级 材化2211");
     expect(notes).toContain("姓名 张三");
     expect(notes).toContain("学号 20220123456");
+  });
+
+  it("expands class/college aliases before matching", () => {
+    const aliases = new ClassAliasService();
+    aliases.setRoster(roster);
+    aliases.set("环工2214", "环工2414");
+    aliases.set("化生学院", "化学与生命科学学院");
+
+    const byAlias = parseProfileInput("环工2214 李四 20220123456", {
+      roster,
+      aliases,
+    });
+    expect(byAlias.error).toBeUndefined();
+    expect(byAlias.fields).toMatchObject({
+      className: "环工2414",
+      name: "李四",
+      studentId: "20220123456",
+    });
+
+    const byCollegeAlias = parseProfileInput("化生学院 王五", {
+      roster,
+      aliases,
+    });
+    expect(byCollegeAlias.error).toBeUndefined();
+    expect(byCollegeAlias.fields).toMatchObject({
+      college: "化学与生命科学学院",
+      name: "王五",
+    });
+
+    // 别名没命中时行为不变
+    const noAlias = parseProfileInput("材化2211 张三", { roster, aliases });
+    expect(noAlias.fields.className).toBe("材化2211");
+  });
+
+  it("does not expand major aliases for profile fields", () => {
+    const aliases = new ClassAliasService();
+    aliases.setRoster(roster);
+    aliases.set("材料化学系", "材料化学");
+
+    const result = parseProfileInput("材料化学系 张三", { roster, aliases });
+    // 专业别名对个人资料没有对应字段：宁可报错也不猜着写入
+    expect(result.fields.className).toBeUndefined();
+    expect(result.fields.college).toBeUndefined();
+    expect(result.error).toBeDefined();
   });
 });

@@ -30,6 +30,7 @@ import type {
 import type { PermissionRepository } from "./db/permissionRepository.js";
 import type { ShortCodeRepository } from "./db/shortCodeRepository.js";
 import type { UserProfileRepository } from "./db/userProfileRepository.js";
+import type { ClassAliasRepository } from "./db/classAliasRepository.js";
 import { WriteQueue } from "./db/writeQueue.js";
 import { pageArg, pageTargets } from "./services/callbackData.js";
 import {
@@ -64,6 +65,7 @@ import { RichMessageSender } from "./services/richMessages.js";
 import { ShortCodeService } from "./services/shortCodes.js";
 import { TestMenuService } from "./services/testMenu.js";
 import { UserProfileService } from "./services/userProfiles.js";
+import { ClassAliasService } from "./services/classAliases.js";
 
 export interface Runtime {
   mode: "official" | "fake";
@@ -77,6 +79,7 @@ export interface Runtime {
   activity: ActivityService;
   activityCards: ActivityCardService;
   userProfiles: UserProfileService;
+  classAliases: ClassAliasService;
   exportService: ExportService;
   notifications: NotificationService;
   shortCodes: ShortCodeService;
@@ -111,6 +114,7 @@ export interface RuntimeRepositories {
   notificationDeliveries?: NotificationDeliveryRepository;
   shortCodes?: ShortCodeRepository;
   userProfiles?: UserProfileRepository;
+  classAliases?: ClassAliasRepository;
   menuDeliveries?: MenuDeliveryRepository;
 }
 
@@ -160,6 +164,10 @@ export function createRuntime(
   const activityCards = new ActivityCardService(richMessages, display);
   const testMenu = new TestMenuService({ permissions });
   const userProfiles = new UserProfileService(repositories.userProfiles, writeQueue);
+  const classAliases = new ClassAliasService(
+    repositories.classAliases,
+    writeQueue,
+  );
   const exportService = new ExportService(permissions, auditLog);
   const joinRules = new JoinRuleEvaluator();
   const messageGuard = new MessageGuardService(
@@ -198,6 +206,7 @@ export function createRuntime(
     identityMap,
     display,
     userProfiles,
+    classAliases,
     activity,
     activityCards,
     notifications,
@@ -440,11 +449,14 @@ export function createRuntime(
     await notifications.load();
     await shortCodes.load();
     await userProfiles.load();
+    await classAliases.load();
     await menuState.load();
     // 班级库缺失时不抛错：班级类规则会自动退化为人工审核
     const roster = await MemberRoster.load(settings.classIndexFile);
     joinRules.setRoster(roster);
     userProfiles.setRoster(roster);
+    classAliases.setRoster(roster);
+    joinRules.setAliases(classAliases);
     await writeQueue.flush();
   };
   return {
@@ -459,6 +471,7 @@ export function createRuntime(
     activity,
     activityCards,
     userProfiles,
+    classAliases,
     exportService,
     notifications,
     shortCodes,

@@ -57,6 +57,10 @@ import {
   SqlUserProfileRepository,
   type UserProfileRepository,
 } from "./db/userProfileRepository.js";
+import {
+  SqlClassAliasRepository,
+  type ClassAliasRepository,
+} from "./db/classAliasRepository.js";
 import { openSqliteDatabase } from "./db/sqliteDatabase.js";
 import { SqliteQueryable } from "./db/sqliteQueryable.js";
 
@@ -79,6 +83,7 @@ export interface Persistence {
   notificationDeliveries: NotificationDeliveryRepository;
   shortCodes: ShortCodeRepository;
   userProfiles: UserProfileRepository;
+  classAliases: ClassAliasRepository;
   activityDetails: ActivityDetailsRepository;
   menuDeliveries: MenuDeliveryRepository;
   close(): Promise<void>;
@@ -177,6 +182,7 @@ interface RepositorySet {
   notificationDeliveries: NotificationDeliveryRepository;
   shortCodes: ShortCodeRepository;
   userProfiles: UserProfileRepository;
+  classAliases: ClassAliasRepository;
   activityDetails: ActivityDetailsRepository;
   menuDeliveries: MenuDeliveryRepository;
 }
@@ -196,6 +202,7 @@ function createRepositories(db: Queryable): RepositorySet {
     notificationDeliveries: new SqlNotificationDeliveryRepository(db),
     shortCodes: new SqlShortCodeRepository(db),
     userProfiles: new SqlUserProfileRepository(db),
+    classAliases: new SqlClassAliasRepository(db),
     menuDeliveries: new SqlMenuDeliveryRepository(db),
   };
 }

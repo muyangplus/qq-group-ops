@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { ClassAliasService } from "../src/services/classAliases.js";
 import { JoinRuleEvaluator } from "../src/services/joinRules.js";
 import { MemberRoster } from "../src/services/memberRoster.js";
 
@@ -140,5 +141,34 @@ describe("JoinRuleEvaluator", () => {
       opinionEnabled: false,
     });
     expect(result.opinion).toBe("");
+  });
+
+  it("accepts a class alias for the class match", () => {
+    const aliases = new ClassAliasService();
+    aliases.setRoster(roster);
+    aliases.set("材化1班", "材化2211");
+    const withAliases = new JoinRuleEvaluator(roster);
+    withAliases.setAliases(aliases);
+
+    const hit = withAliases.evaluate("材化1班 张三", {
+      mode: "approve_on_match",
+      requireClass: true,
+      requireName: true,
+      opinionEnabled: true,
+    });
+    expect(hit.matched).toBe(true);
+    expect(hit.className).toBe("材化2211");
+    expect(hit.name).toBe("张三");
+    expect(hit.action).toBe("approve");
+
+    // 不含别名的回答行为不变
+    const miss = withAliases.evaluate("材化1班", {
+      mode: "approve_on_match",
+      requireClass: true,
+      requireName: true,
+      opinionEnabled: true,
+    });
+    expect(miss.name).toBeUndefined();
+    expect(miss.action).toBe("manual");
   });
 });

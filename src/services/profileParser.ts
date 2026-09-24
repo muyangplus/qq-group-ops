@@ -1,3 +1,4 @@
+import type { ClassAliasService } from "./classAliases.js";
 import type { MemberRoster } from "./memberRoster.js";
 
 /**
@@ -38,6 +39,12 @@ export interface ProfileParseResult {
   error?: string;
 }
 
+export interface ProfileParseOptions {
+  roster?: MemberRoster | undefined;
+  /** 别名表：班级/学院别名会先展开成规范名再识别（专业别名不参与）。 */
+  aliases?: ClassAliasService | undefined;
+}
+
 const FIELD_KEYS: Record<string, ProfileFieldKey> = {
   name: "name",
   姓名: "name",
@@ -68,13 +75,18 @@ export function formatParseNotes(result: ProfileParseResult): string {
 
 export function parseProfileInput(
   raw: string,
-  options: { roster?: MemberRoster | undefined } = {},
+  options: ProfileParseOptions = {},
 ): ProfileParseResult {
   const fields: Partial<Record<ProfileFieldKey, string>> = {};
   const notes: string[] = [];
   let working = raw.trim();
   if (working.length === 0) {
     return { fields, notes, error: "没有识别到任何内容。" };
+  }
+
+  // 0) 别名先展开成规范名（只展开班级/学院，专业别名对个人资料无意义）
+  if (options.aliases) {
+    working = options.aliases.expand(working, ["class", "college"]);
   }
 
   // 1) 显式 `字段=值`（优先级最高，可用于消歧）

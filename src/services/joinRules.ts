@@ -1,4 +1,5 @@
 import { JoinDecisionMode } from "../core/enums.js";
+import type { ClassAliasService } from "./classAliases.js";
 import type { EffectiveGroupConfig } from "./groupConfig.js";
 import type { MemberRoster } from "./memberRoster.js";
 
@@ -41,6 +42,7 @@ export interface JoinEvaluation {
  */
 export class JoinRuleEvaluator {
   private roster: MemberRoster | undefined;
+  private aliases: ClassAliasService | undefined;
 
   public constructor(roster?: MemberRoster) {
     this.roster = roster;
@@ -51,14 +53,22 @@ export class JoinRuleEvaluator {
     this.roster = roster;
   }
 
+  /** 别名表同样是运行时可后置注入；回答里写别名也能命中班级。 */
+  public setAliases(aliases: ClassAliasService | undefined): void {
+    this.aliases = aliases;
+  }
+
   public get rosterAvailable(): boolean {
     return this.roster !== undefined;
   }
 
   public evaluate(answer: string, settings: JoinRuleSettings): JoinEvaluation {
     const roster = this.roster;
-    const classMatch = roster?.findClassIn(answer);
-    const name = roster?.extractName(answer, classMatch?.className);
+    // 别名先展开成规范名，再做班级/姓名匹配（自定义正则仍匹配原始回答）
+    const expanded =
+      this.aliases?.expand(answer, ["class", "college"]) ?? answer;
+    const classMatch = roster?.findClassIn(expanded);
+    const name = roster?.extractName(expanded, classMatch?.className);
 
     const requiresClass = settings.requireClass;
     const requiresName = settings.requireName;

@@ -209,7 +209,8 @@ export class MemberRoster {
   }
 }
 
-function compactText(text: string): string {
+/** 去掉所有空白后的文本：班级/学院匹配统一忽略空格差异。 */
+export function compactText(text: string): string {
   return text.replace(/\s+/gu, "");
 }
 

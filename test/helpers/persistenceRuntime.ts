@@ -13,6 +13,7 @@ import {
 } from "../../src/db/notificationRepository.js";
 import { SqlPermissionRepository } from "../../src/db/permissionRepository.js";
 import { SqlShortCodeRepository } from "../../src/db/shortCodeRepository.js";
+import { SqlClassAliasRepository } from "../../src/db/classAliasRepository.js";
 import { SqlUserProfileRepository } from "../../src/db/userProfileRepository.js";
 import type { Queryable } from "../../src/db/queryable.js";
 import { createRuntime, type Runtime } from "../../src/runtime.js";
@@ -39,6 +40,7 @@ export function createPersistentRuntime(
         new SqlNotificationDeliveryRepository(queryable),
       shortCodes: new SqlShortCodeRepository(queryable),
       userProfiles: new SqlUserProfileRepository(queryable),
+      classAliases: new SqlClassAliasRepository(queryable),
     },
   });
 }

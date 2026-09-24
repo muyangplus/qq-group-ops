@@ -4,6 +4,7 @@ import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { JoinRequestStatus } from "../src/core/enums.js";
 import { AdminCommandService } from "../src/services/adminCommands.js";
 import { AuditLogStore } from "../src/services/audit.js";
+import { ClassAliasService } from "../src/services/classAliases.js";
 import { DisplayNameService } from "../src/services/displayNames.js";
 import { GroupConfigStore } from "../src/services/groupConfig.js";
 import { IdentityMapService } from "../src/services/identityMap.js";
@@ -50,31 +51,33 @@ describe("AdminCommandService", async () => {
     });
   }
 
-  /** 同时装配短码展示与个人资料的替身。 */
+  /** 同时装配短码展示、个人资料与班级别名的替身。 */
   function withProfiles(): {
     svc: AdminCommandService;
     profiles: UserProfileService;
+    aliases: ClassAliasService;
   } {
     shortCodes = new ShortCodeService();
-    const profiles = new UserProfileService();
-    profiles.setRoster(
-      MemberRoster.fromIndex({
-        classes: ["材化2211", "环工2414"],
-        majors: ["材料化学", "环境工程"],
-        classInfo: {
-          材化2211: {
-            major: "材料化学",
-            college: "化学与生命科学学院",
-            year: "2022",
-          },
-          环工2414: {
-            major: "环境工程",
-            college: "环境科学与工程学院",
-            year: "2024",
-          },
+    const roster = MemberRoster.fromIndex({
+      classes: ["材化2211", "环工2414"],
+      majors: ["材料化学", "环境工程"],
+      classInfo: {
+        材化2211: {
+          major: "材料化学",
+          college: "化学与生命科学学院",
+          year: "2022",
         },
-      }),
-    );
+        环工2414: {
+          major: "环境工程",
+          college: "环境科学与工程学院",
+          year: "2024",
+        },
+      },
+    });
+    const profiles = new UserProfileService();
+    profiles.setRoster(roster);
+    const aliases = new ClassAliasService();
+    aliases.setRoster(roster);
     const svc = new AdminCommandService({
       permissions,
       joinAudit,
@@ -85,9 +88,10 @@ describe("AdminCommandService", async () => {
       identityMap,
       notifications,
       userProfiles: profiles,
+      classAliases: aliases,
       display: new DisplayNameService(identityMap, shortCodes),
     });
-    return { svc, profiles };
+    return { svc, profiles, aliases };
   }
 
   function scopedShortCodeLabel(
@@ -1780,5 +1784,64 @@ describe("AdminCommandService", async () => {
     const denied = await svc.handle("g1", "admin", "/whois profile 10001");
     expect(denied.ok).toBe(false);
     expect(denied.text).toContain("权限不足");
+  });
+
+  it("manages the class alias table via /alias (super admin only)", async () => {
+    const { svc, profiles, aliases } = withProfiles();
+
+    const empty = await svc.handle("g1", "root", "/alias");
+    expect(empty.ok).toBe(true);
+    expect(empty.text).toContain("别名表为空");
+    // 卡片标准：所有指令输出都是卡片，固定动作走回调
+    const buttons = (empty.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(buttons.find((button) => button.id === "refresh")?.action).toMatchObject(
+      { type: 1, data: "cb:cmd:run:/alias" },
+    );
+
+    const saved = await svc.handle("g1", "root", "/alias set 环工2214 环工2414");
+    expect(saved.ok).toBe(true);
+    expect(saved.text).toContain("已保存别名");
+    expect(aliases.get("环工2214")).toMatchObject({
+      target: "环工2414",
+      kind: "class",
+    });
+
+    const bad = await svc.handle("g1", "root", "/alias set 环工2214 不存在的班级");
+    expect(bad.ok).toBe(false);
+    expect(bad.text).toContain("不在班级库");
+
+    // 学生写别名也能填资料（别名先展开成规范名）
+    const profile = await svc.handle(
+      "g1",
+      "member",
+      "/profile set 环工2214 张三 22123456789",
+    );
+    expect(profile.ok).toBe(true);
+    expect(profiles.get("member")).toMatchObject({
+      className: "环工2414",
+      college: "环境科学与工程学院",
+    });
+
+    await svc.handle("g1", "root", "/alias set 化生学院 化学与生命科学学院");
+    const list = await svc.handle("g1", "root", "/alias list");
+    expect(list.text).toContain("环工2214 → 环工2414（班级）");
+    expect(list.text).toContain("化生学院 → 化学与生命科学学院（学院）");
+
+    const removed = await svc.handle("g1", "root", "/alias del 环工2214");
+    expect(removed.ok).toBe(true);
+    expect(aliases.get("环工2214")).toBeUndefined();
+    const again = await svc.handle("g1", "root", "/alias del 环工2214");
+    expect(again.ok).toBe(false);
+    expect(again.text).toContain("不存在");
+
+    const denied = await svc.handle("g1", "admin", "/alias");
+    expect(denied.ok).toBe(false);
+    expect(denied.text).toContain("权限不足");
+
+    const usage = await svc.handle("g1", "root", "/alias set 只有一个参数");
+    expect(usage.ok).toBe(false);
+    expect(usage.text).toContain("用法");
   });
 });

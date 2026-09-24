@@ -1,4 +1,4 @@
-﻿import { PermissionLevel } from "../core/enums.js";
+import { PermissionLevel } from "../core/enums.js";
 import { encodeCallback } from "./callbackData.js";
 import { renderCard, escapeCardText, type CardButton, type CardSpec } from "./cardTemplate.js";
 import type { PermissionService } from "./permissions.js";
@@ -393,18 +393,19 @@ function superCard(context: MenuContext): CardSpec {
       "授权：/perm grant super|gsuper|admin|mod ...",
       "全局规则：/rules set all <字段> <值>",
       "全局推送：/notify all on|off",
+      "班级别名：/alias set <别名> <规范名>",
     ],
     rows: [
       [
         cmdButton("perm", "权限", "/perm list"),
         cmdButton("globalRules", "全局规则", "/rules all"),
-        cmdButton("notify", "通知订阅", "/notify"),
+        cmdButton("alias", "别名表", "/alias"),
       ],
       [
+        cmdButton("notify", "通知订阅", "/notify"),
         cmdButton("testmenu", "翻页测试", "/testmenu"),
-        cmdButton("pending", "待审批", "/pending"),
-        backButton(),
       ],
+      [cmdButton("pending", "待审批", "/pending"), backButton()],
     ],
     buttonHint: "常用入口：",
   };

@@ -13,5 +13,8 @@ describe("migrate", () => {
     expect(db.calls[0]?.text).toContain(
       "CREATE TABLE IF NOT EXISTS identity_bindings",
     );
+    expect(db.calls[0]?.text).toContain(
+      "CREATE TABLE IF NOT EXISTS class_aliases",
+    );
   });
 });
