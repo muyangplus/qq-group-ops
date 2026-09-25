@@ -339,6 +339,22 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 系统 / 管理 / 超
 - 当前行为：**每次翻页发一条新卡片**，旧卡片留在聊天记录里（官方没有编辑接口）；
   若以后要"看起来像原地翻页"，可用撤回旧卡片近似实现。
 
+### @ 渲染自检（`/testat`）
+
+仅全局超管、**在群里**执行，用于实测「怎样发才能真正 @ 到人」：
+
+```text
+/testat         发 3 条：纯文本 @、Markdown 首行 @、Markdown 正文中间 @
+/testat all     额外发一条纯文本 @everyone（真的 @ 全群，谨慎）
+```
+
+- 官方内嵌格式（`<@!openid>` 与 `@everyone`）**只在 `content` 生效**；Ark / Embed 明确不生效；
+- Markdown 卡片是 `msg_type=2`，payload 里只有 `markdown.content`、**没有 `content`**，
+  所以卡片里的 @ 到底有没有效果只能真机验证（第 2、3 条就是验证这个）；
+- `@everyone` 需要机器人拥有发送 @所有人 消息的权限，失败时汇总卡直接给出错误原因；
+- 纯文本通道由 `RichMessageSender.sendPlainToGroup()/sendPlainToUser()` 提供（不带 `markdown` 选项）；
+- 测完按汇总卡回复「哪几条真的 @ 到了」，再决定是否把所有 @ 统一改成「纯文本 @ [+ 卡片]」两条消息。
+
 ### 卡片标准与分页
 
 所有指令输出都是菜单式卡片（规范见 [CARD-STANDARD.md](CARD-STANDARD.md)）：
