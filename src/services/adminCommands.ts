@@ -20,17 +20,19 @@ import {
   pendingCard,
   syncCard,
 } from "./commands/reviewCommands.js";
+import { handleBind } from "./commands/bindCommands.js";
+import {
+  handleMyPermission,
+  handlePermissionConfig,
+  handleSync,
+} from "./commands/permCommands.js";
 import {
   mainMenu,
   menuContext,
   menuMessage,
   unknownCommandResult,
 } from "./commands/menuCommands.js";
-import {
-  resolveRequestId,
-  resolveTargetGroupId,
-  resolveUserId,
-} from "./commands/targetResolvers.js";
+import { resolveTargetGroupId } from "./commands/targetResolvers.js";
 import {
   handleTest,
   handleTestAt,
@@ -426,17 +428,6 @@ export class AdminCommandService {
     return cardify(title, result, rows, footer, buttonHint);
   }
 
-  /** 定制卡包装（异步结果版：handler 是 async 时用）。 */
-  private async cardifyAsync(
-    title: string,
-    result: Promise<CommandResult>,
-    rows: readonly (readonly CardButton[])[],
-    footer?: readonly string[],
-    buttonHint?: string,
-  ): Promise<CommandResult> {
-    return cardifyAsync(title, result, rows, footer, buttonHint);
-  }
-
   /** 领域子模块共享依赖（R1 拆分）：门面只负责组装，业务在 commands/* 里。 */
   private context(): AdminCommandContext {
     const helpers: CommandHelpers = {
@@ -453,6 +444,7 @@ export class AdminCommandService {
       displayUser: (officialId) => this.displayUser(officialId),
       displayGroup: (groupId) => this.displayGroup(groupId),
       displayRequest: (requestId) => this.displayRequest(requestId),
+      displayUsers: (ids) => this.displayUsers(ids),
       groupLabel: (groupId) => this.groupLabel(groupId),
       resolveTargetGroupId: (groupId, raw) =>
         this.resolveTargetGroupId(groupId, raw),
@@ -495,7 +487,7 @@ export class AdminCommandService {
       case "我的权限":
         return this.cardify(
           "我的权限",
-          this.handleMyPermission(groupId, userId),
+          handleMyPermission(this.context(), groupId, userId),
           [
             [
               viewButton("profile", "我的资料", "cmd", "run", "/profile"),
@@ -507,9 +499,9 @@ export class AdminCommandService {
         );
       case "bind":
       case "绑定":
-        return this.cardifyAsync(
+        return cardifyAsync(
           "绑定",
-          this.handleBind(groupId, userId, parts),
+          handleBind(this.context(), groupId, userId, parts),
           [
             [
               viewButton("myperm", "我的权限", "cmd", "run", "/myperm"),
@@ -538,7 +530,7 @@ export class AdminCommandService {
       case "权限":
         return this.cardify(
           "权限配置",
-          this.handlePermissionConfig(groupId, userId, parts),
+          handlePermissionConfig(this.context(), groupId, userId, parts),
           [
             [
               viewButton("help", "权限帮助", "help", "topic", "perm"),
@@ -552,7 +544,7 @@ export class AdminCommandService {
         return handlePending(this.context(), groupId, userId, parts);
       case "sync":
       case "同步":
-        return this.handleSync(groupId, userId, parts);
+        return handleSync(this.context(), groupId, userId, parts);
       case "notify":
       case "push":
       case "推送":
@@ -602,147 +594,6 @@ export class AdminCommandService {
     }
   }
 
-  private async handleBind(
-    groupId: string | undefined,
-    userId: string,
-    parts: readonly string[],
-  ): Promise<CommandResult> {
-    const target = normalize(parts[1]);
-    if (!target) {
-      return {
-        ok: false,
-        text:
-          "用法：\n" +
-          "/bind qq <QQ号>\n" +
-          "/bind group <群号>\n" +
-          "/bind user <userId> <QQ号>（超管）\n" +
-          "/bind groupid <group_openid> <群号>（超管）",
-      };
-    }
-
-    if (target === "qq") {
-      const qq = parts[2]?.trim();
-      if (!qq) {
-        return { ok: false, text: "用法：/bind qq <QQ号>" };
-      }
-      try {
-        await this.identityMap?.bindUser(userId, qq);
-      } catch (error) {
-        log.error("bind user qq failed", {
-          userId,
-          error: formatError(error),
-        });
-        return { ok: false, text: bindingFailureText() };
-      }
-      log.info("bound user qq", { userId, qq });
-      return {
-        ok: true,
-        text: `已绑定：QQ ${qq}`,
-      };
-    }
-
-    if (target === "group") {
-      const groupNumber = parts[2]?.trim();
-      if (!groupId || !groupNumber) {
-        return {
-          ok: false,
-          text: "该指令需要在群内使用。用法：/bind group <群号>",
-        };
-      }
-      if (
-        !this.permissions.canApproveJoin(userId, groupId) &&
-        !this.permissions.isSuperAdmin(userId)
-      ) {
-        return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
-      }
-      try {
-        await this.identityMap?.bindGroup(groupId, groupNumber);
-      } catch (error) {
-        log.error("bind group number failed", {
-          groupId,
-          userId,
-          error: formatError(error),
-        });
-        return { ok: false, text: bindingFailureText() };
-      }
-      log.info("bound group number", { groupId, groupNumber, userId });
-      return {
-        ok: true,
-        text: `已绑定：群号 ${groupNumber}`,
-      };
-    }
-
-    if (target === "user") {
-      if (!this.permissions.isSuperAdmin(userId)) {
-        return { ok: false, text: "权限不足：仅超级管理员可以绑定任意用户。" };
-      }
-      const officialId = parts[2]?.trim();
-      const qq = parts[3]?.trim();
-      if (!officialId || !qq) {
-        return { ok: false, text: "用法：/bind user <userId> <QQ号>" };
-      }
-      try {
-        await this.identityMap?.bindUser(officialId, qq);
-      } catch (error) {
-        log.error("bind user failed", {
-          officialId,
-          operator: userId,
-          error: formatError(error),
-        });
-        return { ok: false, text: bindingFailureText() };
-      }
-      log.info("bound user qq", { officialId, qq, operator: userId });
-      return {
-        ok: true,
-        text: `已绑定：QQ ${qq}`,
-      };
-    }
-
-    if (target === "groupid") {
-      if (!this.permissions.isSuperAdmin(userId)) {
-        return { ok: false, text: "权限不足：仅超级管理员可以绑定任意群。" };
-      }
-      const officialId = parts[2]?.trim();
-      const groupNumber = parts[3]?.trim();
-      if (!officialId || !groupNumber) {
-        return { ok: false, text: "用法：/bind groupid <group_openid> <群号>" };
-      }
-      try {
-        await this.identityMap?.bindGroup(officialId, groupNumber);
-      } catch (error) {
-        log.error("bind group failed", {
-          officialId,
-          operator: userId,
-          error: formatError(error),
-        });
-        return { ok: false, text: bindingFailureText() };
-      }
-      log.info("bound group number", {
-        officialId,
-        groupNumber,
-        operator: userId,
-      });
-      return {
-        ok: true,
-        text: `已绑定：群号 ${groupNumber}`,
-      };
-    }
-
-    return {
-      ok: false,
-      text:
-        "未知绑定类型。用法：\n" +
-        "/bind qq <QQ号>\n" +
-        "/bind group <群号>\n" +
-        "/bind user <userId> <QQ号>（超管）\n" +
-        "/bind groupid <group_openid> <群号>（超管）",
-    };
-  }
-
-  private resolveUserId(input: string | undefined): string | undefined {
-    return resolveUserId(this.context(), input);
-  }
-
   private resolveTargetGroupId(
     groupId: string | undefined,
     input: string | undefined,
@@ -751,10 +602,6 @@ export class AdminCommandService {
   }
 
   /** 申请参数：`#短码`（推荐）或完整 join_request_id。 */
-  private resolveRequestId(input: string | undefined): string | undefined {
-    return resolveRequestId(this.context(), input);
-  }
-
   /**
    * `/help` 列出有权限执行的指令；`/help <主题>` 展示该指令的详细用法。
    *
@@ -2075,246 +1922,6 @@ export class AdminCommandService {
 
   private menuContext(groupId: string | undefined, userId: string): MenuContext {
     return menuContext(this.context(), groupId, userId);
-  }
-
-  private handleMyPermission(
-    groupId: string | undefined,
-    userId: string,
-  ): CommandResult {
-    const level = this.permissions.levelFor(userId, groupId);
-    return {
-      ok: true,
-      text: [
-        `你的权限等级：${level}`,
-        `全局超级管理员：${this.permissions.isSuperAdmin(userId)}`,
-        groupId
-          ? `本群超级管理员：${this.permissions.isGroupSuperAdmin(userId, groupId)}`
-          : undefined,
-        groupId ? `当前群：${this.displayGroup(groupId)}` : "当前会话：私聊",
-        `审核入群：${this.permissions.canApproveJoin(userId, groupId ?? "")}`,
-        `管理规则：${this.permissions.canManageRules(userId, groupId ?? "")}`,
-        `内容审核：${this.permissions.canReviewContent(userId, groupId ?? "")}`,
-        `导出数据：${this.permissions.canExportData(userId, groupId ?? "")}`,
-        `配置权限：${this.permissions.isSuperAdmin(userId)}`,
-      ]
-        .filter((line): line is string => line !== undefined)
-        .join("\n"),
-    };
-  }
-
-  private handlePermissionConfig(
-    groupId: string | undefined,
-    userId: string,
-    parts: readonly string[],
-  ): CommandResult {
-    if (!this.permissions.isSuperAdmin(userId)) {
-      log.warn("permission config denied", { groupId, userId });
-      return { ok: false, text: "权限不足：仅超级管理员可以配置权限。" };
-    }
-
-    const action = normalize(parts[1]);
-    if (!action || action === "list" || action === "列表") {
-      const targetGroupId = this.resolveTargetGroupId(groupId, parts[2]);
-      return {
-        ok: true,
-        text: this.formatPermissionList(targetGroupId),
-      };
-    }
-
-    const role = normalize(parts[2]);
-    const isSuperRole = role === "super" || role === "超管";
-    const isGroupSuperRole = GROUP_SUPER_ROLES.has(role);
-    let targetGroupId: string | undefined;
-    let targetUserId: string | undefined;
-
-    if (isSuperRole) {
-      targetUserId = this.resolveUserId(parts[3]);
-    } else if (isGroupSuperRole) {
-      targetGroupId = groupId ?? this.resolveTargetGroupId(undefined, parts[3]);
-      targetUserId = this.resolveUserId(groupId ? parts[3] : parts[4]);
-    } else {
-      targetGroupId = this.resolveTargetGroupId(groupId, parts[3]);
-      targetUserId = this.resolveUserId(groupId ? parts[3] : parts[4]);
-    }
-
-    if (!role) {
-      return { ok: false, text: PERM_USAGE };
-    }
-
-    if (!isSuperRole && !targetGroupId) {
-      return {
-        ok: false,
-        text: "私信中配置群角色需要提供群号或 #群短码。",
-      };
-    }
-
-    if (!targetUserId) {
-      return { ok: false, text: PERM_USAGE };
-    }
-
-    try {
-      if (action === "grant" || action === "授予") {
-        this.grantRole(targetGroupId, role, targetUserId);
-      } else if (action === "revoke" || action === "撤销") {
-        this.revokeRole(targetGroupId, role, targetUserId);
-      } else {
-        return { ok: false, text: PERM_USAGE };
-      }
-    } catch (error) {
-      log.warn("permission config failed", {
-        groupId,
-        userId,
-        action,
-        role,
-        targetUserId,
-        error: String(error),
-      });
-      return { ok: false, text: `权限配置失败：${String(error)}` };
-    }
-
-    log.info("permission config updated", {
-      groupId: targetGroupId,
-      userId,
-      action,
-      role,
-      targetUserId,
-    });
-    return {
-      ok: true,
-      text: `已更新权限：${role} ${this.displayUser(targetUserId)}\n\n${this.formatPermissionList(targetGroupId)}`,
-    };
-  }
-
-  private formatPermissionList(groupId?: string): string {
-    const lines = [`全局超级管理员：${this.displayUsers(this.permissions.listSuperAdmins())}`];
-    if (groupId) {
-      const label = this.displayGroup(groupId);
-      lines.push(
-        `本群超级管理员（${label}）：${this.displayUsers(this.permissions.listGroupSuperAdmins(groupId))}`,
-      );
-      lines.push(
-        `群管理员（${label}）：${this.displayUsers(this.permissions.listGroupAdmins(groupId))}`,
-      );
-      lines.push(
-        `审核员（${label}）：${this.displayUsers(this.permissions.listModerators(groupId))}`,
-      );
-    } else {
-      lines.push("本群超级管理员：私信中请指定 group_openid");
-      lines.push("群管理员：私信中请指定 group_openid");
-      lines.push("审核员：私信中请指定 group_openid");
-    }
-    return lines.join("\n");
-  }
-
-  private grantRole(
-    groupId: string | undefined,
-    role: string,
-    targetUserId: string,
-  ): void {
-    if (role === "super" || role === "超管") {
-      this.permissions.grantSuperAdmin(targetUserId);
-      return;
-    }
-    if (!groupId) {
-      throw new Error("group_openid is required");
-    }
-    if (GROUP_SUPER_ROLES.has(role)) {
-      this.permissions.grantGroupSuperAdmin(groupId, targetUserId);
-      return;
-    }
-    if (role === "admin" || role === "管理员") {
-      this.permissions.grantGroupAdmin(groupId, targetUserId);
-      return;
-    }
-    if (role === "mod" || role === "审核员") {
-      this.permissions.grantModerator(groupId, targetUserId);
-      return;
-    }
-    throw new Error(`未知角色：${role}`);
-  }
-
-  private revokeRole(
-    groupId: string | undefined,
-    role: string,
-    targetUserId: string,
-  ): void {
-    if (role === "super" || role === "超管") {
-      this.permissions.revokeSuperAdmin(targetUserId);
-      return;
-    }
-    if (!groupId) {
-      throw new Error("group_openid is required");
-    }
-    if (GROUP_SUPER_ROLES.has(role)) {
-      this.permissions.revokeGroupSuperAdmin(groupId, targetUserId);
-      return;
-    }
-    if (role === "admin" || role === "管理员") {
-      this.permissions.revokeGroupAdmin(groupId, targetUserId);
-      return;
-    }
-    if (role === "mod" || role === "审核员") {
-      this.permissions.revokeModerator(groupId, targetUserId);
-      return;
-    }
-    throw new Error(`未知角色：${role}`);
-  }
-
-  private async handleSync(
-    groupId: string | undefined,
-    userId: string,
-    parts: readonly string[],
-  ): Promise<CommandResult> {
-    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
-    if (!targetGroupId) {
-      const card = renderCard({
-        title: "同步官方申请",
-        lines: [
-          "该指令需要在群内使用，或在私信中提供群号 / #群短码。",
-          "用法：/sync [#群短码|群号]",
-        ],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    return this.syncCard(targetGroupId, userId, groupId);
-  }
-
-  /**
-   * `/notify`：审核员自助配置入群申请推送。
-   *
-   * 订阅范围只有两种：`__all__`（我担任群管理员的全部群）与单个群；
-   * 推送时还会再按「当前群是否有审批权限」过滤一次，越权订阅不会泄漏申请内容。
-   */
-  private renderNotifyStatus(
-    userId: string,
-    groupId: string | undefined,
-  ): string {
-    const scopes = this.notifications?.listScopes(userId) ?? [];
-    const lines = [
-      "入群申请推送：",
-      `  全部群（你担任群管理员的群）：${
-        scopes.includes(NOTIFY_SCOPE_ALL) ? "已开启" : "未开启"
-      }`,
-    ];
-    for (const scope of scopes.filter((item) => item !== NOTIFY_SCOPE_ALL)) {
-      lines.push(`  群 ${this.groupLabel(scope)}：已开启`);
-    }
-    const reviewable = this.permissions.listReviewableGroups(userId);
-    lines.push(
-      "",
-      reviewable.length > 0
-        ? `可审批的群：${reviewable.map((id) => this.groupLabel(id)).join("、")}`
-        : "可审批的群：无（入群审批需要群管理员或以上权限）",
-    );
-    if (this.permissions.isSuperAdmin(userId)) {
-      lines.push("说明：你是全局超级管理员，可审批所有群。");
-    }
-    if (groupId) {
-      lines.push(`当前群：${this.groupLabel(groupId)}`);
-    }
-    lines.push("", NOTIFY_USAGE);
-    return lines.join("\n");
   }
 
   private groupLabel(groupId: string): string {

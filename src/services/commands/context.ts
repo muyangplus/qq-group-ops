@@ -50,6 +50,8 @@ export interface CommandHelpers {
   displayUser(officialId: string): string;
   displayGroup(groupId: string): string;
   displayRequest(requestId: string): string;
+  /** 多个用户的展示名列表（用 `、` 连接，用于权限列表等）。 */
+  displayUsers(ids: readonly string[]): string;
   /** 展示用群标签（与 displayGroup 同源，便于个别卡片使用）。 */
   groupLabel(groupId: string): string;
   /** 解析目标群：群号 / #群短码 / 内部 id。 */
