@@ -1,6 +1,8 @@
 import { loadSettings } from "../../src/config.js";
 import { SqlActivityRepository } from "../../src/db/activityRepository.js";
 import { SqlActivityDetailsRepository } from "../../src/db/activityDetailsRepository.js";
+import { SqlActivitySettingsRepository } from "../../src/db/activitySettingsRepository.js";
+import { SqlActivityWaitlistRepository } from "../../src/db/activityWaitlistRepository.js";
 import { SqlAuditRepository } from "../../src/db/auditRepository.js";
 import { SqlGroupConfigRepository } from "../../src/db/groupConfigRepository.js";
 import { SqlGroupSettingsRepository } from "../../src/db/groupSettingsRepository.js";
@@ -34,6 +36,8 @@ export function createPersistentRuntime(
       permissions: new SqlPermissionRepository(queryable),
       activities: new SqlActivityRepository(queryable),
       activityDetails: new SqlActivityDetailsRepository(queryable),
+      activityWaitlist: new SqlActivityWaitlistRepository(queryable),
+      activitySettings: new SqlActivitySettingsRepository(queryable),
       notificationSubscriptions:
         new SqlNotificationSubscriptionRepository(queryable),
       notificationDeliveries:

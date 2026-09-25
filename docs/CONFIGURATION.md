@@ -353,8 +353,9 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 系统 / 管理 / 超
 - Markdown 卡片里的 `<@!openid>`（首行、正文中间都算）**生效** → 项目所有 @ 反馈继续用卡片内 @；
 - 纯文本 `content` 里的 `<@!openid>` **不生效**，纯文本 `@everyone` **也不生效**；
 - 所以**官方「内嵌格式只在 content 生效」这条文档在群聊 Markdown 上不成立**，以实测为准；
-- `@everyone` 在 Markdown 卡片里能否生效由 `/testat all` 的 5 条候选实测（`@everyone`、`<@!all>`、
-  `<@!everyone>`、纯文字 `@全体成员`、纯文本 `<@!all>`）；都没有则活动发布改用替代提醒方案；
+- **@全体成员：官方群聊能力做不到**。`/testat all` 穷举了 5 种写法（Markdown 里的 `@everyone`、
+  `<@!all>`、`<@!everyone>`、纯文字 `@全体成员`，以及纯文本 `<@!all>`），**全部不生效**；
+  需要通知全群时只能由管理员手动 @全体，或改用其它触达方式（活动模块用「通知发起人/私信参与者」补齐）；
 - 纯文本通道仍保留在 `RichMessageSender.sendPlainToGroup()/sendPlainToUser()`（`/testat` 的对照项在用）。
 
 ### 卡片标准与分页

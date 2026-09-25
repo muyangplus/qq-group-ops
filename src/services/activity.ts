@@ -5,9 +5,16 @@ import { utcNow } from "../core/models.js";
 import type { ActivityRepository } from "../db/activityRepository.js";
 import { getLogger } from "../core/logger.js";
 import type { ActivityDetailsRepository } from "../db/activityDetailsRepository.js";
+import type { ActivitySettingsRepository } from "../db/activitySettingsRepository.js";
+import type {
+  ActivityWaitlistEntry,
+  ActivityWaitlistRepository,
+} from "../db/activityWaitlistRepository.js";
 import { WriteQueue } from "../db/writeQueue.js";
 import { randomCode } from "./shortCodes.js";
 import type { UserProfile } from "./userProfiles.js";
+
+export type { ActivityWaitlistEntry };
 
 const log = getLogger("activity");
 
@@ -28,7 +35,7 @@ export interface ActivityRules {
 
 export interface Activity {
   activityId: string;
-  /** 6 位随机 Base62 短码（展示为 `#A7K2Q9`）。 */
+  /** 6 位随机短码（展示为 `#A7K2Q9`）。 */
   code: string;
   groupId: string;
   /** 展示用群号（可选，便于在卡片里写明活动群）。 */
@@ -43,6 +50,12 @@ export interface Activity {
   allowYears: string[];
   denyYears: string[];
   status: ActivityStatus;
+  /** 开放报名时是否额外发一条 @全体成员 提醒（默认关）。 */
+  mentionAll: boolean;
+  /** 有人报名时是否私信通知活动发起人（默认关，避免群里刷屏）。 */
+  notifyCreator: boolean;
+  /** 报名截止时间；到期后**懒校验**拒绝报名（不再单独跑定时器）。 */
+  closeAt?: Date;
   createdAt: Date;
 }
 
@@ -78,6 +91,9 @@ export interface CreateActivityInput {
   denyColleges?: string[];
   allowYears?: string[];
   denyYears?: string[];
+  mentionAll?: boolean;
+  notifyCreator?: boolean;
+  closeAt?: Date;
 }
 
 export interface UpdateActivityInput {
@@ -90,6 +106,9 @@ export interface UpdateActivityInput {
   denyColleges?: string[];
   allowYears?: string[];
   denyYears?: string[];
+  mentionAll?: boolean;
+  notifyCreator?: boolean;
+  closeAt?: Date | undefined;
 }
 
 export interface RegisterActivityInput {
@@ -125,8 +144,11 @@ export interface ActivityEligibility {
 export class ActivityService {
   private readonly activities = new Map<string, Activity>();
   private readonly registrations = new Map<string, ActivityRegistration>();
+  private readonly waitlist = new Map<string, ActivityWaitlistEntry>();
   private readonly repository: ActivityRepository | undefined;
   private readonly detailsRepository: ActivityDetailsRepository | undefined;
+  private readonly waitlistRepository: ActivityWaitlistRepository | undefined;
+  private readonly settingsRepository: ActivitySettingsRepository | undefined;
   private readonly queue: WriteQueue | undefined;
   private readonly generateCode: () => string;
 
@@ -134,29 +156,46 @@ export class ActivityService {
     repository?: ActivityRepository,
     queue?: WriteQueue,
     detailsRepository?: ActivityDetailsRepository,
-    options: { generateCode?: () => string } = {},
+    options: {
+      generateCode?: () => string;
+      waitlistRepository?: ActivityWaitlistRepository | undefined;
+      settingsRepository?: ActivitySettingsRepository | undefined;
+    } = {},
   ) {
     this.repository = repository;
     this.detailsRepository = detailsRepository;
+    this.waitlistRepository = options.waitlistRepository;
+    this.settingsRepository = options.settingsRepository;
     this.queue =
-      repository || detailsRepository ? (queue ?? new WriteQueue()) : undefined;
+      repository || detailsRepository || this.waitlistRepository || this.settingsRepository
+        ? (queue ?? new WriteQueue())
+        : undefined;
     this.generateCode =
       options.generateCode ??
       (() => randomCode(ACTIVITY_CODE_LENGTH));
   }
 
   public get persistent(): boolean {
-    return this.repository !== undefined || this.detailsRepository !== undefined;
+    return (
+      this.repository !== undefined ||
+      this.detailsRepository !== undefined ||
+      this.waitlistRepository !== undefined ||
+      this.settingsRepository !== undefined
+    );
   }
 
   public async load(): Promise<void> {
-    const [activities, registrations, details] = await Promise.all([
-      this.repository?.findActivities() ?? Promise.resolve([]),
-      this.repository?.findRegistrations() ?? Promise.resolve([]),
-      this.detailsRepository?.findAll() ?? Promise.resolve([]),
-    ]);
+    const [activities, registrations, details, waitlist, settings] =
+      await Promise.all([
+        this.repository?.findActivities() ?? Promise.resolve([]),
+        this.repository?.findRegistrations() ?? Promise.resolve([]),
+        this.detailsRepository?.findAll() ?? Promise.resolve([]),
+        this.waitlistRepository?.findAll() ?? Promise.resolve([]),
+        this.settingsRepository?.findAll() ?? Promise.resolve([]),
+      ]);
     this.activities.clear();
     this.registrations.clear();
+    this.waitlist.clear();
     for (const activity of activities) {
       this.activities.set(activity.activityId, activity);
     }
@@ -168,6 +207,22 @@ export class ActivityService {
     }
     for (const registration of registrations) {
       this.registrations.set(registration.registrationId, registration);
+    }
+    for (const entry of waitlist) {
+      this.waitlist.set(waitlistKey(entry.activityId, entry.userId), entry);
+    }
+    const settingsByActivity = new Map<string, Map<string, string>>();
+    for (const setting of settings) {
+      const bucket =
+        settingsByActivity.get(setting.activityId) ?? new Map<string, string>();
+      bucket.set(setting.key, setting.value);
+      settingsByActivity.set(setting.activityId, bucket);
+    }
+    for (const [activityId, bucket] of settingsByActivity) {
+      const activity = this.activities.get(activityId);
+      if (activity) {
+        this.activities.set(activityId, applySettings(activity, bucket));
+      }
     }
     this.regenerateLegacyCodes();
   }
@@ -220,6 +275,9 @@ export class ActivityService {
       allowYears: [...(input.allowYears ?? [])],
       denyYears: [...(input.denyYears ?? [])],
       status: ActivityStatus.Draft,
+      mentionAll: input.mentionAll ?? false,
+      notifyCreator: input.notifyCreator ?? false,
+      ...(input.closeAt !== undefined ? { closeAt: input.closeAt } : {}),
       createdAt: utcNow(),
     };
     this.activities.set(activityId, activity);
@@ -307,8 +365,22 @@ export class ActivityService {
     if (patch.denyYears !== undefined) {
       activity.denyYears = normalizeList(patch.denyYears);
     }
+    if (patch.mentionAll !== undefined) {
+      activity.mentionAll = patch.mentionAll;
+    }
+    if (patch.notifyCreator !== undefined) {
+      activity.notifyCreator = patch.notifyCreator;
+    }
+    if ("closeAt" in patch) {
+      if (patch.closeAt === undefined) {
+        delete activity.closeAt;
+      } else {
+        activity.closeAt = patch.closeAt;
+      }
+    }
     this.activities.set(activityId, activity);
     this.persist(activity);
+    this.persistSettings(activity);
     return cloneActivity(activity);
   }
 
@@ -443,6 +515,146 @@ export class ActivityService {
     return { ...registration };
   }
 
+  /** 报名截止/状态判定：`closeAt` 到期即视为截止（懒校验，不依赖定时器）。 */
+  public isRegistrationClosed(activity: Activity, now: Date = utcNow()): boolean {
+    if (activity.status !== ActivityStatus.Open) {
+      return true;
+    }
+    return activity.closeAt !== undefined && now.getTime() >= activity.closeAt.getTime();
+  }
+
+  /** 活动候补名单（按加入时间排序）。 */
+  public listWaitlist(activityId: string): ActivityWaitlistEntry[] {
+    return [...this.waitlist.values()]
+      .filter((entry) => entry.activityId === activityId)
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .map((entry) => ({ ...entry }));
+  }
+
+  public findWaitlistEntry(
+    activityId: string,
+    userId: string,
+  ): ActivityWaitlistEntry | undefined {
+    const entry = this.waitlist.get(waitlistKey(activityId, userId));
+    return entry ? { ...entry } : undefined;
+  }
+
+  /** 候补排位（1 起）；不在候补里返回 undefined。 */
+  public waitlistPosition(activityId: string, userId: string): number | undefined {
+    const index = this.listWaitlist(activityId).findIndex(
+      (entry) => entry.userId === userId,
+    );
+    return index >= 0 ? index + 1 : undefined;
+  }
+
+  /**
+   * 报名：名额没满 → 正式报名；满了 → 自动进候补（返回排位）。
+   *
+   * 与 `register()` 的区别：这里把「满员」当成正常分支而不是错误，
+   * 并且统一做截止时间懒校验。
+   */
+  public joinActivity(input: RegisterActivityInput):
+    | { status: "registered"; registration: ActivityRegistration }
+    | { status: "waitlisted"; position: number; entry: ActivityWaitlistEntry } {
+    const activity = this.getActivity(input.activityId);
+    if (this.isRegistrationClosed(activity)) {
+      throw new ActivityRuleError(
+        activity.status !== ActivityStatus.Open
+          ? `活动未开放报名：${activity.title}`
+          : `报名已截止：${activity.title}`,
+      );
+    }
+    if (this.findRegistration(activity.activityId, input.userId)) {
+      throw new ActivityRuleError("你已经报名过该活动了");
+    }
+    const existingWaitlist = this.findWaitlistEntry(activity.activityId, input.userId);
+    if (existingWaitlist) {
+      throw new ActivityRuleError(
+        `你已经在候补名单里（第 ${this.waitlistPosition(activity.activityId, input.userId) ?? 0} 位）`,
+      );
+    }
+    const current = this.listRegistrations(activity.activityId);
+    const full =
+      activity.capacity !== undefined && current.length >= activity.capacity;
+    if (full) {
+      const entry: ActivityWaitlistEntry = {
+        activityId: activity.activityId,
+        userId: input.userId,
+        displayName: input.displayName ?? "",
+        note: input.note ?? "",
+        createdAt: utcNow(),
+      };
+      this.waitlist.set(waitlistKey(entry.activityId, entry.userId), entry);
+      const waitlistRepository = this.waitlistRepository;
+      if (waitlistRepository) {
+        this.queue?.enqueue("activity.waitlist.save", () =>
+          waitlistRepository.save(entry),
+        );
+      }
+      return {
+        status: "waitlisted",
+        position: this.waitlistPosition(entry.activityId, entry.userId) ?? 1,
+        entry: { ...entry },
+      };
+    }
+    return { status: "registered", registration: this.register(input) };
+  }
+
+  /**
+   * 取消报名并自动递补候补第一位。
+   *
+   * 返回被取消的报名与（如果有）被递补上来的候补条目，便于调用方私信通知。
+   */
+  public cancelRegistrationWithPromotion(
+    registrationId: string,
+    userId: string,
+  ): {
+    cancelled: ActivityRegistration;
+    promoted?: ActivityWaitlistEntry;
+    position?: number;
+  } {
+    const cancelled = this.cancelRegistration(registrationId, userId);
+    const promoted = this.promoteNextWaitlist(cancelled.activityId);
+    return promoted ? { cancelled, ...promoted } : { cancelled };
+  }
+
+  /**
+   * 把候补第一位转成正式报名（有人取消时自动调用；管理端「递补下一位」也用它）。
+   */
+  public promoteNextWaitlist(activityId: string):
+    | { promoted: ActivityWaitlistEntry; registration: ActivityRegistration }
+    | undefined {
+    const next = this.listWaitlist(activityId)[0];
+    if (!next) {
+      return undefined;
+    }
+    const activity = this.getActivity(activityId);
+    this.waitlist.delete(waitlistKey(next.activityId, next.userId));
+    const waitlistRepository = this.waitlistRepository;
+    if (waitlistRepository) {
+      this.queue?.enqueue("activity.waitlist.delete", () =>
+        waitlistRepository.remove(next.activityId, next.userId),
+      );
+    }
+    const registrationId = randomUUID();
+    const registration: ActivityRegistration = {
+      registrationId,
+      activityId: next.activityId,
+      groupId: activity.groupId,
+      userId: next.userId,
+      displayName: next.displayName,
+      note: next.note,
+      createdAt: next.createdAt,
+    };
+    this.registrations.set(registrationId, registration);
+    if (this.repository) {
+      this.queue?.enqueue("activity.registration.save", () =>
+        this.repository!.saveRegistration(registration),
+      );
+    }
+    return { promoted: { ...next }, registration: { ...registration } };
+  }
+
   private nextCode(): string {
     for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt += 1) {
       const code = this.generateCode();
@@ -471,6 +683,43 @@ export class ActivityService {
       const details = detailsOf(activity);
       this.queue?.enqueue("activity.details.save", () =>
         detailsRepository.save(details),
+      );
+    }
+    this.persistSettings(activity);
+  }
+
+  /** 扩展设置（@全体 / 通知发起人 / 截止时间）写进 `activity_settings` KV 表。 */
+  private persistSettings(activity: Activity): void {
+    const repository = this.settingsRepository;
+    if (!repository) {
+      return;
+    }
+    const settings = settingsOf(activity);
+    this.queue?.enqueue("activity.settings.mentionAll", () =>
+      repository.save({
+        activityId: activity.activityId,
+        key: ACTIVITY_SETTING_KEYS.mentionAll,
+        value: String(settings.mentionAll),
+      }),
+    );
+    this.queue?.enqueue("activity.settings.notifyCreator", () =>
+      repository.save({
+        activityId: activity.activityId,
+        key: ACTIVITY_SETTING_KEYS.notifyCreator,
+        value: String(settings.notifyCreator),
+      }),
+    );
+    if (settings.closeAt !== undefined) {
+      this.queue?.enqueue("activity.settings.closeAt", () =>
+        repository.save({
+          activityId: activity.activityId,
+          key: ACTIVITY_SETTING_KEYS.closeAt,
+          value: settings.closeAt!,
+        }),
+      );
+    } else {
+      this.queue?.enqueue("activity.settings.closeAt.clear", () =>
+        repository.remove(activity.activityId, ACTIVITY_SETTING_KEYS.closeAt),
       );
     }
   }
@@ -521,6 +770,53 @@ function cloneActivity(activity: Activity): Activity {
     denyColleges: [...activity.denyColleges],
     allowYears: [...activity.allowYears],
     denyYears: [...activity.denyYears],
+    ...(activity.closeAt !== undefined ? { closeAt: new Date(activity.closeAt) } : {}),
+  };
+}
+
+/** 候补名单的内存键：`activityId\0userId`。 */
+function waitlistKey(activityId: string, userId: string): string {
+  return `${activityId}\u0000${userId}`;
+}
+
+/** 活动扩展设置（KV）的键名。 */
+export const ACTIVITY_SETTING_KEYS = {
+  mentionAll: "mentionAll",
+  notifyCreator: "notifyCreator",
+  closeAt: "closeAt",
+} as const;
+
+/** 把 KV 设置应用到活动对象上（缺省值保持不 @全体、不通知、无截止）。 */
+function applySettings(activity: Activity, bucket: ReadonlyMap<string, string>): Activity {
+  const mentionAll = bucket.get(ACTIVITY_SETTING_KEYS.mentionAll);
+  const notifyCreator = bucket.get(ACTIVITY_SETTING_KEYS.notifyCreator);
+  const closeAt = bucket.get(ACTIVITY_SETTING_KEYS.closeAt);
+  const parsedCloseAt = closeAt ? new Date(closeAt) : undefined;
+  return {
+    ...activity,
+    mentionAll: mentionAll === undefined ? activity.mentionAll : mentionAll === "true",
+    notifyCreator:
+      notifyCreator === undefined ? activity.notifyCreator : notifyCreator === "true",
+    ...(parsedCloseAt && !Number.isNaN(parsedCloseAt.getTime())
+      ? { closeAt: parsedCloseAt }
+      : activity.closeAt !== undefined
+        ? { closeAt: activity.closeAt }
+        : {}),
+  };
+}
+
+/** 活动扩展设置的持久化载荷。 */
+export function settingsOf(activity: Activity): {
+  mentionAll: boolean;
+  notifyCreator: boolean;
+  closeAt?: string;
+} {
+  return {
+    mentionAll: activity.mentionAll,
+    notifyCreator: activity.notifyCreator,
+    ...(activity.closeAt !== undefined
+      ? { closeAt: activity.closeAt.toISOString() }
+      : {}),
   };
 }
 

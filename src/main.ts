@@ -41,6 +41,8 @@ async function main(): Promise<void> {
             permissions: persistence.permissions,
             activities: persistence.activities,
             activityDetails: persistence.activityDetails,
+            activityWaitlist: persistence.activityWaitlist,
+            activitySettings: persistence.activitySettings,
             notificationSubscriptions: persistence.notificationSubscriptions,
             notificationDeliveries: persistence.notificationDeliveries,
             shortCodes: persistence.shortCodes,

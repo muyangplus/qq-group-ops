@@ -16,6 +16,8 @@ import {
 import { getLogger } from "./core/logger.js";
 import type { ActivityRepository } from "./db/activityRepository.js";
 import type { ActivityDetailsRepository } from "./db/activityDetailsRepository.js";
+import type { ActivityWaitlistRepository } from "./db/activityWaitlistRepository.js";
+import type { ActivitySettingsRepository } from "./db/activitySettingsRepository.js";
 import type { AuditRepository } from "./db/auditRepository.js";
 import type { GroupConfigRepository } from "./db/groupConfigRepository.js";
 import type { GroupSettingsRepository } from "./db/groupSettingsRepository.js";
@@ -110,6 +112,8 @@ export interface RuntimeRepositories {
   permissions?: PermissionRepository;
   activities?: ActivityRepository;
   activityDetails?: ActivityDetailsRepository;
+  activityWaitlist?: ActivityWaitlistRepository;
+  activitySettings?: ActivitySettingsRepository;
   notificationSubscriptions?: NotificationSubscriptionRepository;
   notificationDeliveries?: NotificationDeliveryRepository;
   shortCodes?: ShortCodeRepository;
@@ -160,6 +164,10 @@ export function createRuntime(
     repositories.activities,
     writeQueue,
     repositories.activityDetails,
+    {
+      waitlistRepository: repositories.activityWaitlist,
+      settingsRepository: repositories.activitySettings,
+    },
   );
   const activityCards = new ActivityCardService(richMessages, display);
   const testMenu = new TestMenuService({ permissions });

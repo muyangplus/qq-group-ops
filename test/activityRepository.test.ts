@@ -73,6 +73,9 @@ describe("SqlActivityRepository", () => {
         denyColleges: [],
         allowYears: [],
         denyYears: [],
+        // 新增的活动选项由 activity_settings 表合并，行映射阶段给默认值
+        mentionAll: false,
+        notifyCreator: false,
         status: "open",
         createdAt: new Date("2026-01-01T00:00:00.000Z"),
       },

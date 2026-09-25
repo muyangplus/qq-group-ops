@@ -15,6 +15,11 @@ describe("migrate", () => {
     );
     expect(db.calls[0]?.text).toContain(
       "CREATE TABLE IF NOT EXISTS class_aliases",
+    );    expect(db.calls[0]?.text).toContain(
+      "CREATE TABLE IF NOT EXISTS activity_waitlist",
+    );
+    expect(db.calls[0]?.text).toContain(
+      "CREATE TABLE IF NOT EXISTS activity_settings",
     );
   });
 });

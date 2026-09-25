@@ -171,4 +171,27 @@ CREATE TABLE IF NOT EXISTS activity_details (
   deny_years TEXT NOT NULL DEFAULT '[]',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 活动候补名单：名额满了之后按报名顺序排队，有人取消时自动递补第一位。
+CREATE TABLE IF NOT EXISTS activity_waitlist (
+  activity_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  display_name TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (activity_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS activity_waitlist_activity_idx
+  ON activity_waitlist (activity_id, created_at ASC);
+
+-- 活动扩展设置（键值）：@全体、私信通知发起人、报名截止时间等；
+-- 用独立键值表承载新增项，避免对老表做 ALTER（与 group_settings 同一套经验）。
+CREATE TABLE IF NOT EXISTS activity_settings (
+  activity_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (activity_id, key)
+);
 `.trim();

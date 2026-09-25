@@ -6,6 +6,14 @@ import type {
   ActivityDetailsRepository,
 } from "../src/db/activityDetailsRepository.js";
 import type {
+  ActivitySettingEntry,
+  ActivitySettingsRepository,
+} from "../src/db/activitySettingsRepository.js";
+import type {
+  ActivityWaitlistEntry,
+  ActivityWaitlistRepository,
+} from "../src/db/activityWaitlistRepository.js";
+import type {
   Activity,
   ActivityRegistration,
   ActivityRepository,
@@ -73,6 +81,62 @@ class FakeActivityDetailsRepository implements ActivityDetailsRepository {
       this.rows[index] = { ...details };
     } else {
       this.rows.push({ ...details });
+    }
+  }
+}
+
+class FakeActivityWaitlistRepository implements ActivityWaitlistRepository {
+  public readonly rows: ActivityWaitlistEntry[] = [];
+
+  public async findAll(): Promise<ActivityWaitlistEntry[]> {
+    return this.rows.map((row) => ({ ...row }));
+  }
+
+  public async save(entry: ActivityWaitlistEntry): Promise<void> {
+    const index = this.rows.findIndex(
+      (row) => row.activityId === entry.activityId && row.userId === entry.userId,
+    );
+    if (index >= 0) {
+      this.rows[index] = { ...entry };
+    } else {
+      this.rows.push({ ...entry });
+    }
+  }
+
+  public async remove(activityId: string, userId: string): Promise<void> {
+    const index = this.rows.findIndex(
+      (row) => row.activityId === activityId && row.userId === userId,
+    );
+    if (index >= 0) {
+      this.rows.splice(index, 1);
+    }
+  }
+}
+
+class FakeActivitySettingsRepository implements ActivitySettingsRepository {
+  public readonly rows: ActivitySettingEntry[] = [];
+
+  public async findAll(): Promise<ActivitySettingEntry[]> {
+    return this.rows.map((row) => ({ ...row }));
+  }
+
+  public async save(entry: ActivitySettingEntry): Promise<void> {
+    const index = this.rows.findIndex(
+      (row) => row.activityId === entry.activityId && row.key === entry.key,
+    );
+    if (index >= 0) {
+      this.rows[index] = { ...entry };
+    } else {
+      this.rows.push({ ...entry });
+    }
+  }
+
+  public async remove(activityId: string, key: string): Promise<void> {
+    const index = this.rows.findIndex(
+      (row) => row.activityId === activityId && row.key === key,
+    );
+    if (index >= 0) {
+      this.rows.splice(index, 1);
     }
   }
 }
@@ -277,5 +341,130 @@ describe("ActivityService", () => {
 
     const wrong = { ...profile, studentId: "22123456789", year: "22" };
     expect(() => service.checkEligibility(activity, wrong)).toThrow(/仅限/u);
+  });
+
+  it("puts overflow registrations on the waitlist and promotes on cancel", () => {
+    const waitlist = new FakeActivityWaitlistRepository();
+    const withWaitlist = new ActivityService(
+      undefined,
+      undefined,
+      undefined,
+      { waitlistRepository: waitlist },
+    );
+    withWaitlist.createActivity({
+      groupId: "g1",
+      title: "限额活动",
+      createdBy: "admin",
+      activityId: "a1",
+      capacity: 1,
+    });
+    withWaitlist.openActivity("a1");
+
+    expect(
+      withWaitlist.joinActivity({ activityId: "a1", userId: "u1", displayName: "小明" }),
+    ).toMatchObject({ status: "registered" });
+    const overflow = withWaitlist.joinActivity({
+      activityId: "a1",
+      userId: "u2",
+      displayName: "小红",
+      note: "候补一下",
+    });
+    expect(overflow).toMatchObject({ status: "waitlisted", position: 1 });
+    expect(withWaitlist.waitlistPosition("a1", "u2")).toBe(1);
+    expect(withWaitlist.listWaitlist("a1").map((entry) => entry.displayName)).toEqual([
+      "小红",
+    ]);
+    // 重复报名/重复候补都要被拒绝
+    expect(() =>
+      withWaitlist.joinActivity({ activityId: "a1", userId: "u1" }),
+    ).toThrow(/已经报名/u);
+    expect(() =>
+      withWaitlist.joinActivity({ activityId: "a1", userId: "u2" }),
+    ).toThrow(/已经在候补名单/u);
+
+    // 有人取消 → 候补第一位自动递补，并带上原本的备注
+    const registration = withWaitlist.findRegistration("a1", "u1")!;
+    const result = withWaitlist.cancelRegistrationWithPromotion(
+      registration.registrationId,
+      "u1",
+    );
+    expect(result.promoted?.userId).toBe("u2");
+    expect(result.registration.displayName).toBe("小红");
+    expect(result.registration.note).toBe("候补一下");
+    expect(withWaitlist.listWaitlist("a1")).toEqual([]);
+    expect(withWaitlist.listRegistrations("a1").map((item) => item.userId)).toEqual([
+      "u2",
+    ]);
+  });
+
+  it("rejects registrations after the close-at time (lazy check)", () => {
+    const activity = service.createActivity({
+      groupId: "g1",
+      title: "限时活动",
+      createdBy: "admin",
+      activityId: "a1",
+    });
+    service.openActivity("a1");
+    service.updateActivity("a1", { closeAt: new Date(Date.now() - 1_000) });
+
+    const closed = service.getActivity("a1");
+    expect(service.isRegistrationClosed(closed)).toBe(true);
+    expect(() => service.joinActivity({ activityId: "a1", userId: "u1" })).toThrow(
+      /报名已截止/u,
+    );
+
+    // 未到期 / 没有截止时间都能报
+    service.updateActivity("a1", { closeAt: new Date(Date.now() + 60_000) });
+    expect(service.isRegistrationClosed(service.getActivity("a1"))).toBe(false);
+    service.updateActivity("a1", { closeAt: undefined });
+    expect(service.isRegistrationClosed(service.getActivity("a1"))).toBe(false);
+  });
+
+  it("persists activity options and the waitlist across a restart", async () => {
+    const activities = new FakeActivityRepository();
+    const details = new FakeActivityDetailsRepository();
+    const waitlist = new FakeActivityWaitlistRepository();
+    const settings = new FakeActivitySettingsRepository();
+    const first = new ActivityService(activities, undefined, details, {
+      waitlistRepository: waitlist,
+      settingsRepository: settings,
+    });
+    first.createActivity({
+      groupId: "g1",
+      title: "活动",
+      createdBy: "admin",
+      activityId: "a1",
+      capacity: 1,
+    });
+    first.openActivity("a1");
+    first.updateActivity("a1", {
+      mentionAll: true,
+      notifyCreator: true,
+      closeAt: new Date("2026-12-31T23:59:00.000Z"),
+    });
+    first.joinActivity({ activityId: "a1", userId: "u1" });
+    first.joinActivity({ activityId: "a1", userId: "u2", displayName: "小红" });
+    await first.flush();
+
+    expect(settings.rows.map((row) => row.key).sort()).toEqual([
+      "closeAt",
+      "mentionAll",
+      "notifyCreator",
+    ]);
+    expect(waitlist.rows).toHaveLength(1);
+
+    const restarted = new ActivityService(activities, undefined, details, {
+      waitlistRepository: waitlist,
+      settingsRepository: settings,
+    });
+    await restarted.load();
+    expect(restarted.getActivity("a1")).toMatchObject({
+      mentionAll: true,
+      notifyCreator: true,
+    });
+    expect(restarted.getActivity("a1").closeAt?.toISOString()).toBe(
+      "2026-12-31T23:59:00.000Z",
+    );
+    expect(restarted.listWaitlist("a1").map((entry) => entry.userId)).toEqual(["u2"]);
   });
 });

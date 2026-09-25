@@ -153,7 +153,8 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "  · Markdown 卡片里的 `<@!openid>` **生效**（首行与正文中间都可以）→ 所有 @ 反馈都用卡片内 @；",
       "  · 纯文本 `content` 里的 `<@!openid>` 与 `@everyone` **都不生效**；",
       "  · 也就是说官方「内嵌格式只在 content 生效」的文档在群聊 Markdown 上不成立，以实测为准；",
-      "  · @全体成员目前无可用写法，候选写法由 /testat all 实测确认。",
+      "  · **@全体成员做不到**：/testat all 穷举 5 种写法（markdown @everyone / <@!all> / <@!everyone> /",
+      "    纯文字 / 纯文本 <@!all>）全部不生效；需要全群提醒时只能由管理员手动 @全体。",
     ],
   },
   {
