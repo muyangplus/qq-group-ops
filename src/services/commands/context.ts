@@ -1,7 +1,7 @@
 import type { CardButton } from "../cardTemplate.js";
 import type { AuditLog } from "../audit.js";
 import type { ActivityService } from "../activity.js";
-import type { ActivityCardService } from "../activityCards.js";
+import type { ActivityCardService, ActivityExportLike, ActivityStatsLike } from "../activityCards.js";
 import type { ActivityNotificationService } from "../activityNotifications.js";
 import type { ClassAliasService } from "../classAliases.js";
 import type { DisplayNameService } from "../displayNames.js";
@@ -12,6 +12,7 @@ import type { JoinApprovalService } from "../joinApproval.js";
 import type { JoinAuditService } from "../joinAudit.js";
 import type { JoinRequestSyncService } from "../joinAuditSync.js";
 import type { JoinRuleEvaluator } from "../joinRules.js";
+import type { MemberRoster } from "../memberRoster.js";
 import type { NotificationService } from "../notifications.js";
 import type { PermissionService } from "../permissions.js";
 import type { RichMessageSender } from "../richMessages.js";
@@ -59,6 +60,16 @@ export interface CommandHelpers {
     groupId: string | undefined,
     raw: string | undefined,
   ): string | undefined;
+  /** 活动卡片发送器（显式注入 → 富消息 → 通知服务发送器）。 */
+  cardSender(): RichMessageSender | undefined;
+  /** 班级库（活动学院 / 年级按钮）；未装配时为 undefined。 */
+  roster(): MemberRoster | undefined;
+  /** 活动统计图片服务；未装配时为 undefined（不生成「统计图片」按钮）。 */
+  statsService(): ActivityStatsLike | undefined;
+  /** 活动 CSV 导出服务；未装配时为 undefined（不生成「导出 CSV」按钮）。 */
+  exportService(): ActivityExportLike | undefined;
+  /** 活动通知服务缺失时的内存兜底订阅表（仅「是否已订阅」状态）。 */
+  readonly fallbackSubscriptions: Set<string>;
 }
 export interface AdminCommandContext {
   /** 共享小工具（展示名 / 目标解析 / 卡片包装）。 */
@@ -77,6 +88,7 @@ export interface AdminCommandContext {
   readonly classAliases: ClassAliasService | undefined;
   readonly activity: ActivityService | undefined;
   readonly activityCards: ActivityCardService | undefined;
+  readonly activityNotifications: ActivityNotificationService | undefined;
   readonly notifications: NotificationService | undefined;
   readonly richMessages: RichMessageSender | undefined;
 }
