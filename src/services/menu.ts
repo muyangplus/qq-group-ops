@@ -295,16 +295,18 @@ function activityCard(context: MenuContext): CardSpec {
   return {
     title: "活动",
     lines: [
-      "活动列表：/activity",
+      "活动列表：/activity（按「报名中 / 草稿 / 已结束」分组）",
       "活动详情：/activity info #短码",
       "报名：/activity join #短码",
       "取消报名：/activity quit #短码",
+      "订阅新活动：/activity subscribe（发布时私信给你）",
     ],
     rows: [[cmdButton("list", "活动列表", "/activity"), backButton()]],
     buttonHint: "报名与取消报名在活动卡片上有一键按钮。",
     footer: [
       "活动短码形如 #A7K2Q9，可从活动列表或活动卡片上获取。",
       "报名前需要补全个人资料：/profile",
+      "订阅只推送新活动，不发群消息（机器人无法 @全体成员）。",
     ],
   };
 }
@@ -365,10 +367,11 @@ function opsCard(context: MenuContext): CardSpec {
   return {
     title: "活动运营",
     lines: [
-      "新建：/activity create <标题>",
+      "新建：/activity create <标题>（自动返回配置卡）",
       "修改：/activity set #短码 <字段> <值>",
       "开停：/activity open|close|cancel #短码",
-      "名单：/activity signups #短码",
+      "名单：/activity signups #短码 [+页码] [full]",
+      "管理卡：报名名单 / 释放名额 / 重发卡片 / 开关报名",
       "导出审计：/export [数量]",
     ],
     rows: [

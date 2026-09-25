@@ -5,6 +5,7 @@ import {
 } from "../adapters/reconnectingWebSocketGateway.js";
 import type { AuditLogStore } from "./audit.js";
 import type { JoinAuditService } from "./joinAudit.js";
+import type { ActivityNotificationService } from "./activityNotifications.js";
 import type { NotificationService } from "./notifications.js";
 
 const log = getLogger("retention");
@@ -32,6 +33,8 @@ export interface RetentionRunResult {
   auditRecordsRemoved: number;
   joinRequestsRemoved: number;
   notificationsRemoved: number;
+  /** 本次被清理的活动通知去重行数（超过保留期的通知不再需要去重）。 */
+  activityNotificationsRemoved: number;
   /** 本次被标记为过期的待审批申请数。 */
   joinRequestsExpired: number;
 }
@@ -42,7 +45,8 @@ export interface RetentionRunResult {
  * 启动时执行一次，之后按周期执行；只清理「已过期」的数据：
  * - 审计记录早于 `AUDIT_LOG_RETENTION_DAYS`；
  * - 已审批的入群申请早于 `AUDIT_LOG_RETENTION_DAYS`（待审批的永不清理）；
- * - 入群申请推送的投递记录早于 `AUDIT_LOG_RETENTION_DAYS`（只用于去重与排查）。
+ * - 入群申请推送的投递记录早于 `AUDIT_LOG_RETENTION_DAYS`（只用于去重与排查）；
+ * - 活动通知的去重行早于同一保留期（超过保留期后已无去重意义，避免无限增长）。
  *
  * 注意：项目默认不保存消息原文，因此 `RAW_MESSAGE_RETENTION_DAYS` 目前没有可清理的数据。
  */
@@ -58,6 +62,7 @@ export class RetentionService {
     private readonly joinAudit: JoinAuditService,
     private readonly options: RetentionOptions,
     private readonly notifications?: NotificationService,
+    private readonly activityNotifications?: ActivityNotificationService,
   ) {
     this.intervalMs = options.intervalMs ?? DEFAULT_RETENTION_INTERVAL_MS;
     this.clock = options.clock ?? Date.now;
@@ -70,6 +75,7 @@ export class RetentionService {
       auditRecordsRemoved: 0,
       joinRequestsRemoved: 0,
       notificationsRemoved: 0,
+      activityNotificationsRemoved: 0,
       joinRequestsExpired: 0,
     };
 
@@ -91,12 +97,15 @@ export class RetentionService {
         await this.joinAudit.pruneReviewedOlderThan(cutoff);
       result.notificationsRemoved =
         (await this.notifications?.pruneDeliveredOlderThan(cutoff)) ?? 0;
+      result.activityNotificationsRemoved =
+        (await this.activityNotifications?.pruneOlderThan(cutoff)) ?? 0;
     }
 
     if (
       result.auditRecordsRemoved > 0 ||
       result.joinRequestsRemoved > 0 ||
       result.notificationsRemoved > 0 ||
+      result.activityNotificationsRemoved > 0 ||
       result.joinRequestsExpired > 0
     ) {
       log.info("retention cleanup finished", { ...result });

@@ -21,5 +21,14 @@ describe("migrate", () => {
     expect(db.calls[0]?.text).toContain(
       "CREATE TABLE IF NOT EXISTS activity_settings",
     );
+    expect(db.calls[0]?.text).toContain(
+      "CREATE TABLE IF NOT EXISTS activity_subscriptions",
+    );
+    expect(db.calls[0]?.text).toContain(
+      "CREATE TABLE IF NOT EXISTS activity_notifications",
+    );
+    expect(db.calls[0]?.text).toContain(
+      "CREATE INDEX IF NOT EXISTS activity_notifications_user_idx",
+    );
   });
 });

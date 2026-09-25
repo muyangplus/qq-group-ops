@@ -1,4 +1,4 @@
-import { PermissionLevel } from "../core/enums.js";
+import { ActivityStatus, PermissionLevel } from "../core/enums.js";
 import type { KeyboardModal } from "../adapters/qqOfficial.js";
 import { encodeCallback, extractPageToken, pageCallback } from "./callbackData.js";
 import {
@@ -15,15 +15,24 @@ import {
 } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import type { AuditLog } from "./audit.js";
-import type { ActivityCardService } from "./activityCards.js";
-import { code as activityCode } from "./activityCards.js";
+import { ActivityCardService } from "./activityCards.js";
+import type {
+  ActivityCardInput,
+  ActivityExportLike,
+  ActivityStatsLike,
+} from "./activityCards.js";
+import { code as activityCode, formatCloseAt } from "./activityCards.js";
 import { ActivityRuleError } from "./activity.js";
 import type {
   Activity,
   ActivityLink,
+  ActivityRegistration,
   ActivityService,
+  ActivityWaitlistEntry,
 } from "./activity.js";
+import type { ActivityNotificationService } from "./activityNotifications.js";
 import type { DisplayNameService } from "./displayNames.js";
+import type { MemberRoster } from "./memberRoster.js";
 import {
   DEFAULT_GROUP_ID,
   type EffectiveGroupConfig,
@@ -121,12 +130,22 @@ export interface AdminCommandServiceOptions {
   classAliases?: ClassAliasService | undefined;
   /** 活动发布/报名/管理。 */
   activity?: ActivityService | undefined;
-  /** 活动卡片渲染与发送。 */
+  /** 活动卡片渲染（memberCard / configCard / manageCard / signupsCard / rulesCard）。 */
   activityCards?: ActivityCardService | undefined;
+  /** 活动通知（按群订阅 + 去重封顶的私信推送）。 */
+  activityNotifications?: ActivityNotificationService | undefined;
+  /** 班级库（活动学院/年级限制按钮）；缺省时对应按钮不生成。 */
+  activityRoster?: MemberRoster | undefined;
+  /** §B3 统计图片服务；未装配时活动管理卡不生成「统计图片」按钮。 */
+  activityStats?: ActivityStatsLike | undefined;
+  /** §B3 CSV 导出服务；未装配时名单卡不生成「导出 CSV」按钮。 */
+  activityExport?: ActivityExportLike | undefined;
   /** 入群申请推送（`/notify`）。 */
   notifications?: NotificationService | undefined;
   /** 富消息发送器（`/testat` 与活动发布需要「纯文本 + 卡片」两条通道）。 */
   richMessages?: RichMessageSender | undefined;
+  /** 活动卡片发送器；缺省时复用 `richMessages`，再缺省用通知服务的发送器。 */
+  cardSender?: RichMessageSender | undefined;
 }
 
 export class AdminCommandService {
@@ -144,8 +163,18 @@ export class AdminCommandService {
   private readonly classAliases: ClassAliasService | undefined;
   private readonly activity: ActivityService | undefined;
   private readonly activityCards: ActivityCardService | undefined;
+  private readonly activityNotifications: ActivityNotificationService | undefined;
+  private readonly activityStats: ActivityStatsLike | undefined;
+  private readonly activityExport: ActivityExportLike | undefined;
   private readonly notifications: NotificationService | undefined;
   private readonly richMessages: RichMessageSender | undefined;
+  private readonly explicitCardSender: RichMessageSender | undefined;
+  /** 班级库（活动学院/年级按钮）；runtime.load() 里拿到后注入。 */
+  private activityRoster: MemberRoster | undefined;
+  /** §B3 统计图片服务；装配后管理卡才会出现「统计图片」按钮。 */
+  private activityStatsService: ActivityStatsLike | undefined;
+  /** §B3 CSV 导出服务；装配后名单卡才会出现「导出 CSV」按钮。 */
+  private activityExportService: ActivityExportLike | undefined;
 
   public constructor(options: AdminCommandServiceOptions) {
     this.permissions = options.permissions;
@@ -162,8 +191,36 @@ export class AdminCommandService {
     this.classAliases = options.classAliases;
     this.activity = options.activity;
     this.activityCards = options.activityCards;
+    this.activityNotifications = options.activityNotifications;
+    this.activityRoster = options.activityRoster;
+    this.activityStatsService = options.activityStats;
+    this.activityExportService = options.activityExport;
     this.notifications = options.notifications;
     this.richMessages = options.richMessages;
+    this.explicitCardSender = options.cardSender;
+  }
+
+  /** 班级库在 `runtime.load()` 里才加载完成，因此构造后再注入（与 UserProfileService 同套路）。 */
+  public setActivityRoster(roster: MemberRoster | undefined): void {
+    this.activityRoster = roster;
+  }
+
+  /**
+   * §B3 后接线：装配统计图片 / CSV 导出服务。
+   *
+   * 未装配时活动管理卡不出「统计图片」按钮、名单卡不出「导出 CSV」按钮（条件渲染），
+   * 回调被直接调用时也只会得到友好提示，不会抛错。
+   */
+  public setActivityExtras(extras: {
+    stats?: ActivityStatsLike | undefined;
+    exportService?: ActivityExportLike | undefined;
+  }): void {
+    if (extras.stats !== undefined) {
+      this.activityStatsService = extras.stats;
+    }
+    if (extras.exportService !== undefined) {
+      this.activityExportService = extras.exportService;
+    }
   }
 
   public async handle(
@@ -1299,7 +1356,6 @@ export class AdminCommandService {
       footer.push(`上一页：/pending +${current - 1}`);
     }
 
-
     return cardFromText("待审批入群申请", lines.join("\n"), {
       rows,
       buttonHint: "点击审批：",
@@ -1451,10 +1507,11 @@ export class AdminCommandService {
   }
 
   /**
-   * `/activity [list] [群号] [+页码]`：活动列表卡。
+   * `/activity [list] [群号] [+页码]`：活动列表卡（按状态分组）。
    *
-   * 每页 3 个活动（每个一行按钮：报名 / 详情 / 名单），翻页是回调；
-   * 手动翻页用 `/activity list +<页码>`（`+` 前缀与群号区分）。
+   * 每页 3 个活动，每个活动一行按钮：`详情` / `报名` / `管理`（仅管理者）/ `订阅`，
+   * 全部是**回调**（点击即出卡/生效，不用再发消息）；翻页是回调，
+   * 纯文本降级给出 `/activity list +<页码>`（`+` 前缀与群号区分）。
    */
   public activityListCard(
     targetGroupId: string,
@@ -1484,6 +1541,10 @@ export class AdminCommandService {
     const pageCount = Math.max(1, Math.ceil(list.length / size));
     const current = Math.min(Math.max(page, 1), pageCount);
     const slice = list.slice((current - 1) * size, current * size);
+    const subscribed = this.isSubscribedTo(targetGroupId, userId);
+    const canManageAny = list.some((activity) =>
+      this.canManageActivity(userId, activity),
+    );
     const lines = [
       ...this.renderNotice(notice),
       `**群**：${groupLabel}`,
@@ -1491,19 +1552,40 @@ export class AdminCommandService {
       "",
     ];
     const rows: CardButton[][] = [];
-    for (const activity of slice) {
-      const count = this.activity!.listRegistrations(activity.activityId).length;
-      const code = activityCode(activity);
-      lines.push(
-        `**${escapeCardText(code)}** ${escapeCardText(activity.title)} [${activity.status}] 报名 ${count}${
-          activity.capacity ? `/${activity.capacity}` : ""
-        }`,
-      );
-      rows.push([
-        actionButton(`join-${code}`, "报名", `/activity join ${code}`),
-        actionButton(`info-${code}`, "详情", `/activity info ${code}`),
-        actionButton(`signups-${code}`, "名单", `/activity signups ${code}`),
-      ]);
+    for (const groupName of ["报名中", "草稿", "已结束"] as const) {
+      const group = slice.filter((activity) => listGroupOf(activity) === groupName);
+      if (group.length === 0) {
+        continue;
+      }
+      lines.push(`**${groupName}**`);
+      for (const activity of group) {
+        const count = this.activity!.listRegistrations(activity.activityId).length;
+        const code = activityCode(activity);
+        lines.push(
+          `${escapeCardText(code)} ${escapeCardText(activity.title)} · 报名 ${count}${
+            activity.capacity ? `/${activity.capacity}` : ""
+          }`,
+        );
+        const row: CardButton[] = [
+          viewButton(`info-${code}`, "详情", "activity", "info", code),
+          viewButton(`join-${code}`, "报名", "activity", "join", code),
+        ];
+        if (this.canManageActivity(userId, activity)) {
+          row.push(viewButton(`manage-${code}`, "管理", "activity", "manage", code));
+        }
+        row.push(
+          viewButton(
+            `subscribe-${code}`,
+            subscribed ? "订阅 开" : "订阅 关",
+            "activity",
+            "subscribe",
+            targetGroupId,
+            subscribed ? "off" : "on",
+          ),
+        );
+        rows.push(row);
+      }
+      lines.push("");
     }
 
     const paging: CardButton[] = [];
@@ -1529,7 +1611,9 @@ export class AdminCommandService {
     if (current > 1) {
       footer.push(`上一页：/activity list +${current - 1}`);
     }
-
+    if (canManageAny) {
+      footer.push("管理入口只在你有权限的活动上显示。");
+    }
 
     return cardFromText("活动列表", lines.join("\n"), {
       rows,
@@ -2935,32 +3019,872 @@ export class AdminCommandService {
       case "set":
       case "设置":
       case "配置":
-        return this.handleActivitySet(userId, parts);
+        return this.handleActivitySet(userId, parts, groupId);
       case "open":
       case "开始":
       case "发布":
-        return this.handleActivityOpen(userId, parts);
+        return this.handleActivityOpen(userId, parts, groupId);
       case "close":
       case "关闭":
-        return this.handleActivityStatus(userId, parts, "close");
+        return this.handleActivityStatus(userId, parts, "close", groupId);
       case "cancel":
       case "取消活动":
-        return this.handleActivityStatus(userId, parts, "cancel");
+        return this.handleActivityStatus(userId, parts, "cancel", groupId);
       case "join":
       case "报名":
-        return this.handleActivityJoin(userId, parts);
+        return this.handleActivityJoin(groupId, userId, parts);
       case "quit":
       case "取消报名":
-        return this.handleActivityQuit(userId, parts);
+        return this.handleActivityQuit(groupId, userId, parts);
       case "info":
       case "详情":
         return this.handleActivityInfo(userId, parts[2]);
       case "signups":
       case "名单":
-        return this.handleActivitySignups(userId, parts);
+        return this.handleActivitySignups(userId, parts, groupId);
+      case "subscribe":
+      case "订阅":
+        return this.subscribeCard(groupId, userId, parts[2]);
+      case "unsubscribe":
+      case "退订":
+        return this.subscribeCard(groupId, userId, parts[2], false);
+      case "manage":
+      case "管理":
+        return this.activityManageCard(userId, parts[2]);
+      case "config":
+        return this.activityConfigCard(userId, parts[2]);
       default:
         return { ok: false, text: ACTIVITY_USAGE };
     }
+  }
+
+  // ------------------------------------------- 活动：卡片构造（B2）
+
+  /**
+   * 活动通知服务未装配时的兜底（内存记录）。
+   *
+   * `cb:activity:subscribe:<群ID>` 只有「当前是否订阅」这一个状态，兜底表只为它而存在；
+   * 正式的推送与持久化由 `ActivityNotificationService` 负责（见 runtime 装配）。
+   */
+  private readonly fallbackSubscriptions = new Set<string>();
+
+  /** 统一构造活动卡片输入（补齐名单 / 候补 / 展示群名 / 查看者权限）。 */
+  private activityCardInput(
+    activity: Activity,
+    userId: string,
+    extra: { full?: boolean; page?: number } = {},
+  ): ActivityCardInput {
+    const registrations = this.activity!.listRegistrations(activity.activityId);
+    return {
+      activity,
+      registrations,
+      waitlist: this.activity!.listWaitlist(activity.activityId),
+      groupLabel: activity.groupNumber || this.displayGroup(activity.groupId),
+      viewerId: userId,
+      canManage: this.canManageActivity(userId, activity),
+      ...extra,
+    };
+  }
+
+  /**
+   * 活动卡片发送器：优先用显式注入的 `cardSender`，其次 `richMessages`，
+   * 最后复用通知服务的发送器（生产装配三者等价，都是同一通道）。
+   */
+  private cardSender(): RichMessageSender | undefined {
+    return (
+      this.explicitCardSender ??
+      this.richMessages ??
+      this.notifications?.richMessageSender
+    );
+  }
+
+  private activityCardService(): ActivityCardService {
+    const cards = this.activityCards;
+    if (cards) {
+      return cards;
+    }
+    // 未装配卡片服务时（极简单测）用最小依赖现建一个，保证活动指令仍是卡片。
+    return new ActivityCardService({
+      activity: this.activity,
+      display: this.display,
+      ...(this.userProfiles ? { profiles: this.userProfiles } : {}),
+      ...(this.activityRoster ? { roster: this.activityRoster } : {}),
+      ...(this.activityStatsService ? { stats: this.activityStatsService } : {}),
+      ...(this.activityExportService
+        ? { exportService: this.activityExportService }
+        : {}),
+      isSubscribed: (groupId, id) => this.isSubscribedTo(groupId, id),
+    });
+  }
+
+  private isSubscribedTo(groupId: string, userId: string): boolean {
+    if (this.activityNotifications) {
+      return this.activityNotifications.isSubscribed(groupId, userId);
+    }
+    return this.fallbackSubscriptions.has(`${groupId}\u0000${userId}`);
+  }
+
+  /**
+   * 订阅开关（`cb:activity:subscribe` / `/activity subscribe`）：任意成员可切换。
+   *
+   * 订阅是**按群**的：只在发布新活动时给订阅者私信，不发群消息（主动消息有限额）。
+   */
+  private subscribeCard(
+    groupId: string | undefined,
+    userId: string,
+    rawTarget?: string,
+    enabled?: boolean,
+  ): CardResult {
+    const targetGroupId =
+      rawTarget !== undefined && rawTarget.length > 0
+        ? (this.resolveTargetGroupId(undefined, rawTarget) ?? rawTarget)
+        : groupId;
+    if (!targetGroupId) {
+      const card = renderCard({
+        title: "新活动订阅",
+        lines: [
+          "该指令需要在群内使用，或在私信中带上群号 / #群短码。",
+          "用法：/activity subscribe <群号|#群短码>；/activity unsubscribe",
+        ],
+        rows: [[viewButton("help", "指令帮助", "help", "topic", "activity")]],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    const subscribed = this.isSubscribedTo(targetGroupId, userId);
+    const next = enabled ?? (rawTarget === undefined ? !subscribed : true);
+    const changed = next !== subscribed;
+    if (changed) {
+      if (next) {
+        if (this.activityNotifications) {
+          this.activityNotifications.subscribe(targetGroupId, userId);
+        } else {
+          this.fallbackSubscriptions.add(`${targetGroupId}\u0000${userId}`);
+        }
+      } else if (this.activityNotifications) {
+        this.activityNotifications.unsubscribe(targetGroupId, userId);
+      } else {
+        this.fallbackSubscriptions.delete(`${targetGroupId}\u0000${userId}`);
+      }
+      log.info("activity subscription toggled", {
+        groupId: targetGroupId,
+        userId,
+        subscribed: next,
+      });
+    }
+    const groups = this.activityNotifications
+      ? this.activityNotifications.listSubscribedGroups(userId)
+      : [...this.fallbackSubscriptions]
+          .map((key) => key.split("\u0000")[0] ?? "")
+          .filter((id) => id.length > 0);
+    const lines = [
+      `**本群**：${this.groupLabel(targetGroupId)}`,
+      `**订阅状态**：${next ? "已订阅" : "未订阅"}`,
+      changed ? `**结果**：已${next ? "订阅" : "取消订阅"}新活动通知` : "**结果**：订阅状态未变化",
+      "",
+      "订阅后：该群发布新活动时会私信发你一张活动卡；不会再往群里发通知。",
+      groups.length > 0
+        ? `**已订阅的群**：${groups.map((id) => this.groupLabel(id)).join("、")}`
+        : "**已订阅的群**：无",
+      "",
+      "说明：机器人无法 @全体成员；主动私信有人数限额，因此只推送给订阅者与当事人。",
+    ];
+    return cardFromText("新活动订阅", lines.join("\n"), {
+      rows: [
+        [
+          viewButton(
+            "toggle",
+            next ? "订阅 开" : "订阅 关",
+            "activity",
+            "subscribe",
+            targetGroupId,
+            next ? "off" : "on",
+          ),
+          viewButton("help", "订阅帮助", "help", "topic", "activity"),
+        ],
+      ],
+      buttonHint: "点击切换：",
+    });
+  }
+
+  /** 管理卡入口（管理者专用）。 */
+  private activityManageCard(userId: string, rawCode?: string): CardResult {
+    const found = this.requireActivity(rawCode);
+    if (!found.ok) {
+      return this.activityNotFoundCard(rawCode ?? "");
+    }
+    const { activity } = found;
+    if (!this.canManageActivity(userId, activity)) {
+      return this.activityDeniedCard("需要群管理员或活动发布者权限。");
+    }
+    return {
+      ok: true,
+      text: this.activityCardService()
+        .manageCard(this.activityCardInput(activity, userId))
+        .markdown,
+      rich: this.activityCardService().manageCard(this.activityCardInput(activity, userId)),
+    };
+  }
+
+  /** 配置卡入口（管理者专用）。 */
+  private activityConfigCard(userId: string, rawCode?: string): CardResult {
+    const found = this.requireActivity(rawCode);
+    if (!found.ok) {
+      return this.activityNotFoundCard(rawCode ?? "");
+    }
+    const { activity } = found;
+    if (!this.canManageActivity(userId, activity)) {
+      return this.activityDeniedCard("需要群管理员或活动发布者权限。");
+    }
+    const rich = this.activityCardService().configCard(
+      this.activityCardInput(activity, userId),
+    );
+    return { ok: true, text: rich.text, rich };
+  }
+
+  /** 活动不存在的统一卡片（回调里短码解析失败也走这里）。 */
+  private activityNotFoundCard(rawCode: string): CardResult {
+    const card = renderCard({
+      title: "活动不存在",
+      lines: [
+        `没有找到活动：${escapeCardText(rawCode) || "（空短码）"}`,
+        "短码形如 #A7K2Q9，可从活动列表或活动卡片上复制。",
+      ],
+      rows: [[viewButton("help", "活动帮助", "help", "topic", "activity")]],
+    });
+    return { ok: false, text: card.text, rich: card };
+  }
+
+  private activityDeniedCard(reason: string): CardResult {
+    const card = renderCard({
+      title: "权限不足",
+      lines: [reason],
+      rows: [[viewButton("help", "活动帮助", "help", "topic", "activity")]],
+    });
+    return { ok: false, text: card.text, rich: card };
+  }
+
+  /** 活动成员卡（群内展示 / 预览 / 重发）。 */
+  public activityMemberCard(activity: Activity, viewerId: string): RichMessage {
+    return this.activityCardService().memberCard(
+      this.activityCardInput(activity, viewerId),
+    );
+  }
+
+  // ------------------------------------------- 活动：回调 renderer（B2）
+
+  /**
+   * `cb:activity:*` 的总入口。
+   *
+   * 每个 action 在这里**重新做权限校验**（不能信按钮）：
+   * - 报名 / 取消报名 / 订阅 = 任意成员；
+   * - 配置 / 发布 / 关停 / 释放 / 名单 / 导出 / 统计 = `canManageActivity` 或超管；
+   * - 名单 / 统计 / 导出在各自 handler 里再校验一次。
+   *
+   * `replyGroupId` 是**用户点击所在的群**（私聊点击时为 undefined），用于决定
+   * 回执落在群里还是私聊 —— 隐私字段只在私聊出现（用户确认的落点）。
+   */
+  public async activityCallbackCard(
+    action: string,
+    args: readonly string[],
+    userId: string,
+    replyGroupId?: string,
+  ): Promise<CardResult> {
+    if (!this.activity) {
+      return this.activityDeniedCard("活动模块未启用。");
+    }
+    switch (action) {
+      case "join":
+        return this.handleActivityJoin(replyGroupId, userId, [
+          "activity",
+          "join",
+          args[0] ?? "",
+        ]);
+      case "quit":
+        return this.handleActivityQuit(replyGroupId, userId, [
+          "activity",
+          "quit",
+          args[0] ?? "",
+        ]);
+      case "info":
+        return this.activityInfoCard(userId, args[0]);
+      case "signups":
+        return this.handleActivitySignups(
+          userId,
+          ["activity", "signups", args[0] ?? "", args[2] ? "full" : ""],
+          replyGroupId,
+          { page: Number.parseInt(args[1] ?? "1", 10) || 1, full: args[2] === "full" },
+        );
+      case "page":
+        return this.activityListCard(
+          args[0] ?? replyGroupId ?? "",
+          userId,
+          Number.parseInt(args[1] ?? "1", 10) || 1,
+        );
+      case "config":
+        return this.activityConfigCard(userId, args[0]);
+      case "manage":
+        return this.activityManageCard(userId, args[0]);
+      case "preview":
+        return this.activityPreviewCard(userId, args[0]);
+      case "open":
+        return this.handleActivityOpen(
+          userId,
+          ["activity", "open", args[0] ?? ""],
+          replyGroupId,
+        );
+      case "cancel":
+        return this.handleActivityStatus(
+          userId,
+          ["activity", "cancel", args[0] ?? ""],
+          "cancel",
+          replyGroupId,
+        );
+      case "release":
+        return this.handleActivityRelease(userId, args[0], replyGroupId);
+      case "resend":
+        return this.handleActivityResend(userId, args[0], replyGroupId);
+      case "status":
+        return this.handleActivityStatus(
+          userId,
+          ["activity", args[1] === "open" ? "open" : "close", args[0] ?? ""],
+          args[1] === "open" ? "open" : "close",
+          replyGroupId,
+        );
+      case "set":
+        return this.handleActivitySetCallback(
+          userId,
+          args[0],
+          args[1],
+          args[2],
+          replyGroupId,
+        );
+      case "college":
+      case "year":
+        return this.handleActivityRuleToggle(
+          action,
+          userId,
+          args[0],
+          args[1],
+          Number.parseInt(args[2] ?? "1", 10) || 1,
+          args[3],
+          replyGroupId,
+        );
+      case "subscribe":
+        return this.subscribeCard(
+          replyGroupId,
+          userId,
+          args[0],
+          args[1] === "on" ? true : args[1] === "off" ? false : undefined,
+        );
+      case "stats":
+        return this.handleActivityStats(userId, args[0], replyGroupId);
+      case "export":
+        return this.handleActivityExport(userId, args[0], replyGroupId);
+      default: {
+        const card = renderCard({
+          title: "活动操作",
+          lines: [
+            `不认识的按钮动作：${escapeCardText(action) || "（空）"}`,
+            "请重新打开活动卡片再操作。",
+          ],
+          rows: [[viewButton("help", "活动帮助", "help", "topic", "activity")]],
+        });
+        return { ok: false, text: card.text, rich: card };
+      }
+    }
+  }
+
+  /** `cb:activity:info:<短码>`：详情卡（含查看者自己的权限入口）。 */
+  private activityInfoCard(userId: string, rawCode?: string): CardResult {
+    const found = this.requireActivity(rawCode);
+    if (!found.ok) {
+      return this.activityNotFoundCard(rawCode ?? "");
+    }
+    const activity = found.activity;
+    const registrations = this.activity!.listRegistrations(activity.activityId);
+    const canManage = this.canManageActivity(userId, activity);
+    const registration = this.activity!.findRegistration(activity.activityId, userId);
+    const waitlist = this.activity!.findWaitlistEntry(activity.activityId, userId);
+    const lines = [
+      `**状态**：${activity.status}`,
+      `**群**：${activity.groupNumber || this.displayGroup(activity.groupId)}`,
+      `**报名**：${registrations.length}${activity.capacity ? ` / ${activity.capacity}` : ""}${
+        activity.heldSlots > 0 ? `（待释放 ${activity.heldSlots}）` : ""
+      }`,
+      `**候补**：${this.activity!.listWaitlist(activity.activityId).length}`,
+      registration ? "**你的状态**：已报名" : waitlist ? `**你的状态**：候补第 ${this.activity!.waitlistPosition(activity.activityId, userId) ?? 0} 位` : "**你的状态**：未报名",
+    ];
+    if (activity.description) {
+      lines.push("", escapeCardText(activity.description));
+    }
+    const row: CardButton[] = [
+      viewButton("join", "我要报名", "activity", "join", activityCode(activity)),
+      viewButton("quit", "取消报名", "activity", "quit", activityCode(activity)),
+    ];
+    const card = renderCard({
+      title: `活动详情 ${activityCode(activity)}`,
+      lines,
+      rows: [
+        row,
+        canManage
+          ? [
+              viewButton("manage", "管理", "activity", "manage", activityCode(activity)),
+              viewButton("config", "配置", "activity", "config", activityCode(activity)),
+            ]
+          : [
+              viewButton(
+                "subscribe",
+                this.isSubscribedTo(activity.groupId, userId) ? "订阅 开" : "订阅 关",
+                "activity",
+                "subscribe",
+                activity.groupId,
+                this.isSubscribedTo(activity.groupId, userId) ? "off" : "on",
+              ),
+            ],
+      ],
+      buttonHint: "点击操作：",
+      footer: [
+        `报名：/activity join ${activityCode(activity)}`,
+        `报名名单：/activity signups ${activityCode(activity)}（管理者）`,
+      ],
+    });
+    return { ok: true, text: card.text, rich: card };
+  }
+
+  /** `cb:activity:preview:<短码>`：把成员卡预览给操作者本人（不发群）。 */
+  private activityPreviewCard(userId: string, rawCode?: string): CardResult {
+    const found = this.requireActivity(rawCode);
+    if (!found.ok) {
+      return this.activityNotFoundCard(rawCode ?? "");
+    }
+    if (!this.canManageActivity(userId, found.activity)) {
+      return this.activityDeniedCard("预览活动卡片需要群管理员或发布者权限。");
+    }
+    const rich = this.activityCardService().memberCard(
+      this.activityCardInput(found.activity, userId),
+    );
+    return { ok: true, text: rich.text, rich };
+  }
+
+  private async handleActivityStats(
+    userId: string,
+    rawCode?: string,
+    replyGroupId?: string,
+  ): Promise<CardResult> {
+    const found = this.requireActivity(rawCode);
+    if (!found.ok) {
+      return this.activityNotFoundCard(rawCode ?? "");
+    }
+    const { activity } = found;
+    // 统计图含学号/学院分布，必须再校验一次管理权限
+    if (!this.canManageActivity(userId, activity)) {
+      return this.activityDeniedCard("统计需要群管理员或活动发布者权限。");
+    }
+    const stats = this.activityStatsService;
+    if (!stats) {
+      // §B3 未装配：降级为卡片文字统计（不报错）
+      return this.activityStatsFallback(userId, activity, replyGroupId);
+    }
+    try {
+      const buffer = await stats.render(
+        activity,
+        this.activity!.listRegistrations(activity.activityId),
+      );
+      if (!buffer) {
+        return this.activityStatsFallback(userId, activity, replyGroupId);
+      }
+      const sent = await this.cardSender()?.sendToGroup(activity.groupId, {
+        markdown: `## 活动统计 ${activityCode(activity)}\n已生成统计图片。`,
+        text: `活动统计 ${activityCode(activity)} 已生成。`,
+      });
+      return this.activityNoticeCard(
+        replyGroupId,
+        userId,
+        sent?.ok === false
+          ? "统计图片发送失败，请改用文字统计。"
+          : "**结果**：已发送统计图片。",
+      );
+    } catch (error) {
+      log.warn("activity stats render failed", {
+        activityId: activity.activityId,
+        error: formatError(error),
+      });
+      return this.activityStatsFallback(userId, activity, replyGroupId);
+    }
+  }
+
+  /** 统计降级：管理卡同款文字统计。 */
+  private activityStatsFallback(
+    userId: string,
+    activity: Activity,
+    replyGroupId?: string,
+  ): CardResult {
+    const rich = this.activityCardService().manageCard(
+      this.activityCardInput(activity, userId),
+    );
+    const notice = this.mention(replyGroupId, userId).trimEnd();
+    const lines = notice ? [notice, ...(rich.markdown.split("\n"))] : rich.markdown.split("\n");
+    const card = renderCard({
+      title: `活动统计 ${activityCode(activity)}`,
+      lines,
+      rows: [
+        [
+          viewButton("manage", "返回管理", "activity", "manage", activityCode(activity)),
+        ],
+      ],
+      footer: ["统计图片不可用（服务未装配或字体缺失），以上为文字统计。"],
+    });
+    return { ok: true, text: card.text, rich: card };
+  }
+
+  private async handleActivityExport(
+    userId: string,
+    rawCode?: string,
+    replyGroupId?: string,
+  ): Promise<CardResult> {
+    const found = this.requireActivity(rawCode);
+    if (!found.ok) {
+      return this.activityNotFoundCard(rawCode ?? "");
+    }
+    const { activity } = found;
+    if (!this.canManageActivity(userId, activity)) {
+      return this.activityDeniedCard("导出名单需要群管理员或活动发布者权限。");
+    }
+    const exporter = this.activityExportService;
+    const notice = this.mention(replyGroupId, userId).trimEnd();
+    if (!exporter) {
+      return this.activityNoticeCard(
+        replyGroupId,
+        userId,
+        "**结果**：导出服务未装配，暂无法生成 CSV。可用「报名名单」查看并复制。",
+      );
+    }
+    const result = await exporter.exportCsv({
+      activity,
+      registrations: this.activity!.listRegistrations(activity.activityId),
+      operatorId: userId,
+    });
+    return this.activityNoticeCard(
+      replyGroupId,
+      userId,
+      `**结果**：${result.ok ? result.text : `导出失败：${result.text}`}`,
+    );
+  }
+
+  /** 回调反馈卡：群里首行 @ 操作人，私聊直接给结果。 */
+  private activityNoticeCard(
+    replyGroupId: string | undefined,
+    userId: string,
+    body: string,
+  ): CardResult {
+    const mention = this.mention(replyGroupId, userId).trimEnd();
+    const card = renderCard({
+      title: "活动操作",
+      lines: [...(mention ? [mention] : []), body],
+      rows: [[viewButton("help", "活动帮助", "help", "topic", "activity")]],
+    });
+    return { ok: true, text: card.text, rich: card };
+  }
+
+  /**
+   * `cb:activity:resend:<短码>`：把成员卡重发到活动群（管理者专用）。
+   *
+   * 管理卡上的「重发卡片」是发布卡片的补救入口（例如原来那条被刷屏冲走）。
+   */
+  private async handleActivityResend(
+    userId: string,
+    rawCode?: string,
+    replyGroupId?: string,
+  ): Promise<CardResult> {
+    const found = this.requireActivity(rawCode);
+    if (!found.ok) {
+      return this.activityNotFoundCard(rawCode ?? "");
+    }
+    const { activity } = found;
+    if (!this.canManageActivity(userId, activity)) {
+      return this.activityDeniedCard("重发卡片需要群管理员或活动发布者权限。");
+    }
+    const sender = this.cardSender();
+    if (!sender) {
+      return this.activityNoticeCard(
+        replyGroupId,
+        userId,
+        "**结果**：发送通道未启用，无法重发卡片。",
+      );
+    }
+    const result = await sender.sendToGroup(
+      activity.groupId,
+      this.activityMemberCard(activity, userId),
+    );
+    return this.activityNoticeCard(
+      replyGroupId,
+      userId,
+      result.ok
+        ? `**结果**：已重发活动卡片${result.detail ? `（降级为 ${result.detail}）` : ""}。`
+        : `**结果**：卡片发送失败（${result.detail}）。`,
+    );
+  }
+
+  /**
+   * `cb:activity:release:<短码>`：释放一个冻结名额（手动递补模式）。
+   *
+   * 有候补 → 递补第一位（私信通知本人，**不往群里发**）；没有候补 → 名额放回公开池。
+   */
+  private async handleActivityRelease(
+    userId: string,
+    rawCode?: string,
+    replyGroupId?: string,
+  ): Promise<CardResult> {
+    const found = this.requireActivity(rawCode);
+    if (!found.ok) {
+      return this.activityNotFoundCard(rawCode ?? "");
+    }
+    const { activity } = found;
+    if (!this.canManageActivity(userId, activity)) {
+      return this.activityDeniedCard("释放名额需要群管理员或活动发布者权限。");
+    }
+    const released = this.activity!.releaseHeldSlot(activity.activityId);
+    if (!released) {
+      return this.activityManageNotice(userId, activity, replyGroupId, {
+        ok: false,
+        text: "**结果**：没有待释放的名额（可能已经被释放）。",
+      });
+    }
+    if (released.promoted && released.registration) {
+      const total = this.activity!.listRegistrations(activity.activityId).length;
+      await this.notifyPromoted(activity, released.promoted, total);
+      log.info("activity held slot released: promoted", {
+        activityId: activity.activityId,
+        promoter: userId,
+        promoted: released.promoted.userId,
+      });
+      return this.activityManageNotice(userId, activity, replyGroupId, {
+        ok: true,
+        text: `**结果**：已释放名额并递补候补第一位（当前 ${total}${
+          activity.capacity ? ` / ${activity.capacity}` : ""
+        }），已私信通知本人。`,
+      });
+    }
+    log.info("activity held slot released: opened", {
+      activityId: activity.activityId,
+      operator: userId,
+    });
+    return this.activityManageNotice(userId, activity, replyGroupId, {
+      ok: true,
+      text: "**结果**：已释放名额，当前没有候补，名额放回公开池（先到先得）。",
+    });
+  }
+
+  /** 管理类回调的统一反馈卡：刷新后的管理卡 + 结果行。 */
+  private activityManageNotice(
+    userId: string,
+    activity: Activity,
+    replyGroupId: string | undefined,
+    outcome: { ok: boolean; text: string },
+  ): CardResult {
+    const fresh = this.activity!.getActivity(activity.activityId);
+    const rich = this.activityCardService().manageCard(
+      this.activityCardInput(fresh, userId),
+    );
+    const mention = this.mention(replyGroupId, userId).trimEnd();
+    const lines = [
+      ...(mention ? [mention] : []),
+      outcome.text,
+      "",
+      ...rich.markdown.split("\n"),
+    ];
+    const card = renderCard({
+      title: `活动管理 ${activityCode(fresh)}`,
+      lines,
+      rows: [
+        [
+          viewButton("signups", "报名名单", "activity", "signups", activityCode(fresh), 1),
+          viewButton("resend", "重发卡片", "activity", "resend", activityCode(fresh)),
+        ],
+        [
+          viewButton("manage", "刷新管理", "activity", "manage", activityCode(fresh)),
+        ],
+      ],
+      buttonHint: "操作：",
+      footer: [`活动配置：/activity info ${activityCode(fresh)}`],
+    });
+    return { ok: outcome.ok, text: card.text, rich: card };
+  }
+
+  /** `cb:activity:set:<短码>:<字段>:<值>`：配置卡上的快捷设置（管理者专用）。 */
+  private async handleActivitySetCallback(
+    userId: string,
+    rawCode?: string,
+    field?: string,
+    value?: string,
+    replyGroupId?: string,
+  ): Promise<CardResult> {
+    const found = this.requireActivity(rawCode);
+    if (!found.ok) {
+      return this.activityNotFoundCard(rawCode ?? "");
+    }
+    const { activity } = found;
+    if (!this.canManageActivity(userId, activity)) {
+      return this.activityDeniedCard("修改活动需要群管理员或活动发布者权限。");
+    }
+    if (!field || value === undefined) {
+      return this.activityDeniedCard("回调参数不完整，请重新打开配置卡。");
+    }
+    const applied = this.applyActivitySetting(
+      activity,
+      field,
+      value,
+      ACTIVITY_NOTIFY_FIELDS.has(field),
+    );
+    if (!applied.ok) {
+      const rich = this.activityCardService().configCard(
+        this.activityCardInput(activity, userId),
+      );
+      const mention = this.mention(replyGroupId, userId).trimEnd();
+      const card = renderCard({
+        title: "活动未修改",
+        lines: [
+          ...(mention ? [mention] : []),
+          `**结果**：${applied.text}`,
+          "",
+          ...rich.markdown.split("\n"),
+        ],
+        rows: [
+          [viewButton("config", "返回配置", "activity", "config", activityCode(activity))],
+        ],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    const updated = this.activity!.getActivity(activity.activityId);
+    const rich = this.activityCardService().configCard(
+      this.activityCardInput(updated, userId),
+    );
+    const mention = this.mention(replyGroupId, userId).trimEnd();
+    const card = renderCard({
+      title: `活动配置 ${activityCode(updated)}`,
+      lines: [...(mention ? [mention] : []), applied.text, "", ...rich.markdown.split("\n")],
+      rows: [
+        [
+          viewButton("preview", "预览", "activity", "preview", activityCode(updated)),
+          viewButton("open", "开放报名", "activity", "open", activityCode(updated)),
+        ],
+      ],
+      buttonHint: "配置项在卡片下方按钮上：",
+      footer: [`活动管理：/activity set ${activityCode(updated)} <字段> <值>`],
+    });
+    return { ok: applied.ok, text: card.text, rich: card };
+  }
+
+  /**
+   * `cb:activity:college|year:<短码>:<mode>:<页码>[:<取值>]`：
+   * 学院 / 年级限制子卡的点选（管理者专用）。
+   */
+  private async handleActivityRuleToggle(
+    kind: "college" | "year",
+    userId: string,
+    rawCode?: string,
+    rawMode?: string,
+    page = 1,
+    option?: string,
+    replyGroupId?: string,
+  ): Promise<CardResult> {
+    const found = this.requireActivity(rawCode);
+    if (!found.ok) {
+      return this.activityNotFoundCard(rawCode ?? "");
+    }
+    const { activity } = found;
+    if (!this.canManageActivity(userId, activity)) {
+      return this.activityDeniedCard("修改限制需要群管理员或活动发布者权限。");
+    }
+    const mode: "allow" | "deny" = rawMode === "deny" ? "deny" : "allow";
+    if (option !== undefined) {
+      const applied = this.applyActivityRuleOption(kind, mode, activity, option);
+      if (!applied.ok) {
+        return this.activityManageNotice(userId, activity, replyGroupId, applied);
+      }
+      log.info("activity rule toggled", {
+        activityId: activity.activityId,
+        kind,
+        mode,
+        option,
+        userId,
+      });
+    }
+    const updated = this.activity!.getActivity(activity.activityId);
+    const rich = this.activityCardService().rulesCard({
+      activity: updated,
+      kind,
+      mode,
+      page,
+    });
+    const label = kind === "college" ? "学院限制" : "年级限制";
+    return { ok: true, text: rich.text, rich: this.attachNotice(rich, label) };
+  }
+
+  /** 规则子卡的提示：点选后回到同一张子卡（标题即位置）。 */
+  private attachNotice(rich: RichMessage, label: string): RichMessage {
+    return {
+      ...rich,
+      markdown: `**${label}**\n${rich.markdown}`,
+      text: `【${label}】\n${rich.text}`,
+    };
+  }
+
+  /**
+   * 学院 / 年级白黑名单的点选逻辑。
+   *
+   * `clear` 清空当前列表；否则在「当前模式」的列表里切换该取值。
+   */
+  private applyActivityRuleOption(
+    kind: "college" | "year",
+    mode: "allow" | "deny",
+    activity: Activity,
+    option: string,
+  ): { ok: boolean; text: string } {
+    const isAllow = mode === "allow";
+    const current = new Set(
+      kind === "college"
+        ? isAllow
+          ? activity.allowColleges
+          : activity.denyColleges
+        : isAllow
+          ? activity.allowYears
+          : activity.denyYears,
+    );
+    const cleaned = option.trim();
+    if (cleaned === "clear") {
+      current.clear();
+    } else if (cleaned.length === 0) {
+      return { ok: false, text: "**结果**：没有识别到要切换的取值。" };
+    } else if (current.has(cleaned)) {
+      current.delete(cleaned);
+    } else {
+      current.add(cleaned);
+    }
+    const next = [...current].sort();
+    try {
+      if (kind === "college") {
+        this.activity!.updateActivity(
+          activity.activityId,
+          isAllow ? { allowColleges: next } : { denyColleges: next },
+        );
+      } else {
+        this.activity!.updateActivity(
+          activity.activityId,
+          isAllow ? { allowYears: next } : { denyYears: next },
+        );
+      }
+    } catch (error) {
+      return { ok: false, text: `**结果**：${formatError(error)}` };
+    }
+    const label = kind === "college" ? "学院" : "年级";
+    return {
+      ok: true,
+      text:
+        cleaned === "clear"
+          ? `**结果**：已清空${isAllow ? "允许" : "禁止"}${label}（表示不限）。`
+          : `**结果**：已更新${isAllow ? "允许" : "禁止"}${label}：${next.join("、") || "（空）"}`,
+    };
   }
 
   private requireActivity(
@@ -2982,6 +3906,599 @@ export class AdminCommandService {
       activity.createdBy === userId ||
       this.permissions.canApproveJoin(userId, activity.groupId)
     );
+  }
+
+  /**
+   * 活动字段应用（`/activity set` 与配置卡回调共用一条路径）。
+   *
+   * - 布尔开关接受 `on/off/true/false/开/关`；
+   * - `clear` 清空（链接、限制、名额、截止、简介）；
+   * - `closeAt` 接受 `MM-DD HH:mm`（默认当年）或 `YYYY-MM-DD HH:mm`；
+   * - `notify` 为真时，改到「当事人关心的字段」会给已报名 + 候补私信一次变更通知。
+   */
+  private applyActivitySetting(
+    activity: Activity,
+    field: string,
+    value: string,
+    notify: boolean,
+  ): { ok: boolean; text: string } {
+    const activities = this.activity!;
+    const cleared = CLEAR_WORDS.has(value.trim().toLowerCase());
+    try {
+      switch (field) {
+        case "title":
+        case "标题":
+          if (cleared) {
+            return { ok: false, text: "标题不能清空，请填写新的标题。" };
+          }
+          activities.updateActivity(activity.activityId, { title: value });
+          break;
+        case "desc":
+        case "description":
+        case "描述":
+          activities.updateActivity(activity.activityId, {
+            description: cleared ? "" : value,
+          });
+          break;
+        case "capacity":
+        case "名额":
+          activities.updateActivity(activity.activityId, {
+            capacity: cleared ? undefined : parsePositiveInt(field, value),
+          });
+          break;
+        case "group":
+        case "群号":
+          activities.updateActivity(activity.activityId, {
+            groupNumber: cleared ? "" : value,
+          });
+          break;
+        case "link":
+        case "链接":
+          activities.updateActivity(activity.activityId, {
+            links: cleared ? [] : [...activity.links, parseLink(value)],
+          });
+          break;
+        case "links":
+        case "链接列表":
+          activities.updateActivity(activity.activityId, {
+            links: cleared ? [] : parseLinks(value),
+          });
+          break;
+        case "closeat":
+        case "截止":
+          activities.updateActivity(activity.activityId, {
+            closeAt: cleared ? undefined : parseCloseAt(value),
+          });
+          break;
+        case "waitlistpromotion":
+        case "递补":
+          return this.setWaitlistPromotion(activity, value, cleared);
+        case "mentionall":
+        case "提醒全体":
+          activities.updateActivity(activity.activityId, {
+            mentionAll: parseToggle(field, value),
+          });
+          break;
+        case "notifycreator":
+        case "通知发起人":
+          activities.updateActivity(activity.activityId, {
+            notifyCreator: parseToggle(field, value),
+          });
+          break;
+        case "allowcolleges":
+        case "允许学院":
+          activities.updateActivity(activity.activityId, {
+            allowColleges: cleared ? [] : parseList(value),
+          });
+          break;
+        case "denycolleges":
+        case "禁止学院":
+        case "不允许学院":
+          activities.updateActivity(activity.activityId, {
+            denyColleges: cleared ? [] : parseList(value),
+          });
+          break;
+        case "allowyears":
+        case "允许年级":
+          activities.updateActivity(activity.activityId, {
+            allowYears: cleared ? [] : parseYearList(value),
+          });
+          break;
+        case "denyyears":
+        case "禁止年级":
+        case "不允许年级":
+          activities.updateActivity(activity.activityId, {
+            denyYears: cleared ? [] : parseYearList(value),
+          });
+          break;
+        default:
+          return { ok: false, text: ACTIVITY_SET_USAGE };
+      }
+    } catch (error) {
+      return { ok: false, text: `设置失败：${formatError(error)}` };
+    }
+    const updated = activities.getActivity(activity.activityId);
+    if (notify) {
+      this.voidNotifyActivityChanged(updated, field);
+    }
+    return { ok: true, text: `**结果**：已更新 ${field}（${activityCode(updated)}）。` };
+  }
+
+  /** 递补方式：`auto`（自动递补）会先把已有冻结名额释放掉。 */
+  private setWaitlistPromotion(
+    activity: Activity,
+    value: string,
+    cleared: boolean,
+  ): { ok: boolean; text: string } {
+    const activities = this.activity!;
+    const normalized = normalize(value);
+    const mode: "auto" | "manual" = cleared
+      ? "manual"
+      : normalized === "auto" || normalized === "自动" || normalized === "自动递补"
+        ? "auto"
+        : normalized === "manual" || normalized === "手动" || normalized === "手动释放"
+          ? "manual"
+          : TOGGLE_ON.has(normalized)
+            ? "auto"
+            : TOGGLE_OFF.has(normalized)
+              ? "manual"
+              : (() => {
+                  throw new Error("递补方式需要 auto（自动）或 manual（手动）");
+                })();
+    if (mode === "auto" && activity.heldSlots > 0) {
+      activities.releaseHeldSlot(activity.activityId);
+    }
+    activities.updateActivity(activity.activityId, { waitlistPromotion: mode });
+    return {
+      ok: true,
+      text: `**结果**：递补方式已改为「${mode === "auto" ? "自动递补" : "手动释放名额"}」。`,
+    };
+  }
+
+  /**
+   * 活动变更通知（`kind: "changed"`）：私信已报名 + 候补者，**不往群里发**。
+   *
+   * 去重 + 每日封顶在 `ActivityNotificationService` 里统一做；没有通知服务时静默跳过。
+   */
+  private voidNotifyActivityChanged(activity: Activity, field: string): void {
+    const notifications = this.activityNotifications;
+    if (!notifications) {
+      return;
+    }
+    const userIds = this.participantIds(activity);
+    if (userIds.length === 0) {
+      return;
+    }
+    const text = [
+      `活动 **${escapeCardText(activity.title)}**（${activityCode(activity)}）有变更：`,
+      `- 变更字段：${escapeCardText(field)}`,
+      `- 报名：${this.activity!.listRegistrations(activity.activityId).length}${
+        activity.capacity === undefined ? "" : ` / ${activity.capacity}`
+      }`,
+      `- 截止：${formatCloseAt(activity)}`,
+      "",
+      `查看详情：/activity info ${activityCode(activity)}`,
+    ].join("\n");
+    void notifications
+      .notifyParticipants({
+        activityId: activity.activityId,
+        userIds,
+        kind: "changed",
+        text,
+      })
+      .catch((error: unknown) => {
+        log.warn("activity change notify failed", {
+          activityId: activity.activityId,
+          error: formatError(error),
+        });
+      });
+  }
+
+  /** 发布（open）：群内发成员卡 + 私信回执 + 给订阅者私信活动卡。 */
+  private async publishActivity(
+    userId: string,
+    rawCode: string | undefined,
+    replyGroupId?: string,
+  ): Promise<CardResult> {
+    const found = this.requireActivity(rawCode);
+    if (!found.ok) {
+      return this.activityNotFoundCard(rawCode ?? "");
+    }
+    const { activity } = found;
+    if (!this.canManageActivity(userId, activity)) {
+      return this.activityDeniedCard("发布活动需要群管理员或活动发布者权限。");
+    }
+    const opened = this.activity!.openActivity(activity.activityId);
+    const sender = this.cardSender();
+    let publishDetail = "";
+    let published = true;
+    if (sender) {
+      const result = await sender.sendToGroup(
+        opened.groupId,
+        this.activityMemberCard(opened, userId),
+      );
+      publishDetail = result.ok ? (result.detail ? `（降级为 ${result.detail}）` : "") : `（发送失败：${result.detail}）`;
+      published = result.ok;
+    } else {
+      publishDetail = "（发送通道未启用）";
+      published = false;
+    }
+    const groupReceipt = this.activityNoticeCard(
+      replyGroupId,
+      userId,
+      published
+        ? `**结果**：活动已开放报名，活动卡片已发送到群里${publishDetail}。`
+        : `**结果**：活动已开放报名，但卡片发送失败${publishDetail}。`,
+    );
+    // 操作者私信回执：含「@全体不可用」提示与重发 / 关停入口（用户确认的落点）
+    const receiptSender = this.cardSender();
+    if (receiptSender) {
+      const hint = opened.mentionAll
+        ? "你开启了「提醒@全体」：**机器人无法 @全体成员**，如需通知全群请手动 @ 一条。"
+        : "机器人无法 @全体成员；如需通知全群请手动 @ 一条。";
+      const receipt = renderCard({
+        title: `活动已发布 ${activityCode(opened)}`,
+        lines: [
+          `**活动**：${escapeCardText(opened.title)}`,
+          `**群**：${opened.groupNumber || this.displayGroup(opened.groupId)}`,
+          `**结果**：${published ? "卡片已发到群里" : "卡片发送失败，可点「重发卡片」重试"}`,
+          "",
+          hint,
+          "",
+          `查看详情：/activity info ${activityCode(opened)}`,
+        ],
+        rows: [
+          [
+            viewButton("resend", "重发卡片", "activity", "resend", activityCode(opened)),
+            viewButton("close", "关闭报名", "activity", "status", activityCode(opened), "close"),
+          ],
+        ],
+      });
+      await receiptSender
+        .sendToUser(userId, receipt)
+        .catch(() => undefined);
+    }
+    log.info("activity published", {
+      activityId: opened.activityId,
+      groupId: opened.groupId,
+      by: userId,
+      published,
+    });
+    await this.pushNewActivity(opened);
+    return groupReceipt;
+  }
+
+  /** 给该群订阅者私信新活动卡片（只发给订阅者，不群发）。 */
+  private async pushNewActivity(activity: Activity): Promise<void> {
+    const notifications = this.activityNotifications;
+    if (!notifications) {
+      return;
+    }
+    try {
+      const card = this.activityMemberCard(activity, activity.createdBy);
+      await notifications.publishNewActivity({
+        activityId: activity.activityId,
+        groupId: activity.groupId,
+        card,
+      });
+    } catch (error) {
+      log.warn("activity publish push failed", {
+        activityId: activity.activityId,
+        error: formatError(error),
+      });
+    }
+  }
+
+  /** 递补成功：私信被递补者「你已递补成功（当前 Y/Z）」，**不往群里发**。 */
+  private async notifyPromoted(
+    activity: Activity,
+    entry: ActivityWaitlistEntry,
+    total: number,
+  ): Promise<void> {
+    const notifications = this.activityNotifications;
+    if (!notifications) {
+      return;
+    }
+    const text = [
+      `你已递补成功（活动 ${escapeCardText(activity.title)}，当前 ${total}${
+        activity.capacity === undefined ? "" : ` / ${activity.capacity}`
+      }）。`,
+      `活动群：${activity.groupNumber || this.displayGroup(activity.groupId)}`,
+      "",
+      `取消报名：/activity quit ${activityCode(activity)}`,
+    ].join("\n");
+    await notifications
+      .notifyParticipants({
+        activityId: activity.activityId,
+        userIds: [entry.userId],
+        kind: "promoted",
+        text,
+        title: "候补递补成功",
+      })
+      .catch((error: unknown) => {
+        log.warn("activity promotion notify failed", {
+          activityId: activity.activityId,
+          error: formatError(error),
+        });
+      });
+  }
+
+  /** 取消活动：私信所有已报名 + 候补者。 */
+  private async notifyActivityCancelled(activity: Activity): Promise<void> {
+    const notifications = this.activityNotifications;
+    const userIds = this.participantIds(activity);
+    if (!notifications || userIds.length === 0) {
+      return;
+    }
+    const text = [
+      `活动 **${escapeCardText(activity.title)}**（${activityCode(activity)}）已取消。`,
+      `活动群：${activity.groupNumber || this.displayGroup(activity.groupId)}`,
+      "",
+      "如有疑问请联系活动管理者。",
+    ].join("\n");
+    await notifications
+      .notifyParticipants({
+        activityId: activity.activityId,
+        userIds,
+        kind: "cancelled",
+        text,
+        title: "活动已取消",
+      })
+      .catch((error: unknown) => {
+        log.warn("activity cancel notify failed", {
+          activityId: activity.activityId,
+          error: formatError(error),
+        });
+      });
+  }
+
+  /** 活动的当事人（已报名 + 候补，去重）。 */
+  private participantIds(activity: Activity): string[] {
+    const registrations = this.activity!.listRegistrations(activity.activityId);
+    const waitlist = this.activity!.listWaitlist(activity.activityId);
+    return [
+      ...new Set([
+        ...registrations.map((item) => item.userId),
+        ...waitlist.map((item) => item.userId),
+      ]),
+    ];
+  }
+
+  /**
+   * 报名（`/activity join` 与 `cb:activity:join` 共用）。
+   *
+   * 消息落点（用户确认）：
+   * - **群里操作**：群里回执首行 `<@!申请人>`，正文只写「报名成功 · 当前 X/Y」，
+   *   不出现姓名/学号/班级/学院；
+   * - **私聊操作**：私聊回执可以包含姓名/学号/序号/人数；
+   * - **失败**：群里只说「报名未通过，原因已私信」，**具体原因只走私信**。
+   */
+  private async joinActivityCard(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): Promise<CardResult> {
+
+    const found = this.requireActivity(parts[2]);
+    if (!found.ok) {
+      return this.activityNotFoundCard(parts[2] ?? "");
+    }
+    const { activity } = found;
+    const profiles = this.userProfiles;
+    if (!profiles) {
+      const card = renderCard({
+        title: "报名未通过",
+        lines: ["个人资料服务未启用，无法校验报名资格。"],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    const inGroup = Boolean(groupId);
+    let profile;
+    try {
+      profile = profiles.requireComplete(userId);
+      this.activity!.checkEligibility(activity, profile);
+    } catch (error) {
+      if (error instanceof UserProfileError || error instanceof ActivityRuleError) {
+        return this.activityJoinFailure(groupId, userId, activity, error.message);
+      }
+      throw error;
+    }
+    let outcome;
+    try {
+      outcome = this.activity!.joinActivity({
+        activityId: activity.activityId,
+        userId,
+        displayName: profile.name,
+        note: parts.slice(3).join(" ").trim(),
+      });
+    } catch (error) {
+      if (error instanceof ActivityRuleError) {
+        return this.activityJoinFailure(groupId, userId, activity, error.message);
+      }
+      return this.activityJoinFailure(groupId, userId, activity, formatError(error));
+    }
+    const total = this.activity!.listRegistrations(activity.activityId).length;
+    const capacity = activity.capacity;
+    const ticket = capacity === undefined ? `${total}` : `${total} / ${capacity}`;
+    if (outcome.status === "waitlisted") {
+      const body = `已进入候补 · 第 ${outcome.position} 位`;
+      if (inGroup) {
+        const card = renderCard({
+          title: "候补登记",
+          lines: [`<@!${userId}>`, escapeCardText(body)],
+          footer: [`取消报名：/activity quit ${activityCode(activity)}`],
+        });
+        return { ok: true, text: card.text, rich: card };
+      }
+      const lines = [
+        `**结果**：${body}`,
+        `**姓名**：${escapeCardText(profile.name)}`,
+        `**学号**：${escapeCardText(profile.studentId)}`,
+        `**班级**：${escapeCardText(profile.className)}`,
+        `**当前报名**：${ticket}`,
+        "",
+        `取消报名：/activity quit ${activityCode(activity)}`,
+      ];
+      const card = renderCard({ title: "候补登记", lines });
+      return { ok: true, text: card.text, rich: card };
+    }
+    // 报名成功
+    if (inGroup) {
+      const card = renderCard({
+        title: "报名成功",
+        lines: [`<@!${userId}>`, `报名成功 · 当前 ${ticket}`],
+        footer: [`取消报名：/activity quit ${activityCode(activity)}`],
+      });
+      return { ok: true, text: card.text, rich: card };
+    }
+    const lines = [
+      `**结果**：报名成功 · 当前 ${ticket}`,
+      `**姓名**：${escapeCardText(profile.name)}`,
+      `**学号**：${escapeCardText(profile.studentId)}`,
+      `**班级**：${escapeCardText(profile.className)}`,
+      `**序号**：${outcome.registration.registrationId ? total : total}`,
+      "",
+      `取消报名：/activity quit ${activityCode(activity)}`,
+    ];
+    const card = renderCard({ title: "报名成功", lines });
+    return { ok: true, text: card.text, rich: card };
+  }
+
+  /**
+   * 报名失败：群里回 `<@!申请人> 报名未通过，原因已私信`，原因走私信。
+   *
+   * 私信失败时群里只提示「请先私聊机器人再试」，**绝不**把原因降级到群里
+   * （原因可能包含班级/学院等个人资料）。
+   */
+  private async activityJoinFailure(
+    groupId: string | undefined,
+    userId: string,
+    activity: Activity,
+    reason: string,
+  ): Promise<CardResult> {
+    const privateCard = renderCard({
+      title: "报名未通过",
+      lines: [
+        `**活动**：${escapeCardText(activity.title)}（${activityCode(activity)}）`,
+        `**原因**：${escapeCardText(reason)}`,
+        "",
+        `查看详情：/activity info ${activityCode(activity)}`,
+      ],
+    });
+    const sender = this.cardSender();
+    const sent = sender
+      ? await sender.sendToUser(userId, privateCard)
+      : { ok: false, detail: "私信通道未启用" };
+    if (groupId) {
+      const card = renderCard({
+        title: "报名未通过",
+        lines: [
+          `<@!${userId}>`,
+          sent.ok
+            ? escapeCardText("报名未通过，原因已私信。")
+            : escapeCardText("报名未通过，请先私聊机器人再试（原因只走私信）。"),
+        ],
+        footer: [`活动详情：/activity info ${activityCode(activity)}`],
+      });
+      return { ok: false, text: card.text, rich: card };
+    }
+    return { ok: false, text: privateCard.text, rich: privateCard };
+  }
+
+  /**
+   * 取消报名（`/activity quit` 与 `cb:activity:quit` 共用）。
+   *
+   * - `auto` 模式：立刻递补候补第一位，并私信被递补者；
+   * - `manual` 模式（默认）：名额被冻结（待释放名额 +1），**不在群里公开说明谁退出了**。
+   */
+  private async quitActivityCard(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): Promise<CardResult> {
+    const found = this.requireActivity(parts[2]);
+    if (!found.ok) {
+      return this.activityNotFoundCard(parts[2] ?? "");
+    }
+    const { activity } = found;
+    const registration = this.activity!.findRegistration(
+      activity.activityId,
+      userId,
+    );
+    if (!registration) {
+      return this.activityNoticeCard(
+        groupId,
+        userId,
+        "**结果**：你还没有报名这个活动。",
+      );
+    }
+    const outcome = this.activity!.cancelRegistrationWithPromotion(
+      registration.registrationId,
+      userId,
+    );
+    const lines: string[] = ["**结果**：已取消报名。"];
+    if (outcome.promoted && outcome.registration) {
+      const total = this.activity!.listRegistrations(activity.activityId).length;
+      await this.notifyPromoted(
+        this.activity!.getActivity(activity.activityId),
+        outcome.promoted,
+        total,
+      );
+      lines.push("**结果**：已自动递补候补第一位（已私信通知本人）。");
+    } else if (outcome.heldSlots > 0) {
+      lines.push(
+        `**结果**：名额已冻结，等待管理员释放（待释放名额 ${outcome.heldSlots}）。`,
+      );
+    }
+    const fresh = this.activity!.getActivity(activity.activityId);
+    lines.push(`**当前报名**：${this.activity!.listRegistrations(fresh.activityId).length}${
+      fresh.capacity === undefined ? "" : ` / ${fresh.capacity}`
+    }`);
+    const mention = this.mention(groupId, userId).trimEnd();
+    const card = renderCard({
+      title: "取消报名",
+      lines: [...(mention ? [mention] : []), ...lines],
+      footer: [
+        `重新报名：/activity join ${activityCode(fresh)}`,
+        ...(fresh.heldSlots > 0 && this.canManageActivity(userId, fresh)
+          ? ["释放名额：管理卡上的「释放名额」按钮"]
+          : []),
+      ],
+    });
+    return { ok: true, text: card.text, rich: card };
+  }
+
+  /** 名单卡：管理者专用（非管理者回调也只得到「权限不足」卡）。 */
+  private handleActivitySignups(
+    userId: string,
+    parts: readonly string[],
+    replyGroupId?: string,
+    override: { page?: number; full?: boolean } = {},
+  ): CardResult {
+    const found = this.requireActivity(parts[2]);
+    if (!found.ok) {
+      return this.activityNotFoundCard(parts[2] ?? "");
+    }
+    const { activity } = found;
+    if (!this.canManageActivity(userId, activity)) {
+      return this.activityDeniedCard("只有群管理员或活动发布者可以查看报名名单。");
+    }
+    const rawPage = override.page ?? parseSignupPage(parts);
+    const full = override.full ?? parts.includes("full");
+    const rich = this.activityCardService().signupsCard({
+      ...this.activityCardInput(activity, userId),
+      page: rawPage,
+      full,
+    });
+    const mention = this.mention(replyGroupId, userId).trimEnd();
+    if (!mention) {
+      return { ok: true, text: rich.text, rich };
+    }
+    return {
+      ok: true,
+      text: rich.text,
+      rich: { ...rich, markdown: `${mention}\n${rich.markdown}` },
+    };
   }
 
   private handleActivityCreate(
@@ -3018,284 +4535,120 @@ export class AdminCommandService {
         createdBy: userId,
         groupNumber: this.identityMap?.getGroupNumber(targetGroupId) ?? "",
       });
-      return {
-        ok: true,
-        text:
-          `已创建活动（草稿）：${activity.title}\n` +
-          `活动短码：${activityCode(activity)}\n\n` +
-          `接下来：/activity set ${activityCode(activity)} capacity 50、link https://...、allowYears 22,23、denyColleges ...；\n` +
-          `配好后用 /activity open ${activityCode(activity)} 开放报名并发送卡片。`,
-      };
+      // 用户确认：`/activity create` 之后直接返回**配置卡**（短码 + 全部配置按钮）
+      const rich = this.activityCardService().configCard(
+        this.activityCardInput(activity, userId),
+      );
+      return { ok: true, text: rich.text, rich };
     } catch (error) {
       return { ok: false, text: `创建失败：${formatError(error)}` };
     }
   }
 
-  private handleActivitySet(userId: string, parts: readonly string[]): CommandResult {
+  private handleActivitySet(
+    userId: string,
+    parts: readonly string[],
+    replyGroupId?: string,
+  ): CommandResult {
     const found = this.requireActivity(parts[2]);
     if (!found.ok) {
-      return found;
+      return this.activityNotFoundCard(parts[2] ?? "");
     }
     const { activity } = found;
     if (!this.canManageActivity(userId, activity)) {
-      return { ok: false, text: "权限不足：只有群管理员或活动发布者可以修改活动。" };
+      return this.activityDeniedCard("只有群管理员或活动发布者可以修改活动。");
     }
     const field = normalize(parts[3]);
     const value = parts.slice(4).join(" ").trim();
     if (!field || value.length === 0) {
       return { ok: false, text: ACTIVITY_SET_USAGE };
     }
-    const cleared = CLEAR_WORDS.has(value.toLowerCase());
-    try {
-      switch (field) {
-        case "title":
-        case "标题":
-          this.activity!.updateActivity(activity.activityId, { title: value });
-          break;
-        case "desc":
-        case "description":
-        case "描述":
-          this.activity!.updateActivity(activity.activityId, {
-            description: cleared ? "" : value,
-          });
-          break;
-        case "capacity":
-        case "名额":
-          this.activity!.updateActivity(activity.activityId, {
-            capacity: cleared ? undefined : parsePositiveInt(field, value),
-          });
-          break;
-        case "group":
-        case "群号":
-          this.activity!.updateActivity(activity.activityId, {
-            groupNumber: cleared ? "" : value,
-          });
-          break;
-        case "link":
-        case "链接":
-          this.activity!.updateActivity(activity.activityId, {
-            links: cleared ? [] : [...activity.links, parseLink(value)],
-          });
-          break;
-        case "links":
-        case "链接列表":
-          this.activity!.updateActivity(activity.activityId, {
-            links: cleared ? [] : parseLinks(value),
-          });
-          break;
-        case "allowcolleges":
-        case "允许学院":
-          this.activity!.updateActivity(activity.activityId, {
-            allowColleges: cleared ? [] : parseList(value),
-          });
-          break;
-        case "denycolleges":
-        case "禁止学院":
-        case "不允许学院":
-          this.activity!.updateActivity(activity.activityId, {
-            denyColleges: cleared ? [] : parseList(value),
-          });
-          break;
-        case "allowyears":
-        case "允许年级":
-          this.activity!.updateActivity(activity.activityId, {
-            allowYears: cleared ? [] : parseYearList(value),
-          });
-          break;
-        case "denyyears":
-        case "禁止年级":
-        case "不允许年级":
-          this.activity!.updateActivity(activity.activityId, {
-            denyYears: cleared ? [] : parseYearList(value),
-          });
-          break;
-        default:
-          return { ok: false, text: ACTIVITY_SET_USAGE };
-      }
-    } catch (error) {
-      return { ok: false, text: `设置失败：${formatError(error)}` };
+    const applied = this.applyActivitySetting(
+      activity,
+      field,
+      value,
+      ACTIVITY_NOTIFY_FIELDS.has(field),
+    );
+    if (!applied.ok) {
+      return { ok: false, text: applied.text };
     }
-    const updated = this.activity!.requireByCode(activity.code);
-    return {
-      ok: true,
-      text: `已更新活动 ${activityCode(updated)}。\n\n${this.formatActivityInfo(updated)}`,
-    };
+    const updated = this.activity!.getActivity(activity.activityId);
+    const rich = this.activityCardService().configCard(
+      this.activityCardInput(updated, userId),
+    );
+    return { ok: true, text: rich.text, rich };
   }
 
   private async handleActivityOpen(
     userId: string,
     parts: readonly string[],
-  ): Promise<CommandResult> {
-    const found = this.requireActivity(parts[2]);
-    if (!found.ok) {
-      return found;
-    }
-    const { activity } = found;
-    if (!this.canManageActivity(userId, activity)) {
-      return { ok: false, text: "权限不足：只有群管理员或活动发布者可以开放活动。" };
-    }
-    const opened = this.activity!.openActivity(activity.activityId);
-    const registrations = this.activity!.listRegistrations(opened.activityId);
-    const result = await this.activityCards?.publish({
-      activity: opened,
-      registrations,
-      groupLabel: this.displayGroup(opened.groupId),
-    });
-    const lines = [`活动已开放报名：${opened.title}（${activityCode(opened)}）`];
-    if (result && !result.ok) {
-      lines.push(`卡片发送失败：${result.detail}`);
-      lines.push(`可以手动把活动发到群里：/activity info ${activityCode(opened)}`);
-    } else if (result?.detail) {
-      lines.push(`卡片已发送（降级为 ${result.detail}）。`);
-    } else if (result) {
-      lines.push("活动卡片已发送到群里。");
-    }
-    return { ok: true, text: lines.join("\n") };
+    replyGroupId?: string,
+  ): Promise<CardResult>
+  {
+    return this.publishActivity(userId, parts[2], replyGroupId);
   }
 
-  private handleActivityStatus(
+  private async handleActivityStatus(
     userId: string,
     parts: readonly string[],
-    mode: "close" | "cancel",
-  ): CommandResult {
+    mode: "close" | "cancel" | "open",
+    replyGroupId?: string,
+  ): Promise<CardResult>
+  {
+    if (mode === "open") {
+      return this.publishActivity(userId, parts[2], replyGroupId);
+    }
     const found = this.requireActivity(parts[2]);
     if (!found.ok) {
-      return found;
+      return this.activityNotFoundCard(parts[2] ?? "");
     }
     const { activity } = found;
     if (!this.canManageActivity(userId, activity)) {
-      return { ok: false, text: "权限不足：只有群管理员或活动发布者可以操作活动。" };
+      return this.activityDeniedCard("只有群管理员或活动发布者可以操作活动。");
     }
     const updated =
       mode === "close"
         ? this.activity!.closeActivity(activity.activityId)
         : this.activity!.cancelActivity(activity.activityId);
-    return {
-      ok: true,
-      text:
-        mode === "close"
-          ? `已关闭活动：${updated.title}（停止报名）`
-          : `已取消活动：${updated.title}`,
-    };
-  }
-
-  private handleActivityJoin(
-    userId: string,
-    parts: readonly string[],
-  ): CommandResult {
-    const found = this.requireActivity(parts[2]);
-    if (!found.ok) {
-      return found;
-    }
-    const { activity } = found;
-    const profiles = this.userProfiles;
-    if (!profiles) {
-      return { ok: false, text: "个人资料服务未启用，无法校验报名资格。" };
-    }
-    let profile;
-    try {
-      profile = profiles.requireComplete(userId);
-      this.activity!.checkEligibility(activity, profile);
-    } catch (error) {
-      if (error instanceof UserProfileError || error instanceof ActivityRuleError) {
-        return { ok: false, text: error.message };
-      }
-      throw error;
-    }
-    try {
-      const registration = this.activity!.register({
-        activityId: activity.activityId,
+    if (mode === "cancel") {
+      await this.notifyActivityCancelled(updated);
+      const notified =
+        this.activity!.listRegistrations(updated.activityId).length +
+        this.activity!.listWaitlist(updated.activityId).length;
+      return this.activityNoticeCard(
+        replyGroupId,
         userId,
-        displayName: profile.name,
-        note: parts.slice(3).join(" ").trim(),
-      });
-      const total = this.activity!.listRegistrations(activity.activityId).length;
-      return {
-        ok: true,
-        text:
-          `报名成功：${activity.title}\n` +
-          `姓名：${registration.displayName} · 学号：${profile.studentId} · 班级：${profile.className} · 学院：${profile.college}\n` +
-          `当前报名人数：${total}${activity.capacity ? ` / ${activity.capacity}` : ""}\n` +
-          `取消报名：/activity quit ${activityCode(activity)}`,
-      };
-    } catch (error) {
-      if (error instanceof ActivityRuleError) {
-        return { ok: false, text: error.message };
-      }
-      return { ok: false, text: `报名失败：${formatError(error)}` };
+        `**结果**：已取消活动 ${activityCode(updated)}，已私信通知 ${notified} 位同学。`,
+      );
     }
+    return this.activityManageNotice(userId, updated, replyGroupId, {
+      ok: true,
+      text: "**结果**：已关闭报名（不再接受新的报名）。",
+    });
   }
 
-  private handleActivityQuit(
+  private async handleActivityJoin(
+    groupId: string | undefined,
     userId: string,
     parts: readonly string[],
-  ): CommandResult {
-    const found = this.requireActivity(parts[2]);
-    if (!found.ok) {
-      return found;
-    }
-    const { activity } = found;
-    const registration = this.activity!.findRegistration(
-      activity.activityId,
-      userId,
-    );
-    if (!registration) {
-      return { ok: false, text: "你还没有报名这个活动。" };
-    }
-    this.activity!.cancelRegistration(registration.registrationId, userId);
-    return {
-      ok: true,
-      text: `已取消报名：${activity.title}（${activityCode(activity)}）`,
-    };
+    ): Promise<CardResult> {
+    return this.joinActivityCard(groupId, userId, parts);
   }
 
+  private async handleActivityQuit(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+    ): Promise<CardResult> {
+    return this.quitActivityCard(groupId, userId, parts);
+  }
+
+  /** `/activity info <#短码>`：详情卡（回调 `cb:activity:info` 复用）。 */
   private handleActivityInfo(
     userId: string,
     code: string | undefined,
-  ): CommandResult {
-    const found = this.requireActivity(code);
-    if (!found.ok) {
-      return found;
-    }
-    return { ok: true, text: this.formatActivityInfo(found.activity) };
-  }
-
-  private handleActivitySignups(
-    userId: string,
-    parts: readonly string[],
-  ): CommandResult {
-    const found = this.requireActivity(parts[2]);
-    if (!found.ok) {
-      return found;
-    }
-    const { activity } = found;
-    if (!this.canManageActivity(userId, activity)) {
-      return { ok: false, text: "权限不足：只有群管理员或活动发布者可以查看报名名单。" };
-    }
-    const registrations = this.activity!.listRegistrations(activity.activityId);
-    if (registrations.length === 0) {
-      return { ok: true, text: `${activity.title} 目前还没有人报名。` };
-    }
-    const lines = [
-      `${activity.title} 报名名单（${registrations.length}${
-        activity.capacity ? ` / ${activity.capacity}` : ""
-      }）：`,
-    ];
-    registrations.forEach((registration, index) => {
-      const profile = this.userProfiles?.get(registration.userId);
-      const detail = profile
-        ? [profile.studentId, profile.className, profile.college]
-            .filter((item) => item.length > 0)
-            .join(" · ")
-        : "";
-      const note = registration.note ? ` 备注：${registration.note}` : "";
-      lines.push(
-        `${index + 1}. ${registration.displayName || this.displayUser(registration.userId)}${
-          detail ? `（${detail}）` : ""
-        }${note}`,
-      );
-    });
-    return { ok: true, text: lines.join("\n") };
+  ): CardResult {
+    return this.activityInfoCard(userId, code);
   }
 
   private formatActivityList(groupId: string): string {
@@ -3316,34 +4669,12 @@ export class AdminCommandService {
     return lines.join("\n");
   }
 
-  private formatActivityInfo(activity: Activity): string {
-    const registrations = this.activity!.listRegistrations(activity.activityId);
-    const rules: string[] = [];
-    if (activity.allowColleges.length > 0) {
-      rules.push(`仅限学院：${activity.allowColleges.join("、")}`);
-    }
-    if (activity.allowYears.length > 0) {
-      rules.push(`仅限年级：${activity.allowYears.join("、")}`);
-    }
-    if (activity.denyColleges.length > 0) {
-      rules.push(`不接受学院：${activity.denyColleges.join("、")}`);
-    }
-    if (activity.denyYears.length > 0) {
-      rules.push(`不接受年级：${activity.denyYears.join("、")}`);
-    }
-    return [
-      `活动 ${activityCode(activity)}：${activity.title}`,
-      `状态：${activity.status}`,
-      `群：${activity.groupNumber || this.displayGroup(activity.groupId)}`,
-      ...(activity.description ? [`简介：${activity.description}`] : []),
-      `报名人数：${registrations.length}${activity.capacity ? ` / ${activity.capacity}` : ""}`,
-      ...rules,
-      ...activity.links.map((link) => `链接：${link.label} ${link.url}`),
-      "",
-      `报名：/activity join ${activityCode(activity)}`,
-      `取消报名：/activity quit ${activityCode(activity)}`,
-      `管理：/activity set ${activityCode(activity)} <字段> <值>`,
-    ].join("\n");
+  private formatActivityInfo(activity: Activity): string
+  {
+    const rich = this.activityCardService().configCard(
+      this.activityCardInput(activity, activity.createdBy),
+    );
+    return rich.text;
   }
 
   private handlePending(
@@ -3585,6 +4916,14 @@ export class AdminCommandService {
   private handleTest(groupId: string | undefined, userId: string): CommandResult {
     return this.testCard(groupId, userId);
   }
+}
+
+/** 活动列表卡的分组标题（报名中 / 草稿 / 已结束）。 */
+function listGroupOf(activity: Activity): "报名中" | "草稿" | "已结束" {
+  if (activity.status === ActivityStatus.Open) {
+    return "报名中";
+  }
+  return activity.status === ActivityStatus.Draft ? "草稿" : "已结束";
 }
 
 function normalize(value: string | undefined): string {
@@ -3896,6 +5235,37 @@ const ACTIVITY_USAGE = [
   "  /activity signups <#活动短码>              报名名单（群管理员/发布者）",
 ].join("\n");
 
+/** 改到这些字段时，给已报名 + 候补私信一次变更通知（去重 + 每日封顶）。 */
+const ACTIVITY_NOTIFY_FIELDS = new Set([
+  "title",
+  "标题",
+  "desc",
+  "description",
+  "描述",
+  "capacity",
+  "名额",
+  "group",
+  "群号",
+  "link",
+  "链接",
+  "links",
+  "链接列表",
+  "closeat",
+  "截止",
+  "waitlistpromotion",
+  "递补",
+  "allowcolleges",
+  "允许学院",
+  "denycolleges",
+  "禁止学院",
+  "不允许学院",
+  "allowyears",
+  "允许年级",
+  "denyyears",
+  "禁止年级",
+  "不允许年级",
+]);
+
 const ACTIVITY_SET_USAGE = [
   "用法：/activity set <#活动短码> <字段> <值>",
   "字段（大小写不敏感，clear 清空）：",
@@ -3941,6 +5311,50 @@ function parseLink(value: string): ActivityLink {
 
 function parseLinks(value: string): ActivityLink[] {
   return parseList(value).map((item) => parseLink(item));
+}
+
+/**
+ * 报名截止时间：接受 `MM-DD HH:mm`（默认当年）或 `YYYY-MM-DD HH:mm`。
+ *
+ * 只做最小解析，不做「已过去」校验：管理员可能就是想立刻截止（懒校验会在报名时拒绝）。
+ */
+function parseCloseAt(value: string): Date {
+  const match =
+    /^(?:(\d{4})[-/])?(\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{2})$/u.exec(
+      value.trim(),
+    );
+  if (!match) {
+    throw new Error("截止时间格式：MM-DD HH:mm（当天日期）或 YYYY-MM-DD HH:mm");
+  }
+  const [, rawYear, rawMonth, rawDay, rawHour, rawMinute] = match;
+  const now = new Date();
+  const year = rawYear ? Number.parseInt(rawYear, 10) : now.getFullYear();
+  const date = new Date(
+    year,
+    Number.parseInt(rawMonth!, 10) - 1,
+    Number.parseInt(rawDay!, 10),
+    Number.parseInt(rawHour!, 10),
+    Number.parseInt(rawMinute!, 10),
+  );
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("截止时间不合法");
+  }
+  return date;
+}
+
+/** 名单卡页码：`/activity signups #码 [+页码] [full]`。 */
+function parseSignupPage(parts: readonly string[]): number {
+  for (const part of parts.slice(3)) {
+    const token = /^\+(\d+)$/u.exec(part);
+    if (token) {
+      return Number.parseInt(token[1]!, 10) || 1;
+    }
+  }
+  const bare = parts[3];
+  if (bare && /^\d+$/u.test(bare)) {
+    return Number.parseInt(bare, 10) || 1;
+  }
+  return 1;
 }
 
 function parsePositiveInt(field: string, value: string): number {

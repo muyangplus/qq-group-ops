@@ -1,4 +1,4 @@
-﻿export const DEFAULT_SQLITE_PATH = "data/qq-group-ops.db";
+export const DEFAULT_SQLITE_PATH = "data/qq-group-ops.db";
 export const DEFAULT_BOT_CACHE_FILE = "data/qq-bot-cache.json";
 export const DEFAULT_CLASS_INDEX_FILE = "data/class-index.json";
 
@@ -31,6 +31,13 @@ export interface Settings {
   menuFirstPush: MenuFirstPushMode;
   /** 待审批入群申请的有效期（天）；0 表示不自动过期（默认 7）。 */
   joinRequestTtlDays: number;
+  /**
+   * 活动通知每人每日上限（`ACTIVITY_NOTIFY_DAILY_LIMIT`，默认 3）。
+   *
+   * `0` = 不限制；非负整数。官方主动私信有「单用户每天 1000 条、单关系 20 qpm」
+   * 的额度，封顶是为了避免活动集中变更时把额度打满、后续通知全部失败。
+   */
+  activityNotifyDailyLimit: number;
 }
 
 export type MenuFirstPushMode = "memory" | "persistent";
@@ -71,6 +78,15 @@ function asInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value, 10);
   if (Number.isNaN(parsed)) {
     throw new Error(`invalid integer value: ${value}`);
+  }
+  return parsed;
+}
+
+/** 非负整数（`0` 合法，用于「不限制」语义）。 */
+function asNonNegativeInt(value: string | undefined, fallback: number): number {
+  const parsed = asInt(value, fallback);
+  if (parsed < 0) {
+    throw new Error(`invalid non-negative integer value: ${value}`);
   }
   return parsed;
 }
@@ -144,6 +160,10 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     auditLogRetentionDays: asInt(env.AUDIT_LOG_RETENTION_DAYS, 180),
     menuFirstPush: resolveMenuFirstPushMode(env.MENU_FIRST_PUSH),
     joinRequestTtlDays: asInt(env.JOIN_REQUEST_TTL_DAYS, 7),
+    activityNotifyDailyLimit: asNonNegativeInt(
+      env.ACTIVITY_NOTIFY_DAILY_LIMIT,
+      3,
+    ),
   };
 }
 

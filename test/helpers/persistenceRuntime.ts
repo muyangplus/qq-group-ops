@@ -3,6 +3,8 @@ import { SqlActivityRepository } from "../../src/db/activityRepository.js";
 import { SqlActivityDetailsRepository } from "../../src/db/activityDetailsRepository.js";
 import { SqlActivitySettingsRepository } from "../../src/db/activitySettingsRepository.js";
 import { SqlActivityWaitlistRepository } from "../../src/db/activityWaitlistRepository.js";
+import { SqlActivitySubscriptionRepository } from "../../src/db/activitySubscriptionRepository.js";
+import { SqlActivityNotificationRepository } from "../../src/db/activityNotificationRepository.js";
 import { SqlAuditRepository } from "../../src/db/auditRepository.js";
 import { SqlGroupConfigRepository } from "../../src/db/groupConfigRepository.js";
 import { SqlGroupSettingsRepository } from "../../src/db/groupSettingsRepository.js";
@@ -38,6 +40,8 @@ export function createPersistentRuntime(
       activityDetails: new SqlActivityDetailsRepository(queryable),
       activityWaitlist: new SqlActivityWaitlistRepository(queryable),
       activitySettings: new SqlActivitySettingsRepository(queryable),
+      activitySubscriptions: new SqlActivitySubscriptionRepository(queryable),
+      activityNotifications: new SqlActivityNotificationRepository(queryable),
       notificationSubscriptions:
         new SqlNotificationSubscriptionRepository(queryable),
       notificationDeliveries:

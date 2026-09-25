@@ -74,7 +74,13 @@ describe("activity & profile commands", () => {
       display,
       userProfiles,
       activity,
-      activityCards: new ActivityCardService(sender, display),
+      activityCards: new ActivityCardService({
+        activity,
+        display,
+        profiles: userProfiles,
+        roster,
+      }),
+      cardSender: sender,
     });
   });
 
@@ -135,41 +141,90 @@ describe("activity & profile commands", () => {
     expect(card?.markdown).toContain("报名限制：学院 化学 · 年级 22");
     const buttons = (
       card?.keyboard as {
-        content: { rows: Array<{ buttons: Array<{ action: { data: string } }> }> };
+        content: {
+          rows: Array<{
+            buttons: Array<{
+              id: string;
+              action: { type: number; data: string; modal?: unknown };
+            }>;
+          }>;
+        };
       }
     ).content.rows
-      .flatMap((row) => row.buttons)
-      .map((button) => button.action.data);
-    expect(buttons).toContain("/activity join #ACT001");
-    expect(buttons).toContain("/activity quit #ACT001");
+      .flatMap((row) => row.buttons);
+    // 成员卡的报名 / 取消报名是**回调按钮**（带二次确认），点击即自动完成；
+    // 纯文本降级里保留等价的 /activity join|quit 指令（按钮不可用时可用）。
+    const joinButton = buttons.find((button) => button.id === "join");
+    expect(joinButton?.action).toMatchObject({
+      type: 1,
+      data: "cb:activity:join:#ACT001",
+    });
+    expect(joinButton?.action.modal).toBeDefined();
+    const quitButton = buttons.find((button) => button.id === "quit");
+    expect(quitButton?.action).toMatchObject({
+      type: 1,
+      data: "cb:activity:quit:#ACT001",
+    });
+    expect(quitButton?.action.modal).toBeDefined();
+    // 纯文本降级（`RichMessage.text`）里保留等价指令
+    expect(card?.markdown).toContain("/activity join #ACT001");
+    expect(card?.markdown).toContain("/activity quit #ACT001");
 
     // 资料完整的 22 级同学可以报名
     await fillProfile("member", "小明", "22123456789", "材化2211");
     const joined = await service.handle("g1", "member", "/activity join #ACT001");
     expect(joined.ok).toBe(true);
     expect(joined.text).toContain("报名成功");
-    expect(joined.text).toContain("当前报名人数：1 / 2");
+    // 群内回执（用户确认的落点）：首行 @ 申请人 + 人数；**不含任何隐私字段**
+    expect(joined.text).toContain("当前 1 / 2");
+    expect(joined.text).toContain("<@!member>");
+    expect(joined.text).not.toContain("小明");
+    expect(joined.text).not.toContain("22123456789");
+    expect(joined.text).not.toContain("材化2211");
+    expect(joined.text).not.toContain("学号");
 
     const duplicate = await service.handle("g1", "member", "/activity join #ACT001");
     expect(duplicate.ok).toBe(false);
-    expect(duplicate.text).toContain("已经报名");
+    // 具体原因（「已经报名过」）只走私信，群里只说原因已私信
+    expect(duplicate.text).toContain("原因已私信");
+    expect(duplicate.text).not.toContain("已经报名");
+    expect(String(api.sentPrivateMessages.at(-1)?.markdown ?? "")).toContain(
+      "已经报名",
+    );
 
-    // 年级不符的同学被拒绝
+    // 年级不符的同学被拒绝：原因同样只走私信
     await fillProfile("other", "小红", "23123456789", "环工2314");
     const rejected = await service.handle("g1", "other", "/activity join #ACT001");
     expect(rejected.ok).toBe(false);
-    expect(rejected.text).toContain("仅限");
+    expect(rejected.text).toContain("原因已私信");
+    expect(rejected.text).not.toContain("仅限");
+    expect(String(api.sentPrivateMessages.at(-1)?.markdown ?? "")).toContain("仅限");
 
-    // 名单包含资料
+    // 名单默认脱敏（不显示学号/学院），「完整信息」才带学号
     const signups = await service.handle("g1", "admin", "/activity signups #ACT001");
     expect(signups.ok).toBe(true);
     expect(signups.text).toContain("小明");
-    expect(signups.text).toContain("22123456789");
     expect(signups.text).toContain("材化2211");
+    expect(signups.text).not.toContain("22123456789");
+    const fullSignups = await service.activityCallbackCard(
+      "signups",
+      ["#ACT001", "1", "full"],
+      "admin",
+      "g1",
+    );
+    expect(fullSignups.text).toContain("22123456789");
 
-    const info = await service.handle("g1", "member", "/activity info #ACT001");
+    // 管理卡正文给出报名进度（详情卡本身不含隐私字段）
+    const info = await service.activityCallbackCard(
+      "manage",
+      ["#ACT001"],
+      "admin",
+      "g1",
+    );
     expect(info.ok).toBe(true);
-    expect(info.text).toContain("报名人数：1 / 2");
+    expect(info.text).toContain("报名");
+    expect(info.text).toContain("1 / 2");
+    expect(info.text).not.toContain("22123456789");
 
     const quit = await service.handle("g1", "member", "/activity quit #ACT001");
     expect(quit.ok).toBe(true);
@@ -184,7 +239,13 @@ describe("activity & profile commands", () => {
 
     const result = await service.handle("g1", "member", "/activity join #ACT001");
     expect(result.ok).toBe(false);
-    expect(result.text).toContain("补全个人资料");
+    // 群里只给「原因已私信」，具体原因（含隐私提示）走私信
+    const groupText = String(result.rich?.markdown ?? "");
+    expect(groupText).toContain("<@!member>");
+    expect(groupText).toContain("原因已私信");
+    expect(groupText).not.toContain("学号");
+    const dmText = String(api.sentPrivateMessages.at(-1)?.markdown ?? "");
+    expect(dmText).toContain("补全个人资料");
   });
 
   it("only lets group admins publish and manage activities", async () => {
@@ -236,10 +297,18 @@ describe("activity & profile commands", () => {
       type: 1,
       data: "cb:activity:page:g1:2",
     });
-    // 每个活动一行操作按钮：报名 / 详情 / 名单
+    // 每个活动一行操作按钮：详情 / 报名 / 订阅（都是回调，点击即出卡 / 生效）
     expect(buttons.find((button) => button.id === "join-#ACT001")?.action).toMatchObject({
-      type: 2,
-      data: "/activity join #ACT001",
+      type: 1,
+      data: "cb:activity:join:#ACT001",
+    });
+    expect(buttons.find((button) => button.id === "info-#ACT001")?.action).toMatchObject({
+      type: 1,
+      data: "cb:activity:info:#ACT001",
+    });
+    expect(buttons.find((button) => button.id === "subscribe-#ACT001")?.action).toMatchObject({
+      type: 1,
+      data: "cb:activity:subscribe:g1:on",
     });
     expect(first.text).toContain("下一页：/activity list +2");
 

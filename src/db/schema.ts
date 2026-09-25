@@ -194,4 +194,24 @@ CREATE TABLE IF NOT EXISTS activity_settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (activity_id, key)
 );
+
+-- 按群订阅「新活动通知」：只推送订阅者
+CREATE TABLE IF NOT EXISTS activity_subscriptions (
+  group_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (group_id, user_id)
+);
+
+-- 活动通知去重 + 每人每日计数
+CREATE TABLE IF NOT EXISTS activity_notifications (
+  activity_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  kind TEXT NOT NULL,           -- published | changed | cancelled | promoted
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (activity_id, user_id, kind)
+);
+
+CREATE INDEX IF NOT EXISTS activity_notifications_user_idx
+  ON activity_notifications (user_id, created_at DESC);
 `.trim();

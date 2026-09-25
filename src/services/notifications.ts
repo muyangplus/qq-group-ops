@@ -119,6 +119,16 @@ export class NotificationService {
   }
 
   /**
+   * 暴露富消息发送器（Markdown + 按钮 + 三级降级）。
+   *
+   * 与活动卡片共用同一条发送通道，避免同一进程里出现两个键盘降级状态
+   * （一个被平台拒绝、另一个还在重试）。
+   */
+  public get richMessageSender(): RichMessageSender {
+    return this.sender;
+  }
+
+  /**
    * 主动私信发一张任意卡片（`/whois` 这类**隐私结果**只走私信，不走群聊）。
    *
    * 返回 `ok=false` 时 `detail` 是失败原因（例如用户没和机器人私聊过、未开启主动消息）。

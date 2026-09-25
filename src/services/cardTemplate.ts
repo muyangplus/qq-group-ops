@@ -54,7 +54,7 @@ export interface CardButton {
   visitedLabel?: string | undefined;
   /** 按钮可见性（例如只允许某个接收者点击）。 */
   permission?: KeyboardButtonPermission | undefined;
-  /** 二次确认弹窗（官方 `action.modal`，仅指令按钮）。 */
+  /** 二次确认弹窗（官方 `action.modal`，回调与指令按钮都支持）。 */
   modal?: KeyboardModal | undefined;
   unsupportTips?: string | undefined;
 }
@@ -206,6 +206,9 @@ function toKeyboardButton(
             ? { permission: button.permission }
             : {}),
           unsupportTips: button.unsupportTips ?? DEFAULT_UNSUPPORT_TIPS,
+          // 回调按钮同样支持二次确认：报名 / 取消报名 / 取消活动这类不可逆动作
+          // 需要先弹官方 modal，避免误点（官方 `action.modal` 对 type=1 有效）。
+          ...(button.modal !== undefined ? { modal: button.modal } : {}),
         }
       : {
           type: 2,

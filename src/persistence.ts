@@ -13,6 +13,14 @@ import {
   type ActivitySettingsRepository,
 } from "./db/activitySettingsRepository.js";
 import {
+  SqlActivitySubscriptionRepository,
+  type ActivitySubscriptionRepository,
+} from "./db/activitySubscriptionRepository.js";
+import {
+  SqlActivityNotificationRepository,
+  type ActivityNotificationRepository,
+} from "./db/activityNotificationRepository.js";
+import {
   SqlActivityWaitlistRepository,
   type ActivityWaitlistRepository,
 } from "./db/activityWaitlistRepository.js";
@@ -89,6 +97,8 @@ export interface Persistence {
   activities: ActivityRepository;
   activityWaitlist: ActivityWaitlistRepository;
   activitySettings: ActivitySettingsRepository;
+  activitySubscriptions: ActivitySubscriptionRepository;
+  activityNotifications: ActivityNotificationRepository;
   notificationSubscriptions: NotificationSubscriptionRepository;
   notificationDeliveries: NotificationDeliveryRepository;
   shortCodes: ShortCodeRepository;
@@ -190,6 +200,8 @@ interface RepositorySet {
   activities: ActivityRepository;
   activityWaitlist: ActivityWaitlistRepository;
   activitySettings: ActivitySettingsRepository;
+  activitySubscriptions: ActivitySubscriptionRepository;
+  activityNotifications: ActivityNotificationRepository;
   notificationSubscriptions: NotificationSubscriptionRepository;
   notificationDeliveries: NotificationDeliveryRepository;
   shortCodes: ShortCodeRepository;
@@ -211,6 +223,8 @@ function createRepositories(db: Queryable): RepositorySet {
     activities: new SqlActivityRepository(db),
     activityWaitlist: new SqlActivityWaitlistRepository(db),
     activitySettings: new SqlActivitySettingsRepository(db),
+    activitySubscriptions: new SqlActivitySubscriptionRepository(db),
+    activityNotifications: new SqlActivityNotificationRepository(db),
     activityDetails: new SqlActivityDetailsRepository(db),
     notificationSubscriptions: new SqlNotificationSubscriptionRepository(db),
     notificationDeliveries: new SqlNotificationDeliveryRepository(db),

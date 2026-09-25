@@ -18,6 +18,8 @@ import type { ActivityRepository } from "./db/activityRepository.js";
 import type { ActivityDetailsRepository } from "./db/activityDetailsRepository.js";
 import type { ActivityWaitlistRepository } from "./db/activityWaitlistRepository.js";
 import type { ActivitySettingsRepository } from "./db/activitySettingsRepository.js";
+import type { ActivitySubscriptionRepository } from "./db/activitySubscriptionRepository.js";
+import type { ActivityNotificationRepository } from "./db/activityNotificationRepository.js";
 import type { AuditRepository } from "./db/auditRepository.js";
 import type { GroupConfigRepository } from "./db/groupConfigRepository.js";
 import type { GroupSettingsRepository } from "./db/groupSettingsRepository.js";
@@ -41,6 +43,7 @@ import {
 } from "./services/callbackRouter.js";
 import { ActivityService } from "./services/activity.js";
 import { ActivityCardService } from "./services/activityCards.js";
+import { ActivityNotificationService } from "./services/activityNotifications.js";
 import { AdminCommandService } from "./services/adminCommands.js";
 import { AuditLogStore } from "./services/audit.js";
 import { DisplayNameService } from "./services/displayNames.js";
@@ -80,6 +83,8 @@ export interface Runtime {
   permissions: PermissionService;
   activity: ActivityService;
   activityCards: ActivityCardService;
+  /** 活动通知：按群订阅 + 去重封顶的私信推送。 */
+  activityNotifications: ActivityNotificationService;
   userProfiles: UserProfileService;
   classAliases: ClassAliasService;
   exportService: ExportService;
@@ -114,6 +119,8 @@ export interface RuntimeRepositories {
   activityDetails?: ActivityDetailsRepository;
   activityWaitlist?: ActivityWaitlistRepository;
   activitySettings?: ActivitySettingsRepository;
+  activitySubscriptions?: ActivitySubscriptionRepository;
+  activityNotifications?: ActivityNotificationRepository;
   notificationSubscriptions?: NotificationSubscriptionRepository;
   notificationDeliveries?: NotificationDeliveryRepository;
   shortCodes?: ShortCodeRepository;
@@ -169,7 +176,10 @@ export function createRuntime(
       settingsRepository: repositories.activitySettings,
     },
   );
-  const activityCards = new ActivityCardService(richMessages, display);
+  const activityCards = new ActivityCardService({
+    activity,
+    display,
+  });
   const testMenu = new TestMenuService({ permissions });
   const userProfiles = new UserProfileService(repositories.userProfiles, writeQueue);
   const classAliases = new ClassAliasService(
@@ -202,6 +212,12 @@ export function createRuntime(
     joinRules,
     sender: richMessages,
   });
+  const activityNotifications = new ActivityNotificationService(
+    notifications,
+    repositories.activitySubscriptions,
+    repositories.activityNotifications,
+    { dailyLimit: settings.activityNotifyDailyLimit },
+  );
   const adminCommands = new AdminCommandService({
     permissions,
     joinAudit,
@@ -217,10 +233,16 @@ export function createRuntime(
     classAliases,
     activity,
     activityCards,
+    activityNotifications,
     notifications,
     richMessages,
+    cardSender: richMessages,
   });
-  const menuState = createFirstMenuPushState(settings, repositories.menuDeliveries, writeQueue);
+  const menuState = createFirstMenuPushState(
+    settings,
+    repositories.menuDeliveries,
+    writeQueue,
+  );
   // 回调 renderer 表：导航/查看类按钮点击后由此渲染新卡片（见 docs/CARD-STANDARD.md）
   const callbackRenderers = new Map<string, CallbackRenderer>([
     [
@@ -410,18 +432,19 @@ export function createRuntime(
       "activity",
       async (parsed, event) => {
         const userId = event.userId;
-        const group =
-          parsed.args[0] && parsed.args[0].length > 0
-            ? parsed.args[0]
-            : event.groupId;
-        if (!userId || !group) {
+        if (!userId) {
           return undefined;
         }
-        return adminCommands.activityListCard(
-          group,
+        // 活动回调：join / quit / info / signups / page / config / preview / open /
+        // cancel / release / resend / status / set / college / year / subscribe /
+        // stats / export 全部由 AdminCommandService 内部再做一次权限校验。
+        const card = await adminCommands.activityCallbackCard(
+          parsed.action,
+          parsed.args,
           userId,
-          Number.parseInt(parsed.args[1] ?? "1", 10) || 1,
-        ).rich;
+          event.groupId,
+        );
+        return card.rich;
       },
     ],
     [
@@ -455,6 +478,7 @@ export function createRuntime(
     await permissions.load();
     await groupMessageMode.load();
     await activity.load();
+    await activityNotifications.load();
     await notifications.load();
     await shortCodes.load();
     await userProfiles.load();
@@ -466,6 +490,8 @@ export function createRuntime(
     userProfiles.setRoster(roster);
     classAliases.setRoster(roster);
     joinRules.setAliases(classAliases);
+    // 活动卡片的「学院限制 / 年级限制」按钮需要班级库（缺省时对应按钮不生成）
+    adminCommands.setActivityRoster(roster);
     await writeQueue.flush();
   };
   return {
@@ -479,6 +505,7 @@ export function createRuntime(
     permissions,
     activity,
     activityCards,
+    activityNotifications,
     userProfiles,
     classAliases,
     exportService,
@@ -499,7 +526,10 @@ export function createRuntime(
       interactionHandler,
     ),
     load,
-    flush: () => writeQueue.flush(),
+    flush: async () => {
+      await writeQueue.flush();
+      await activityNotifications.flush();
+    },
   };
 }
 

@@ -43,6 +43,8 @@ async function main(): Promise<void> {
             activityDetails: persistence.activityDetails,
             activityWaitlist: persistence.activityWaitlist,
             activitySettings: persistence.activitySettings,
+            activitySubscriptions: persistence.activitySubscriptions,
+            activityNotifications: persistence.activityNotifications,
             notificationSubscriptions: persistence.notificationSubscriptions,
             notificationDeliveries: persistence.notificationDeliveries,
             shortCodes: persistence.shortCodes,
@@ -66,6 +68,7 @@ async function main(): Promise<void> {
       joinRequestTtlDays: settings.joinRequestTtlDays,
     },
     runtime.notifications,
+    runtime.activityNotifications,
   );
 
   log.info("qq-group-ops Node.js runtime");
