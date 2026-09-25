@@ -599,3 +599,59 @@
     否则会出现「有实现没入口」）；`activity:stats` 成功回「已发送统计图」卡、失败或降级回文字统计卡；
   - 新增 env `ACTIVITY_STATS_FONT_URL`；README / CONFIGURATION / ACCEPTANCE（J41–J44）/
     CHANGELOG 同步更新。
+
+## ADR-0040 补充：群内静默 + 多群绑定 + 满员广播（§B4）
+
+- 状态：已采纳（**优先于 ADR-0040 第 3 条的群内回执**）
+- 背景：ADR-0040 的群内报名回执虽然不含隐私字段，但在几十人的群里仍然会刷屏
+  （每人报名一条「@本人 + 报名成功」），而报名结果本身对其他人没有价值；
+  同时一个活动常常要在多个群同时推广（主群 + 年级群 / 学院群），
+  原来「活动只归属一个群」的表达力不够；名额刚满时也需要一个自然的「已满」公告，
+  但机器人**无法 @全体成员**，只能靠卡片本身传递信息。
+- 决策：
+  1. **群内报名 / 取消报名一律静默**：群里点回调或手输 `/activity join|quit`
+     都**不发任何群消息**（连「原因已私信」都不发），成功 / 候补 / 失败原因一律私信本人。
+     实现对 `CommandResult` 增加 `silent?: boolean`，`ensureCard` **原样保留**该字段，
+     `eventRouter` 透传到 `kind:"command"` 的结果，`gatewayRunner` 在
+     `result.silent === true` 时**跳过一次 `sendReply`**；
+     `cb:activity:join|quit` 的 renderer 在私信成功后**返回 `undefined`**（只回包，不发言）。
+  2. **唯一例外**：私信发送失败（没私聊过机器人 / 关闭主动消息 / 被限流）时，
+     群里允许回一条**不含任何结果**的提示「`<@!申请人>` 私信发送失败，请先私聊机器人再试」，
+     否则用户会以为点了没反应。**绝不**把结果或原因降级到群里。
+     私聊里用同样的指令仍然原地回复（可含姓名 / 学号 / 班级 / 人数）。
+  3. **活动可绑定多个群**：新增 `activity_groups (activity_id, group_id, created_at)`
+     与 `ActivityGroupRepository`；`ActivityService` 增加
+     `bindGroup` / `unbindGroup` / `listBoundGroups`（幂等；`createActivity` **自动绑定创建群**；
+     `load()` 读回绑定关系）。`activities.group_id` 仍然是**归属群**（创建地与权限依据），
+     绑定关系是**发布与广播的目标群集合**；没有任何绑定行时回落到归属群
+     （老活动与极简单测不需要显式绑定）。
+     `/activity bind|unbind <#短码> <群号|#群短码>` 与配置卡上的「绑定群」子卡（每页 5 个 + 解绑回调）。
+  4. **发布与重发打到所有绑定群**：`open` / `重发卡片` 逐个群发送并**记录每个群的成功 / 失败**，
+     操作者的私信回执列出「成功 N 个 / 失败 N 个」与失败群号（展示用群号，不暴露 openid）。
+  5. **满员广播**：`joinActivity` 的 registered 分支返回 `becameFull`（本次报名后恰好满员）；
+     调用方随后在**所有绑定群**发一张「活动已满 X/X」卡（含「后续报名将自动进入候补队列
+     （当前候补 N 人）」与截止时间）。**每个群只发一次**：复用 `activity_notifications`
+     去重表，键为 `(activity_id, "group:<群ID>", "full")`——群消息不占用户的每日私信额度。
+  6. **群消息通道**：`ActivityNotificationService` 的构造选项增加可选 `groupSender`
+     （runtime 注入 `RichMessageSender`），`notifyGroupsCard()` 只在**发送成功**的群写去重行，
+     失败不写（下次重试仍会尝试）；未装配通道时返回 `available: false`，静默跳过。
+- 理由：报名结果是「私事」，群消息应当只承载对所有人都有价值的信息（卡片 / 已满 / 发布回执）；
+  把「群内静默」做成 `CommandResult.silent` → `EventRouter` → `gatewayRunner` 的**透传链路**，
+  而不是在 handler 里特判「这是群消息还是命令」，是为了让后续任何「结果只能私信」的指令
+  复用同一条路径（`/whois` 已经在用同款思路）。绑定多个群比「复制多个活动」更贴近真实运营：
+  名额、候补、名单只有一份，公告可以多处。
+- 影响：
+  - 新增 `src/db/activityGroupRepository.ts` + `activity_groups` 表（`CREATE TABLE IF NOT EXISTS`），
+    接入 `persistence.ts` / `runtime.ts` / `main.ts` / `test/helpers/persistenceRuntime.ts`
+    与 `test/migrate.test.ts` 的建表断言；
+  - `ActivityService` 的 `joinActivity` 返回值新增 `becameFull` / `registered`；
+    新增 `bindGroup` / `unbindGroup` / `listBoundGroups` / `isGroupBound`；
+  - `ActivityCardService` 新增 `fullCard()`（满员广播卡）与 `bindGroupsCard()`（绑定群子卡）、
+    `groupLabel` 选项；配置卡正文增加「绑定群」行与「绑定群」入口；
+  - `AdminCommandService`：`CommandResult` / `CardResult` 新增 `silent`；
+    `cb:activity:join|quit` 命中静默时返回 `undefined`；
+    新增回调 action `bindings` / `bind` / `unbind` 与命令 `/activity bind|unbind`；
+    `publishActivity` / `handleActivityResend` 改为多群；
+    新增 `announceActivityFull()`（满员广播）；
+  - `ActivityNotificationKind` 增加 `full`；`notifyGroupsCard()` / `isGroupCardSent()`；
+  - 帮助主题（activity）、README、CONFIGURATION、ACCEPTANCE（J45–J48）、CHANGELOG 同步更新。

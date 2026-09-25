@@ -82,6 +82,32 @@
     `ActivityStatsLike` 新增 `canSend`：只有**既能渲染又能发送**时才生成「统计图片」按钮。
   - **新 env `ACTIVITY_STATS_FONT_URL`**（默认 Noto Sans SC 官方发布地址，留空 = 只用系统字体）。
 - `cardTemplate` 的**回调按钮也支持 `modal`**（报名 / 取消报名 / 取消活动等不可逆动作的二次确认）。
+- **活动群内静默 + 多群绑定 + 满员广播（§B4）**：
+  - **群内报名 / 取消报名一律静默**：群里点回调或手输 `/activity join|quit` 都**不发任何群消息**
+    （连「原因已私信」都不发），成功 / 候补 / 失败原因一律私信本人（私信可含姓名/学号/班级/序号/人数）。
+    实现链路：`CommandResult` 新增 `silent?: boolean`（`ensureCard` 原样保留）→
+    `EventRouter` 透传到 `kind:"command"` → `gatewayRunner` 在 `result.silent === true` 时
+    **跳过一次 `sendReply`**；`cb:activity:join|quit` 的 renderer 在私信成功后**返回 `undefined`**
+    （只回包、不发言）。
+  - **唯一例外**：私信发送失败（没私聊过机器人 / 关闭主动消息 / 被限流）时，群里只回一条
+    **不含任何结果**的提示「`<@!申请人> 私信发送失败，请先私聊机器人再试`」；私聊里用同样的指令
+    仍然原地回复。
+  - **活动可绑定多个群**：新增 `activity_groups (activity_id, group_id, created_at)` 表与
+    `src/db/activityGroupRepository.ts`（接入 `persistence.ts` / `runtime.ts` / `main.ts` /
+    `test/helpers/persistenceRuntime.ts`）；`ActivityService` 新增
+    `bindGroup` / `unbindGroup` / `listBoundGroups`（幂等），`createActivity` **自动绑定创建群**，
+    `load()` 读回绑定关系；`activities.group_id` 仍是「归属群」，绑定全部解绑后回落到归属群。
+  - **新增命令 ` /activity bind|unbind <#活动短码> <群号|#群短码>`** 与配置卡的「绑定群」子卡
+    （每页 5 个 + `解绑` 回调 + `绑定群` 指令按钮 + `返回配置`）。
+  - **发布 / 重发改打所有绑定群**：`/activity open` 与「重发卡片」逐个群发送，
+    操作者的私信回执列出「成功 N 个 / 失败 N 个」与失败群号（展示用群号，不暴露 openid）。
+  - **满员广播**：`joinActivity` 的 registered 分支新增 `becameFull`（本次报名后恰好满员），
+    调用方随后在**所有绑定群**发一张「活动已满 X/X」卡（含「后续报名将自动进入候补队列
+    （当前候补 N 人）」与截止时间、`活动详情` / `订阅` 按钮）；**每个群只发一次**——
+    复用 `activity_notifications` 去重，键为 `(活动, group:<群ID>, full)`（群消息不占用户私信额度）。
+  - `ActivityNotificationKind` 新增 `full`；`ActivityNotificationService` 新增可选 `groupSender`
+    与 `notifyGroupsCard()` / `isGroupCardSent()`（只在发送成功的群写去重行，失败可重试；
+    未装配通道时返回 `available: false`，静默跳过）。
 
 ### 变更
 
@@ -92,6 +118,10 @@
 - `/menu` 的「活动」「活动运营」子菜单补充订阅、配置卡、管理卡与 `[+页码] [full]` 等新用法。
 - `/activity set` 新增 `closeAt` / `waitlistPromotion` / `mentionAll` / `notifyCreator` 字段，
   并在改到「当事人关心」的字段时给已报名 + 候补私信一次变更通知（`kind: "changed"`，去重 + 封顶）。
+- **活动消息落点改为「群内静默」（§B4，覆盖 §B2 的群内回执）**：报名 / 候补 / 取消报名 / 报名失败
+  在群里都不再有回执，结果只私信本人；发布回执与成员卡、满员卡仍然是群消息（不含隐私字段）。
+- `/activity open` 的群内回执与操作者私信回执改为**逐群结果**（多群绑定后一个群一句话）；
+  `/activity list` 的按钮不变，`/activity set` 的「群号」字段仍然只影响卡片展示。
 - `<@!>` 与 `msg_type=7` 共用「发送群聊消息」接口：图片发送复用 `sendGroupMessage` 的节流与
   被动回复配额，`sendGroupImage(groupId, fileInfo, msgId?)` 支持被动回复。
 
