@@ -13,7 +13,8 @@
 - 回调链路：新增 `INTERACTION (1<<26)` intent 与 `INTERACTION_CREATE` 事件处理，`/testmenu` 用回调按钮翻页（回包 `PUT /interactions/{id}` + 主动发送新一页；官方没有更新原卡片的能力，旧卡片会保留）。
 - 卡片标准：**所有指令输出统一为菜单式卡片**（导航/查看/开关/枚举用回调自动完成、需要参数或不可逆的动作用指令按钮、列表用回调翻页 + `+页码` 降级），规范见 [docs/CARD-STANDARD.md](docs/CARD-STANDARD.md)；已迁移 `/help`、`/status`、`/pending`、`/rules`、`/audit`、`/test`、`/sync`、`/approve`、`/reject`、`/notify`，其余指令按批次迁移。
 - 规则菜单（§C）：`/rules` 为**概览卡 + 5 个子卡**（开关设置 / 入群审核 / 违规处理 / 关键词 / 名单筛选 / 更多设置），开关标签显示**当前状态**，每张子卡可「恢复本页继承」、概览可「恢复全部继承」；新增 `/rules add|del keyword` 逐条增删与 `/rules overrides` 覆盖率总览；全局规则卡与群规则同构（只影响未覆盖的群）。
-- 测试：Vitest，共 685 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
+- 待办与已知限制：[TODO.md](./TODO.md)（待澄清 / 已知限制 / 待真机验收 / 新功能待办的唯一入口）。
+- 测试：Vitest，共 686 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
 
 ## 技术栈
 
