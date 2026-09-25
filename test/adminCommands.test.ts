@@ -35,6 +35,14 @@ describe("AdminCommandService", async () => {
   let service: AdminCommandService;
   let shortCodes: ShortCodeService;
 
+  /** 最近一条发给某人的私信正文（`/whois` 结果只走私信）。 */
+  function privateText(userId: string): string {
+    const message = api.sentPrivateMessages
+      .filter((item) => item.userOpenid === userId)
+      .at(-1);
+    return String(message?.markdown ?? message?.content ?? "");
+  }
+
   /** 带短码展示的服务：生产装配路径（DisplayNameService）的最小替身。 */
   function withShortCodes(): AdminCommandService {
     shortCodes = new ShortCodeService();
@@ -1257,8 +1265,13 @@ describe("AdminCommandService", async () => {
 
     const result = await scoped.handle("g1", "root", `/whois ${code}`);
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("类型：入群申请");
-    expect(result.text).toContain("真实申请 ID：r1");
+    // 群内只回提示：结果只走私信，群里不出现真实 id
+    expect(result.text).toContain("已私信发送");
+    expect(result.text).not.toContain("真实申请 ID");
+    expect(result.text).not.toContain("r1");
+    const dm = privateText("root");
+    expect(dm).toContain("类型：入群申请");
+    expect(dm).toContain("真实申请 ID：r1");
   });
 
   it("renders /help as an umbrella card and /help all as the full list", async () => {
@@ -1595,22 +1608,54 @@ describe("AdminCommandService", async () => {
   });
 
   it("defaults /whois to the current context", async () => {
-    // 群内：不带参数 → 当前群
+    // 群里：结果私信给操作人，群里只回提示
     const inGroup = await service.handle("g1", "root", "/whois");
     expect(inGroup.ok).toBe(true);
-    expect(inGroup.text).toContain("类型：群（当前群）");
-    expect(inGroup.text).toContain("654321");
+    expect(inGroup.text).toContain("已私信发送");
+    expect(inGroup.text).not.toContain("654321");
+    const dm = privateText("root");
+    expect(dm).toContain("类型：群（当前群）");
+    expect(dm).toContain("654321");
 
-    // 私聊：不带参数 → 你自己
+    // 私聊：直接回复（本来就只有本人能看到）
     const inPrivate = await service.handle(undefined, "root", "/whois");
     expect(inPrivate.ok).toBe(true);
     expect(inPrivate.text).toContain("类型：用户（你自己）");
     expect(inPrivate.text).toContain("10004");
 
-    // 非超管照旧被拒
+    // 非超管照旧被拒（这类提示不含隐私，仍在原处回）
     const denied = await service.handle("g1", "member", "/whois");
     expect(denied.ok).toBe(false);
     expect(denied.text).toContain("仅超级管理员");
+  });
+
+  it("delivers /whois results privately and never falls back to the group", async () => {
+    // 私信通道失败：群里只提示重试，绝不显示结果
+    api.failPrivateMessages = true;
+    const failed = await service.handle(undefined, "root", "/whois 654321");
+    // 私聊里的失败也能直接看到（不需要私信发送）
+    expect(failed.ok).toBe(true);
+    expect(failed.text).toContain("类型：群");
+
+    const inGroup = await service.handle("g1", "root", "/whois 654321");
+    expect(inGroup.ok).toBe(true);
+    expect(inGroup.text).toContain("私信发送失败");
+    expect(inGroup.text).not.toContain("g1");
+  });
+
+  it("supports querying a mentioned member in a group", async () => {
+    // 官方 at 段：<@!openid>
+    const viaMention = await service.handle("g1", "root", "/whois <@!u3>");
+    expect(viaMention.ok).toBe(true);
+    expect(viaMention.text).toContain("已私信发送");
+    const dm = privateText("root");
+    expect(dm).toContain("userId：u3");
+    expect(dm).toContain("QQ：10005");
+
+    // @昵称 无法反查：给出提示，不猜
+    const nickname = await service.handle("g1", "root", "/whois @张三");
+    expect(nickname.ok).toBe(false);
+    expect(nickname.text).toContain("无法从 @昵称 反查用户");
   });
 
   it("shows join request details for a /whois short code", async () => {
@@ -1621,17 +1666,21 @@ describe("AdminCommandService", async () => {
     const result = await scoped.handle("g1", "root", `/whois ${code}`);
 
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("类型：入群申请");
-    expect(result.text).toContain("申请人：");
-    expect(result.text).toContain("理由：环工2214小明");
-    expect(result.text).toContain("状态：pending");
-    expect(result.text).toContain("本地队列：待审批中");
+    expect(result.text).toContain("已私信发送");
+    const dm = privateText("root");
+    expect(dm).toContain("类型：入群申请");
+    expect(dm).toContain("申请人：");
+    expect(dm).toContain("理由：环工2214小明");
+    expect(dm).toContain("状态：pending");
+    expect(dm).toContain("本地队列：待审批中");
 
-    // 处理过之后不再进队列，但 /whois 仍能查到详情
+    // 处理过之后不再进队列，但 /whois 仍能查到详情（同样走私信）
     joinAudit.approve("r1", "admin");
     const after = await scoped.handle("g1", "root", `/whois ${code}`);
-    expect(after.text).toContain("状态：approved");
-    expect(after.text).toContain("已不在队列");
+    expect(after.ok).toBe(true);
+    const afterDm = privateText("root");
+    expect(afterDm).toContain("状态：approved");
+    expect(afterDm).toContain("已不在队列");
   });
 
   it("resolves #group and #user short codes in commands", async () => {
@@ -1665,7 +1714,7 @@ describe("AdminCommandService", async () => {
       studentId: "22123456789",
       className: "材化2211",
       college: "化学与生命科学学院",
-      year: "2022",
+      year: "22",
     });
 
     // 无分隔符 + 顺序颠倒
@@ -1680,7 +1729,7 @@ describe("AdminCommandService", async () => {
       studentId: "24123456789",
       className: "环工2414",
       college: "环境科学与工程学院",
-      year: "2024",
+      year: "24",
     });
 
     // `字段=值` 显式写法
@@ -1743,7 +1792,7 @@ describe("AdminCommandService", async () => {
     expect(profiles.get("member")).toMatchObject({
       className: "材化2211",
       college: "化学与生命科学学院",
-      year: "2022",
+      year: "22",
     });
 
     const cleared = await svc.handle("g1", "member", "/profile set class clear");
@@ -1755,28 +1804,46 @@ describe("AdminCommandService", async () => {
     const { svc, profiles } = withProfiles();
     await svc.handle("g1", "member", "/profile set 22123456789 材化2211 张三");
 
+    // 群内：只回提示，详情走私信
     const byQq = await svc.handle("g1", "root", "/whois profile 10001");
     expect(byQq.ok).toBe(true);
-    expect(byQq.text).toContain("类型：用户资料");
-    expect(byQq.text).toContain("QQ：10001");
-    expect(byQq.text).toContain("姓名：张三");
-    expect(byQq.text).toContain("学号：22123456789");
-    expect(byQq.text).toContain("班级：材化2211");
-    expect(byQq.text).toContain("学院：化学与生命科学学院");
+    expect(byQq.text).toContain("已私信发送");
+    expect(byQq.text).not.toContain("张三");
+    const dm = privateText("root");
+    expect(dm).toContain("类型：用户资料");
+    expect(dm).toContain("QQ：10001");
+    expect(dm).toContain("姓名：张三");
+    expect(dm).toContain("学号：22123456789");
+    expect(dm).toContain("班级：材化2211");
+    expect(dm).toContain("学院：化学与生命科学学院");
 
-    // 未绑定 QQ 的用户：短码也能查到
+    // 私聊里直接回
+    const inPrivate = await svc.handle(undefined, "root", "/whois profile 10001");
+    expect(inPrivate.ok).toBe(true);
+    expect(inPrivate.text).toContain("姓名：张三");
+
+    // 未绑定 QQ 的用户：短码也能查到（走私信）
     profiles.set("ghost", "name", "赵六");
     const code = scopedShortCodeLabel("user", "ghost");
     const byCode = await svc.handle("g1", "root", `/whois profile ${code}`);
     expect(byCode.ok).toBe(true);
-    expect(byCode.text).toContain(`短码：${code}`);
-    expect(byCode.text).toContain("QQ：（未绑定）");
-    expect(byCode.text).toContain("姓名：赵六");
+    const codeDm = privateText("root");
+    expect(codeDm).toContain(`短码：${code}`);
+    expect(codeDm).toContain("QQ：（未绑定）");
+    expect(codeDm).toContain("姓名：赵六");
 
-    // 未填写资料 / 未知映射 / 权限
+    // 群内 @ 指定对方
+    const byMention = await svc.handle("g1", "root", "/whois profile <@!member>");
+    expect(byMention.ok).toBe(true);
+    expect(privateText("root")).toContain("姓名：张三");
+
+    // 未填写资料：同样只走私信
     const blank = await svc.handle("g1", "root", "/whois profile 10002");
-    expect(blank.text).toContain("个人资料：尚未填写");
+    expect(blank.ok).toBe(true);
+    expect(blank.text).toContain("已私信发送");
+    expect(privateText("root")).toContain("个人资料：尚未填写");
 
+    // 未知映射 / 权限：不含隐私，群里直接回
     const missing = await svc.handle("g1", "root", "/whois profile nope");
     expect(missing.ok).toBe(false);
     expect(missing.text).toContain("未找到");

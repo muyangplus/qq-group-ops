@@ -94,7 +94,7 @@ describe("QQOfficialEventMapper", () => {
   it("maps button interaction events", () => {
     expect(
       mapper.map("INTERACTION_CREATE", {
-        application_id: "101984245",
+        application_id: "123456789",
         chat_type: 1,
         data: {
           resolved: { button_data: "testmenu:page:2", button_id: "next" },

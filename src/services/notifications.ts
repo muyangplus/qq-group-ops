@@ -19,7 +19,7 @@ import {
   type JoinRequestDecision,
 } from "./joinRequestCard.js";
 import { renderCard } from "./cardTemplate.js";
-import { RichMessageSender } from "./richMessages.js";
+import { RichMessageSender, type RichMessage } from "./richMessages.js";
 import {
   evaluateConfiguredJoinRules,
   type JoinRuleEvaluator,
@@ -116,6 +116,26 @@ export class NotificationService {
 
   public get keyboardAvailable(): boolean {
     return this.sender.keyboardAvailable;
+  }
+
+  /**
+   * 主动私信发一张任意卡片（`/whois` 这类**隐私结果**只走私信，不走群聊）。
+   *
+   * 返回 `ok=false` 时 `detail` 是失败原因（例如用户没和机器人私聊过、未开启主动消息）。
+   */
+  public async sendPrivateCard(
+    userId: string,
+    message: RichMessage,
+  ): Promise<{ ok: boolean; detail: string }> {
+    const result = await this.sender.sendToUser(userId, message);
+    if (result.ok) {
+      return { ok: true, detail: result.detail };
+    }
+    log.warn("private card delivery failed", {
+      userId,
+      error: result.detail,
+    });
+    return { ok: false, detail: result.detail };
   }
 
   public async load(): Promise<void> {

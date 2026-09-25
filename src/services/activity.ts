@@ -3,10 +3,13 @@ import { randomUUID } from "node:crypto";
 import { ActivityStatus } from "../core/enums.js";
 import { utcNow } from "../core/models.js";
 import type { ActivityRepository } from "../db/activityRepository.js";
+import { getLogger } from "../core/logger.js";
 import type { ActivityDetailsRepository } from "../db/activityDetailsRepository.js";
 import { WriteQueue } from "../db/writeQueue.js";
-import { randomBase62 } from "./shortCodes.js";
+import { randomCode } from "./shortCodes.js";
 import type { UserProfile } from "./userProfiles.js";
+
+const log = getLogger("activity");
 
 export const ACTIVITY_CODE_LENGTH = 6;
 const MAX_CODE_ATTEMPTS = 20;
@@ -139,7 +142,7 @@ export class ActivityService {
       repository || detailsRepository ? (queue ?? new WriteQueue()) : undefined;
     this.generateCode =
       options.generateCode ??
-      (() => randomBase62(ACTIVITY_CODE_LENGTH));
+      (() => randomCode(ACTIVITY_CODE_LENGTH));
   }
 
   public get persistent(): boolean {
@@ -165,6 +168,25 @@ export class ActivityService {
     }
     for (const registration of registrations) {
       this.registrations.set(registration.registrationId, registration);
+    }
+    this.regenerateLegacyCodes();
+  }
+
+  /**
+   * 历史活动短码可能含小写字母；启动时换成「数字 + 大写字母」并写回数据库。
+   * 旧短码（已发到群里的卡片/链接）会失效，需重新从活动列表获取（用户确认的选择）。
+   */
+  private regenerateLegacyCodes(): void {
+    for (const activity of [...this.activities.values()]) {
+      if (activity.code === activity.code.toUpperCase()) {
+        continue;
+      }
+      const updated: Activity = { ...activity, code: this.nextCode() };
+      this.activities.set(updated.activityId, updated);
+      this.persist(updated);
+      log.info("activity code regenerated to uppercase", {
+        activityId: updated.activityId,
+      });
     }
   }
 
@@ -314,10 +336,11 @@ export class ActivityService {
     const studentId = profile.studentId;
     const year = studentYear(studentId);
     const college = profile.college;
+    // 年级统一用两位（22）；为兼容历史配置，仍接受四位写法（2022）
     const yearLabel = `20${year}`;
 
     if (activity.denyYears.includes(year) || activity.denyYears.includes(yearLabel)) {
-      throw new ActivityRuleError(`本活动不接受 ${yearLabel} 级报名`);
+      throw new ActivityRuleError(`本活动不接受 ${year} 级报名`);
     }
     if (activity.denyColleges.length > 0 && college.length > 0 && matchesCollege(activity.denyColleges, college)) {
       throw new ActivityRuleError(`本活动不接受「${college}」的同学报名`);

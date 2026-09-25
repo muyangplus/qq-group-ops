@@ -358,17 +358,7 @@ export class AdminCommandService {
         );
       case "whois":
       case "查询":
-        return this.cardify(
-          "映射查询",
-          this.handleWhois(groupId, userId, parts),
-          [
-            [
-              viewButton("myperm", "我的权限", "cmd", "run", "/myperm"),
-              viewButton("help", "查询帮助", "help", "topic", "whois"),
-            ],
-          ],
-          ["详细用法：/help"],
-        );
+        return this.whoisCard(groupId, userId, parts);
       case "perm":
       case "权限":
         return this.cardify(
@@ -609,6 +599,15 @@ export class AdminCommandService {
       };
     }
 
+    // 群内 @ 指定目标：官方 at 段是 `<@!openid>`，可以直接当 userId 用
+    const mentionedId = parseMentionTarget(input);
+    if (mentionedId) {
+      return this.userMapping(mentionedId, "用户（群内 @）");
+    }
+    if (input.startsWith("@")) {
+      return { ok: false, text: WHOIS_MENTION_HINT };
+    }
+
     // `#短码`：唯一允许查看真实系统 id 的入口
     const code = this.display?.resolveCode(input);
     if (code) {
@@ -696,6 +695,61 @@ export class AdminCommandService {
     return { ok: false, text: `未找到映射。\n\n${WHOIS_USAGE}` };
   }
 
+  /** 用户类映射的统一输出（群内 @ / 短码 / QQ号 都用它）。 */
+  private userMapping(userId: string, label = "用户"): CommandResult {
+    const qq = this.identityMap?.getQq(userId) ?? "（未绑定）";
+    const shortCode = this.display ? `\n短码：${this.display.user(userId)}` : "";
+    return {
+      ok: true,
+      text: `类型：${label}\nuserId：${userId}\nQQ：${qq}${shortCode}`,
+    };
+  }
+
+  /**
+   * `/whois` 的投递层：**结果只走私信**。
+   *
+   * - 私聊里发指令：直接回复（本来就只有本人能看到）；
+   * - 群聊里发指令：结果私信给操作人，群里只回一张不含任何内容的提示卡；
+   * - 私信发送失败：只提示「先私聊机器人再试」，**绝不在群里降级显示结果**；
+   * - 权限不足 / 用法 / 未找到映射这类不含隐私的结果，仍在原处直接回。
+   */
+  private async whoisCard(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): Promise<CommandResult> {
+    const rows = [
+      [
+        viewButton("myperm", "我的权限", "cmd", "run", "/myperm"),
+        viewButton("help", "查询帮助", "help", "topic", "whois"),
+      ],
+    ];
+    const result = this.handleWhois(groupId, userId, parts);
+    const card = this.cardify("映射查询", result, rows, ["详细用法：/help"]);
+    if (!groupId || !result.ok) {
+      return card;
+    }
+    const rich = card.rich;
+    if (!rich) {
+      return card;
+    }
+    const sender = this.notifications;
+    const sent = sender
+      ? await sender.sendPrivateCard(userId, rich)
+      : { ok: false, detail: "私信通道未启用" };
+    const mention = this.mention(groupId, userId).trimEnd();
+    const body = sent.ok
+      ? "**结果**：已私信发送，请在私聊里查看。\n（/whois 的结果涉及隐私，不在群里展示）"
+      : `**结果**：私信发送失败（${sent.detail}），请先私聊机器人再试。\n（/whois 的结果涉及隐私，不会在群里展示）`;
+    const notice = renderCard({
+      title: "映射查询",
+      lines: [...(mention ? [mention] : []), body],
+      rows,
+      footer: ["详细用法：/help"],
+    });
+    return { ok: true, text: notice.text, rich: notice };
+  }
+
   // -------------------------------------------------------------- /alias
 
   /** `/alias list|set|del`：班级/学院/专业别名（仅全局超管）。 */
@@ -762,8 +816,12 @@ export class AdminCommandService {
     return { ok: false, text: ALIAS_USAGE };
   }
 
-  /** 把 QQ号 / userId / `#短码` 解析成 userId（仅用户类）。 */
+  /** 把 `@`（官方 at 段）/ QQ号 / userId / `#短码` 解析成 userId（仅用户类）。 */
   private resolveWhoisTargetUserId(target: string): string | undefined {
+    const mentioned = parseMentionTarget(target);
+    if (mentioned) {
+      return mentioned;
+    }
     if (target.startsWith("#")) {
       const code = this.display?.resolveCode(target);
       return code && code.kind === "user" ? code.targetId : undefined;
@@ -771,7 +829,7 @@ export class AdminCommandService {
     return this.identityMap?.resolveUserId(target);
   }
 
-  /** `/whois profile <QQ号|userId|#短码>`：QQ↔userId↔短码 + 个人资料（仅超级管理员）。 */
+  /** `/whois profile <@某人|QQ号|userId|#短码>`：QQ↔userId↔短码 + 个人资料（仅超级管理员）。 */
   private handleWhoisProfile(parts: readonly string[]): CommandResult {
     const target = parts[0]?.trim();
     if (!target) {
@@ -781,7 +839,9 @@ export class AdminCommandService {
     if (!resolvedUserId) {
       return {
         ok: false,
-        text: `未找到该用户的映射。支持：QQ号 / userId / #用户短码。\n\n${WHOIS_USAGE}`,
+        text: target.startsWith("@")
+          ? WHOIS_MENTION_HINT
+          : `未找到该用户的映射。支持：QQ号 / userId / #用户短码。\n\n${WHOIS_USAGE}`,
       };
     }
     const lines = ["类型：用户资料"];
@@ -3475,6 +3535,13 @@ function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** 从官方 at 段（`<@!openid>` / `<@openid>`）里取出对方 id。 */
+function parseMentionTarget(text: string): string | undefined {
+  const match = /<@!?([^>\s]+)>/u.exec(text);
+  const value = match?.[1]?.trim();
+  return value && value.length > 0 ? value : undefined;
+}
+
 function bindingFailureText(): string {
   return "绑定失败：数据库写入异常，请查看服务端日志后重试。";
 }
@@ -3608,6 +3675,11 @@ const ALIAS_USAGE = [
   "说明：目标类型由规范名自动判定；别名会用于 /profile set 智能识别与入群审核的班级匹配。",
 ].join("\n");
 
+const WHOIS_MENTION_HINT = [
+  "无法从 @昵称 反查用户：请在群里**直接 @ 对方**（官方消息会带上对方 id），",
+  "或改用 QQ号 / userId / #用户短码。",
+].join("\n");
+
 const WHOIS_USAGE = [
   "用法（仅超级管理员）：",
   "  /whois                                    当前上下文（群聊=本群，私聊=你自己）",
@@ -3623,12 +3695,13 @@ const PROFILE_USAGE = [
   "  /profile set id <11位学号>                学号（前两位决定年级：22-26）",
   "  /profile set class <班级>                 班级（必须在班级库里，自动带出学院）",
   "  /profile set college <学院>               学院（可手动覆盖）",
-  "  /profile set year <年级>                  年级（可手动覆盖，如 2022 或 22）",
+  "  /profile set year <年级>                  年级（可手动覆盖，只写两位，如 22）",
   "  /profile set <字段> clear                 清除单个字段",
   "  /profile clear                            清空整份资料",
   "",
-  "智能识别支持：空格 / - / + / 分隔，如 材化2211 张三 20220123456",
-  "或 张三-材化2211-20220123456；也可用 班级=材化2211 明确指定。",
+  "智能识别支持：空格 / - / + / 分隔，如 材化2211 张三 22123456789",
+  "或 张三-材化2211-22123456789；也可用 班级=材化2211 明确指定。",
+  "年级只接受两位（22），四位年份（2022）会被拒绝。",
   "识别不确定时不会写入，会列出识别结果并提示改用 字段=值。",
 ].join("\n");
 
@@ -3669,7 +3742,8 @@ function parseList(value: string): string[] {
 
 /** 年级列表：22 / 2022 都接受，统一存 2 位。 */
 function parseYearList(value: string): string[] {
-  return parseList(value).map((item) => normalizeYear(item).slice(2));
+  // normalizeYear 现在返回两位（22），并拒绝四位完整年份
+  return parseList(value).map((item) => normalizeYear(item));
 }
 
 /** `<说明=url>` 或纯 url。 */

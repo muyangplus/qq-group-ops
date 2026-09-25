@@ -13,18 +13,18 @@ export type ShortCodeKind = (typeof SHORT_CODE_KINDS)[number];
 
 export const SHORT_CODE_LENGTH = 6;
 export const SHORT_CODE_PREFIX = "#";
-export const ALPHABET_62 =
-  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+/** 短码字符表：**只含数字与大写字母**（不出现小写字母，便于口头/手抄）。 */
+export const ALPHABET_36 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const MAX_ATTEMPTS = 20;
 
-/** 生成一个随机 Base62 短码（不含前缀）。 */
-export function randomBase62(
+/** 生成一个随机短码（不含前缀）。 */
+export function randomCode(
   length: number,
   randomInt: (max: number) => number = (max) => randomIntCrypto(max),
 ): string {
   let code = "";
   for (let index = 0; index < length; index += 1) {
-    code += ALPHABET_62[randomInt(ALPHABET_62.length)];
+    code += ALPHABET_36[randomInt(ALPHABET_36.length)];
   }
   return code;
 }
@@ -87,6 +87,31 @@ export class ShortCodeService {
       }
       this.register({ ...entry });
     }
+    this.regenerateLegacyCodes();
+  }
+
+  /**
+   * 历史短码可能含小写字母；启动时统一换成「数字 + 大写字母」并写回数据库。
+   * 已发出的旧短码会失效，需要重新从卡片/列表获取（用户确认的选择）。
+   */
+  private regenerateLegacyCodes(): void {
+    const stale = [...this.byCode.values()].filter(
+      (entry) => entry.code !== entry.code.toUpperCase(),
+    );
+    for (const entry of stale) {
+      const next: ShortCodeEntry = { ...entry, code: this.generate() };
+      this.byCode.delete(entry.code.toLowerCase());
+      this.register(next);
+      const repository = this.repository;
+      if (repository) {
+        this.queue?.enqueue("short-code.replace", () =>
+          repository.replaceCode(entry.code, next),
+        );
+      }
+    }
+    if (stale.length > 0) {
+      log.info("short codes regenerated to uppercase", { count: stale.length });
+    }
   }
 
   public async flush(): Promise<void> {
@@ -146,7 +171,7 @@ export class ShortCodeService {
 
   private generate(): string {
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-      const candidate = randomBase62(this.length, this.random);
+      const candidate = randomCode(this.length, this.random);
       if (!this.byCode.has(candidate.toLowerCase())) {
         return candidate;
       }

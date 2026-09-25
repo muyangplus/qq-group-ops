@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 
 import type { UserProfileRepository } from "../src/db/userProfileRepository.js";
 import { MemberRoster } from "../src/services/memberRoster.js";
@@ -6,6 +6,7 @@ import {
   UserProfileError,
   UserProfileService,
   normalizeYear,
+  toShortYear,
   yearFromStudentId,
   type UserProfile,
 } from "../src/services/userProfiles.js";
@@ -49,13 +50,19 @@ describe("UserProfileService", () => {
     service.setRoster(roster());
   });
 
-  it("derives the year from the 11-digit student id", () => {
-    expect(yearFromStudentId("22123456789")).toBe("2022");
-    expect(yearFromStudentId("26123456789")).toBe("2026");
+  it("derives a two-digit year from the 11-digit student id", () => {
+    expect(yearFromStudentId("22123456789")).toBe("22");
+    expect(yearFromStudentId("26123456789")).toBe("26");
     expect(() => yearFromStudentId("2022123456")).toThrow(UserProfileError);
     expect(() => yearFromStudentId("20123456789")).toThrow(/前两位/u);
-    expect(normalizeYear("23")).toBe("2023");
-    expect(normalizeYear("2024")).toBe("2024");
+    // 年级只接受两位：四位完整年份一律拒绝
+    expect(normalizeYear("23")).toBe("23");
+    expect(() => normalizeYear("2024")).toThrow(/只写两位/u);
+    expect(() => normalizeYear("2024")).toThrow(/四位/u);
+    expect(() => normalizeYear("7")).toThrow(UserProfileError);
+    // 班级库里的四位年份会被转换成两位
+    expect(toShortYear("2022")).toBe("22");
+    expect(toShortYear("22")).toBe("22");
   });
 
   it("fills the college automatically from the class library", () => {
@@ -64,7 +71,7 @@ describe("UserProfileService", () => {
     const profile = service.set("u1", "className", "环工2414");
 
     expect(profile.name).toBe("小明");
-    expect(profile.year).toBe("2024");
+    expect(profile.year).toBe("24");
     expect(profile.college).toBe("环境科学与工程学院");
     expect(service.requireComplete("u1").className).toBe("环工2414");
   });
@@ -76,7 +83,7 @@ describe("UserProfileService", () => {
     const profile = service.set("u1", "year", "22");
 
     expect(profile.college).toBe("计算机学院");
-    expect(profile.year).toBe("2022");
+    expect(profile.year).toBe("22");
   });
 
   it("rejects classes outside the class library", () => {
@@ -115,7 +122,7 @@ describe("UserProfileService", () => {
       studentId: "22123456789",
       className: "材化2211",
       college: "化学与生命科学学院",
-      year: "2022",
+      year: "22",
     });
   });
 

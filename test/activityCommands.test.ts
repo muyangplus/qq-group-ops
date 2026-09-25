@@ -98,7 +98,7 @@ describe("activity & profile commands", () => {
     const view = await service.handle("g1", "member", "/profile");
     expect(view.ok).toBe(true);
     expect(view.text).toContain("姓名：小明");
-    expect(view.text).toContain("学号：22123456789（2022 级）");
+    expect(view.text).toContain("学号：22123456789（22 级）");
     expect(view.text).toContain("班级：材化2211");
     // 学院由班级库自动带出
     expect(view.text).toContain("学院：化学与生命科学学院");

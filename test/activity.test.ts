@@ -1,7 +1,81 @@
-﻿import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 
 import { ActivityStatus } from "../src/core/enums.js";
+import type {
+  ActivityDetails,
+  ActivityDetailsRepository,
+} from "../src/db/activityDetailsRepository.js";
+import type {
+  Activity,
+  ActivityRegistration,
+  ActivityRepository,
+} from "../src/services/activity.js";
 import { ActivityService } from "../src/services/activity.js";
+
+class FakeActivityRepository implements ActivityRepository {
+  public readonly activities: Activity[] = [];
+  public readonly registrations: ActivityRegistration[] = [];
+
+  public async saveActivity(activity: Activity): Promise<void> {
+    const index = this.activities.findIndex(
+      (item) => item.activityId === activity.activityId,
+    );
+    if (index >= 0) {
+      this.activities[index] = { ...activity };
+    } else {
+      this.activities.push({ ...activity });
+    }
+  }
+
+  public async findActivities(): Promise<Activity[]> {
+    return this.activities.map((activity) => ({ ...activity }));
+  }
+
+  public async saveRegistration(
+    registration: ActivityRegistration,
+  ): Promise<void> {
+    const index = this.registrations.findIndex(
+      (item) => item.registrationId === registration.registrationId,
+    );
+    if (index >= 0) {
+      this.registrations[index] = { ...registration };
+    } else {
+      this.registrations.push({ ...registration });
+    }
+  }
+
+  public async deleteRegistration(registrationId: string): Promise<void> {
+    const index = this.registrations.findIndex(
+      (item) => item.registrationId === registrationId,
+    );
+    if (index >= 0) {
+      this.registrations.splice(index, 1);
+    }
+  }
+
+  public async findRegistrations(): Promise<ActivityRegistration[]> {
+    return this.registrations.map((registration) => ({ ...registration }));
+  }
+}
+
+class FakeActivityDetailsRepository implements ActivityDetailsRepository {
+  public readonly rows: ActivityDetails[] = [];
+
+  public async findAll(): Promise<ActivityDetails[]> {
+    return this.rows.map((row) => ({ ...row }));
+  }
+
+  public async save(details: ActivityDetails): Promise<void> {
+    const index = this.rows.findIndex(
+      (row) => row.activityId === details.activityId,
+    );
+    if (index >= 0) {
+      this.rows[index] = { ...details };
+    } else {
+      this.rows.push({ ...details });
+    }
+  }
+}
 
 describe("ActivityService", () => {
   let service: ActivityService;
@@ -121,7 +195,7 @@ describe("ActivityService", () => {
       studentId: "23123456789",
       className: "材化2211",
       college: "化学与生命科学学院",
-      year: "2023",
+      year: "23",
     };
 
     // 黑名单优先
@@ -133,7 +207,7 @@ describe("ActivityService", () => {
     const otherCollege = { ...profile, college: "环境科学与工程学院" };
     expect(() => service.checkEligibility(activity, otherCollege)).not.toThrow();
 
-    const wrongYear = { ...otherCollege, studentId: "22123456789", year: "2022" };
+    const wrongYear = { ...otherCollege, studentId: "22123456789", year: "22" };
     expect(() => service.checkEligibility(activity, wrongYear)).toThrow(/仅限/u);
   });
 
@@ -151,8 +225,57 @@ describe("ActivityService", () => {
       studentId: "24123456789",
       className: "环工2414",
       college: "环境科学与工程学院",
-      year: "2024",
+      year: "24",
     };
     expect(() => service.checkEligibility(activity, profile)).not.toThrow();
+  });
+
+  it("regenerates legacy lowercase activity codes on load", async () => {
+    const activities = new FakeActivityRepository();
+    const details = new FakeActivityDetailsRepository();
+    const first = new ActivityService(activities, undefined, details);
+    first.createActivity({
+      groupId: "g1",
+      title: "活动",
+      createdBy: "admin",
+      activityId: "a1",
+      code: "Ab12Cd",
+    });
+    await first.flush();
+    expect(details.rows[0]?.code).toBe("Ab12Cd");
+
+    // 重启：含小写的短码换成数字 + 大写，并写回数据库
+    const restarted = new ActivityService(activities, undefined, details, {
+      generateCode: () => "Z9Y8X7",
+    });
+    await restarted.load();
+    await restarted.flush();
+
+    expect(restarted.findByCode("#Z9Y8X7")?.activityId).toBe("a1");
+    expect(restarted.findByCode("#Ab12Cd")).toBeUndefined();
+    expect(details.rows[0]?.code).toBe("Z9Y8X7");
+  });
+
+  it("treats four-digit allowed years as legacy values", () => {
+    const activity = service.createActivity({
+      groupId: "g1",
+      title: "活动",
+      createdBy: "admin",
+      activityId: "a1",
+      allowYears: ["2023"],
+    });
+    const profile = {
+      userId: "u1",
+      name: "小明",
+      studentId: "23123456789",
+      className: "材化2211",
+      college: "化学与生命科学学院",
+      year: "23",
+    };
+    // 历史配置写成四位时仍然能命中两位数年级
+    expect(() => service.checkEligibility(activity, profile)).not.toThrow();
+
+    const wrong = { ...profile, studentId: "22123456789", year: "22" };
+    expect(() => service.checkEligibility(activity, wrong)).toThrow(/仅限/u);
   });
 });

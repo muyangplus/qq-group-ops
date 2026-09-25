@@ -22,7 +22,7 @@ export interface UserProfile {
   studentId: string;
   className: string;
   college: string;
-  /** 入学年份，如 `2022`（由学号前两位推导，可手动覆盖）。 */
+  /** 入学年级，**两位**，如 `22`（由学号前两位推导，可用 `/profile set year 22` 覆盖）。 */
   year: string;
 }
 
@@ -33,7 +33,7 @@ export class UserProfileError extends Error {
   }
 }
 
-/** 学号前两位 → 入学年份；不合法时抛错。 */
+/** 学号前两位 → 年级（两位）；不合法时抛错。 */
 export function yearFromStudentId(studentId: string): string {
   const trimmed = studentId.trim();
   if (!/^\d{11}$/u.test(trimmed)) {
@@ -45,19 +45,33 @@ export function yearFromStudentId(studentId: string): string {
       `学号前两位必须是 ${PROFILE_ENTRY_YEARS.join(" / ")}（当前在校年级），收到：${prefix}`,
     );
   }
-  return `20${prefix}`;
+  return prefix;
 }
 
-/** 年级展示：`2022` → `22`（也兼容直接传 `22`）。 */
+/**
+ * 年级规范化：**只接受两位**（`22`），不接受四位完整年份（`2022`）。
+ *
+ * 存储与展示都用两位，和班级库 `njmc`（四位）在写入时做转换，避免同一语义两种写法。
+ */
 export function normalizeYear(value: string): string {
   const trimmed = value.trim();
-  const prefix = trimmed.length === 4 ? trimmed.slice(2) : trimmed;
-  if (!(PROFILE_ENTRY_YEARS as readonly string[]).includes(prefix)) {
+  if (/^\d{4}$/u.test(trimmed)) {
     throw new UserProfileError(
-      `年级必须是 ${PROFILE_ENTRY_YEARS.join(" / ")}（或 ${PROFILE_ENTRY_YEARS.map((year) => `20${year}`).join(" / ")}）`,
+      `年级只写两位，如 ${PROFILE_ENTRY_YEARS.join(" / ")}（不要写 ${trimmed} 这种四位年份）`,
     );
   }
-  return `20${prefix}`;
+  if (!(PROFILE_ENTRY_YEARS as readonly string[]).includes(trimmed)) {
+    throw new UserProfileError(
+      `年级必须是两位：${PROFILE_ENTRY_YEARS.join(" / ")}`,
+    );
+  }
+  return trimmed;
+}
+
+/** 四位年份 → 两位年级（`2022` → `22`）；已经是两位则原样返回。 */
+export function toShortYear(value: string): string {
+  const trimmed = value.trim();
+  return /^\d{4}$/u.test(trimmed) ? trimmed.slice(2) : trimmed;
 }
 
 /**
@@ -99,7 +113,15 @@ export class UserProfileService {
     const profiles = await this.repository.findAll();
     this.profiles.clear();
     for (const profile of profiles) {
-      this.profiles.set(profile.userId, profile);
+      // 兼容历史数据：早期版本把年份存成四位（2022），统一收敛成两位（22）
+      const year = toShortYear(profile.year);
+      const normalized: UserProfile = { ...profile, year };
+      this.profiles.set(normalized.userId, normalized);
+      if (year !== profile.year) {
+        this.queue?.enqueue("user-profile.save", () =>
+          this.repository!.save(normalized),
+        );
+      }
     }
   }
 
@@ -181,7 +203,8 @@ export class UserProfileService {
         if (info) {
           next.college = info.college;
           if (!next.year && info.year) {
-            next.year = info.year;
+            // 班级库里是四位（2022），个人资料统一存两位（22）
+            next.year = toShortYear(info.year);
           }
         }
         break;

@@ -25,10 +25,20 @@ class FakeShortCodeRepository implements ShortCodeRepository {
     }
     this.rows.push({ ...entry });
   }
+
+  public async replaceCode(
+    oldCode: string,
+    entry: ShortCodeEntry,
+  ): Promise<void> {
+    const index = this.rows.findIndex((row) => row.code === oldCode);
+    if (index >= 0) {
+      this.rows[index] = { ...entry };
+    }
+  }
 }
 
-const ALPHABET =
-  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+/** 短码字符表：数字 + 大写字母（与 src/services/shortCodes.ts 保持一致）。 */
+const ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 /** 用固定短码序列驱动随机源，便于测试碰撞与重生成。 */
 function randomFromCodes(codes: readonly string[]): (max: number) => number {
@@ -47,13 +57,14 @@ function randomFromCodes(codes: readonly string[]): (max: number) => number {
 }
 
 describe("ShortCodeService", () => {
-  it("generates a stable 6-char Base62 code per target", () => {
+  it("generates a stable 6-char code per target", () => {
     const service = new ShortCodeService();
     const first = service.codeFor("join_request", "long-request-id");
     const again = service.codeFor("join_request", "long-request-id");
     const other = service.codeFor("join_request", "another-request-id");
 
-    expect(first).toMatch(/^[0-9A-Za-z]{6}$/u);
+    // 只含数字与大写字母，绝不出现小写
+    expect(first).toMatch(/^[0-9A-Z]{6}$/u);
     expect(again).toBe(first);
     expect(other).not.toBe(first);
     expect(service.label("join_request", "long-request-id")).toBe(`#${first}`);
@@ -90,6 +101,7 @@ describe("ShortCodeService", () => {
       kind: "join_request",
       targetId: "r1",
     });
+    // 手输时大小写都能解析（虽然生成的短码永远是大写）
     expect(service.resolve("#m7k2q9")?.targetId).toBe("r1");
     expect(service.resolve("M7K2Q9")).toBeUndefined();
     expect(service.resolve("#ZZZZZZ")).toBeUndefined();
@@ -98,14 +110,14 @@ describe("ShortCodeService", () => {
   it("persists codes and restores them after a restart", async () => {
     const repository = new FakeShortCodeRepository();
     const first = new ShortCodeService(repository, undefined, {
-      randomInt: randomFromCodes(["Ab12Cd"]),
+      randomInt: randomFromCodes(["A1B2C3"]),
     });
     const code = first.codeFor("group", "group-openid");
     await first.flush();
 
     expect(repository.rows).toEqual([
       {
-        code: "Ab12Cd",
+        code: "A1B2C3",
         kind: "group",
         targetId: "group-openid",
         createdAt: expect.any(Date),
@@ -116,7 +128,40 @@ describe("ShortCodeService", () => {
     await restarted.load();
     // 重启后同一个 id 复用原短码，并支持解析
     expect(restarted.codeFor("group", "group-openid")).toBe(code);
-    expect(restarted.resolve("#ab12cd")?.targetId).toBe("group-openid");
+    expect(restarted.resolve("#a1b2c3")?.targetId).toBe("group-openid");
+  });
+
+  it("regenerates legacy lowercase codes to uppercase on load", async () => {
+    const repository = new FakeShortCodeRepository();
+    repository.rows.push({
+      code: "Ab12Cd",
+      kind: "group",
+      targetId: "group-openid",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    const service = new ShortCodeService(repository, undefined, {
+      randomInt: randomFromCodes(["Z9Y8X7"]),
+    });
+
+    await service.load();
+    await service.flush();
+
+    // 同一个 target 换成纯大写短码，并写回数据库
+    expect(service.resolve("#Z9Y8X7")).toEqual({
+      code: "Z9Y8X7",
+      kind: "group",
+      targetId: "group-openid",
+    });
+    expect(repository.rows).toEqual([
+      {
+        code: "Z9Y8X7",
+        kind: "group",
+        targetId: "group-openid",
+        createdAt: expect.any(Date),
+      },
+    ]);
+    // 旧短码立即失效
+    expect(service.resolve("#Ab12Cd")).toBeUndefined();
   });
 
   it("keeps generating codes without exhausting the space", () => {
@@ -127,7 +172,7 @@ describe("ShortCodeService", () => {
     }
     expect(codes.size).toBe(200);
     for (const code of codes) {
-      expect(code).toMatch(/^[0-9A-Za-z]{6}$/u);
+      expect(code).toMatch(/^[0-9A-Z]{6}$/u);
     }
   });
 });

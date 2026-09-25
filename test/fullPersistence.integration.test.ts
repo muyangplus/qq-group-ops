@@ -114,7 +114,7 @@ for (const driver of TEST_DATABASES) {
           name: "小明",
           studentId: "22123456789",
           college: "化学与生命科学学院",
-          year: "2022",
+          year: "22",
         });
         // 别名表也会恢复（全局超管维护，重启不丢）
         expect(restarted.classAliases.get("环工2214")).toMatchObject({
