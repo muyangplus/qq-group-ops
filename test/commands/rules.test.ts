@@ -1,0 +1,230 @@
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+import {
+  configStore,
+  service,
+} from "../helpers/adminCommandsHarness.js";
+
+/**
+ * AdminCommandService 集成测试 · rules（12 个用例）。
+ */
+
+describe("AdminCommandService · rules", () => {
+  it("shows rules", async () => {
+    const result = await service.handle("g1", "mod", "/rules");
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("广告");
+  });
+
+  it("configures keyword recall and punishment", async () => {
+    await service.handle("g1", "admin", "/rules set keywordRecall on");
+    await service.handle("g1", "admin", "/rules set keywordPunish kick_blacklist");
+
+    expect(configStore.get("g1").keywordRecall).toBe(true);
+    expect(configStore.get("g1").keywordPunish).toBe("kick_blacklist");
+
+    // 中文别名
+    await service.handle("g1", "admin", "/rules set 处罚 禁言");
+    expect(configStore.get("g1").keywordPunish).toBe("mute");
+
+    await service.handle("g1", "admin", "/rules set 撤回 off");
+    expect(configStore.get("g1").keywordRecall).toBe(false);
+
+    const invalid = await service.handle(
+      "g1",
+      "admin",
+      "/rules set keywordPunish nope",
+    );
+    expect(invalid.ok).toBe(false);
+    expect(invalid.text).toContain("none / mute / kick / kick_blacklist");
+  });
+
+  it("updates group keywords with /rules set", async () => {
+    const result = await service.handle("g1", "admin", "/rules set keywords 广告,刷屏");
+
+    expect(result.ok).toBe(true);
+    expect(configStore.get("g1").keywords).toEqual(["刷屏", "广告"]);
+    expect(result.text).toContain("刷屏");
+  });
+
+  it("clears keywords with /rules set keywords clear", async () => {
+    await service.handle("g1", "admin", "/rules set keywords 广告");
+    const result = await service.handle("g1", "admin", "/rules set keywords clear");
+
+    expect(result.ok).toBe(true);
+    expect(configStore.get("g1").keywords).toEqual([]);
+  });
+
+  it("toggles switches and numbers with /rules set", async () => {
+    await service.handle("g1", "admin", "/rules set autoApprove on");
+    await service.handle("g1", "admin", "/rules set wordFilter off");
+    await service.handle("g1", "admin", "/rules set muteDuration 120");
+    await service.handle("g1", "admin", "/rules set warning 请勿刷屏");
+
+    const config = configStore.get("g1");
+    expect(config.autoApproveJoin).toBe(true);
+    expect(config.wordFilterEnabled).toBe(false);
+    expect(config.muteDurationSeconds).toBe(120);
+    expect(config.warningMessage).toBe("请勿刷屏");
+  });
+
+  it("supports the documented private rule flow with a bound group number", async () => {
+    const keywords = await service.handle(
+      undefined,
+      "root",
+      "/rules set 654321 keywords 广告,刷屏",
+    );
+    expect(keywords.ok).toBe(true);
+    expect(configStore.get("g1").keywords).toEqual(["刷屏", "广告"]);
+
+    const warning = await service.handle(
+      undefined,
+      "root",
+      "/rules set 654321 warning 本群禁止广告与刷屏，请撤回并阅读群规。",
+    );
+    expect(warning.ok).toBe(true);
+    expect(configStore.get("g1").warningMessage).toBe(
+      "本群禁止广告与刷屏，请撤回并阅读群规。",
+    );
+
+    const view = await service.handle(undefined, "root", "/rules 654321");
+    expect(view.ok).toBe(true);
+    expect(view.text).toContain("本群禁止广告与刷屏");
+    expect(view.text).toContain("刷屏");
+    expect(view.text).toContain("禁言时长");
+
+    const unknown = await service.handle(
+      undefined,
+      "root",
+      "/rules set 654321 unknown 1",
+    );
+    expect(unknown.ok).toBe(false);
+    expect(unknown.text).toContain("未知字段");
+
+    const badToggle = await service.handle(
+      undefined,
+      "root",
+      "/rules set 654321 autoApprove maybe",
+    );
+    expect(badToggle.ok).toBe(false);
+    expect(badToggle.text).toContain("需要 on 或 off");
+
+    const badDuration = await service.handle(
+      undefined,
+      "root",
+      "/rules set 654321 muteDuration abc",
+    );
+    expect(badDuration.ok).toBe(false);
+    expect(badDuration.text).toContain("禁言时长需要非负整数（秒）");
+  });
+
+  it("accepts the 全局 alias for global rules", async () => {
+    const set = await service.handle("g1", "root", "/rules set 全局 autoApprove on");
+    expect(set.ok).toBe(true);
+    expect(configStore.default.autoApproveJoin).toBe(true);
+
+    const view = await service.handle(undefined, "root", "/rules 全局");
+    expect(view.ok).toBe(true);
+    expect(view.text).toContain("全局默认规则");
+  });
+
+  it("requires a field and value for global rules", async () => {
+    const result = await service.handle("g1", "root", "/rules set all");
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("/rules set all <字段> <值>");
+  });
+
+  it("clears global keywords with /rules set all keywords clear", async () => {
+    await service.handle("g1", "root", "/rules set all keywords 全局词");
+    expect(configStore.default.keywords).toEqual(["全局词"]);
+    expect(configStore.get("g-other").keywords).toEqual(["全局词"]);
+
+    const cleared = await service.handle(
+      "g1",
+      "root",
+      "/rules set all keywords clear",
+    );
+
+    expect(cleared.ok).toBe(true);
+    expect(configStore.default.keywords).toEqual([]);
+    expect(configStore.get("g-other").keywords).toEqual([]);
+  });
+
+  it("supports /rules set from private with a group id", async () => {
+    const result = await service.handle(
+      undefined,
+      "root",
+      "/rules set g1 autoApprove on",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(configStore.get("g1").autoApproveJoin).toBe(true);
+  });
+
+  it("renders /rules as an overview card plus setting panels", async () => {
+    const overview = await service.handle("g1", "admin", "/rules");
+
+    expect(overview.ok).toBe(true);
+    const overviewButtons = (overview.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    // 概览卡只给设置入口：开关 / 决策 / 处罚
+    expect(
+      overviewButtons.find((button) => button.id === "panel-toggle")?.action,
+    ).toMatchObject({ type: 1, data: "cb:rules:panel:g1:toggle" });
+    expect(
+      overviewButtons.find((button) => button.id === "panel-decision")?.action,
+    ).toMatchObject({ type: 1, data: "cb:rules:panel:g1:decision" });
+    // 按钮已经表达的开关/枚举状态不再用大段文字重复
+    expect(overview.rich?.markdown).not.toContain("入群决策：");
+    expect(overview.rich?.markdown).not.toContain("命中处罚：");
+    // 按钮没覆盖的字段仍然展示
+    expect(overview.rich?.markdown).toContain("**关键词**");
+    expect(overview.rich?.markdown).toContain("**禁言时长**");
+
+    // 开关子卡：一行 2 个，点击即切换
+    const switches = service.rulesPanelCard("toggle", "g1", "admin");
+    const switchButtons = (switches.rich.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(
+      switchButtons.find((button) => button.id === "wordFilterEnabled")?.action,
+    ).toMatchObject({ type: 1, data: "cb:rules:toggle:g1:wordFilterEnabled:off:toggle" });
+    expect((switches.rich.keyboard?.content.rows ?? [])[0]?.buttons).toHaveLength(2);
+
+    // 决策子卡：枚举当前值带 ● 标记
+    const decision = service.rulesPanelCard("decision", "g1", "admin");
+    const decisionButtons = (decision.rich.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    expect(
+      decisionButtons.find((button) => button.id === "decision-match")?.action,
+    ).toMatchObject({
+      type: 1,
+      data: "cb:rules:toggle:g1:joinDecision:approve_on_match:decision",
+    });
+    expect(
+      decisionButtons.find((button) => button.id === "decision-manual")?.label,
+    ).toBe("● 人工");
+  });
+
+  it("toggles rules via callback with operator feedback", async () => {
+    const result = await service.toggleRulesCard(
+      "g1",
+      "wordFilter",
+      "off",
+      "admin",
+      undefined,
+      "g1",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.rich.markdown).toContain("已更新：wordFilter = off");
+    expect(result.rich.markdown.split("\n")[1]).toBe("<@!admin>");
+    expect(result.rich.markdown).not.toContain("操作人：");
+    expect(configStore.get("g1").wordFilterEnabled).toBe(false);
+  });
+});
