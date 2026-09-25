@@ -9,6 +9,24 @@
 
 （暂无未发布改动）
 
+## [0.10.0] - 2026-09-25
+
+### 新增
+
+- **学院 / 年级白黑名单真正参与入群审核**：`/rules` 的「名单筛选」不再只是保存展示——命中学院黑名单、
+  或学院 / 年级不在白名单内会**直接拒绝**，不会被「自动通过」这类决策模式绕过；纯人工模式仍交人工，
+  只在审核意见里标明原因。只配置名单也算「已配置入群审核规则」；年级 `2022` 与 `22` 两种写法等价；
+  班级库缺失或答案里识别不到班级时，白名单判不通过、仅黑名单不拦并给出配置提示。
+- **`/rules set rawMessageRetentionDays <天数>`**：原始消息保留天数可配置（`0` = 不保留，`clear` 归零），
+  「更多设置」子卡新增「消息保留」按钮并显示当前值，也纳入「恢复本页继承」范围。
+- **关键词子卡支持指令翻页**：新增 `/rules keyword [+页码]`（私信 `/rules keyword <群号|#短码> +页码`），
+  卡片页脚给出可复制的「下一页 / 上一页」指令。
+
+### 变更
+
+- **`/whois` 与 `/whois profile` 群内完全静默**：群里发这两个指令时，只要结果已私信成功，群里不再回
+  「已私信发送」提示；私信失败时仍会在群里回**唯一一条**不含结果的提示（请先私聊机器人再试）。
+
 ## [0.9.1] - 2026-09-25
 
 ### 备注
@@ -198,7 +216,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.7.0...v0.8.0
