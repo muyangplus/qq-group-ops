@@ -35,6 +35,14 @@ export interface GroupConfig {
   joinReviewOpinion?: boolean;
   /** 机器人自动通过/拒绝的申请是否也推送给审核员（默认只推需要人工处理的）。 */
   notifyAutoApproved?: boolean;
+  /** 入群白名单学院（空 = 不限）；由规则子卡从班级库点选。 */
+  allowColleges?: readonly string[];
+  /** 入群黑名单学院（优先于白名单）。 */
+  denyColleges?: readonly string[];
+  /** 入群白名单年级（两位，如 22；空 = 不限）。 */
+  allowYears?: readonly string[];
+  /** 入群黑名单年级（两位）。 */
+  denyYears?: readonly string[];
 }
 
 export interface EffectiveGroupConfig {
@@ -56,6 +64,10 @@ export interface EffectiveGroupConfig {
   joinAnswerPattern: string;
   joinReviewOpinion: boolean;
   notifyAutoApproved: boolean;
+  allowColleges: readonly string[];
+  denyColleges: readonly string[];
+  allowYears: readonly string[];
+  denyYears: readonly string[];
 }
 
 export type GroupConfigOverride = GroupConfig;
@@ -86,6 +98,10 @@ export const SETTING_FIELDS = [
   "joinAnswerPattern",
   "joinReviewOpinion",
   "notifyAutoApproved",
+  "allowColleges",
+  "denyColleges",
+  "allowYears",
+  "denyYears",
 ] as const satisfies readonly (keyof GroupConfigOverride)[];
 
 export type GroupSettingKey = (typeof SETTING_FIELDS)[number];
@@ -122,14 +138,29 @@ const DEFAULT_CONFIG: EffectiveGroupConfig = {
   joinAnswerPattern: "",
   joinReviewOpinion: true,
   notifyAutoApproved: false,
+  allowColleges: [],
+  denyColleges: [],
+  allowYears: [],
+  denyYears: [],
 };
 
 export class GroupConfigStore {
   /** 构造函数（或内置默认值）提供的初始配置，用于 reset 与 reload 的基准。 */
   private readonly builtinConfig: EffectiveGroupConfig;
+  /** 构造函数提供的「种子默认」（builtin + 构造函数显式项），全局清字段时回落到这里。 */
+  private readonly seedDefault: EffectiveGroupConfig;
+  /** 种子默认里被构造函数显式指定的字段（清持久化覆盖后仍算「显式」，不显示成继承）。 */
+  private readonly seedFields: ReadonlySet<keyof GroupConfigOverride>;
   /** 当前生效的全局默认配置：builtin + 持久化的全局覆盖。 */
   private defaultConfig: EffectiveGroupConfig;
   private readonly overrides = new Map<string, GroupConfigOverride>();
+  /** 每个群**显式覆盖**过的字段（含关键词，值等于默认值也算覆盖），用于「恢复本页继承」。 */
+  private readonly overridden = new Map<
+    string,
+    Set<keyof GroupConfigOverride>
+  >();
+  /** 全局默认规则里**显式覆盖**过的字段（其余回落 builtinDefault）。 */
+  private readonly overriddenDefault = new Set<keyof GroupConfigOverride>();
   private readonly repository: GroupConfigRepository | undefined;
   private readonly settingsRepository: GroupSettingsRepository | undefined;
   private readonly queue: WriteQueue | undefined;
@@ -147,8 +178,24 @@ export class GroupConfigStore {
       keywords: normalizeKeywords(
         defaultConfig.keywords ?? DEFAULT_CONFIG.keywords,
       ),
+      allowColleges: normalizeKeywords(
+        defaultConfig.allowColleges ?? DEFAULT_CONFIG.allowColleges,
+      ),
+      denyColleges: normalizeKeywords(
+        defaultConfig.denyColleges ?? DEFAULT_CONFIG.denyColleges,
+      ),
+      allowYears: normalizeKeywords(
+        defaultConfig.allowYears ?? DEFAULT_CONFIG.allowYears,
+      ),
+      denyYears: normalizeKeywords(
+        defaultConfig.denyYears ?? DEFAULT_CONFIG.denyYears,
+      ),
     };
     this.defaultConfig = cloneConfig(this.builtinConfig);
+    this.seedDefault = cloneConfig(this.builtinConfig);
+    // 构造函数传入的默认值等价于「显式配置的种子默认」
+    this.seedFields = new Set(overriddenFieldsOf(defaultConfig));
+    this.overriddenDefault = new Set(this.seedFields);
     this.repository = repository;
     this.settingsRepository = settingsRepository;
     this.queue =
@@ -170,7 +217,9 @@ export class GroupConfigStore {
       return;
     }
     this.overrides.clear();
-    this.defaultConfig = cloneConfig(this.builtinConfig);
+    this.overridden.clear();
+    this.defaultConfig = cloneConfig(this.seedDefault);
+    this.overriddenDefault.clear();
 
     if (this.repository) {
       const overrides = await this.repository.findAll();
@@ -239,6 +288,10 @@ export class GroupConfigStore {
         override.joinReviewOpinion ?? this.defaultConfig.joinReviewOpinion,
       notifyAutoApproved:
         override.notifyAutoApproved ?? this.defaultConfig.notifyAutoApproved,
+      allowColleges: override.allowColleges ?? this.defaultConfig.allowColleges,
+      denyColleges: override.denyColleges ?? this.defaultConfig.denyColleges,
+      allowYears: override.allowYears ?? this.defaultConfig.allowYears,
+      denyYears: override.denyYears ?? this.defaultConfig.denyYears,
     };
   }
 
@@ -261,27 +314,41 @@ export class GroupConfigStore {
       groupId: override.groupId,
     });
     this.overrides.set(override.groupId, merged);
+    const overridden = this.overriddenSet(override.groupId);
+    for (const field of overriddenFieldsOf(override)) {
+      overridden.add(field);
+    }
     this.persistGroupOverride(override.groupId, merged, override);
   }
 
   /** 全局规则：整行快照 + 扩展键值。 */
   private setDefaultOverride(override: GroupConfigOverride): void {
-    this.defaultConfig = mergeIntoDefault(
-      this.defaultConfig,
-      normalizeOverride(override),
-    );
+    const normalized: GroupConfigOverride = {
+      ...normalizeOverride(override),
+      groupId: DEFAULT_GROUP_ID,
+    };
+    this.defaultConfig = {
+      ...this.defaultConfig,
+      ...slimOverride(normalized),
+    } as EffectiveGroupConfig;
     const repository = this.repository;
     if (repository) {
-      const snapshot = defaultSnapshot(this.defaultConfig);
+      const snapshot: GroupConfigOverride = {
+        ...this.defaultConfig,
+        groupId: DEFAULT_GROUP_ID,
+      };
       this.queue?.enqueue("group-config.default.save", () =>
         repository.saveOverride(snapshot),
       );
-      if (override.keywords !== undefined) {
+      if (normalized.keywords !== undefined) {
         const keywords = [...this.defaultConfig.keywords];
         this.queue?.enqueue("group-config.default.keywords", () =>
           repository.replaceKeywords(DEFAULT_GROUP_ID, keywords),
         );
       }
+    }
+    for (const field of overriddenFieldsOf(normalized)) {
+      this.overriddenDefault.add(field);
     }
     this.persistSettings(DEFAULT_GROUP_ID, override);
   }
@@ -333,11 +400,15 @@ export class GroupConfigStore {
   }
 
   private applyLoadedOverride(override: GroupConfigOverride): void {
+    const fields = overriddenFieldsOf(override);
     if (override.groupId === DEFAULT_GROUP_ID) {
       this.defaultConfig = mergeIntoDefault(
         this.defaultConfig,
         normalizeOverride(override),
       );
+      for (const field of fields) {
+        this.overriddenDefault.add(field);
+      }
       return;
     }
     const existing = this.overrides.get(override.groupId);
@@ -345,6 +416,144 @@ export class GroupConfigStore {
       override.groupId,
       normalizeOverride({ ...existing, ...override, groupId: override.groupId }),
     );
+    const overridden = this.overriddenSet(override.groupId);
+    for (const field of fields) {
+      overridden.add(field);
+    }
+  }
+
+  /** 该群**显式覆盖**过的字段（含 `__default__`）；只读快照。 */
+  public overriddenFields(groupId: string): Set<keyof GroupConfigOverride> {
+    if (groupId === DEFAULT_GROUP_ID) {
+      return new Set(this.overriddenDefault);
+    }
+    return new Set(this.overridden.get(groupId) ?? []);
+  }
+
+  /**
+   * 清除字段级覆盖，回落到继承：
+   *
+   * - `group_configs` 里对应列置 `NULL`（只清列，不动其它列）；
+   * - `group_settings` 里对应 KV 行删除；
+   * - `__default__` 清字段 → 回落到 `builtinDefault`（种子默认）。
+   *
+   * 与 `removeOverride`（整群重置）不同，这里只动指定字段，其余覆盖保持不变。
+   */
+  public clearFields(
+    groupId: string,
+    fields: readonly (keyof GroupConfigOverride)[],
+  ): void {
+    const targets = new Set(fields);
+    if (targets.size === 0) {
+      return;
+    }
+    const sqlTargets = SQL_FIELDS.filter((field) => targets.has(field));
+    const settingTargets = SETTING_FIELDS.filter((field) => targets.has(field));
+
+    if (groupId === DEFAULT_GROUP_ID) {
+      // 全局：指定字段回落种子默认（构造函数显式项 + DEFAULT_CONFIG），其它全局覆盖保持不变。
+      this.defaultConfig = {
+        ...mergeIntoDefault(this.seedDefault, slimOverride(this.defaultConfig)),
+        ...fieldsFromConfig(this.seedDefault, sqlTargets),
+        groupId: DEFAULT_GROUP_ID,
+      } as EffectiveGroupConfig;
+      this.overriddenDefault.clear();
+      for (const field of this.seedFields) {
+        this.overriddenDefault.add(field);
+      }
+      for (const field of targets) {
+        this.overriddenDefault.delete(field);
+      }
+      const repository = this.repository;
+      if (repository && sqlTargets.length > 0) {
+        this.queue?.enqueue("group-config.default.save", () =>
+          repository.saveOverride({
+            ...this.defaultConfig,
+            groupId: DEFAULT_GROUP_ID,
+          }),
+        );
+        if (targets.has("keywords")) {
+          this.queue?.enqueue("group-config.default.keywords", () =>
+            repository.replaceKeywords(DEFAULT_GROUP_ID, [
+              ...this.seedDefault.keywords,
+            ]),
+          );
+        }
+      }
+      this.removeSettings(DEFAULT_GROUP_ID, settingTargets);
+      return;
+    }
+
+    const override = this.overrides.get(groupId);
+    const remaining: GroupConfigOverride = { ...override, groupId };
+    for (const field of targets) {
+      delete remaining[field];
+    }
+    this.overrides.set(groupId, remaining);
+    const overridden = this.overriddenSet(groupId);
+    for (const field of targets) {
+      overridden.delete(field);
+    }
+    const repository = this.repository;
+    if (repository && sqlTargets.some((field) => field !== "keywords")) {
+      this.queue?.enqueue("group-config.clear", () =>
+        repository.clearColumns(groupId, sqlTargets),
+      );
+    }
+    if (repository && targets.has("keywords")) {
+      this.queue?.enqueue("group-config.keywords", () =>
+        repository.replaceKeywords(groupId, []),
+      );
+    }
+    this.removeSettings(groupId, settingTargets);
+  }
+
+  /** 覆盖率总览：每个有显式覆盖的群 + 覆盖字段。 */
+  public listOverrideSummaries(): Array<{
+    groupId: string;
+    fields: Array<keyof GroupConfigOverride>;
+  }> {
+    const summaries: Array<{
+      groupId: string;
+      fields: Array<keyof GroupConfigOverride>;
+    }> = [];
+    for (const groupId of [...this.overridden.keys()].sort()) {
+      if (groupId === DEFAULT_GROUP_ID) {
+        continue;
+      }
+      const fields = [...this.overriddenFields(groupId)].sort(
+        (a, b) => PERSISTED_FIELD_ORDER.indexOf(a) - PERSISTED_FIELD_ORDER.indexOf(b),
+      );
+      if (fields.length > 0) {
+        summaries.push({ groupId, fields });
+      }
+    }
+    return summaries;
+  }
+
+  private overriddenSet(groupId: string): Set<keyof GroupConfigOverride> {
+    const existing = this.overridden.get(groupId);
+    if (existing) {
+      return existing;
+    }
+    const created = new Set<keyof GroupConfigOverride>();
+    this.overridden.set(groupId, created);
+    return created;
+  }
+
+  private removeSettings(
+    groupId: string,
+    fields: readonly GroupSettingKey[],
+  ): void {
+    const settingsRepository = this.settingsRepository;
+    if (!settingsRepository || fields.length === 0) {
+      return;
+    }
+    for (const key of fields) {
+      this.queue?.enqueue("group-config.setting.delete", () =>
+        settingsRepository.remove(groupId, key),
+      );
+    }
   }
 
   /**
@@ -352,9 +561,11 @@ export class GroupConfigStore {
    */
   public removeOverride(groupId: string): void {
     if (groupId === DEFAULT_GROUP_ID) {
-      this.defaultConfig = cloneConfig(this.builtinConfig);
+      this.defaultConfig = cloneConfig(this.seedDefault);
+      this.overriddenDefault.clear();
     }
     this.overrides.delete(groupId);
+    this.overridden.delete(groupId);
     const repository = this.repository;
     if (repository) {
       this.queue?.enqueue("group-config.delete", () => repository.deleteOverride(groupId));
@@ -388,14 +599,72 @@ function normalizeKeywords(keywords: readonly string[]): string[] {
 }
 
 function normalizeOverride(override: GroupConfigOverride): GroupConfigOverride {
-  if (override.keywords === undefined) {
-    return { ...override };
-  }
-  return { ...override, keywords: normalizeKeywords(override.keywords) };
+  return {
+    ...override,
+    ...(override.keywords !== undefined
+      ? { keywords: normalizeKeywords(override.keywords) }
+      : {}),
+    ...(override.allowColleges !== undefined
+      ? { allowColleges: normalizeKeywords(override.allowColleges) }
+      : {}),
+    ...(override.denyColleges !== undefined
+      ? { denyColleges: normalizeKeywords(override.denyColleges) }
+      : {}),
+    ...(override.allowYears !== undefined
+      ? { allowYears: normalizeKeywords(override.allowYears) }
+      : {}),
+    ...(override.denyYears !== undefined
+      ? { denyYears: normalizeKeywords(override.denyYears) }
+      : {}),
+  };
 }
 
+/** 抽出只包含「已显式设置」字段的对象（用于合并进 EffectiveGroupConfig）。 */
+function slimOverride(override: GroupConfigOverride): GroupConfigOverride {
+  const result: GroupConfigOverride = { groupId: override.groupId };
+  for (const field of PERSISTED_CONFIG_FIELDS) {
+    if (override[field] !== undefined) {
+      // 逐字段拷贝：字段类型各不相同，这里以 keyof 索引赋值
+      (result as unknown as Record<string, unknown>)[field] = override[field];
+    }
+  }
+  return result;
+}
+
+/** 取配置对象里显式设置过的字段（`undefined` 视为未设置）。 */
+function overriddenFieldsOf(
+  override: GroupConfigOverride,
+): Array<keyof GroupConfigOverride> {
+  return PERSISTED_CONFIG_FIELDS.filter(
+    (field) => override[field] !== undefined,
+  );
+}
+
+/** 从种子默认配置里摘出指定字段（全局「恢复本页继承」回落用）。 */
+function fieldsFromConfig(
+  config: EffectiveGroupConfig,
+  fields: readonly (keyof GroupConfigOverride)[],
+): GroupConfigOverride {
+  const result: GroupConfigOverride = { groupId: DEFAULT_GROUP_ID };
+  for (const field of fields) {
+    (result as unknown as Record<string, unknown>)[field] = config[field];
+  }
+  return result;
+}
+
+/** 覆盖率总览里字段的展示顺序：按持久化清单（SQL 在前、扩展在后）。 */
+const PERSISTED_FIELD_ORDER: readonly (keyof GroupConfigOverride)[] =
+  PERSISTED_CONFIG_FIELDS;
+
 function cloneConfig(config: EffectiveGroupConfig): EffectiveGroupConfig {
-  return { ...config, keywords: [...config.keywords] };
+  return {
+    ...config,
+    keywords: [...config.keywords],
+    allowColleges: [...config.allowColleges],
+    denyColleges: [...config.denyColleges],
+    allowYears: [...config.allowYears],
+    denyYears: [...config.denyYears],
+  };
 }
 
 /** 把局部覆盖合并到全局默认配置上。 */
@@ -404,49 +673,17 @@ function mergeIntoDefault(
   override: GroupConfigOverride,
 ): EffectiveGroupConfig {
   return {
+    ...base,
+    ...slimOverride(override),
     groupId: DEFAULT_GROUP_ID,
-    enabled: override.enabled ?? base.enabled,
-    joinAuditEnabled: override.joinAuditEnabled ?? base.joinAuditEnabled,
-    autoApproveJoin: override.autoApproveJoin ?? base.autoApproveJoin,
     keywords:
       override.keywords !== undefined
         ? normalizeKeywords(override.keywords)
         : base.keywords,
-    wordFilterEnabled: override.wordFilterEnabled ?? base.wordFilterEnabled,
-    exportEnabled: override.exportEnabled ?? base.exportEnabled,
-    rawMessageRetentionDays:
-      override.rawMessageRetentionDays ?? base.rawMessageRetentionDays,
-    muteDurationSeconds:
-      override.muteDurationSeconds ?? base.muteDurationSeconds,
-    warningMessage: override.warningMessage ?? base.warningMessage,
-    keywordRecall: override.keywordRecall ?? base.keywordRecall,
-    keywordPunish: override.keywordPunish ?? base.keywordPunish,
-    joinDecision: override.joinDecision ?? base.joinDecision,
-    joinRequireClass: override.joinRequireClass ?? base.joinRequireClass,
-    joinRequireName: override.joinRequireName ?? base.joinRequireName,
-    joinAnswerPattern: override.joinAnswerPattern ?? base.joinAnswerPattern,
-    joinReviewOpinion: override.joinReviewOpinion ?? base.joinReviewOpinion,
-    notifyAutoApproved:
-      override.notifyAutoApproved ?? base.notifyAutoApproved,
   };
 }
 
-/** 全局规则的 SQL 持久化快照（扩展字段走 group_settings）。 */
-function defaultSnapshot(config: EffectiveGroupConfig): GroupConfigOverride {
-  return {
-    groupId: DEFAULT_GROUP_ID,
-    enabled: config.enabled,
-    joinAuditEnabled: config.joinAuditEnabled,
-    autoApproveJoin: config.autoApproveJoin,
-    keywords: [...config.keywords],
-    wordFilterEnabled: config.wordFilterEnabled,
-    exportEnabled: config.exportEnabled,
-    rawMessageRetentionDays: config.rawMessageRetentionDays,
-    muteDurationSeconds: config.muteDurationSeconds,
-    warningMessage: config.warningMessage,
-  };
-}
-
+/** 本次覆盖里是否包含任一指定字段。 */
 function hasAnyField(
   override: GroupConfigOverride,
   fields: readonly (keyof GroupConfigOverride)[],
@@ -502,9 +739,23 @@ function applySettingField(
       target.joinAnswerPattern = value;
       return true;
     }
+    case "allowColleges":
+    case "denyColleges":
+    case "allowYears":
+    case "denyYears": {
+      if (!isStringArray(value)) {
+        return false;
+      }
+      target[key] = value;
+      return true;
+    }
     default:
       return false;
   }
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function isKeywordPunish(value: unknown): value is KeywordPunishType {

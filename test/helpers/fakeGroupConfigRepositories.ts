@@ -1,4 +1,5 @@
 import type { GroupConfigRepository } from "../../src/db/groupConfigRepository.js";
+import { GROUP_CONFIG_COLUMNS } from "../../src/db/groupConfigRepository.js";
 import type {
   GroupSetting,
   GroupSettingsRepository,
@@ -25,11 +26,38 @@ export class FakeGroupConfigRepository implements GroupConfigRepository {
   }
 
   public async saveOverride(override: GroupConfigOverride): Promise<void> {
-    this.overrides.set(override.groupId, { ...override });
+    // 与 SQL `group_configs` 一致：只落**列**字段。
+    // 扩展字段（group_settings）与关键词（group_keywords）由各自的仓储负责，
+    // 整行快照里混进 KV 字段会让 `clearColumns` / `findAll` 行为对不上真实 SQL。
+    const row: GroupConfigOverride = { groupId: override.groupId };
+    for (const field of Object.keys(GROUP_CONFIG_COLUMNS)) {
+      const value = (override as unknown as Record<string, unknown>)[field];
+      if (value !== undefined) {
+        (row as unknown as Record<string, unknown>)[field] = value;
+      }
+    }
+    this.overrides.set(override.groupId, row);
   }
 
   public async deleteOverride(groupId: string): Promise<void> {
     this.overrides.delete(groupId);
+  }
+
+  public async clearColumns(
+    groupId: string,
+    fields: readonly (keyof GroupConfigOverride)[],
+  ): Promise<void> {
+    const override = this.overrides.get(groupId);
+    if (!override) {
+      return;
+    }
+    const next: GroupConfigOverride = { ...override };
+    for (const field of fields) {
+      if (field in GROUP_CONFIG_COLUMNS) {
+        delete next[field];
+      }
+    }
+    this.overrides.set(groupId, next);
   }
 
   public async loadKeywords(groupId: string): Promise<string[]> {

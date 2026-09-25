@@ -75,6 +75,34 @@ describe("SqlGroupConfigRepository", () => {
     expect(db.calls[0]?.values).toEqual(["g1"]);
   });
 
+  it("clears only the requested columns", async () => {
+    const db = new FakeQueryable();
+    const repository = new SqlGroupConfigRepository(db);
+
+    await repository.clearColumns("g1", ["autoApproveJoin", "warningMessage"]);
+
+    expect(db.calls).toHaveLength(1);
+    const sql = db.calls[0]?.text ?? "";
+    expect(sql).toContain("UPDATE group_configs SET");
+    expect(sql).toContain("auto_approve_join = NULL");
+    expect(sql).toContain("warning_message = NULL");
+    // 只清指定列：其它列不能出现在 SET 里
+    expect(sql).not.toContain("enabled = NULL");
+    expect(sql).not.toContain("join_audit_enabled = NULL");
+    expect(db.calls[0]?.values).toEqual(["g1"]);
+  });
+
+  it("ignores keys that are not real columns (e.g. keywords)", async () => {
+    const db = new FakeQueryable();
+    const repository = new SqlGroupConfigRepository(db);
+
+    await repository.clearColumns("g1", ["keywords"]);
+    expect(db.calls).toHaveLength(0);
+
+    await repository.clearColumns("g1", []);
+    expect(db.calls).toHaveLength(0);
+  });
+
   it("loads every override together with its keywords", async () => {
     const db = new FakeQueryable([
       [

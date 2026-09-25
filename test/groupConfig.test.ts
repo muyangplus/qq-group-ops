@@ -105,4 +105,94 @@ describe("GroupConfigStore", () => {
     // 单群覆盖不受影响
     expect(store.get("g1").autoApproveJoin).toBe(true);
   });
+
+  it("reports the explicitly overridden fields per group", () => {
+    const store = createStore();
+    expect(store.overriddenFields("g1").size).toBe(0);
+
+    store.setOverride({ groupId: "g1", autoApproveJoin: true });
+    store.setOverride({ groupId: "g1", keywords: ["刷屏"] });
+    expect([...store.overriddenFields("g1")].sort()).toEqual([
+      "autoApproveJoin",
+      "keywords",
+    ]);
+    // 其它群不受影响
+    expect(store.overriddenFields("g2").size).toBe(0);
+  });
+
+  it("clears a single field back to inherited value", () => {
+    const store = createStore();
+    store.setOverride({ groupId: "g1", autoApproveJoin: true, keywords: ["刷屏"] });
+
+    store.clearFields("g1", ["autoApproveJoin"]);
+
+    const config = store.get("g1");
+    // 该字段回落全局（autoApproveJoin 默认 false）
+    expect(config.autoApproveJoin).toBe(false);
+    // 其它字段的覆盖保持不变
+    expect(config.keywords).toEqual(["刷屏"]);
+    expect([...store.overriddenFields("g1")]).toEqual(["keywords"]);
+  });
+
+  it("clears extended (KV) fields back to inherited value", () => {
+    const store = createStore();
+    store.setOverride({ groupId: "g1", keywordRecall: true, denyColleges: ["某学院"] });
+
+    store.clearFields("g1", ["keywordRecall", "denyColleges"]);
+
+    expect(store.get("g1").keywordRecall).toBe(false);
+    expect(store.get("g1").denyColleges).toEqual([]);
+    expect(store.overriddenFields("g1").size).toBe(0);
+  });
+
+  it("falls a cleared global field back to the builtin default", () => {
+    const store = new GroupConfigStore({
+      groupId: DEFAULT_GROUP_ID,
+      keywords: ["广告"],
+      warningMessage: "种子文案",
+    });
+    store.setOverride({ groupId: DEFAULT_GROUP_ID, warningMessage: "全局文案" });
+    store.setOverride({ groupId: DEFAULT_GROUP_ID, autoApproveJoin: true });
+    expect(store.default.warningMessage).toBe("全局文案");
+
+    store.clearFields(DEFAULT_GROUP_ID, ["warningMessage"]);
+
+    // 全局清字段 → 回落种子默认，不影响其它全局覆盖
+    expect(store.default.warningMessage).toBe("种子文案");
+    expect(store.default.autoApproveJoin).toBe(true);
+    // 种子里的显式项仍是「显式」（只是回落到了种子），被清掉的字段不再算覆盖
+    expect([...store.overriddenFields(DEFAULT_GROUP_ID)].sort()).toEqual([
+      "keywords",
+    ]);
+    // 未覆盖的群继续继承全局
+    expect(store.get("g9").warningMessage).toBe("种子文案");
+  });
+
+  it("summarizes per-group overrides for the coverage card", () => {
+    const store = createStore();
+    store.setOverride({ groupId: "g2", autoApproveJoin: true });
+    store.setOverride({ groupId: "g1", keywords: ["刷屏"] });
+    store.setOverride({ groupId: DEFAULT_GROUP_ID, warningMessage: "全局" });
+
+    const summaries = store.listOverrideSummaries();
+    expect(summaries.map((item) => item.groupId)).toEqual(["g1", "g2"]);
+    expect(summaries[0]?.fields).toEqual(["keywords"]);
+    expect(summaries[1]?.fields).toEqual(["autoApproveJoin"]);
+  });
+
+  it("clears roster list fields back to inherited value", () => {
+    const store = createStore();
+    store.setOverride({
+      groupId: "g1",
+      allowColleges: ["化学与生命科学学院"],
+      allowYears: ["22"],
+    });
+
+    expect(store.get("g1").allowColleges).toEqual(["化学与生命科学学院"]);
+    store.clearFields("g1", ["allowColleges"]);
+
+    expect(store.get("g1").allowColleges).toEqual([]);
+    expect(store.get("g1").allowYears).toEqual(["22"]);
+    expect([...store.overriddenFields("g1")]).toEqual(["allowYears"]);
+  });
 });

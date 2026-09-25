@@ -356,8 +356,12 @@ export function createRuntime(
         if (!userId) {
           return undefined;
         }
+        // 所有规则回调都在这里重新做权限校验（见 docs/CARD-STANDARD.md §5）：
+        // `toggle` / `resetPage` / `resetAll` / `delKeyword` / `clearKeyword` / `rosterToggle`
+        // 需要群管理员（或超管），`panel` / `all` / `overrides` 至少需要审核员（查看）；
+        // 具体校验在对应方法内部完成，越权返回「权限不足」卡片。
         if (parsed.action === "toggle") {
-          const [targetGroupId, field, value, panel] = parsed.args;
+          const [targetGroupId, field, value, panel, page, mode] = parsed.args;
           if (!targetGroupId || !field || !value) {
             return undefined;
           }
@@ -368,15 +372,109 @@ export function createRuntime(
             userId,
             panel,
             event.groupId,
+            Number.parseInt(page ?? "1", 10) || 1,
+            mode === "deny" ? "deny" : "allow",
           );
           return card.rich;
         }
         if (parsed.action === "panel") {
-          const [targetGroupId, panel] = parsed.args;
+          const [targetGroupId, panel, page, mode] = parsed.args;
           if (!targetGroupId || !panel) {
             return undefined;
           }
-          return adminCommands.rulesPanelCard(panel, targetGroupId, userId).rich;
+          return adminCommands.rulesPanelCard(
+            panel,
+            targetGroupId,
+            userId,
+            undefined,
+            Number.parseInt(page ?? "1", 10) || 1,
+            mode === "deny" ? "deny" : "allow",
+          ).rich;
+        }
+        if (parsed.action === "panelPage") {
+          const [targetGroupId, panel, page, mode] = parsed.args;
+          if (!targetGroupId || !panel) {
+            return undefined;
+          }
+          return adminCommands.rulesPanelCard(
+            panel,
+            targetGroupId,
+            userId,
+            undefined,
+            Number.parseInt(page ?? "1", 10) || 1,
+            mode === "deny" ? "deny" : "allow",
+          ).rich;
+        }
+        if (parsed.action === "delKeyword") {
+          const [targetGroupId, serial, page] = parsed.args;
+          if (!targetGroupId) {
+            return undefined;
+          }
+          return adminCommands.delKeywordCard(
+            targetGroupId,
+            Number.parseInt(serial ?? "0", 10),
+            Number.parseInt(page ?? "1", 10) || 1,
+            userId,
+            event.groupId,
+          ).rich;
+        }
+        if (parsed.action === "clearKeyword") {
+          const [targetGroupId] = parsed.args;
+          if (!targetGroupId) {
+            return undefined;
+          }
+          return adminCommands.clearKeywordsCard(
+            targetGroupId,
+            userId,
+            event.groupId,
+          ).rich;
+        }
+        if (parsed.action === "resetPage") {
+          const [targetGroupId, panel, fields, page, mode] = parsed.args;
+          if (!targetGroupId || !panel || !fields) {
+            return undefined;
+          }
+          return adminCommands.resetRulePageCard(
+            targetGroupId,
+            panel,
+            fields,
+            userId,
+            event.groupId,
+            Number.parseInt(page ?? "1", 10) || 1,
+            mode === "deny" ? "deny" : "allow",
+          ).rich;
+        }
+        if (parsed.action === "resetAll") {
+          const [targetGroupId] = parsed.args;
+          if (!targetGroupId) {
+            return undefined;
+          }
+          return adminCommands.resetAllRulesCard(
+            targetGroupId,
+            userId,
+            event.groupId,
+          ).rich;
+        }
+        if (parsed.action === "rosterToggle") {
+          const [targetGroupId, field, mode, option, page] = parsed.args;
+          if (!targetGroupId || !field || !option) {
+            return undefined;
+          }
+          return adminCommands.rosterToggleCard(
+            targetGroupId,
+            field,
+            mode === "deny" ? "deny" : "allow",
+            option,
+            userId,
+            event.groupId,
+            Number.parseInt(page ?? "1", 10) || 1,
+          ).rich;
+        }
+        if (parsed.action === "overrides") {
+          return adminCommands.ruleOverridesCard(
+            userId,
+            Number.parseInt(parsed.args[0] ?? "1", 10) || 1,
+          ).rich;
         }
         const parts =
           parsed.action === "all"

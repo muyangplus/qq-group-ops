@@ -337,6 +337,7 @@ function adminCard(context: MenuContext, access: MenuAccess): CardSpec {
     lines: [
       "群管理相关能力按权限分级显示；看不到的入口说明权限不足。",
       "审批、改规则与导出需要群管理员及以上权限。",
+      "群规则卡：字段级继承（概览 + 开关/审核/处罚/关键词/名单/更多子卡），可恢复本页或全部继承。",
     ],
     rows,
     buttonHint: "请选择功能：",

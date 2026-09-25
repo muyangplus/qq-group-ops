@@ -191,4 +191,57 @@ describe("rule configuration persistence", () => {
     expect(settingsRepo.rows.size).toBe(0);
     expect(configRepo.overrides.size).toBe(0);
   });
+
+  it("clears a single column and a KV row, then falls back after reload", async () => {
+    await service.handle("g1", "admin", "/rules set autoApprove on");
+    await service.handle("g1", "admin", "/rules set keywordRecall on");
+    await service.handle("g1", "admin", "/rules set wordFilter off");
+    await configStore.flush();
+
+    // 清一个 SQL 列 + 一个 KV 行，另一个 SQL 列保持覆盖
+    configStore.clearFields("g1", ["autoApproveJoin", "keywordRecall"]);
+    const reloaded = await reload();
+
+    const config = reloaded.get("g1");
+    // 被清的字段回落继承（默认 false / false）
+    expect(config.autoApproveJoin).toBe(false);
+    expect(config.keywordRecall).toBe(false);
+    // 没被清的覆盖保持
+    expect(config.wordFilterEnabled).toBe(false);
+    expect([...reloaded.overriddenFields("g1")]).toEqual(["wordFilterEnabled"]);
+    // 覆盖率总览只列剩下的字段
+    expect(reloaded.listOverrideSummaries()).toEqual([
+      { groupId: "g1", fields: ["wordFilterEnabled"] },
+    ]);
+  });
+
+  it("adds and deletes keywords one by one, then reloads", async () => {
+    await service.handle("g1", "admin", "/rules add keyword 广告");
+    await service.handle("g1", "admin", "/rules add keyword 刷屏");
+
+    const first = await reload();
+    expect(first.get("g1").keywords).toEqual(["刷屏", "广告"]);
+
+    await service.handle("g1", "admin", "/rules del keyword 广告");
+    const second = await reload();
+    expect(second.get("g1").keywords).toEqual(["刷屏"]);
+  });
+
+  it("falls a cleared global field back to the seed default after reload", async () => {
+    await service.handle(undefined, "root", "/rules set all warning 全局文案");
+    await service.handle(undefined, "root", "/rules set all autoApprove on");
+    await configStore.flush();
+
+    configStore.clearFields("__default__", ["warningMessage"]);
+    const reloaded = await reload();
+
+    // warningMessage 回落种子默认；autoApproveJoin 的全局覆盖保留
+    expect(reloaded.default.warningMessage).toBe(
+      "请遵守群规，不要发送违规内容。",
+    );
+    expect(reloaded.default.autoApproveJoin).toBe(true);
+    expect(reloaded.get("brand-new").warningMessage).toBe(
+      "请遵守群规，不要发送违规内容。",
+    );
+  });
 });

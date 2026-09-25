@@ -1,10 +1,38 @@
 import type { GroupConfigOverride } from "../services/groupConfig.js";
 import type { Queryable } from "./queryable.js";
 
+/**
+ * `group_configs` 的列（服务层 `SQL_FIELDS` 的子集：关键词在独立表里，不在列里）。
+ *
+ * 键名 → 列名，用于「字段级恢复继承」只清指定列。
+ */
+export const GROUP_CONFIG_COLUMNS = {
+  enabled: "enabled",
+  joinAuditEnabled: "join_audit_enabled",
+  autoApproveJoin: "auto_approve_join",
+  wordFilterEnabled: "word_filter_enabled",
+  exportEnabled: "export_enabled",
+  rawMessageRetentionDays: "raw_message_retention_days",
+  muteDurationSeconds: "mute_duration_seconds",
+  warningMessage: "warning_message",
+} as const satisfies Partial<Record<keyof GroupConfigOverride, string>>;
+
+export type GroupConfigColumn = keyof typeof GROUP_CONFIG_COLUMNS;
+
 export interface GroupConfigRepository {
   loadOverride(groupId: string): Promise<GroupConfigOverride | null>;
   saveOverride(override: GroupConfigOverride): Promise<void>;
   deleteOverride(groupId: string): Promise<void>;
+  /**
+   * 只把指定列置 `NULL`（字段级「恢复继承」）。
+   *
+   * 与 `saveOverride` 的整行快照不同，这里**不动其它列**；`group_keywords`
+   * 不在列里，关键词清空由 `replaceKeywords(groupId, [])` 负责。
+   */
+  clearColumns(
+    groupId: string,
+    fields: readonly (keyof GroupConfigOverride)[],
+  ): Promise<void>;
   loadKeywords(groupId: string): Promise<string[]>;
   replaceKeywords(groupId: string, keywords: readonly string[]): Promise<void>;
   findAll(): Promise<GroupConfigOverride[]>;
@@ -103,6 +131,23 @@ export class SqlGroupConfigRepository implements GroupConfigRepository {
     await this.db.query(DELETE_SQL, [groupId]);
   }
 
+  public async clearColumns(
+    groupId: string,
+    fields: readonly (keyof GroupConfigOverride)[],
+  ): Promise<void> {
+    const columns = fields.filter(isColumn);
+    if (columns.length === 0) {
+      return;
+    }
+    const assignments = columns
+      .map((field) => `${GROUP_CONFIG_COLUMNS[field]} = NULL`)
+      .join(", ");
+    await this.db.query(
+      `UPDATE group_configs SET ${assignments}, updated_at = NOW() WHERE group_id = $1`,
+      [groupId],
+    );
+  }
+
   public async loadKeywords(groupId: string): Promise<string[]> {
     const result = await this.db.query<{ keyword: string }>(
       SELECT_KEYWORDS_SQL,
@@ -172,4 +217,11 @@ function optionalBoolean(
     return undefined;
   }
   return typeof value === "boolean" ? value : value !== 0;
+}
+
+/** 运行时判定字段是否对应 `group_configs` 的真实列（关键词等不在列里）。 */
+function isColumn(
+  field: keyof GroupConfigOverride,
+): field is GroupConfigColumn {
+  return Object.hasOwn(GROUP_CONFIG_COLUMNS, field);
 }

@@ -128,6 +128,42 @@ describe("createRuntime", () => {
     expect(query.ok).toBe(true);
   });
 
+  it("routes the §C rules callbacks through the interaction handler", async () => {
+    const runtime = createRuntime(loadSettings({ ADMIN_USER_IDS: "admin" }));
+    runtime.identityMap.bindUser("admin", "10001");
+    runtime.identityMap.bindGroup("g1", "654321");
+    const api = runtime.api as unknown as FakeQQOfficialAPI;
+
+    // 先设一个字段级覆盖，再点「恢复本页继承」回调
+    runtime.configStore.setOverride({ groupId: "g1", wordFilterEnabled: false });
+    const reset = await runtime.router.handle({
+      type: "interaction",
+      interactionId: "i1",
+      interactionType: 11,
+      groupId: "g1",
+      userId: "admin",
+      buttonData:
+        "cb:rules:resetPage:g1:toggle:wordFilterEnabled,keywordRecall,joinAuditEnabled,exportEnabled:1:allow",
+    });
+    expect(reset.ok).toBe(true);
+    expect(runtime.configStore.get("g1").wordFilterEnabled).toBe(true);
+    expect(String(api.sentMessages.at(-1)?.markdown ?? "")).toContain(
+      "已恢复本页继承",
+    );
+
+    // 普通成员点管理类回调 → 返回「权限不足」卡（不静默）
+    const denied = await runtime.router.handle({
+      type: "interaction",
+      interactionId: "i2",
+      interactionType: 11,
+      groupId: "g1",
+      userId: "member",
+      buttonData: "cb:rules:resetAll:g1:1",
+    });
+    expect(denied.ok).toBe(true);
+    expect(String(api.sentMessages.at(-1)?.markdown ?? "")).toContain("权限不足");
+  });
+
   /**
    * §B4 端到端：群里手输 `/activity join` → 群内静默、结果私信。
    *
