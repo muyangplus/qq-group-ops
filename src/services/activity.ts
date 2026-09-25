@@ -247,6 +247,13 @@ export class ActivityService {
       .map(cloneActivity);
   }
 
+  /** 设了定时提醒（`remindAt`）的活动；供 `ActivityReminderService` 轮询（C3）。 */
+  public listActivitiesWithReminder(): Activity[] {
+    return [...this.activities.values()]
+      .filter((activity) => activity.remindAt !== undefined)
+      .map(cloneActivity);
+  }
+
   // ------------------------------------------------- 绑定群（§B4）
 
   /**
@@ -382,6 +389,13 @@ export class ActivityService {
         delete activity.closeAt;
       } else {
         activity.closeAt = patch.closeAt;
+      }
+    }
+    if ("remindAt" in patch) {
+      if (patch.remindAt === undefined) {
+        delete activity.remindAt;
+      } else {
+        activity.remindAt = patch.remindAt;
       }
     }
     this.activities.set(activityId, activity);
@@ -819,6 +833,19 @@ export class ActivityService {
     } else {
       this.queue?.enqueue("activity.settings.heldSlots.clear", () =>
         repository.remove(activity.activityId, ACTIVITY_SETTING_KEYS.heldSlots),
+      );
+    }
+    if (settings.remindAt !== undefined) {
+      this.queue?.enqueue("activity.settings.remindAt", () =>
+        repository.save({
+          activityId: activity.activityId,
+          key: ACTIVITY_SETTING_KEYS.remindAt,
+          value: settings.remindAt!,
+        }),
+      );
+    } else {
+      this.queue?.enqueue("activity.settings.remindAt.clear", () =>
+        repository.remove(activity.activityId, ACTIVITY_SETTING_KEYS.remindAt),
       );
     }
   }

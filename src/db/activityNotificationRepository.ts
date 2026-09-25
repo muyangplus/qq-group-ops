@@ -15,7 +15,9 @@ export type ActivityNotificationKind =
   | "cancelled"
   | "promoted"
   /** 满员广播（群消息）：`user_id` 写 `group:<群ID>` 伪接收者，每个群只发一次。 */
-  | "full";
+  | "full"
+  /** 定时提醒广播（群消息）：同样的伪接收者与去重语义。 */
+  | "remind";
 
 export interface ActivityNotification {
   activityId: string;

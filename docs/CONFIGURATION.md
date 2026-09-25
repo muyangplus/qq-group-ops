@@ -779,6 +779,7 @@ pnpm db:up     # docker compose --profile postgres up -d db
 | `JOIN_REQUEST_TTL_DAYS` | 否 | 待审批入群申请有效期（天），默认 `7`；超过即标记 `expired`（不删数据，`/whois` 可追溯），`0` 表示不自动过期 |
 | `ACTIVITY_NOTIFY_DAILY_LIMIT` | 否 | **活动通知**每人每日上限，默认 `3`；非负整数，`0` = 不限制 |
 | `ACTIVITY_NOTIFY_RATE_PER_SECOND` | 否 | **活动通知**令牌桶速率（条/秒），默认 `5`；正整数，`0` = 不限制。桶容量按速率向上取整，桶空时**排队等待**下一个令牌（不丢通知） |
+| `ACTIVITY_REMIND_INTERVAL_MS` | 否 | **活动定时提醒**的轮询间隔（毫秒），默认 `60000`（1 分钟）；`0` = 关闭扫描。提醒由 `/activity set <短码> remindAt MM-DD HH:mm` 设置，到点在所有绑定群广播一次 |
 | `ACTIVITY_STATS_FONT_URL` | 否 | 统计图片的中文字体下载地址（系统字体都没有时才用）；默认 Noto Sans SC 官方发布地址，留空表示只用系统字体 |
 
 `ACTIVITY_NOTIFY_DAILY_LIMIT` 的用途：活动发布 / 变更 / 取消 / 递补的通知走**主动私信**，

@@ -907,13 +907,13 @@ export function parseLinks(value: string): ActivityLink[] {
  *
  * 只做最小解析，不做「已过去」校验：管理员可能就是想立刻截止（懒校验会在报名时拒绝）。
  */
-export function parseCloseAt(value: string): Date {
+export function parseCloseAt(value: string, label = "截止时间"): Date {
   const match =
     /^(?:(\d{4})[-/])?(\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{2})$/u.exec(
       value.trim(),
     );
   if (!match) {
-    throw new Error("截止时间格式：MM-DD HH:mm（当天日期）或 YYYY-MM-DD HH:mm");
+    throw new Error(`${label}格式：MM-DD HH:mm（当天日期）或 YYYY-MM-DD HH:mm`);
   }
   const [, rawYear, rawMonth, rawDay, rawHour, rawMinute] = match;
   const now = new Date();

@@ -421,6 +421,7 @@ const NOTIFY_TITLES: Record<ActivityNotificationKind, string> = {
   cancelled: "活动已取消",
   promoted: "候补递补成功",
   full: "活动已满",
+  remind: "活动提醒",
 };
 
 function normalizeDailyLimit(value: number | undefined): number {

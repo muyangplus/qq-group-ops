@@ -54,6 +54,12 @@ export interface Settings {
    */
   activityNotifyRatePerSecond: number;
   /**
+   * 活动定时提醒的轮询间隔（`ACTIVITY_REMIND_INTERVAL_MS`，默认 60000）。
+   *
+   * `0` = 关闭定时提醒扫描；精度即轮询间隔。
+   */
+  activityRemindIntervalMs: number;
+  /**
    * 活动统计图片的字体下载地址（`ACTIVITY_STATS_FONT_URL`）。
    *
    * 系统已有中文字体（Windows 雅黑 / Linux Noto CJK 等）时不会用到；
@@ -199,6 +205,10 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     activityNotifyRatePerSecond: asNonNegativeInt(
       env.ACTIVITY_NOTIFY_RATE_PER_SECOND,
       5,
+    ),
+    activityRemindIntervalMs: asNonNegativeInt(
+      env.ACTIVITY_REMIND_INTERVAL_MS,
+      60_000,
     ),
     activityStatsFontUrl: asText(
       env.ACTIVITY_STATS_FONT_URL,

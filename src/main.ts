@@ -10,6 +10,7 @@ import { loadEnvFile } from "./env.js";
 import { attachGateway } from "./gatewayRunner.js";
 import { connectPersistence } from "./persistence.js";
 import { createRuntime } from "./runtime.js";
+import { ActivityReminderService } from "./services/activityReminder.js";
 import { RetentionService } from "./services/retention.js";
 
 /** 启动阶段命中限流时的固定冷却时间。 */
@@ -72,6 +73,13 @@ async function main(): Promise<void> {
     runtime.activityNotifications,
   );
 
+  // C3 活动定时提醒：周期扫描 `activity_settings.remindAt`，到点在所有绑定群广播一次
+  const activityReminder = new ActivityReminderService({
+    activity: runtime.activity,
+    notifications: runtime.activityNotifications,
+    intervalMs: settings.activityRemindIntervalMs,
+  });
+
   log.info("qq-group-ops Node.js runtime");
   log.info("configuration loaded", {
     qqCredentialsConfigured: hasQqCredentials(settings),
@@ -93,6 +101,8 @@ async function main(): Promise<void> {
 
   await retention.runOnce();
   retention.start();
+  await activityReminder.runOnce();
+  activityReminder.start();
 
   const gateway = instrumentEventGateway(
     new QQOfficialGateway({

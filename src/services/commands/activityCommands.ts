@@ -1029,6 +1029,13 @@ export async function applyActivitySetting(
           closeAt: cleared ? undefined : parseCloseAt(value),
         });
         break;
+      case "remindat":
+      case "提醒":
+      case "提醒时间":
+        activities.updateActivity(activity.activityId, {
+          remindAt: cleared ? undefined : parseCloseAt(value, "提醒时间"),
+        });
+        break;
       case "waitlistpromotion":
       case "递补":
         return setWaitlistPromotion(ctx, activity, value, cleared);

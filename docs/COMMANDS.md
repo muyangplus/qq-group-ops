@@ -428,6 +428,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 /activity set #A7K2Q9 capacity 50            # 名额
 /activity set #A7K2Q9 link 报名入口=https://example.com/signup
 /activity set #A7K2Q9 closeAt 03-05 18:00    # 报名截止（MM-DD HH:mm；clear 取消）
+/activity set #A7K2Q9 remindAt 03-04 20:00   # 定时提醒：到点在所有绑定群广播一次（clear 取消）
 /activity set #A7K2Q9 waitlistPromotion auto # 递补方式（默认 manual = 管理员手动释放名额）
 /activity set #A7K2Q9 notifyCreator on       # 有人报名时私信通知发起人
 /activity set #A7K2Q9 mentionAll on          # 开放报名时提示操作者手动 @全体（机器人无法 @全体）

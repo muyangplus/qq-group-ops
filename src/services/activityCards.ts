@@ -178,6 +178,11 @@ export class ActivityCardService {
         : `**名额**：${capacity}（已报名 ${registrations} · 待释放 ${activity.heldSlots}）`,
       `**限制**：${restrictionLabel(activity)}`,
       `**截止**：${formatCloseAt(activity, this.now())}`,
+      `**定时提醒**：${
+        activity.remindAt === undefined
+          ? "未设置"
+          : formatRemindAt(activity.remindAt)
+      }`,
       `**递补**：${activity.waitlistPromotion === "auto" ? "自动递补" : "手动释放名额"}`,
       `**提醒@全体**：${activity.mentionAll ? "开" : "关"}（机器人无法 @全体成员，开启后只提示操作者手动 @）`,
       `**报名通知**：${activity.notifyCreator ? "开" : "关"}（有人报名时私信发起人）`,
@@ -677,3 +682,9 @@ export class ActivityCardService {
 }
 
 /** 活动卡片里的短码展示：`#A7K2Q9`。 */
+
+/** 提醒时间展示（本地时间）：`MM-DD HH:mm`。 */
+function formatRemindAt(date: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}

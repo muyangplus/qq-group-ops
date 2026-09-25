@@ -897,4 +897,24 @@ describe("activity card callbacks (§B2)", async () => {
         .filter((message) => String(message.markdown ?? "").includes("活动已满")),
     ).toEqual([]);
   });
+  /** C3：`/activity set remindAt` 设置/清除定时提醒，配置卡显示当前值。 */
+  it("sets and clears the activity reminder time", async () => {
+    const { svc } = withActivity();
+    await svc.handle("g1", "admin", "/activity create 迎新晚会");
+
+    const set = await svc.handle("g1", "admin", "/activity set #ACT001 remindAt 12-31 20:00");
+    expect(set.ok).toBe(true);
+    expect(set.text).toContain("定时提醒");
+    expect(set.text).toContain("12-31 20:00");
+
+    const cleared = await svc.handle("g1", "admin", "/activity set #ACT001 remindAt clear");
+    expect(cleared.ok).toBe(true);
+    expect(cleared.text).toContain("定时提醒");
+    expect(cleared.text).toContain("未设置");
+
+    // 非法时间：报错且不写入
+    const invalid = await svc.handle("g1", "admin", "/activity set #ACT001 remindAt 明天");
+    expect(invalid.ok).toBe(false);
+    expect(invalid.text).toContain("提醒时间格式");
+  });
 });

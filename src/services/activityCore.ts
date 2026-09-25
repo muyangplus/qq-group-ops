@@ -61,6 +61,8 @@ export interface Activity {
   heldSlots: number;
   /** 报名截止时间；到期后**懒校验**拒绝报名（不再单独跑定时器）。 */
   closeAt?: Date;
+  /** 定时提醒时间：到点后由 `ActivityReminderService` 在所有绑定群广播一次报名提醒。 */
+  remindAt?: Date;
   createdAt: Date;
 }
 
@@ -116,6 +118,7 @@ export interface UpdateActivityInput {
   notifyCreator?: boolean;
   waitlistPromotion?: WaitlistPromotionMode;
   closeAt?: Date | undefined;
+  remindAt?: Date | undefined;
 }
 
 export interface RegisterActivityInput {
@@ -193,6 +196,7 @@ export function cloneActivity(activity: Activity): Activity {
     allowYears: [...activity.allowYears],
     denyYears: [...activity.denyYears],
     ...(activity.closeAt !== undefined ? { closeAt: new Date(activity.closeAt) } : {}),
+    ...(activity.remindAt !== undefined ? { remindAt: new Date(activity.remindAt) } : {}),
   };
 }
 
@@ -208,16 +212,19 @@ export const ACTIVITY_SETTING_KEYS = {
   closeAt: "closeAt",
   waitlistPromotion: "waitlistPromotion",
   heldSlots: "heldSlots",
+  remindAt: "remindAt",
 } as const;
 
-/** 把 KV 设置应用到活动对象上（缺省值：不 @全体、不通知、无截止、**手动释放名额**）。 */
+/** 把 KV 设置应用到活动对象上（缺省值：不 @全体、不通知、无截止、无提醒、**手动释放名额**）。 */
 export function applySettings(activity: Activity, bucket: ReadonlyMap<string, string>): Activity {
   const mentionAll = bucket.get(ACTIVITY_SETTING_KEYS.mentionAll);
   const notifyCreator = bucket.get(ACTIVITY_SETTING_KEYS.notifyCreator);
   const closeAt = bucket.get(ACTIVITY_SETTING_KEYS.closeAt);
   const promotion = bucket.get(ACTIVITY_SETTING_KEYS.waitlistPromotion);
   const heldSlots = Number.parseInt(bucket.get(ACTIVITY_SETTING_KEYS.heldSlots) ?? "", 10);
+  const remindAt = bucket.get(ACTIVITY_SETTING_KEYS.remindAt);
   const parsedCloseAt = closeAt ? new Date(closeAt) : undefined;
+  const parsedRemindAt = remindAt ? new Date(remindAt) : undefined;
   return {
     ...activity,
     mentionAll: mentionAll === undefined ? activity.mentionAll : mentionAll === "true",
@@ -233,6 +240,11 @@ export function applySettings(activity: Activity, bucket: ReadonlyMap<string, st
       : activity.closeAt !== undefined
         ? { closeAt: activity.closeAt }
         : {}),
+    ...(parsedRemindAt && !Number.isNaN(parsedRemindAt.getTime())
+      ? { remindAt: parsedRemindAt }
+      : activity.remindAt !== undefined
+        ? { remindAt: activity.remindAt }
+        : {}),
   };
 }
 
@@ -243,6 +255,7 @@ export function settingsOf(activity: Activity): {
   waitlistPromotion: WaitlistPromotionMode;
   heldSlots: number;
   closeAt?: string;
+  remindAt?: string;
 } {
   return {
     mentionAll: activity.mentionAll,
@@ -251,6 +264,9 @@ export function settingsOf(activity: Activity): {
     heldSlots: activity.heldSlots,
     ...(activity.closeAt !== undefined
       ? { closeAt: activity.closeAt.toISOString() }
+      : {}),
+    ...(activity.remindAt !== undefined
+      ? { remindAt: activity.remindAt.toISOString() }
       : {}),
   };
 }
