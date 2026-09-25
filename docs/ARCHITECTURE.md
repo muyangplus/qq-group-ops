@@ -39,7 +39,7 @@ TypeScript 核心服务
   ├── services/memberRoster.ts   班级/专业索引加载与姓名抽取
   ├── services/joinRequestCard.ts 入群申请推送卡片（Markdown + 指令按钮）
   ├── services/notifications.ts  入群申请推送（订阅、权限过滤、三级降级、投递去重）
-  ├── services/shortCodes.ts     随机 Base62 短码（生成/解析/持久化，替代系统 id 展示）
+  ├── services/shortCodes.ts     随机短码（数字+大写字母，生成/解析/持久化，替代系统 id 展示）
   ├── services/displayNames.ts   统一展示与命令参数解析（QQ号/群号/短码）
   ├── services/userProfiles.ts   个人资料（班级/学院/姓名/学号，学号 11 位 + 年级推导）
   ├── services/activity.ts       活动发布/报名/管理（短码、链接、学院年级白黑名单）

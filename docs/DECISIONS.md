@@ -473,6 +473,25 @@
   - `scripts/build-class-index.mjs` 变薄，逻辑移到 `scripts/classIndex.mjs`；新增 `CLASS_INDEX_SQLITE_FILE`（`-` 跳过）；
   - 真机功能：`/profile set` 智能识别、`/whois profile`、`/alias` 各有验收行（J21-J26）。
 
+## ADR-0039：短码去小写、`/whois` 结果只走私信、年级统一两位、仓库不出现真实标识
+
+- 状态：已采纳
+- 背景：真机试用后用户提出四条要求：① 文档里不要出现真实 QQ号；② 短码不要出现小写字母；③ `/whois` 结果可能涉及隐私，只在私信里给，群里可用 @ 指定查谁；④ 个人资料年级只允许两位，不接受四位完整年份。
+- 决策：
+  1. **短码字符表去掉小写**：`ALPHABET_62` → `ALPHABET_36`（`0-9A-Z`），`randomBase62` → `randomCode`；`short_codes` 与活动短码（`activity_details.code`）共用同一生成器；
+     **启动时重生成历史遗留的含小写短码**（`ShortCodeRepository.replaceCode` / `ActivityService.load` 内的迁移），旧短码随之失效；解析仍大小写不敏感，方便手输；
+  2. **`/whois` 只走私信**：新增 `NotificationService.sendPrivateCard`（包装 `RichMessageSender.sendToUser`）复用 `/notify` 的私信通道；群内发指令时结果私信给操作人，群里只回一张不含内容的提示卡；私信失败只提示「先私聊机器人再试」，**禁止降级到群里**；权限不足/用法/未找到映射等不含隐私的提示仍在原处回；目标解析新增官方 at 段（`<@!openid>`），`@昵称` 反查不了时明确提示替代写法；
+  3. **年级统一两位**：`yearFromStudentId` / `normalizeYear` 都返回两位，四位输入直接报错；班级库里的四位年份写入 profile 时用 `toShortYear` 转换；`UserProfileService.load()` 把历史四位值收敛成两位并写回；活动 `allowYears` 输入只接受两位，历史四位配置在 `checkEligibility` 里仍然匹配；
+  4. **仓库隐私守卫**：README/文档示例里的真实 QQ号、群号、openid 全部替换为明显占位的假值（`10001` / `654321` / `123456789` / `0123456789ABCDEF0123456789ABCDEF`），并新增 `test/privacyGuard.test.ts` 扫描 `src`/`test`/`scripts`/`docs`/README/CHANGELOG：
+     形状规则是「9-12 位未登记数字」「32 位十六进制串」「6-8 位十六进制 + `...`」，命中不在占位符白名单就失败。
+     **守卫测试自身绝不保存真实值（连片段都不保存）**——把真实值写进守卫等于换个地方泄露；需要按精确值兜底时用本地环境变量 `PRIVACY_GUARD_IDS`（逗号分隔），真实值只留在本地环境。
+- 理由：小写字母在口语与手抄场景容易与数字混淆（`l/1`、`o/0`），去掉小写后短码更可靠；`/whois` 是唯一会暴露真实系统 id 的入口，把它限制在私信里，等于把"越权/围观"风险降到最低；年级两种写法（`22` / `2022`）长期看必然产生对账与判断 bug，趁数据量小统一成两位。
+- 影响：
+  - 新方法 `NotificationService.sendPrivateCard`；`ShortCodeRepository` 新增 `replaceCode`；
+  - `/whois` 的群内输出语义改变（提示卡），私聊输出不变；相关测试改为断言私信内容；
+  - `user_profiles.year` 历史数据自动收敛（启动时写回），活动 `allowYears` 输入格式收紧；
+  - 新增守卫测试 `test/privacyGuard.test.ts`，示例值统一为 `10001` / `654321` / `0123456789ABCDEF0123456789ABCDEF`。
+
 
 
 
