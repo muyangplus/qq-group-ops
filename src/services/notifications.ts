@@ -25,6 +25,7 @@ import {
   type JoinRuleEvaluator,
 } from "./joinRules.js";
 import type { PermissionService } from "./permissions.js";
+import { PushService } from "./pushService.js";
 
 const log = getLogger("notifications");
 
@@ -94,6 +95,8 @@ export class NotificationService {
   private readonly now: () => Date;
   /** 富消息发送器（Markdown + 按钮 + 三级降级），与活动卡片共用。 */
   private readonly sender: RichMessageSender;
+  /** 统一推送骨架（去重 + 记录；失败也记录，避免重复重试刷屏）。 */
+  private readonly push: PushService<NotificationDelivery>;
 
   public constructor(
     private readonly api: QQOfficialAPI,
@@ -112,6 +115,16 @@ export class NotificationService {
     this.joinRules = options.joinRules;
     this.now = options.now ?? (() => utcNow());
     this.sender = options.sender ?? new RichMessageSender(api);
+    this.push = new PushService({
+      store: {
+        has: (key) => this.deliveries.has(key),
+        countSince: () => 0,
+        record: (_key, entry) => this.recordDelivery(entry),
+      },
+      now: this.now,
+      label: "notification",
+      recordOnFailure: true,
+    });
   }
 
   public get keyboardAvailable(): boolean {
@@ -268,26 +281,33 @@ export class NotificationService {
         recipientId: userId,
         withButtons: this.sender.keyboardAvailable,
       };
-      const delivery = this.deliveries.get(
-        deliveryKey({ groupId: push.groupId, requestId: push.requestId, userId }),
-      );
-      if (delivery) {
-        result.skipped += 1;
-        continue;
-      }
-      const outcome = await this.deliver(userId, input);
-      this.recordDelivery({
-        groupId: push.groupId,
-        requestId: push.requestId,
+      const outcome = await this.push.deliver({
+        key: deliveryKey({
+          groupId: push.groupId,
+          requestId: push.requestId,
+          userId,
+        }),
         userId,
-        status: outcome.status,
-        detail: outcome.detail,
-        createdAt: this.now(),
+        fields: { groupId: push.groupId, requestId: push.requestId },
+        send: () => this.send(userId, input),
+        entry: (now, sent) => ({
+          groupId: push.groupId,
+          requestId: push.requestId,
+          userId,
+          status:
+            sent.status === "sent"
+              ? NotificationDeliveryStatus.Sent
+              : NotificationDeliveryStatus.Failed,
+          detail: sent.detail,
+          createdAt: now,
+        }),
       });
-      if (outcome.status === NotificationDeliveryStatus.Sent) {
+      if (outcome.status === "sent") {
         result.sent += 1;
-      } else {
+      } else if (outcome.status === "failed") {
         result.failed += 1;
+      } else {
+        result.skipped += 1;
       }
     }
     log.info("join request push finished", {
@@ -357,8 +377,8 @@ export class NotificationService {
             buttonHint: "请点击按钮：",
           }),
     });
-    const outcome = await this.deliver(userId, input, card);
-    if (outcome.status === NotificationDeliveryStatus.Sent) {
+    const outcome = await this.send(userId, input, card);
+    if (outcome.ok) {
       return {
         ok: true,
         text:
@@ -403,29 +423,14 @@ export class NotificationService {
    *
    * 任何一次成功都算投递成功，detail 里记录降级原因。
    */
-  private async deliver(
+  private async send(
     userId: string,
     input: JoinRequestCardInput,
     preset?: JoinRequestCard,
-  ): Promise<{ status: NotificationDeliveryStatus; detail: string }> {
+  ): Promise<{ ok: boolean; detail: string }> {
     const card = preset ?? buildJoinRequestCard(input);
     const result = await this.sender.sendToUser(userId, card);
-    if (result.ok) {
-      log.debug("notification delivered", {
-        userId,
-        groupId: input.groupId,
-        requestId: input.requestId,
-        mode: result.mode,
-      });
-      return { status: NotificationDeliveryStatus.Sent, detail: result.detail };
-    }
-    log.warn("notification delivery failed", {
-      userId,
-      groupId: input.groupId,
-      requestId: input.requestId,
-      error: result.detail,
-    });
-    return { status: NotificationDeliveryStatus.Failed, detail: result.detail };
+    return { ok: result.ok, detail: result.detail };
   }
 
   private recordDelivery(delivery: NotificationDelivery): void {

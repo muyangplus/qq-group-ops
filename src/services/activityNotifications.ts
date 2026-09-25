@@ -12,6 +12,7 @@ import type {
 import { WriteQueue } from "../db/writeQueue.js";
 import { renderCard } from "./cardTemplate.js";
 import type { NotificationService } from "./notifications.js";
+import { PushService } from "./pushService.js";
 import type { RichMessage, RichMessageSender } from "./richMessages.js";
 
 const log = getLogger("activity-notifications");
@@ -84,6 +85,8 @@ export class ActivityNotificationService {
   private readonly dailyLimit: number;
   private readonly now: () => Date;
   private readonly groupSender: RichMessageSender | undefined;
+  /** 统一推送骨架（去重 + 每日封顶 + 记录）。 */
+  private readonly push: PushService<ActivityNotification>;
 
   public constructor(
     private readonly sender: NotificationService,
@@ -97,6 +100,16 @@ export class ActivityNotificationService {
     this.dailyLimit = normalizeDailyLimit(options.dailyLimit);
     this.now = options.now ?? (() => utcNow());
     this.groupSender = options.groupSender;
+    this.push = new PushService({
+      store: {
+        has: (key) => this.sent.has(key),
+        countSince: (userId, since) => this.countSince(userId, since),
+        record: (_key, entry) => this.record(entry),
+      },
+      now: this.now,
+      label: "activity notification",
+      dailyLimit: this.dailyLimit,
+    });
   }
 
   public get persistent(): boolean {
@@ -355,36 +368,18 @@ export class ActivityNotificationService {
     kind: ActivityNotificationKind,
     message: RichMessage,
   ): Promise<{ delivered: boolean; skipped: boolean; rateLimited: boolean }> {
-    const key = notificationKey({ activityId, userId, kind });
-    if (this.sent.has(key)) {
-      log.debug("activity notification deduplicated", { activityId, userId, kind });
-      return { delivered: false, skipped: true, rateLimited: false };
-    }
-    if (this.dailyLimit > 0) {
-      const count = this.countSince(userId, startOfToday(this.now()));
-      if (count >= this.dailyLimit) {
-        log.warn("activity notification skipped: daily limit reached", {
-          activityId,
-          userId,
-          kind,
-          limit: this.dailyLimit,
-          count,
-        });
-        return { delivered: false, skipped: true, rateLimited: true };
-      }
-    }
-    const sent = await this.sender.sendPrivateCard(userId, message);
-    if (!sent.ok) {
-      log.warn("activity notification delivery failed", {
-        activityId,
-        userId,
-        kind,
-        error: sent.detail,
-      });
-      return { delivered: false, skipped: false, rateLimited: false };
-    }
-    this.record({ activityId, userId, kind, createdAt: this.now() });
-    return { delivered: true, skipped: false, rateLimited: false };
+    const outcome = await this.push.deliver({
+      key: notificationKey({ activityId, userId, kind }),
+      userId,
+      fields: { activityId, kind },
+      send: () => this.sender.sendPrivateCard(userId, message),
+      entry: (now) => ({ activityId, userId, kind, createdAt: now }),
+    });
+    return {
+      delivered: outcome.status === "sent",
+      skipped: outcome.status === "skipped" || outcome.status === "rateLimited",
+      rateLimited: outcome.status === "rateLimited",
+    };
   }
 
   /** 当日已发条数（内存为准：`load()` 会把历史去重行读回来）。 */
@@ -431,11 +426,6 @@ function normalizeDailyLimit(value: number | undefined): number {
   }
   const parsed = Math.trunc(value);
   return parsed >= 0 ? parsed : 3;
-}
-
-/** 本地时区的「今天 0 点」。 */
-function startOfToday(now: Date): Date {
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
 function emptyResult(recipients: number): ActivityNotifyResult {

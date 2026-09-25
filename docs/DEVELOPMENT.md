@@ -53,6 +53,15 @@ test/
 `help`、`menu`、`status`、`test`、`whois`、`profile`、`alias`、`bind`、`perm`、`review`、
 `notify`、`rule`、`activity`、`activityCard`、`activityFlow`。
 
+### 服务层的同类约定
+
+- **大服务 = 主类文件 + `<name>Core.ts`**：类型、常量、纯函数放 Core，主类文件只留类并从 Core
+  import；公开名字由主类文件原样再导出，外部 import 路径不变（`activity` / `activityCards` /
+  `activityStats` / `groupConfig` 都按这个结构，单向依赖无环）。
+- **推送统一走 `services/pushService.ts`**：入群申请推送与活动通知共用
+  「按 key 去重 → 可选每日封顶 → 发送 → 记录 → 汇总」骨架，各自只提供自己的 `PushStore` 适配器、
+  发送通道与记录形状；两者语义差异用选项表达（`recordOnFailure`、`dailyLimit`）。
+
 其中活动域按三层拆分（单向依赖）：`activityCardCommands` ← `activityFlowCommands` ← `activityCommands`。
 
 ### 新增一个领域模块的步骤
