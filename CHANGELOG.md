@@ -2,14 +2,14 @@
 
 本项目遵循 [Keep a Changelog 1.1.0](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本 2.0.0](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
-`0.1.0` 之后的每个版本都包含可感知的新功能，因此按 MINOR 递增（`0.2.0` → `0.10.0`）；版本按时间倒序，日期格式 `YYYY-MM-DD`。
+`0.1.0` 之后按「改动性质」定版本：**含用户可见新功能的版本按 MINOR 递增**（`0.2.0` → `0.9.0`），**只有修复与安全、行为修正的版本按 PATCH 递增**（`0.6.1`）；版本按时间倒序，日期格式 `YYYY-MM-DD`。
 变更分类为 `新增` / `变更` / `修复` / `备注`；`备注` 用于记录能力边界与已知限制，不作为独立变更分类。
 
 ## [Unreleased]
 
 （暂无未发布改动）
 
-## [0.10.0] - 2026-09-25
+## [0.9.0] - 2026-09-25
 
 ### 新增
 
@@ -31,7 +31,7 @@
 - 受卡片排版限制：关键词与学院列表分页只在卡片上翻页（学院每页 4 个），没有可复制的翻页指令。
 - 原始消息保留天数暂时没有提供修改入口。
 
-## [0.9.0] - 2026-09-25
+## [0.8.0] - 2026-09-25
 
 ### 新增
 
@@ -63,7 +63,7 @@
 - 满员公告只在「本次报名恰好填满名额」时触发；管理员事后调小名额不会补发。
 - 活动提醒为「同一活动同一人去重 + 每人每日上限」，没有更细的发送频率限制。
 
-## [0.8.0] - 2026-09-25
+## [0.7.0] - 2026-09-25
 
 ### 新增
 
@@ -74,7 +74,7 @@
 
 - 实测结论：**卡片内的 @ 有效**，纯文本 @ 与 `@全体成员` 都无效。项目内所有 @ 反馈因此统一使用卡片内 @。
 
-## [0.7.0] - 2026-09-25
+## [0.6.1] - 2026-09-25
 
 ### 新增
 
@@ -191,11 +191,11 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.10.0...HEAD
-[0.10.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.9.0...v0.10.0
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.9.0...HEAD
 [0.9.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.6.0...v0.7.0
+[0.7.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.6.1...v0.7.0
+[0.6.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.3.0...v0.4.0
