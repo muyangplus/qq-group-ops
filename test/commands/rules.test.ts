@@ -262,4 +262,23 @@ describe("AdminCommandService · rules", () => {
     expect(labels).toContain("消息保留");
     expect(panel.rich.markdown).toContain("消息保留");
   });
+
+  it("pages the keyword panel with a copyable /rules keyword command", async () => {
+    await service.handle("g1", "admin", "/rules set keywords 广告,刷屏,加群,代写");
+
+    const first = await service.handle("g1", "admin", "/rules keyword");
+    expect(first.ok).toBe(true);
+    expect(first.text).toContain("下一页：/rules keyword +2");
+
+    const second = await service.handle("g1", "admin", "/rules keyword +2");
+    expect(second.ok).toBe(true);
+    expect(second.text).toContain("上一页：/rules keyword +1");
+    expect(second.text).not.toContain("下一页：/rules keyword +3");
+    expect(second.text).not.toBe(first.text);
+
+    // 私信里带群参数也能翻页
+    const scoped = await service.handle(undefined, "admin", "/rules keyword g1 +2");
+    expect(scoped.ok).toBe(true);
+    expect(scoped.text).toContain("上一页：/rules keyword +1");
+  });
 });

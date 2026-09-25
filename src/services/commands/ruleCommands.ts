@@ -430,9 +430,10 @@ export function rulesKeywordPanel(
   ];
   const footer = [`本群：${ctx.helpers.displayGroup(targetGroupId)}`];
   if (current < pageCount) {
-    footer.push(
-      `还有 ${pageCount - current} 页，点「下一页」继续（关键词只支持卡片翻页）。`,
-    );
+    footer.push(`下一页：/rules keyword +${current + 1}`);
+  }
+  if (current > 1) {
+    footer.push(`上一页：/rules keyword +${current - 1}`);
   }
   return cardFromText("群规则 · 关键词", body.join("\n"), {
     rows,
@@ -1136,6 +1137,28 @@ export async function handleRules(
   if (action === "overrides" || action === "覆盖") {
     const { page } = extractPageToken(parts.slice(1));
     return ruleOverridesCard(ctx, userId, page);
+  }
+  if (action === "keyword" || action === "keywords" || action === "关键词") {
+    const args = parts.slice(2);
+    let targetGroupId = groupId;
+    let rest = args;
+    // 私信里允许 `<群号|#群短码>` 前缀；纯页码（如 `+2`）不算群参数
+    if (!targetGroupId && args[0] !== undefined && !/^\+?\d+$/u.test(args[0])) {
+      targetGroupId = ctx.helpers.resolveTargetGroupId(undefined, args[0]);
+      if (!targetGroupId) {
+        return {
+          ok: false,
+          text: "私信中需要提供已绑定的群号或 #群短码：/rules keyword <群号|#群短码> +页码",
+        };
+      }
+      rest = args.slice(1);
+    }
+    if (!targetGroupId) {
+      return rulesCard(ctx, groupId, userId, parts);
+    }
+    // extractPageToken 会跳过一个「动作名」占位元素，这里补上 action 本身
+    const { page } = extractPageToken(["keyword", ...rest]);
+    return rulesPanelCard(ctx, "keyword", targetGroupId, userId, undefined, page);
   }
   return rulesCard(ctx, groupId, userId, parts);
 }

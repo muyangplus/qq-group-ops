@@ -617,7 +617,11 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 ```text
 /rules add keyword 广告
 /rules del keyword 广告
+/rules keyword +2          # 打开关键词子卡第 2 页（翻页还有按钮，这里是文本降级）
 ```
+
+> 关键词子卡每页 3 条：翻页可以用卡片上的「上一页 / 下一页」按钮，也可以直接发
+> `/rules keyword +页码`（私信里写成 `/rules keyword 654321 +2`）；卡片页脚会给出可复制的下一页指令。
 
 私信（带群号，`<group_openid|群号>` 二者皆可）：
 
