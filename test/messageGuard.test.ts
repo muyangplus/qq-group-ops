@@ -8,6 +8,7 @@ import { GroupConfigStore } from "../src/services/groupConfig.js";
 import { MessageGuardService } from "../src/services/messageGuard.js";
 import { RuleEngine } from "../src/services/moderation.js";
 import { PermissionService } from "../src/services/permissions.js";
+import { RichMessageSender } from "../src/services/richMessages.js";
 
 describe("MessageGuardService", () => {
   let api: FakeQQOfficialAPI;
@@ -280,5 +281,45 @@ describe("MessageGuardService keyword rules", () => {
 
     expect(result.executed).toBe(false);
     expect(auditLog.all()[0]?.status).toBe(AuditStatus.Pending);
+  });
+
+  /** B2：注入富消息发送器时，命中反馈是一张「@ 当事人 + 命中规则 + 处理动作」的完整卡片。 */
+  it("sends a complete card that mentions the offender", async () => {
+    const rules = new RuleEngine([
+      { ruleId: "warn", pattern: "广告", action: ModerationAction.Warn, reason: "发现广告" },
+      { ruleId: "mute", pattern: "刷屏", action: ModerationAction.Mute, reason: "发现刷屏" },
+    ]);
+    configStore.setOverride({ groupId: "g1", muteDurationSeconds: 300 });
+    const scoped = new MessageGuardService(
+      api,
+      rules,
+      configStore,
+      auditLog,
+      undefined,
+      new RichMessageSender(api),
+    );
+
+    // 仅警告：卡片含 @、命中规则与处理动作，且仍是被动回复原消息
+    const warned = await scoped.handleMessage(
+      newIncomingMessage("g1", "u1", "m1", "这是广告"),
+    );
+    expect(warned.executed, `warn detail=${warned.detail}`).toBe(true);
+    const warnCard = api.sentMessages.at(-1);
+    expect(warnCard?.msgId).toBe("m1");
+    const warnText = String(warnCard?.markdown ?? "");
+    expect(warnText).toContain("<@!u1>");
+    expect(warnText).toContain("命中规则");
+    expect(warnText).toContain("发现广告");
+    expect(warnText).toContain("仅警告");
+
+    // 禁言：处理动作写明时长
+    const muted = await scoped.handleMessage(
+      newIncomingMessage("g1", "u1", "m2", "一直刷屏"),
+    );
+    expect(muted.executed, `mute detail=${muted.detail}`).toBe(true);
+    const muteText = String(api.sentMessages.at(-1)?.markdown ?? "");
+    expect(muteText).toContain("<@!u1>");
+    expect(muteText).toContain("禁言 300 秒");
+    expect(api.mutedMembers).toEqual([["g1", "u1", 300]]);
   });
 });

@@ -13,12 +13,14 @@ import type {
   RuleMatch,
 } from "../core/models.js";
 import { utcNow } from "../core/models.js";
+import { renderCard } from "./cardTemplate.js";
 import type { AuditLog } from "./audit.js";
 import { AuditLogStore } from "./audit.js";
 import type { EffectiveGroupConfig } from "./groupConfig.js";
 import { GroupConfigStore } from "./groupConfig.js";
 import { RuleEngine } from "./moderation.js";
 import type { PermissionService } from "./permissions.js";
+import type { RichMessageSender } from "./richMessages.js";
 
 const log = getLogger("message-guard");
 
@@ -47,6 +49,11 @@ export class MessageGuardService {
     auditLog: AuditLog = new AuditLogStore(),
     /** 注入后：审核员及以上（canReviewContent）的消息豁免关键词判断。 */
     private readonly permissions?: PermissionService,
+    /**
+     * 富消息发送器：注入后命中关键词会回一张**完整卡片**（@ 当事人 + 命中规则 + 处理动作）。
+     * 未注入时退化为原来的纯文本警告（被动回复群消息）。
+     */
+    private readonly richMessages?: RichMessageSender,
   ) {
     this.auditLog = auditLog;
   }
@@ -97,7 +104,7 @@ export class MessageGuardService {
       action,
       rules: matches.map((match) => match.ruleId),
     });
-    const [executed, detail] = await this.execute(action, message, config);
+    const [executed, detail] = await this.execute(action, message, config, matches);
     const record: AuditRecord = {
       recordId: randomUUID(),
       groupId: message.groupId,
@@ -116,6 +123,7 @@ export class MessageGuardService {
     action: ModerationAction,
     message: IncomingMessage,
     config: EffectiveGroupConfig,
+    matches: readonly RuleMatch[],
   ): Promise<[boolean, string]> {
     if (action === ModerationAction.Review) {
       return [false, "queued_for_review"];
@@ -182,17 +190,80 @@ export class MessageGuardService {
     if (warn) {
       details.push(
         await this.attempt("warn", () =>
-          this.api.sendGroupMessage(
-            message.groupId,
-            config.warningMessage,
-            message.messageId,
-          ),
+          this.sendWarning(message, config, {
+            recall,
+            punish,
+            muteDurationSeconds: config.muteDurationSeconds,
+            matches,
+          }),
         ),
       );
     }
 
     const executed = details.some((detail) => !detail.endsWith("_failed"));
     return [executed, details.length > 0 ? details.join("+") : "allow"];
+  }
+
+  /**
+   * 命中反馈：注入富消息发送器时回一张**完整卡片**——
+   * 首行 @ 当事人（卡片内 `<@!openid>` 已真机验证能 @ 到人），正文含命中规则、处理动作与群规则文案；
+   * 没有发送器时退化为原来的纯文本警告。
+   */
+  private async sendWarning(
+    message: IncomingMessage,
+    config: EffectiveGroupConfig,
+    input: {
+      recall: boolean;
+      punish: KeywordPunish;
+      muteDurationSeconds: number;
+      matches: readonly RuleMatch[];
+    },
+  ): Promise<void> {
+    const hit = input.matches[0]?.reason?.trim();
+    if (!this.richMessages) {
+      await this.api.sendGroupMessage(
+        message.groupId,
+        config.warningMessage,
+        message.messageId,
+      );
+      return;
+    }
+    const card = renderCard({
+      title: "关键词命中",
+      lines: [
+        `<@!${message.userId}>`,
+        `**命中规则**：${hit && hit.length > 0 ? hit : "（关键词）"}`,
+        `**处理**：${this.punishLabel(input)}`,
+        `**群规则**：${config.warningMessage}`,
+      ],
+      footer: ["有异议请联系群管理员；/help 查看全部指令"],
+    });
+    await this.richMessages.replyToGroup(message.groupId, card, {
+      msgId: message.messageId,
+    });
+  }
+
+  /** 把实际执行的动作写成一行中文（与 `execute` 的分支保持一致）。 */
+  private punishLabel(input: {
+    recall: boolean;
+    punish: KeywordPunish;
+    muteDurationSeconds: number;
+  }): string {
+    const parts: string[] = [];
+    if (input.recall) {
+      parts.push("撤回消息");
+    }
+    if (input.punish === KeywordPunish.Mute) {
+      parts.push(`禁言 ${input.muteDurationSeconds} 秒`);
+    } else if (input.punish === KeywordPunish.Kick) {
+      parts.push("移出群");
+    } else if (input.punish === KeywordPunish.KickBlacklist) {
+      parts.push("移出并拉黑");
+    }
+    if (parts.length === 0) {
+      parts.push("仅警告");
+    }
+    return parts.join(" + ");
   }
 
   /** 单个动作失败不影响其他动作与审计记录，失败信息带 `_failed` 后缀。 */

@@ -202,6 +202,7 @@ export function createRuntime(
     configStore,
     auditLog,
     permissions,
+    richMessages,
   );
   const joinApproval = new JoinApprovalService(
     api,
