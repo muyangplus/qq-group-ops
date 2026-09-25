@@ -1,5 +1,11 @@
 import type { CardResult, CommandResult } from "./commands/support.js";
 import { cardify, cardifyAsync, ensureCard, mention, renderNotice } from "./commands/support.js";
+import {
+  displayGroup,
+  displayRequest,
+  displayUser,
+  displayUsers,
+} from "./commands/displayHelpers.js";
 import { aliasCard } from "./commands/aliasCommands.js";
 import { whoisCard } from "./commands/whoisCommands.js";
 import { handleProfile } from "./commands/profileCommands.js";
@@ -2879,7 +2885,7 @@ export class AdminCommandService {
   }
 
   private groupLabel(groupId: string): string {
-    return this.displayGroup(groupId);
+    return displayGroup(this.context(), groupId);
   }
 
   /**
@@ -2888,27 +2894,21 @@ export class AdminCommandService {
    * 没有注入 DisplayNameService 时（部分单测）回退为「绑定 QQ号 → QQ号，否则原样 id」。
    */
   private displayUser(officialId: string): string {
-    if (this.display) {
-      return this.display.user(officialId);
-    }
-    return this.identityMap?.getQq(officialId) ?? officialId;
+    return displayUser(this.context(), officialId);
   }
 
   /** 展示群：群号 或随机短码 `#XXXXXX`。 */
   private displayGroup(groupId: string): string {
-    if (this.display) {
-      return this.display.group(groupId);
-    }
-    return this.identityMap?.getGroupNumber(groupId) ?? groupId;
+    return displayGroup(this.context(), groupId);
   }
 
   /** 展示申请：短码 `#XXXXXX`（替代又长又难读的 join_request_id）。 */
   private displayRequest(requestId: string): string {
-    return this.display?.request(requestId) ?? requestId;
+    return displayRequest(this.context(), requestId);
   }
 
   private displayUsers(ids: readonly string[]): string {
-    return formatList(ids.map((id) => this.displayUser(id)));
+    return displayUsers(this.context(), ids);
   }
 
   /** 同步补齐的申请也推送一次；投递表保证同一申请不会重复推给同一个人。 */
