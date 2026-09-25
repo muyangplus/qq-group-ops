@@ -145,4 +145,66 @@ describe("PushService", () => {
     expect([start.getFullYear(), start.getMonth(), start.getDate()]).toEqual([2024, 2, 5]);
     expect([start.getHours(), start.getMinutes(), start.getSeconds()]).toEqual([0, 0, 0]);
   });
+
+  it("桶空时等待下一个令牌，而不是丢消息", async () => {
+    let fakeNow = 0;
+    const sleeps: number[] = [];
+    const store = makeStore();
+    const push = new PushService<Entry>({
+      store,
+      now: () => new Date(fakeNow),
+      label: "test push",
+      rateLimitPerSecond: 2, // 桶容量 = ceil(2) = 2
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        fakeNow += ms;
+      },
+    });
+    let sends = 0;
+    const deliver = (key: string) =>
+      push.deliver({
+        key,
+        userId: "u1",
+        send: async () => {
+          sends += 1;
+          return { ok: true, detail: "sent" };
+        },
+        entry: entryOf(key)("u1"),
+      });
+
+    // 前两条用掉桶里的 2 个令牌，不等待
+    expect((await deliver("r1")).status).toBe("sent");
+    expect((await deliver("r2")).status).toBe("sent");
+    expect(sleeps).toEqual([]);
+
+    // 第三条桶空 → 等一个令牌（2/s ⇒ 500ms）后照常发出
+    expect((await deliver("r3")).status).toBe("sent");
+    expect(sleeps).toEqual([500]);
+    expect(sends).toBe(3);
+  });
+
+  it("未配置速率时不节流", async () => {
+    let fakeNow = 0;
+    const sleeps: number[] = [];
+    const store = makeStore();
+    const push = new PushService<Entry>({
+      store,
+      now: () => new Date(fakeNow),
+      label: "test push",
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        fakeNow += ms;
+      },
+    });
+    for (const key of ["a", "b", "c"]) {
+      const outcome = await push.deliver({
+        key,
+        userId: "u1",
+        send: async () => ({ ok: true, detail: "sent" }),
+        entry: entryOf(key)("u1"),
+      });
+      expect(outcome.status).toBe("sent");
+    }
+    expect(sleeps).toEqual([]);
+  });
 });

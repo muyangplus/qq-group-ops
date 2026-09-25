@@ -51,6 +51,8 @@ export interface ActivityGroupBroadcastResult {
 export interface ActivityNotifyOptions {
   /** 每人每日上限；`0` = 不限制（默认 3）。 */
   dailyLimit?: number;
+  /** 令牌桶速率（条/秒）；`0` = 不限制。默认 0，由 runtime 按配置传入。 */
+  ratePerSecond?: number;
   now?: () => Date;
   /**
    * 群消息发送器（§B4 满员广播用）。
@@ -109,6 +111,7 @@ export class ActivityNotificationService {
       now: this.now,
       label: "activity notification",
       dailyLimit: this.dailyLimit,
+      rateLimitPerSecond: options.ratePerSecond ?? 0,
     });
   }
 

@@ -79,6 +79,15 @@ export interface PushServiceOptions<TRecord extends PushDeliveryRecord> {
   dailyLimit?: number;
   /** 发送失败是否也记录（入群推送为 true：失败不重试，避免刷屏）。 */
   recordOnFailure?: boolean;
+  /**
+   * 令牌桶速率（每秒允许的投递条数）；`0` / 不传表示不限制。
+   *
+   * 桶容量取 `ceil(每秒条数)`（允许同一瞬间的突发），桶空时**等待**下一个令牌而不是丢消息。
+   * 目前只有活动通知启用（`ACTIVITY_NOTIFY_RATE_PER_SECOND`）。
+   */
+  rateLimitPerSecond?: number;
+  /** 等待令牌用的睡眠函数（测试可注入）。 */
+  sleep?: ((ms: number) => Promise<void>) | undefined;
 }
 
 export interface PushDeliverInput<TRecord extends PushDeliveryRecord> {
@@ -91,7 +100,49 @@ export interface PushDeliverInput<TRecord extends PushDeliveryRecord> {
 }
 
 export class PushService<TRecord extends PushDeliveryRecord> {
-  public constructor(private readonly options: PushServiceOptions<TRecord>) {}
+  private tokens: number;
+  private lastRefillMs: number;
+
+  public constructor(private readonly options: PushServiceOptions<TRecord>) {
+    this.tokens = this.burst();
+    this.lastRefillMs = options.now().getTime();
+  }
+
+  private ratePerSecond(): number {
+    const value = this.options.rateLimitPerSecond ?? 0;
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }
+
+  private burst(): number {
+    const rate = this.ratePerSecond();
+    return rate > 0 ? Math.max(1, Math.ceil(rate)) : 0;
+  }
+
+  /** 取一个令牌；桶空时睡到下一个令牌，返回累计等待毫秒数（0 = 没等）。 */
+  private async acquireToken(): Promise<number> {
+    const rate = this.ratePerSecond();
+    if (rate === 0) {
+      return 0;
+    }
+    const burst = this.burst();
+    const sleep =
+      this.options.sleep ??
+      ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    let waited = 0;
+    for (;;) {
+      const nowMs = this.options.now().getTime();
+      const elapsed = Math.max(0, nowMs - this.lastRefillMs);
+      this.lastRefillMs = nowMs;
+      this.tokens = Math.min(burst, this.tokens + (elapsed / 1000) * rate);
+      if (this.tokens >= 1) {
+        this.tokens -= 1;
+        return waited;
+      }
+      const waitMs = Math.max(1, Math.ceil(((1 - this.tokens) / rate) * 1000));
+      waited += waitMs;
+      await sleep(waitMs);
+    }
+  }
 
   public async deliver(input: PushDeliverInput<TRecord>): Promise<PushOutcome> {
     const { store, now, label, dailyLimit = 0, recordOnFailure = false } = this.options;
@@ -110,6 +161,10 @@ export class PushService<TRecord extends PushDeliveryRecord> {
         });
         return { status: "rateLimited", detail: "daily-limit" };
       }
+    }
+    const waitedMs = await this.acquireToken();
+    if (waitedMs > 0) {
+      log.debug(`${label} waiting for rate limit token`, { ...fields, waitedMs });
     }
     const sent = await input.send();
     if (!sent.ok) {

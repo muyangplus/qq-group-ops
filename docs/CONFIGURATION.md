@@ -778,6 +778,7 @@ pnpm db:up     # docker compose --profile postgres up -d db
 | `AUDIT_LOG_RETENTION_DAYS` | 否 | 审计记录保留天数，默认 `180`；`0` 表示不清理 |
 | `JOIN_REQUEST_TTL_DAYS` | 否 | 待审批入群申请有效期（天），默认 `7`；超过即标记 `expired`（不删数据，`/whois` 可追溯），`0` 表示不自动过期 |
 | `ACTIVITY_NOTIFY_DAILY_LIMIT` | 否 | **活动通知**每人每日上限，默认 `3`；非负整数，`0` = 不限制 |
+| `ACTIVITY_NOTIFY_RATE_PER_SECOND` | 否 | **活动通知**令牌桶速率（条/秒），默认 `5`；正整数，`0` = 不限制。桶容量按速率向上取整，桶空时**排队等待**下一个令牌（不丢通知） |
 | `ACTIVITY_STATS_FONT_URL` | 否 | 统计图片的中文字体下载地址（系统字体都没有时才用）；默认 Noto Sans SC 官方发布地址，留空表示只用系统字体 |
 
 `ACTIVITY_NOTIFY_DAILY_LIMIT` 的用途：活动发布 / 变更 / 取消 / 递补的通知走**主动私信**，
@@ -785,6 +786,10 @@ pnpm db:up     # docker compose --profile postgres up -d db
 用户还可以在 QQ 客户端关闭「允许主动发送」。因此活动通知在 `activity_notifications` 里
 按 `(活动, 用户, 类型)` **去重**，并用这个变量做**每人每天封顶**；超过上限只记 warn 日志、不再发送
 （活动本身的状态不受影响）。
+
+`ACTIVITY_NOTIFY_RATE_PER_SECOND` 是**平滑发送速率**的令牌桶：一次活动变更可能有几十个接收人，
+逐条串行发送时用它限速，避免瞬间打满官方 qps；桶空时该条通知会等待（`waitedMs` 记 debug 日志），
+而不是被丢掉。它只作用于活动通知，入群申请推送不受影响。
 
 清理行为（`RetentionService`）：
 

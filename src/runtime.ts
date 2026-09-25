@@ -225,7 +225,11 @@ export function createRuntime(
     repositories.activitySubscriptions,
     repositories.activityNotifications,
     // 满员广播是**群消息**：直接复用富消息发送器发到绑定群（不占用户私信额度）。
-    { dailyLimit: settings.activityNotifyDailyLimit, groupSender: richMessages },
+    {
+      dailyLimit: settings.activityNotifyDailyLimit,
+      ratePerSecond: settings.activityNotifyRatePerSecond,
+      groupSender: richMessages,
+    },
   );
   /**
    * §B3 统计图片与 CSV 导出。

@@ -47,6 +47,13 @@ export interface Settings {
    */
   activityNotifyDailyLimit: number;
   /**
+   * 活动通知的令牌桶速率（`ACTIVITY_NOTIFY_RATE_PER_SECOND`，默认 5）。
+   *
+   * `0` = 不限制；桶容量取 `ceil(速率)`，桶空时**等待**下一个令牌（不丢通知）。
+   * 官方主动私信同样有 qps 限制，这里是推送侧自己的平滑。
+   */
+  activityNotifyRatePerSecond: number;
+  /**
    * 活动统计图片的字体下载地址（`ACTIVITY_STATS_FONT_URL`）。
    *
    * 系统已有中文字体（Windows 雅黑 / Linux Noto CJK 等）时不会用到；
@@ -188,6 +195,10 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     activityNotifyDailyLimit: asNonNegativeInt(
       env.ACTIVITY_NOTIFY_DAILY_LIMIT,
       3,
+    ),
+    activityNotifyRatePerSecond: asNonNegativeInt(
+      env.ACTIVITY_NOTIFY_RATE_PER_SECOND,
+      5,
     ),
     activityStatsFontUrl: asText(
       env.ACTIVITY_STATS_FONT_URL,
