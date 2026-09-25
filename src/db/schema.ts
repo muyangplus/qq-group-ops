@@ -207,11 +207,25 @@ CREATE TABLE IF NOT EXISTS activity_subscriptions (
 CREATE TABLE IF NOT EXISTS activity_notifications (
   activity_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
-  kind TEXT NOT NULL,           -- published | changed | cancelled | promoted
+  -- kind: published | changed | cancelled | promoted | full
+  -- 满员广播（full）也复用本表去重：user_id 写 group:<群ID> 伪接收者，每个群一次。
+  kind TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (activity_id, user_id, kind)
 );
 
 CREATE INDEX IF NOT EXISTS activity_notifications_user_idx
   ON activity_notifications (user_id, created_at DESC);
+
+-- 活动绑定群（§B4）：一个活动可绑定多个群，发布与满员广播都打到全部绑定群。
+-- activities.group_id 仍是「归属群」（创建地 / 权限依据），绑定关系是发布目标集合。
+CREATE TABLE IF NOT EXISTS activity_groups (
+  activity_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (activity_id, group_id)
+);
+
+CREATE INDEX IF NOT EXISTS activity_groups_group_idx
+  ON activity_groups (group_id, created_at ASC);
 `.trim();

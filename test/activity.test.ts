@@ -14,6 +14,10 @@ import type {
   ActivityWaitlistRepository,
 } from "../src/db/activityWaitlistRepository.js";
 import type {
+  ActivityGroup,
+  ActivityGroupRepository,
+} from "../src/db/activityGroupRepository.js";
+import type {
   Activity,
   ActivityRegistration,
   ActivityRepository,
@@ -106,6 +110,32 @@ class FakeActivityWaitlistRepository implements ActivityWaitlistRepository {
   public async remove(activityId: string, userId: string): Promise<void> {
     const index = this.rows.findIndex(
       (row) => row.activityId === activityId && row.userId === userId,
+    );
+    if (index >= 0) {
+      this.rows.splice(index, 1);
+    }
+  }
+}
+
+class FakeActivityGroupRepository implements ActivityGroupRepository {
+  public readonly rows: ActivityGroup[] = [];
+
+  public async findAll(): Promise<ActivityGroup[]> {
+    return this.rows.map((row) => ({ ...row }));
+  }
+
+  public async save(entry: ActivityGroup): Promise<void> {
+    const exists = this.rows.some(
+      (row) => row.activityId === entry.activityId && row.groupId === entry.groupId,
+    );
+    if (!exists) {
+      this.rows.push({ ...entry });
+    }
+  }
+
+  public async remove(activityId: string, groupId: string): Promise<void> {
+    const index = this.rows.findIndex(
+      (row) => row.activityId === activityId && row.groupId === groupId,
     );
     if (index >= 0) {
       this.rows.splice(index, 1);
@@ -556,6 +586,77 @@ describe("ActivityService", () => {
     expect(restarted.getActivity("a2")).toMatchObject({
       waitlistPromotion: "manual",
       heldSlots: 1,
+    });
+  });
+
+  it("binds multiple groups (auto-binding the creating group) and persists them (§B4)", async () => {
+    const activities = new FakeActivityRepository();
+    const groups = new FakeActivityGroupRepository();
+    const service = new ActivityService(activities, undefined, undefined, {
+      groupRepository: groups,
+    });
+    const activity = service.createActivity({
+      groupId: "g1",
+      title: "迎新晚会",
+      createdBy: "admin",
+      activityId: "a1",
+    });
+
+    // 创建活动自动绑定创建群
+    expect(service.listBoundGroups(activity.activityId)).toEqual(["g1"]);
+    expect(service.isGroupBound(activity.activityId, "g1")).toBe(true);
+
+    expect(service.bindGroup(activity.activityId, "g2")).toBe(true);
+    // 重复绑定是幂等空操作
+    expect(service.bindGroup(activity.activityId, "g2")).toBe(false);
+    expect(service.listBoundGroups(activity.activityId)).toEqual(["g1", "g2"]);
+    await service.flush();
+    expect(groups.rows.map((row) => row.groupId)).toEqual(["g1", "g2"]);
+
+    // 解绑归属群也允许；全部解绑后回落到归属群（发布不会没有目标）
+    expect(service.unbindGroup(activity.activityId, "g2")).toBe(true);
+    expect(service.unbindGroup(activity.activityId, "g2")).toBe(false);
+    expect(service.listBoundGroups(activity.activityId)).toEqual(["g1"]);
+    expect(service.unbindGroup(activity.activityId, "g1")).toBe(true);
+    expect(service.listBoundGroups(activity.activityId)).toEqual(["g1"]);
+    expect(service.isGroupBound(activity.activityId, "g1")).toBe(false);
+    await service.flush();
+    expect(groups.rows).toEqual([]);
+
+    // 重启后绑定关系恢复（显式绑定全部清空 → 回落到归属群）
+    const restarted = new ActivityService(activities, undefined, undefined, {
+      groupRepository: groups,
+    });
+    await restarted.load();
+    expect(restarted.listBoundGroups("a1")).toEqual(["g1"]);
+    expect(restarted.isGroupBound("a1", "g1")).toBe(false);
+  });
+
+  it("reports becameFull exactly when a join fills the last slot (§B4)", () => {
+    const service = new ActivityService();
+    service.createActivity({
+      groupId: "g1",
+      title: "满员判定",
+      createdBy: "admin",
+      activityId: "a1",
+      capacity: 2,
+    });
+    service.openActivity("a1");
+
+    expect(service.joinActivity({ activityId: "a1", userId: "u1" })).toMatchObject({
+      status: "registered",
+      becameFull: false,
+      registered: 1,
+    });
+    expect(service.joinActivity({ activityId: "a1", userId: "u2" })).toMatchObject({
+      status: "registered",
+      becameFull: true,
+      registered: 2,
+    });
+    // 已满之后的新报名走候补，不再重复触发「满员」
+    expect(service.joinActivity({ activityId: "a1", userId: "u3" })).toMatchObject({
+      status: "waitlisted",
+      position: 1,
     });
   });
 });

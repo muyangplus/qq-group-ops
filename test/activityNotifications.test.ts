@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
+import type { ActivityNotificationRepository } from "../src/db/activityNotificationRepository.js";
 import { ActivityNotificationService } from "../src/services/activityNotifications.js";
 import { NotificationService } from "../src/services/notifications.js";
 import { PermissionService } from "../src/services/permissions.js";
 import { renderCard } from "../src/services/cardTemplate.js";
+import type { RichMessageSender } from "../src/services/richMessages.js";
 
 /**
  * 活动通知（§B2）：按群订阅 + 私信推送，带**去重**与**每人每日封顶**。
@@ -273,4 +275,142 @@ describe("ActivityNotificationService", () => {
     expect(delivered).toEqual([{ activityId: "a1", userId: "u1", kind: "published" }]);
     await restored.flush();
   });
+
+  // ---------------------------------------------------------------- §B4
+
+  it("broadcasts a group card once per group without touching the daily private quota", async () => {
+    const spy = createSpySender();
+    const groupCards: Array<{ groupId: string; markdown: string }> = [];
+    const stored: Array<{
+      activityId: string;
+      userId: string;
+      kind: string;
+      createdAt: Date;
+    }> = [];
+    const service = new ActivityNotificationService(
+      spy.service,
+      undefined,
+      createMemoryNotificationRepository(stored),
+      {
+        groupSender: createGroupSender({
+          onSend: async (groupId, message) => {
+            groupCards.push({ groupId, markdown: message.markdown });
+            return { ok: true, detail: "", mode: "markdown" };
+          },
+        }),
+      },
+    );
+
+    const first = await service.notifyGroupsCard({
+      activityId: "a1",
+      groupIds: ["g2", "g1", "g2"],
+      card: CARD,
+    });
+    expect(first).toMatchObject({
+      available: true,
+      sent: 2,
+      skipped: 0,
+      failed: 0,
+      recipients: 2,
+      groups: ["g1", "g2"],
+    });
+    // 每个群各一条去重行，伪接收者 `group:<群ID>`，kind = full
+    await service.flush();
+    expect(stored.map((row) => row.userId).sort()).toEqual(["group:g1", "group:g2"]);
+    expect(stored.every((row) => row.kind === "full")).toBe(true);
+    // 群消息不占用户私信额度，也不发私信
+    expect(spy.sent).toEqual([]);
+
+    const second = await service.notifyGroupsCard({
+      activityId: "a1",
+      groupIds: ["g1", "g2"],
+      card: CARD,
+    });
+    expect(second).toMatchObject({ sent: 0, skipped: 2 });
+    expect(groupCards.map((item) => item.groupId)).toEqual(["g1", "g2"]);
+  });
+
+  it("reports unavailable when no group sender is wired, and never throws", async () => {
+    const spy = createSpySender();
+    const service = new ActivityNotificationService(spy.service);
+    const result = await service.notifyGroupsCard({
+      activityId: "a1",
+      groupIds: ["g1"],
+      card: CARD,
+    });
+    expect(result).toMatchObject({ available: false, sent: 0, failed: 0 });
+  });
+
+  it("only writes a dedup row for group cards that were actually sent", async () => {
+    const spy = createSpySender();
+    const stored: Array<{
+      activityId: string;
+      userId: string;
+      kind: string;
+      createdAt: Date;
+    }> = [];
+    const service = new ActivityNotificationService(
+      spy.service,
+      undefined,
+      createMemoryNotificationRepository(stored),
+      {
+        groupSender: createGroupSender({
+          onSend: async (groupId) =>
+            groupId === "g1"
+              ? { ok: true, detail: "", mode: "markdown" }
+              : { ok: false, detail: "failed", mode: "none" },
+        }),
+      },
+    );
+
+    const result = await service.notifyGroupsCard({
+      activityId: "a1",
+      groupIds: ["g1", "g2"],
+      card: CARD,
+    });
+    expect(result).toMatchObject({ sent: 1, failed: 1, groups: ["g1"] });
+    // 失败的群不写去重行：下次重试仍会尝试发送
+    await service.flush();
+    expect(stored.map((row) => row.userId)).toEqual(["group:g1"]);
+    expect(service.isGroupCardSent("a1", "g1")).toBe(true);
+    expect(service.isGroupCardSent("a1", "g2")).toBe(false);
+  });
 });
+
+/** 内存去重表替身（`activity_notifications`）。 */
+function createMemoryNotificationRepository(
+  stored: Array<{
+    activityId: string;
+    userId: string;
+    kind: string;
+    createdAt: Date;
+  }>,
+): ActivityNotificationRepository {
+  return {
+    async findAll() {
+      return [...stored];
+    },
+    async save(entry) {
+      stored.push(entry);
+    },
+    async countSince() {
+      return 0;
+    },
+    async deleteOlderThan() {
+      stored.length = 0;
+    },
+  };
+}
+
+/** 只实现 `sendToGroup` 的群消息发送器替身（`RichMessageSender` 的最小面）。 */
+function createGroupSender(input: {
+  onSend: (
+    groupId: string,
+    message: { markdown: string },
+  ) => Promise<{ ok: boolean; detail: string; mode: string }>;
+}): RichMessageSender {
+  return {
+    sendToGroup: (groupId: string, message: { markdown: string }) =>
+      input.onSend(groupId, message),
+  } as unknown as RichMessageSender;
+}

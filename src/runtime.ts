@@ -18,6 +18,7 @@ import type { ActivityRepository } from "./db/activityRepository.js";
 import type { ActivityDetailsRepository } from "./db/activityDetailsRepository.js";
 import type { ActivityWaitlistRepository } from "./db/activityWaitlistRepository.js";
 import type { ActivitySettingsRepository } from "./db/activitySettingsRepository.js";
+import type { ActivityGroupRepository } from "./db/activityGroupRepository.js";
 import type { ActivitySubscriptionRepository } from "./db/activitySubscriptionRepository.js";
 import type { ActivityNotificationRepository } from "./db/activityNotificationRepository.js";
 import type { AuditRepository } from "./db/auditRepository.js";
@@ -123,6 +124,8 @@ export interface RuntimeRepositories {
   activitySettings?: ActivitySettingsRepository;
   activitySubscriptions?: ActivitySubscriptionRepository;
   activityNotifications?: ActivityNotificationRepository;
+  /** 活动绑定群（§B4）：一个活动可发布 / 广播到多个群。 */
+  activityGroups?: ActivityGroupRepository;
   notificationSubscriptions?: NotificationSubscriptionRepository;
   notificationDeliveries?: NotificationDeliveryRepository;
   shortCodes?: ShortCodeRepository;
@@ -176,11 +179,14 @@ export function createRuntime(
     {
       waitlistRepository: repositories.activityWaitlist,
       settingsRepository: repositories.activitySettings,
+      groupRepository: repositories.activityGroups,
     },
   );
   const activityCards = new ActivityCardService({
     activity,
     display,
+    // 绑定群子卡里的群展示名：优先绑定号 / 短码，缺省显示内部群 ID
+    groupLabel: (groupId) => display.group(groupId),
   });
   const testMenu = new TestMenuService({ permissions });
   const userProfiles = new UserProfileService(repositories.userProfiles, writeQueue);
@@ -218,7 +224,8 @@ export function createRuntime(
     notifications,
     repositories.activitySubscriptions,
     repositories.activityNotifications,
-    { dailyLimit: settings.activityNotifyDailyLimit },
+    // 满员广播是**群消息**：直接复用富消息发送器发到绑定群（不占用户私信额度）。
+    { dailyLimit: settings.activityNotifyDailyLimit, groupSender: richMessages },
   );
   /**
    * §B3 统计图片与 CSV 导出。
@@ -462,15 +469,18 @@ export function createRuntime(
           return undefined;
         }
         // 活动回调：join / quit / info / signups / page / config / preview / open /
-        // cancel / release / resend / status / set / college / year / subscribe /
-        // stats / export 全部由 AdminCommandService 内部再做一次权限校验。
+        // cancel / release / resend / status / set / bind / unbind / college / year /
+        // subscribe / stats / export 全部由 AdminCommandService 内部再做一次权限校验。
+        //
+        // §B4：群内报名 / 取消报名是**静默**的（结果只私信），此时返回 undefined 表示
+        // 「这个回调不产生群消息」；renderer 返回 undefined 时 CallbackRouter 只回包。
         const card = await adminCommands.activityCallbackCard(
           parsed.action,
           parsed.args,
           userId,
           event.groupId,
         );
-        return card.rich;
+        return card?.rich;
       },
     ],
     [

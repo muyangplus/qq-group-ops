@@ -23,7 +23,16 @@ export async function attachGateway(
       (result.kind === "command" || result.kind === "private_message") &&
       (result.text || result.rich)
     ) {
-      await sendReply(runtime, event, result.text ?? "", result.rich);
+      // §B4 群内静默：结果只私信的动作（群里报名 / 取消报名）由 handler 自己私信，
+      // 这里**跳过群回复**——连「原因已私信」都不发。
+      if (result.silent === true) {
+        log.debug("skipping group reply for silent command", {
+          type: event.type,
+          ok: result.ok,
+        });
+      } else {
+        await sendReply(runtime, event, result.text ?? "", result.rich);
+      }
     }
     // 空私信的回复本身就是主菜单，不再重复推一次
     const menuAlreadyReplied =

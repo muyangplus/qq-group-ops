@@ -133,7 +133,7 @@ describe("activity & profile commands", () => {
 
     const opened = await service.handle("g1", "admin", "/activity open #ACT001");
     expect(opened.ok).toBe(true);
-    expect(opened.text).toContain("活动卡片已发送到群里");
+    expect(opened.text).toContain("活动卡片已发送到 1 个绑定群");
     const card = api.sentMessages.at(-1);
     expect(card?.groupId).toBe("g1");
     expect(card?.markdown).toContain("迎新晚会");
@@ -170,24 +170,30 @@ describe("activity & profile commands", () => {
     expect(card?.markdown).toContain("/activity join #ACT001");
     expect(card?.markdown).toContain("/activity quit #ACT001");
 
-    // 资料完整的 22 级同学可以报名
+    // 资料完整的 22 级同学可以报名（§B4：群内静默，结果只私信）
     await fillProfile("member", "小明", "22123456789", "材化2211");
+    const groupMessagesBeforeJoin = api.sentMessages.length;
     const joined = await service.handle("g1", "member", "/activity join #ACT001");
     expect(joined.ok).toBe(true);
-    expect(joined.text).toContain("报名成功");
-    // 群内回执（用户确认的落点）：首行 @ 申请人 + 人数；**不含任何隐私字段**
-    expect(joined.text).toContain("当前 1 / 2");
-    expect(joined.text).toContain("<@!member>");
-    expect(joined.text).not.toContain("小明");
-    expect(joined.text).not.toContain("22123456789");
-    expect(joined.text).not.toContain("材化2211");
-    expect(joined.text).not.toContain("学号");
+    // 群内一条消息都不发（连「原因已私信」都不发）
+    expect(joined.silent).toBe(true);
+    expect(api.sentMessages).toHaveLength(groupMessagesBeforeJoin);
+    // 私信回执：可以带姓名 / 学号 / 班级 / 人数（只私信）
+    const joinDm = String(api.sentPrivateMessages.at(-1)?.markdown ?? "");
+    expect(joinDm).toContain("报名成功");
+    expect(joinDm).toContain("当前 1 / 2");
+    expect(joinDm).toContain("小明");
+    expect(joinDm).toContain("22123456789");
+    expect(joinDm).toContain("材化2211");
+    // 群内不得出现任何结果或隐私字段（`silent: true` 时 gatewayRunner 不会把 text/rich 发到群里）
+    expect(joined.silent).toBe(true);
+    expect(api.sentMessages).toHaveLength(groupMessagesBeforeJoin);
 
     const duplicate = await service.handle("g1", "member", "/activity join #ACT001");
     expect(duplicate.ok).toBe(false);
-    // 具体原因（「已经报名过」）只走私信，群里只说原因已私信
-    expect(duplicate.text).toContain("原因已私信");
-    expect(duplicate.text).not.toContain("已经报名");
+    expect(duplicate.silent).toBe(true);
+    // 具体原因（「已经报名过」）只走私信，群内静默
+    expect(api.sentMessages).toHaveLength(groupMessagesBeforeJoin);
     expect(String(api.sentPrivateMessages.at(-1)?.markdown ?? "")).toContain(
       "已经报名",
     );
@@ -196,8 +202,8 @@ describe("activity & profile commands", () => {
     await fillProfile("other", "小红", "23123456789", "环工2314");
     const rejected = await service.handle("g1", "other", "/activity join #ACT001");
     expect(rejected.ok).toBe(false);
-    expect(rejected.text).toContain("原因已私信");
-    expect(rejected.text).not.toContain("仅限");
+    expect(rejected.silent).toBe(true);
+    expect(api.sentMessages).toHaveLength(groupMessagesBeforeJoin);
     expect(String(api.sentPrivateMessages.at(-1)?.markdown ?? "")).toContain("仅限");
 
     // 名单默认脱敏（不显示学号/学院），「完整信息」才带学号
@@ -228,6 +234,7 @@ describe("activity & profile commands", () => {
 
     const quit = await service.handle("g1", "member", "/activity quit #ACT001");
     expect(quit.ok).toBe(true);
+    expect(quit.silent).toBe(true);
     expect(
       activity.listRegistrations(activity.requireByCode("#ACT001").activityId),
     ).toEqual([]);
@@ -237,15 +244,26 @@ describe("activity & profile commands", () => {
     await service.handle("g1", "admin", "/activity create 活动");
     await service.handle("g1", "admin", "/activity open #ACT001");
 
+    const groupMessagesBeforeJoin = api.sentMessages.length;
     const result = await service.handle("g1", "member", "/activity join #ACT001");
     expect(result.ok).toBe(false);
-    // 群里只给「原因已私信」，具体原因（含隐私提示）走私信
-    const groupText = String(result.rich?.markdown ?? "");
-    expect(groupText).toContain("<@!member>");
-    expect(groupText).toContain("原因已私信");
-    expect(groupText).not.toContain("学号");
+    // §B4：群里一条都不发（silent）；具体原因（含隐私提示）只走私信
+    expect(result.silent).toBe(true);
+    expect(api.sentMessages).toHaveLength(groupMessagesBeforeJoin);
     const dmText = String(api.sentPrivateMessages.at(-1)?.markdown ?? "");
     expect(dmText).toContain("补全个人资料");
+  });
+
+  it("keeps a bad short code out of the group and DMs it (§B4)", async () => {
+    const before = api.sentMessages.length;
+    const result = await service.handle("g1", "member", "/activity join #NOPE00");
+    // §B4：群内静默 —— 群内没有「活动不存在」卡，只有私信提示
+    expect(result.ok).toBe(false);
+    expect(result.silent).toBe(true);
+    expect(api.sentMessages).toHaveLength(before);
+    expect(String(api.sentPrivateMessages.at(-1)?.markdown ?? "")).toContain(
+      "活动不存在",
+    );
   });
 
   it("only lets group admins publish and manage activities", async () => {

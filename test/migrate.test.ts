@@ -30,5 +30,12 @@ describe("migrate", () => {
     expect(db.calls[0]?.text).toContain(
       "CREATE INDEX IF NOT EXISTS activity_notifications_user_idx",
     );
+    // §B4：活动绑定多个群（发布与满员广播的目标群）
+    expect(db.calls[0]?.text).toContain(
+      "CREATE TABLE IF NOT EXISTS activity_groups",
+    );
+    expect(db.calls[0]?.text).toContain(
+      "CREATE INDEX IF NOT EXISTS activity_groups_group_idx",
+    );
   });
 });

@@ -98,6 +98,13 @@ export interface EventRouterResult {
   text?: string;
   /** 富回复（Markdown + 按钮）；由 gatewayRunner 交给 RichMessageSender 发送。 */
   rich?: RichMessage | undefined;
+  /**
+   * §B4 群内静默：`true` 时 `gatewayRunner` **不往群里发任何消息**。
+   *
+   * 用于「结果只能私信」的动作（群里报名 / 取消报名）：结果由 handler 私信发出，
+   * 群里连「原因已私信」都不发。
+   */
+  silent?: boolean | undefined;
 }
 
 /** 互动事件处理器（例如 `/testmenu` 的回调翻页）。 */
@@ -135,6 +142,7 @@ export class EventRouter {
             ok: commandResult.ok,
             text: commandResult.text,
             rich: commandResult.rich,
+            silent: commandResult.silent,
           };
         }
         if (content.length === 0) {
@@ -273,6 +281,7 @@ export class EventRouter {
           ok: result.ok,
           text: result.text,
           rich: result.rich,
+          silent: result.silent,
         };
       }
       case "interaction": {

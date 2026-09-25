@@ -13,7 +13,9 @@ export type ActivityNotificationKind =
   | "published"
   | "changed"
   | "cancelled"
-  | "promoted";
+  | "promoted"
+  /** 满员广播（群消息）：`user_id` 写 `group:<群ID>` 伪接收者，每个群只发一次。 */
+  | "full";
 
 export interface ActivityNotification {
   activityId: string;
@@ -103,7 +105,8 @@ function toKind(value: string): ActivityNotificationKind {
   return value === "published" ||
     value === "changed" ||
     value === "cancelled" ||
-    value === "promoted"
+    value === "promoted" ||
+    value === "full"
     ? value
     : "changed";
 }

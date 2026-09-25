@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
+import { FakeEventGateway } from "../src/adapters/fakeEventGateway.js";
 import { loadSettings } from "../src/config.js";
+import { attachGateway } from "../src/gatewayRunner.js";
+import { MemberRoster } from "../src/services/memberRoster.js";
 import { createRuntime } from "../src/runtime.js";
 import { FakeIdentityBindingRepository } from "./helpers/fakeIdentityBindingRepository.js";
 
@@ -123,5 +126,85 @@ describe("createRuntime", () => {
       content: "/myperm",
     });
     expect(query.ok).toBe(true);
+  });
+
+  /**
+   * §B4 端到端：群里手输 `/activity join` → 群内静默、结果私信。
+   *
+   * 覆盖 `AdminCommandService` → `EventRouter`（透传 `silent`）→ `gatewayRunner`
+   * （`silent === true` 时跳过一次 `sendReply`）的整条链路。
+   */
+  it("keeps the group silent for /activity join and DMs the result (§B4)", async () => {
+    const runtime = createRuntime(loadSettings({ ADMIN_USER_IDS: "admin" }));
+    const api = runtime.api as unknown as FakeQQOfficialAPI;
+    runtime.identityMap.bindUser("admin", "10001");
+    runtime.identityMap.bindUser("member", "10002");
+    runtime.identityMap.bindGroup("g1", "654321");
+    // 个人资料写入需要班级库（学院由班级库自动带出）
+    runtime.userProfiles.setRoster(
+      MemberRoster.fromIndex({
+        classes: ["材化2211"],
+        majors: ["材料化学"],
+        classInfo: {
+          材化2211: {
+            major: "材料化学",
+            college: "化学与生命科学学院",
+            year: "2022",
+          },
+        },
+      }),
+    );
+    runtime.userProfiles.set("member", "name", "小明");
+    runtime.userProfiles.set("member", "studentId", "22123456789");
+    runtime.userProfiles.set("member", "className", "材化2211");
+
+    const gateway = new FakeEventGateway();
+    await attachGateway(runtime, gateway);
+
+    // 建活动 + 开放报名（管理员操作，正常有群回复）
+    await gateway.emit({
+      type: "group_message",
+      groupId: "g1",
+      userId: "admin",
+      messageId: "m1",
+      content: "/activity create 迎新晚会",
+    });
+    const created = runtime.activity.listActivities("g1")[0]!;
+    await gateway.emit({
+      type: "group_message",
+      groupId: "g1",
+      userId: "admin",
+      messageId: "m2",
+      content: `/activity open #${created.code}`,
+    });
+
+    const groupMessagesBeforeJoin = api.sentMessages.length;
+    await gateway.emit({
+      type: "group_message",
+      groupId: "g1",
+      userId: "member",
+      messageId: "m3",
+      content: `/activity join #${created.code}`,
+    });
+
+    // 群内一条都不发；结果私信给本人
+    expect(api.sentMessages).toHaveLength(groupMessagesBeforeJoin);
+    const dm = String(api.sentPrivateMessages.at(-1)?.markdown ?? "");
+    expect(dm).toContain("报名成功");
+    expect(dm).toContain("小明");
+
+    // 私聊里同样的指令仍然原地回复（首次私信还会额外推一次主菜单）
+    const privateMessagesBeforeJoin = api.sentPrivateMessages.length;
+    await gateway.emit({
+      type: "private_message",
+      userId: "member",
+      messageId: "m4",
+      content: `/activity quit #${created.code}`,
+    });
+    const privateText = api.sentPrivateMessages
+      .slice(privateMessagesBeforeJoin)
+      .map((item) => String(item.markdown ?? ""))
+      .join("\n");
+    expect(privateText).toContain("已取消报名");
   });
 });

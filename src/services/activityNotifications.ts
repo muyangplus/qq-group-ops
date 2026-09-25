@@ -12,7 +12,7 @@ import type {
 import { WriteQueue } from "../db/writeQueue.js";
 import { renderCard } from "./cardTemplate.js";
 import type { NotificationService } from "./notifications.js";
-import type { RichMessage } from "./richMessages.js";
+import type { RichMessage, RichMessageSender } from "./richMessages.js";
 
 const log = getLogger("activity-notifications");
 
@@ -31,10 +31,33 @@ export interface ActivityNotifyResult {
   rateLimited: number;
 }
 
+/** 群卡片广播（满员卡）的结果。 */
+export interface ActivityGroupBroadcastResult {
+  /** 是否装配了群消息发送通道；false 时其余字段无意义。 */
+  available: boolean;
+  /** 本次实际发出的群数量。 */
+  sent: number;
+  /** 之前已经发过、因此跳过的群数量。 */
+  skipped: number;
+  /** 发送失败的群数量（只记日志）。 */
+  failed: number;
+  /** 本次目标群数量。 */
+  recipients: number;
+  /** 本次实际发出的群 ID（便于回执里列出「成功 / 失败」）。 */
+  groups: string[];
+}
+
 export interface ActivityNotifyOptions {
   /** 每人每日上限；`0` = 不限制（默认 3）。 */
   dailyLimit?: number;
   now?: () => Date;
+  /**
+   * 群消息发送器（§B4 满员广播用）。
+   *
+   * 这是**群消息**不是私信，因此不占用户的每日私信额度；未装配时不做群广播
+   * （调用方按「没装配就跳过」处理，不影响报名本身）。
+   */
+  groupSender?: RichMessageSender | undefined;
 }
 
 /**
@@ -60,6 +83,7 @@ export class ActivityNotificationService {
   private readonly queue: WriteQueue | undefined;
   private readonly dailyLimit: number;
   private readonly now: () => Date;
+  private readonly groupSender: RichMessageSender | undefined;
 
   public constructor(
     private readonly sender: NotificationService,
@@ -72,6 +96,7 @@ export class ActivityNotificationService {
     this.queue = subscriptions || notifications ? new WriteQueue() : undefined;
     this.dailyLimit = normalizeDailyLimit(options.dailyLimit);
     this.now = options.now ?? (() => utcNow());
+    this.groupSender = options.groupSender;
   }
 
   public get persistent(): boolean {
@@ -225,6 +250,81 @@ export class ActivityNotificationService {
     return result;
   }
 
+  /**
+   * 群卡片广播（§B4 满员卡）：给每个群发**同一条群消息**，每个群只发一次。
+   *
+   * - 不占用户的每日私信额度（群消息不是私信），但**共用同一张去重表**：
+   *   键是 `(activityId, "group:<groupId>", kind)`；
+   * - `kind` 由调用方决定（默认 `full`），`received` 是本次实际发出的群数量，
+   *   `skipped` 是已经发过的群数量；
+   * - 没有装配群发送通道时返回 `available: false`，由调用方降级（不报错）。
+   */
+  public async notifyGroupsCard(input: {
+    activityId: string;
+    groupIds: readonly string[];
+    card: RichMessage;
+    kind?: ActivityNotificationKind;
+  }): Promise<ActivityGroupBroadcastResult> {
+    const kind = input.kind ?? "full";
+    const groups = [...new Set(input.groupIds)].sort();
+    const result: ActivityGroupBroadcastResult = {
+      available: this.groupSender !== undefined,
+      sent: 0,
+      skipped: 0,
+      failed: 0,
+      recipients: groups.length,
+      groups: [],
+    };
+    const sender = this.groupSender;
+    if (!sender) {
+      log.warn("activity group broadcast skipped: no group sender", {
+        activityId: input.activityId,
+        kind,
+      });
+      return result;
+    }
+    for (const groupId of groups) {
+      // 群消息的「接收者」是伪用户 `group:<群ID>`：与真实用户 ID 不冲突，
+      // 且不会进入某个用户的每日计数（`countSince` 按 user_id 过滤）。
+      const target = groupTargetId(groupId);
+      if (this.sent.has(notificationKey({ activityId: input.activityId, userId: target, kind }))) {
+        result.skipped += 1;
+        continue;
+      }
+      const sent = await sender.sendToGroup(groupId, input.card);
+      if (!sent.ok) {
+        log.warn("activity group broadcast failed", {
+          activityId: input.activityId,
+          groupId,
+          kind,
+          error: sent.detail,
+        });
+        result.failed += 1;
+        continue;
+      }
+      this.record({ activityId: input.activityId, userId: target, kind, createdAt: this.now() });
+      result.sent += 1;
+      result.groups.push(groupId);
+    }
+    log.info("activity group broadcast finished", {
+      activityId: input.activityId,
+      kind,
+      ...result,
+    });
+    return result;
+  }
+
+  /** 某条群卡片是否已经发过（不产生写入，供调用方判断）。 */
+  public isGroupCardSent(
+    activityId: string,
+    groupId: string,
+    kind: ActivityNotificationKind = "full",
+  ): boolean {
+    return this.sent.has(
+      notificationKey({ activityId, userId: groupTargetId(groupId), kind }),
+    );
+  }
+
   /** 删除早于 cutoff 的去重记录（由保留策略调用），返回内存里清掉的条数。 */
   public async pruneOlderThan(cutoff: Date): Promise<number> {
     let removed = 0;
@@ -322,6 +422,7 @@ const NOTIFY_TITLES: Record<ActivityNotificationKind, string> = {
   changed: "活动有变更",
   cancelled: "活动已取消",
   promoted: "候补递补成功",
+  full: "活动已满",
 };
 
 function normalizeDailyLimit(value: number | undefined): number {
@@ -363,4 +464,15 @@ function notificationKey(input: {
   kind: string;
 }): string {
   return `${input.activityId}\u0000${input.userId}\u0000${input.kind}`;
+}
+
+/**
+ * 群消息广播的伪接收者 ID。
+ *
+ * `activity_notifications` 的主键是 `(activity_id, user_id, kind)`，群消息没有用户；
+ * 用 `group:<群ID>` 占位既能复用同一张去重表，也不会与真实用户 ID 撞键
+ * （官方 openid 不含 `:`）。
+ */
+function groupTargetId(groupId: string): string {
+  return `group:${groupId}`;
 }

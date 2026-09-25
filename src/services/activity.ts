@@ -5,6 +5,7 @@ import { utcNow } from "../core/models.js";
 import type { ActivityRepository } from "../db/activityRepository.js";
 import { getLogger } from "../core/logger.js";
 import type { ActivityDetailsRepository } from "../db/activityDetailsRepository.js";
+import type { ActivityGroupRepository } from "../db/activityGroupRepository.js";
 import type { ActivitySettingsRepository } from "../db/activitySettingsRepository.js";
 import type {
   ActivityWaitlistEntry,
@@ -159,10 +160,18 @@ export class ActivityService {
   private readonly activities = new Map<string, Activity>();
   private readonly registrations = new Map<string, ActivityRegistration>();
   private readonly waitlist = new Map<string, ActivityWaitlistEntry>();
+  /**
+   * 活动 → 绑定群集合（§B4）。
+   *
+   * `activities.groupId` 是**归属群**（创建地 / 权限依据），这里是**发布与广播的目标群**；
+   * 一个活动可以绑定多个群，创建活动会自动绑定创建群。
+   */
+  private readonly boundGroups = new Map<string, Set<string>>();
   private readonly repository: ActivityRepository | undefined;
   private readonly detailsRepository: ActivityDetailsRepository | undefined;
   private readonly waitlistRepository: ActivityWaitlistRepository | undefined;
   private readonly settingsRepository: ActivitySettingsRepository | undefined;
+  private readonly groupRepository: ActivityGroupRepository | undefined;
   private readonly queue: WriteQueue | undefined;
   private readonly generateCode: () => string;
 
@@ -174,14 +183,20 @@ export class ActivityService {
       generateCode?: () => string;
       waitlistRepository?: ActivityWaitlistRepository | undefined;
       settingsRepository?: ActivitySettingsRepository | undefined;
+      groupRepository?: ActivityGroupRepository | undefined;
     } = {},
   ) {
     this.repository = repository;
     this.detailsRepository = detailsRepository;
     this.waitlistRepository = options.waitlistRepository;
     this.settingsRepository = options.settingsRepository;
+    this.groupRepository = options.groupRepository;
     this.queue =
-      repository || detailsRepository || this.waitlistRepository || this.settingsRepository
+      repository ||
+      detailsRepository ||
+      this.waitlistRepository ||
+      this.settingsRepository ||
+      this.groupRepository
         ? (queue ?? new WriteQueue())
         : undefined;
     this.generateCode =
@@ -194,22 +209,28 @@ export class ActivityService {
       this.repository !== undefined ||
       this.detailsRepository !== undefined ||
       this.waitlistRepository !== undefined ||
-      this.settingsRepository !== undefined
+      this.settingsRepository !== undefined ||
+      this.groupRepository !== undefined
     );
   }
 
   public async load(): Promise<void> {
-    const [activities, registrations, details, waitlist, settings] =
+    const [activities, registrations, details, waitlist, settings, groups] =
       await Promise.all([
         this.repository?.findActivities() ?? Promise.resolve([]),
         this.repository?.findRegistrations() ?? Promise.resolve([]),
         this.detailsRepository?.findAll() ?? Promise.resolve([]),
         this.waitlistRepository?.findAll() ?? Promise.resolve([]),
         this.settingsRepository?.findAll() ?? Promise.resolve([]),
+        this.groupRepository?.findAll() ?? Promise.resolve([]),
       ]);
     this.activities.clear();
     this.registrations.clear();
     this.waitlist.clear();
+    this.boundGroups.clear();
+    for (const group of groups) {
+      this.addGroupBinding(group.activityId, group.groupId);
+    }
     for (const activity of activities) {
       this.activities.set(activity.activityId, activity);
     }
@@ -298,6 +319,8 @@ export class ActivityService {
     };
     this.activities.set(activityId, activity);
     this.persist(activity);
+    // 用户确认（§B4）：创建活动**自动绑定创建群**，省掉一次手动绑定。
+    this.bindGroup(activityId, activity.groupId);
     return { ...activity };
   }
 
@@ -336,6 +359,84 @@ export class ActivityService {
       .filter((activity) => activity.groupId === groupId)
       .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
       .map(cloneActivity);
+  }
+
+  // ------------------------------------------------- 绑定群（§B4）
+
+  /**
+   * 绑定发布 / 广播目标群；重复绑定是幂等空操作（返回 `false`）。
+   *
+   * 活动必须先存在；`groupId` 为空字符串时抛错，避免写出脏绑定行。
+   */
+  public bindGroup(activityId: string, groupId: string): boolean {
+    this.getActivity(activityId);
+    const trimmed = groupId.trim();
+    if (trimmed.length === 0) {
+      throw new Error("activity group id must not be empty");
+    }
+    const existing = this.boundGroups.get(activityId);
+    if (existing?.has(trimmed)) {
+      return false;
+    }
+    this.addGroupBinding(activityId, trimmed);
+    const repository = this.groupRepository;
+    if (repository) {
+      this.queue?.enqueue("activity.group.save", () =>
+        repository.save({ activityId, groupId: trimmed, createdAt: utcNow() }),
+      );
+    }
+    log.info("activity group bound", { activityId, groupId: trimmed });
+    return true;
+  }
+
+  /** 解绑目标群；解绑不存在的绑定返回 `false`（归属群也可以被解绑）。 */
+  public unbindGroup(activityId: string, groupId: string): boolean {
+    const trimmed = groupId.trim();
+    const bucket = this.boundGroups.get(activityId);
+    if (!bucket?.delete(trimmed)) {
+      return false;
+    }
+    if (bucket.size === 0) {
+      this.boundGroups.delete(activityId);
+    }
+    const repository = this.groupRepository;
+    if (repository) {
+      this.queue?.enqueue("activity.group.remove", () =>
+        repository.remove(activityId, trimmed),
+      );
+    }
+    log.info("activity group unbound", { activityId, groupId: trimmed });
+    return true;
+  }
+
+  /**
+   * 活动的发布 / 广播目标群（排序，保证发送顺序稳定）。
+   *
+   * 没有任何绑定行时回落到归属群（`activities.group_id`）：老活动与极简单测的
+   * `ActivityService` 都不需要显式绑定，发布行为与 §B2 一致。
+   */
+  public listBoundGroups(activityId: string): string[] {
+    const activity = this.getActivity(activityId);
+    const bound = [...(this.boundGroups.get(activityId) ?? [])].sort();
+    if (bound.length > 0) {
+      return bound;
+    }
+    return activity.groupId.length > 0 ? [activity.groupId] : [];
+  }
+
+  /** 是否显式绑定过该群（与用户确认的「绑定/解绑」语义一致）。 */
+  public isGroupBound(activityId: string, groupId: string): boolean {
+    return this.boundGroups.get(activityId)?.has(groupId.trim()) ?? false;
+  }
+
+  private addGroupBinding(activityId: string, groupId: string): void {
+    const trimmed = groupId.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    const bucket = this.boundGroups.get(activityId) ?? new Set<string>();
+    bucket.add(trimmed);
+    this.boundGroups.set(activityId, bucket);
   }
 
   public updateActivity(
@@ -571,9 +672,19 @@ export class ActivityService {
    *
    * 与 `register()` 的区别：这里把「满员」当成正常分支而不是错误，
    * 并且统一做截止时间懒校验。
+   *
+   * §B4：registered 分支额外返回 `becameFull`（本次报名后**恰好满员**）与当前
+   * `registered` 人数，调用方据此在所有绑定群广播一次「已满」卡。
    */
   public joinActivity(input: RegisterActivityInput):
-    | { status: "registered"; registration: ActivityRegistration }
+    | {
+        status: "registered";
+        registration: ActivityRegistration;
+        /** 本次报名后是否刚好满员（`已报名 === capacity`）。 */
+        becameFull: boolean;
+        /** 当前已报名人数（含本次）。 */
+        registered: number;
+      }
     | { status: "waitlisted"; position: number; entry: ActivityWaitlistEntry } {
     const activity = this.getActivity(input.activityId);
     if (this.isRegistrationClosed(activity)) {
@@ -618,7 +729,17 @@ export class ActivityService {
         entry: { ...entry },
       };
     }
-    return { status: "registered", registration: this.register(input) };
+    const registration = this.register(input);
+    const registered = this.listRegistrations(input.activityId).length;
+    // 冻结名额也算占用，因此「恰好满员」用 occupied 判定：1/1 与 1/2（held=1）都算满
+    const occupiedAfter = registered + activity.heldSlots;
+    return {
+      status: "registered",
+      registration,
+      registered,
+      becameFull:
+        activity.capacity !== undefined && occupiedAfter >= activity.capacity,
+    };
   }
 
   /**

@@ -5,6 +5,10 @@ import {
   type ActivityDetailsRepository,
 } from "./db/activityDetailsRepository.js";
 import {
+  SqlActivityGroupRepository,
+  type ActivityGroupRepository,
+} from "./db/activityGroupRepository.js";
+import {
   SqlActivityRepository,
   type ActivityRepository,
 } from "./db/activityRepository.js";
@@ -99,6 +103,8 @@ export interface Persistence {
   activitySettings: ActivitySettingsRepository;
   activitySubscriptions: ActivitySubscriptionRepository;
   activityNotifications: ActivityNotificationRepository;
+  /** 活动绑定群（§B4）：发布与满员广播的目标群集合。 */
+  activityGroups: ActivityGroupRepository;
   notificationSubscriptions: NotificationSubscriptionRepository;
   notificationDeliveries: NotificationDeliveryRepository;
   shortCodes: ShortCodeRepository;
@@ -202,6 +208,8 @@ interface RepositorySet {
   activitySettings: ActivitySettingsRepository;
   activitySubscriptions: ActivitySubscriptionRepository;
   activityNotifications: ActivityNotificationRepository;
+  /** 活动绑定群（§B4）。 */
+  activityGroups: ActivityGroupRepository;
   notificationSubscriptions: NotificationSubscriptionRepository;
   notificationDeliveries: NotificationDeliveryRepository;
   shortCodes: ShortCodeRepository;
@@ -225,6 +233,7 @@ function createRepositories(db: Queryable): RepositorySet {
     activitySettings: new SqlActivitySettingsRepository(db),
     activitySubscriptions: new SqlActivitySubscriptionRepository(db),
     activityNotifications: new SqlActivityNotificationRepository(db),
+    activityGroups: new SqlActivityGroupRepository(db),
     activityDetails: new SqlActivityDetailsRepository(db),
     notificationSubscriptions: new SqlNotificationSubscriptionRepository(db),
     notificationDeliveries: new SqlNotificationDeliveryRepository(db),

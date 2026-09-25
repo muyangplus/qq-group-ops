@@ -93,6 +93,8 @@ export interface ActivityCardServiceOptions {
   stats?: ActivityStatsLike | undefined;
   /** §B3 CSV 导出；未装配时不生成「导出 CSV」按钮。 */
   exportService?: ActivityExportLike | undefined;
+  /** 群展示名解析（绑定群子卡）；缺省时直接显示内部群 ID。 */
+  groupLabel?: ((groupId: string) => string) | undefined;
   now?: (() => Date) | undefined;
 }
 
@@ -109,10 +111,15 @@ export const SIGNUP_PAGE_SIZE = 10;
  */
 export const COLLEGE_PAGE_SIZE = 2;
 
+/** 绑定群子卡每页个数（用户确认：每页 5 个）。 */
+export const BIND_GROUP_PAGE_SIZE = 5;
+
 export interface ActivityCardInput {
   activity: Activity;
   registrations: readonly ActivityRegistration[];
   waitlist?: readonly ActivityWaitlistEntry[] | undefined;
+  /** 绑定群列表（配置卡 / 绑定群子卡展示）；缺省回落到归属群。 */
+  boundGroups?: readonly string[] | undefined;
   /** 展示用：群号 / 群短码（缺省用活动里的 groupNumber）。 */
   groupLabel?: string | undefined;
   /** 当前查看者：用于「只有管理者看到报名名单按钮」与订阅开关状态。 */
@@ -236,6 +243,14 @@ export class ActivityCardService {
   public configCard(input: ActivityCardInput): RichMessage {
     const { activity } = input;
     const code = codeOf(activity);
+    // 绑定群列表由调用方提供（`ActivityService.listBoundGroups`），缺省回落到归属群
+    const groups = input.boundGroups ?? (activity.groupId ? [activity.groupId] : []);
+    const boundLabel =
+      groups.length > 0
+        ? groups
+            .map((groupId) => escapeCardText(this.options.groupLabel?.(groupId) ?? groupId))
+            .join("、")
+        : "（未绑定）";
     const registrations = input.registrations.length;
     const capacity = activity.capacity;
     const lines = [
@@ -250,6 +265,7 @@ export class ActivityCardService {
       `**递补**：${activity.waitlistPromotion === "auto" ? "自动递补" : "手动释放名额"}`,
       `**提醒@全体**：${activity.mentionAll ? "开" : "关"}（机器人无法 @全体成员，开启后只提示操作者手动 @）`,
       `**报名通知**：${activity.notifyCreator ? "开" : "关"}（有人报名时私信发起人）`,
+      `**绑定群**：${boundLabel}（发布与满员广播都发到这些群）`,
       ...formatLinks(activity),
     ];
 
@@ -277,6 +293,7 @@ export class ActivityCardService {
     rows.push([
       callbackButton("closeAt-clear", "不限截止", "activity", "set", code, "closeAt", "clear"),
       commandButton("closeAt-custom", "自定义", `/activity set ${code} closeAt `),
+      callbackButton("bindGroups", "绑定群", "activity", "bindings", code),
     ]);
     rows.push([
       callbackButton(
@@ -503,8 +520,122 @@ export class ActivityCardService {
     });
   }
 
-  /** 学院 / 年级选择子卡（配置卡入口）。 */
-  public rulesCard(input: {
+  /**
+   * 满员广播卡（§B4）：报名后恰好满员时发到**所有绑定群**。
+   *
+   * 纯群消息（不属于任何人的私信），去重在 `activity_notifications` 里按
+   * `(活动, "group:<群ID>", "full")` 记录，每个群只发一次。
+   */
+  public fullCard(input: ActivityCardInput): RichMessage {
+    const { activity } = input;
+    const capacity = activity.capacity;
+    const waitlist = (input.waitlist ?? []).length;
+    const code = codeOf(activity);
+    const registered = input.registrations.length;
+    const groupId = activity.groupId;
+    return renderCard({
+      title: `活动已满 ${code}`,
+      lines: [
+        `**${escapeCardText(activity.title)}**`,
+        capacity === undefined
+          ? `活动已满 ${registered} 人`
+          : `活动已满 ${registered} / ${capacity}`,
+        `后续报名将自动进入候补队列（当前候补 ${waitlist} 人）`,
+        `截止：${formatCloseAt(activity, this.now())}`,
+      ],
+      rows: [
+        [
+          callbackButton("info", "活动详情", "activity", "info", code),
+          ...(groupId.length > 0 ? [this.subscribeButton(groupId, input.viewerId)] : []),
+        ],
+      ],
+      buttonHint: "点击查看：",
+      footer: [`候补报名：/activity join ${code}`],
+    });
+  }
+
+  /**
+   * 绑定群子卡（§B4）：列出所有绑定群 + 解绑 + 绑定 / 解绑指令按钮。
+   *
+   * 新增 / 解绑需要群号（自由文本），因此走**指令按钮**（`/activity bind|unbind`）；
+   * 解绑已有的群是固定动作，用**回调**（`cb:activity:unbind:<短码>:<群ID>`）。
+   */
+  public bindGroupsCard(input: {
+    activity: Activity;
+    groups: readonly string[];
+    page?: number;
+  }): RichMessage {
+    const { activity } = input;
+    const code = codeOf(activity);
+    const perPage = BIND_GROUP_PAGE_SIZE;
+    const pageCount = Math.max(1, Math.ceil(input.groups.length / perPage));
+    const page = clampPage(input.page ?? 1, pageCount);
+    const slice = input.groups.slice((page - 1) * perPage, page * perPage);
+    const label = (groupId: string): string =>
+      this.options.groupLabel?.(groupId) ?? groupId;
+    const lines = [
+      `**活动**：${code} ${escapeCardText(activity.title)}`,
+      `**绑定群**：${input.groups.length} 个 · 第 ${page} / ${pageCount} 页`,
+      "绑定群会收到发布卡片与满员广播；归属群：",
+      "",
+    ];
+    if (slice.length === 0) {
+      lines.push("（还没有绑定群，点下方「绑定群」补一个）");
+    }
+    slice.forEach((groupId, index) => {
+      const serial = (page - 1) * perPage + index + 1;
+      const own = groupId === activity.groupId ? "（归属群）" : "";
+      lines.push(`${serial}. ${escapeCardText(label(groupId))}${own}`);
+    });
+
+    if (input.groups.length > perPage) {
+      lines.push("", `（共 ${input.groups.length} 个，每页 ${perPage} 个，可翻页）`);
+    }
+
+    const rows: CardButton[][] = [];
+    const unbindRow: CardButton[] = slice.map((groupId, index) =>
+      callbackButton(
+        `unbind-${index}`,
+        "解绑",
+        "activity",
+        "unbind",
+        code,
+        groupId,
+        page,
+        { style: 3 },
+      ),
+    );
+    if (unbindRow.length > 0) {
+      rows.push(unbindRow);
+    }
+    rows.push([
+      commandButton("bind", "绑定群", `/activity bind ${code} `),
+      callbackButton("back", "返回配置", "activity", "config", code),
+    ]);
+    const paging: CardButton[] = [];
+    if (page > 1) {
+      paging.push(callbackButton("prev", "上一页", "activity", "bind", code, page - 1));
+    }
+    if (page < pageCount) {
+      paging.push(callbackButton("next", "下一页", "activity", "bind", code, page + 1));
+    }
+    if (paging.length > 0) {
+      rows.push(paging);
+    }
+
+    return renderCard({
+      title: `绑定群 ${code}`,
+      lines,
+      rows,
+      buttonHint: "点击操作：",
+      footer: [
+        `绑定：/activity bind ${code} <群号|#群短码>`,
+        `解绑：/activity unbind ${code} <群号|#群短码>`,
+      ],
+    });
+  }
+
+  /** 学院 / 年级选择子卡（配置卡入口）。 */  public rulesCard(input: {
     activity: Activity;
     kind: "college" | "year";
     mode: "allow" | "deny";
