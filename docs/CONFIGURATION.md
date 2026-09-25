@@ -368,9 +368,11 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 系统 / 管理 / 超
   点击即自动生效；执行动作里需要自由文本或不可逆的仍是指令按钮（危险动作带二次确认）；
 - 回调自动完成的动作都会回一张**刷新后的卡片**；群内会在开头**单独一行 @ 操作人**，私聊不 @（操作人就是接收者本人）；
 - 列表分页：每页固定条数 + 回调翻页，正文同时给出 `+页码` 指令，例如
-  `/pending +2`、`/audit 20 +2`、`/activity list +2`；
+  `/pending +2`、`/audit 20 +2`、`/activity list +2`、`/activity signups #A7K2Q9 +2`；
 - 排版约束：一行按钮文字合计 ≤12 字、单个按钮 ≤10 字、整盘 ≤5 行，过挤就拆子卡；
-- 按钮未开通时自动降级为纯文本；手动指令统一在 `/help` 里查，卡片只保留分页用的 `+页码` 提示。
+- 按钮未开通时自动降级为纯文本；手动指令统一在 `/help` 里查，卡片只保留分页用的 `+页码` 提示；
+- **活动卡片拆成四张子卡**：成员卡（群里那张）/ 配置卡 / 管理卡 / 名单卡；
+  活动配置项多（名额、限制、截止、递补、开关、起停），按标准拆开而不是硬塞一张卡。
 
 ### 私信指令
 
@@ -504,17 +506,36 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 系统 / 管理 / 超
 ### `/activity`（活动发布 / 报名 / 管理）
 
 ```text
-/activity                                      本群活动列表
-/activity list <群号|#群短码>
-/activity create <标题>                         创建（群管理员+；私信需先写群号）
+/activity                                      本群活动列表（按「报名中 / 草稿 / 已结束」分组）
+/activity list <群号|#群短码> [+页码]
+/activity create <标题>                         创建（群管理员+；私信需先写群号）→ 返回配置卡
 /activity set <#活动短码> <字段> <值>
-/activity open <#活动短码>                      开放并把卡片发到群里
+/activity open <#活动短码>                      开放并把卡片发到群里（回调 cb:activity:open 等价）
 /activity close|/activity cancel <#活动短码>
 /activity join <#活动短码> [备注]
 /activity quit <#活动短码>
 /activity info <#活动短码>
-/activity signups <#活动短码>
+/activity signups <#活动短码> [+页码] [full]    报名名单（群管理员/发布者；默认不含学号/学院）
+/activity subscribe|unsubscribe [群号|#群短码]  订阅/退订「新活动通知」（默认本群）
 ```
+
+回调命名空间 `activity`（`cb:activity:<action>[:args]`，**renderer 内部重新做权限校验**）：
+
+| action | 参数 | 权限 | 行为 |
+|---|---|---|---|
+| `join` / `quit` | `<短码>` | 任意成员 | 报名 / 取消报名（带官方 `modal` 二次确认） |
+| `info` | `<短码>` | 任意成员 | 活动详情卡 |
+| `signups` | `<短码>:<页码>[:full]` | 管理者 | 名单卡（分页；`full` 才显示学号/学院） |
+| `page` | `<群>:<页码>` | 任意成员 | 活动列表翻页 |
+| `config` / `manage` / `preview` | `<短码>` | 管理者 | 配置卡 / 管理卡 / 成员卡预览 |
+| `open` / `status` / `cancel` | `<短码>[:open\|close]` | 管理者 | 开放报名 / 开停 / 取消活动 |
+| `release` | `<短码>` | 管理者 | 释放一个冻结名额（优先递补候补第一位） |
+| `resend` | `<短码>` | 管理者 | 把成员卡重发到活动群 |
+| `set` | `<短码>:<字段>:<值>` | 管理者 | 配置卡上的快捷设置（名额 / 截止 / 递补 / 开关 / 学院年级列表） |
+| `college` / `year` | `<短码>:<allow\|deny>:<页码>[:<取值>]` | 管理者 | 学院 / 年级白黑名单子卡（`●` 标已选，点一下切换） |
+| `subscribe` | `<群>:<on\|off>` | 任意成员 | 切换「新活动通知」订阅 |
+| `stats` | `<短码>` | 管理者 | §B3 统计图片；**未装配统计服务时降级为文字统计卡** |
+| `export` | `<短码>` | 管理者 | §B3 CSV 导出（私信给操作者）；**未装配时提示不可用** |
 
 `/activity set` 字段：
 
@@ -524,21 +545,43 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 系统 / 管理 / 超
 | `capacity` | 名额上限（正整数；`clear` 取消限制） |
 | `group` | 卡片里展示的活动群号 |
 | `link <url>` / `link <说明=url>` | 追加链接（可多次）；`links clear` 清空 |
+| `closeAt <MM-DD HH:mm\|YYYY-MM-DD HH:mm>` | 报名截止时间；`clear` 取消（懒校验，到期即拒绝报名） |
+| `waitlistPromotion auto\|manual` | 递补方式：自动递补 / 手动释放名额（**默认 manual**） |
+| `mentionAll on\|off` | 开放报名时是否提示操作者手动 @全体（机器人**无法** @全体成员） |
+| `notifyCreator on\|off` | 有人报名时是否私信通知活动发起人 |
 | `allowColleges` / `denyColleges` | 学院白名单 / 黑名单（逗号、顿号或空格分隔） |
 | `allowYears` / `denyYears` | 年级白名单 / 黑名单（22、23…；`2022` 也接受） |
 
-- 存储：`activities` / `activity_registrations`（原有）+ `activity_details`（短码、群号、链接、限制，`CREATE TABLE IF NOT EXISTS` 幂等升级）；
+- 存储：`activities` / `activity_registrations`（原有）+ `activity_details`（短码、群号、链接、限制）
+  + `activity_waitlist`（候补）+ `activity_settings`（@全体 / 通知发起人 / 截止 / 递补方式 / 冻结名额），
+  全部是 `CREATE TABLE IF NOT EXISTS` 幂等升级，老库无需 ALTER；
 - 活动短码是 6 位随机短码（**数字 + 大写字母**，`#A7K2Q9`），在 `activity_details.code` 上有唯一索引；启动时同样会把含小写的旧活动短码重生成；
 - 报名规则：**黑名单优先**，白名单为空表示不限；年级来自 `/profile` 学号前两位；学院匹配允许简称（`环境` 命中 `环境科学与工程学院`）；
+- 名额满了自动进候补；`auto` 模式取消报名立刻递补，`manual` 模式（默认）名额被**冻结**，
+  管理员在管理卡上点「释放名额」才转成递补或放回公开池；
 - 卡片发送与入群申请共用 `RichMessageSender`：Markdown+按钮 → Markdown → 纯文本；
 - 权限：`canApproveJoin`（群管理员+）或活动发布者本人。
+
+**消息落点（隐私优先）**：
+
+- 报名 / 候补 / 取消报名：**原处回执**（群里首行 `<@!申请人>`，正文只写「报名成功 · 当前 X/Y」，
+  不含姓名/学号/班级/学院）；
+- 报名失败（资料不全 / 不符合学院年级限制 / 已报名 / 已截止）：群里只说「原因已私信」，
+  **具体原因只走私信**（私信失败时提示「请先私聊机器人再试」，绝不把原因降级到群里）；
+- 活动发布：群内发成员卡，同时私信操作者回执（含「机器人无法 @全体成员」提示与重发/关停入口），
+  并给**订阅者**私信活动卡；
+- 活动取消 / 变更 / 递补：只私信当事人（已报名 + 候补），不往群里发；
+- 主动私信**去重**（`activity_notifications` 的 `(活动, 用户, 类型)` 主键）+ **每人每天封顶**
+  （`ACTIVITY_NOTIFY_DAILY_LIMIT`，默认 3），失败只记日志。
 
 ### 关键词豁免（审核员及以上）
 
 操作 | 权限
 ---|---
-`/profile`、`/activity join|quit|info` | 任意已绑定用户
+`/profile`、`/activity join|quit|info|subscribe` | 任意已绑定用户
 `/activity create|set|open|close|cancel|signups` | 群管理员+ 或活动发布者
+`cb:activity:<config|manage|preview|open|status|cancel|release|resend|set|college|year|stats|export>` | 同上（回调 renderer **重新校验**一次）
+`cb:activity:<join|quit|info|page|subscribe>` | 任意成员
 消息关键词判断 | **审核员及以上直接豁免**（不警告/不撤回/不处罚、不写审计，仅 debug 日志）
 
 ## 数据库
@@ -594,6 +637,10 @@ pnpm db:up     # docker compose --profile postgres up -d db
 | `activity_details` | 活动短码/群号/链接/学院年级限制 | `ActivityService` |
 | `group_message_modes` | 全量消息模式诊断 | `GroupMessageModeRegistry` |
 | `activities` / `activity_registrations` | 活动与报名 | `ActivityService` |
+| `activity_waitlist` | 活动候补名单 | `ActivityService` |
+| `activity_settings` | 活动扩展设置（@全体 / 通知发起人 / 截止 / 递补方式 / 冻结名额） | `ActivityService` |
+| `activity_subscriptions` | 活动通知的按群订阅 | `ActivityNotificationService` |
+| `activity_notifications` | 活动通知去重 + 每人每日计数 | `ActivityNotificationService` |
 
 写入策略：
 
@@ -635,6 +682,13 @@ pnpm db:up     # docker compose --profile postgres up -d db
 | `RAW_MESSAGE_RETENTION_DAYS` | 否 | 消息原文保留天数；`0` 表示不保存（见下方说明） |
 | `AUDIT_LOG_RETENTION_DAYS` | 否 | 审计记录保留天数，默认 `180`；`0` 表示不清理 |
 | `JOIN_REQUEST_TTL_DAYS` | 否 | 待审批入群申请有效期（天），默认 `7`；超过即标记 `expired`（不删数据，`/whois` 可追溯），`0` 表示不自动过期 |
+| `ACTIVITY_NOTIFY_DAILY_LIMIT` | 否 | **活动通知**每人每日上限，默认 `3`；非负整数，`0` = 不限制 |
+
+`ACTIVITY_NOTIFY_DAILY_LIMIT` 的用途：活动发布 / 变更 / 取消 / 递补的通知走**主动私信**，
+而官方对主动消息有限额（单用户每天 1000 条、单关系 20 qpm、未认证机器人 5 qps & 30 qpm），
+用户还可以在 QQ 客户端关闭「允许主动发送」。因此活动通知在 `activity_notifications` 里
+按 `(活动, 用户, 类型)` **去重**，并用这个变量做**每人每天封顶**；超过上限只记 warn 日志、不再发送
+（活动本身的状态不受影响）。
 
 清理行为（`RetentionService`）：
 

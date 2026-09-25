@@ -6,7 +6,79 @@
 
 ### 新增
 
+- **活动卡片 / 回调 / 订阅（§B2）**：活动管理从「指令按钮 + 手动指令」升级为**回调驱动**，并补上按群订阅推送。
+  - **三种视图 + 名单卡**（全部 `renderCard()`，Markdown + 内嵌按钮 + 纯文本降级）：
+    - **成员卡**（群里那张）：`我要报名` / `取消报名`（回调 + 官方 `modal` 二次确认）、
+      `活动详情`、`报名名单`（**只有管理者能看到这个按钮**）、`订阅 开/关`；
+      正文含简介、活动群、报名 `X/Y`（满员显示「已满，可进候补」）、候补 N、截止 `MM-DD HH:mm`
+      （过期显示「已截止」）、限制与链接；footer 保留 `/activity join|quit #码`；
+    - **配置卡**（`/activity create` 后自动返回，`cb:activity:config:<短码>` 也打开）：短码/标题/状态/
+      名额/限制/截止/递补/@全体提示/报名通知；按钮：名额 `10/20/50/不限` + `自定义`（指令按钮预填）、
+      `学院限制` / `年级限制` 子卡、`不限截止` + `自定义`、`递补 自动/手动`、`报名通知 开/关`、
+      `提醒@全体 开/关`、`预览卡片` / `开放报名` / `取消`（带 modal）；
+    - **管理卡**（`cb:activity:manage:<短码>`）：报名 `X/Y`、候补 N、**待释放名额 M**、学院分布（前 3）、
+      年级分布、截止、递补方式；按钮：`报名名单`、`释放名额`（**仅当 `heldSlots>0` 时生成**）、
+      `重发卡片`、`开/关报名`、`取消活动`、`统计图片`（§B3 未装配时不生成）；
+    - **名单卡**：每页 10 人，默认只列 `序号 姓名（班级）备注`（**默认不显示学号/学院**），
+      `完整信息` 开关才切到含学号/学院；候补区单独列出（最多 10 个 + 「还有 N 人」）；
+      只有 `canManageActivity` 可用，非管理者回调得到「权限不足」卡；`导出 CSV`（§B3 未装配时不生成）。
+  - **回调命名空间 `activity`**（`cb:activity:<action>[:args]`）覆盖
+    `join, quit, info, signups, page, config, preview, open, cancel, release, resend, status, set, college, year, subscribe, stats, export`；
+    renderer 在 `runtime.ts` 的 `callbackRenderers` 里注册，**每个 action 内部重新做权限校验**
+    （报名/取消/订阅 = 任意成员；配置/发布/关停/释放/名单/导出/统计 = `canManageActivity` 或超管）；
+    回调参数用**活动短码**，解析失败返回一张「活动不存在」卡。
+  - **消息落点（隐私优先，用户确认）**：群里报名只回 `<@!申请人>` + `报名成功 · 当前 X/Y`，
+    **不出现姓名/学号/班级/学院**；报名失败群里只说「原因已私信」，**具体原因只走私信**
+    （私信失败时提示「请先私聊机器人再试」，绝不降级到群里）；私聊操作可含姓名/学号/序号/人数；
+    `manual` 模式取消报名只在管理卡的「待释放名额」里体现，**不在群里公开谁退出了**。
+  - **递补与变更通知**：`auto` 模式取消即递补、管理卡「释放名额」递补候补第一位，
+    被递补者**私信**收到「你已递补成功（当前 Y/Z）」（不往群里发）；活动发布/变更/取消
+    分别私信订阅者 / 已报名+候补，`mentionAll on` 时给操作者私信提示
+    「机器人无法 @全体成员，如需通知全群请手动 @ 一条」，**不假装能 @全体**。
+  - **新表 + 仓储**：`activity_subscriptions`（按群订阅）与 `activity_notifications`
+    （`(activity_id, user_id, kind)` 去重 + 每人每日计数）；新增
+    `src/db/activitySubscriptionRepository.ts`、`src/db/activityNotificationRepository.ts`，并接入
+    `persistence.ts` / `runtime.ts` / `main.ts` / `test/helpers/persistenceRuntime.ts`。
+  - **新服务 `src/services/activityNotifications.ts`**：`load/flush`、
+    `isSubscribed/subscribe/unsubscribe/listSubscribedGroups`、
+    `publishNewActivity`（给该群所有订阅者私信活动卡）、`notifyParticipants`（当事人）；
+    统一入口 `deliver()` 做「去重 → 每人每日封顶 → `sendPrivateCard` → 写去重行」，
+    **失败只记 warn 不抛错**（活动状态不受通知失败影响）。
+  - **新 env `ACTIVITY_NOTIFY_DAILY_LIMIT`**（默认 `3`，非负整数，`0` = 不限制）：
+    主动私信有官方额度（单用户每天 1000 条、单关系 20 qpm、未认证机器人 5 qps & 30 qpm），
+    封顶避免一次活动变更把额度打满。
+  - `/activity list` 改为**按状态分组**（报名中 / 草稿 / 已结束），每个活动一行
+    `详情 / 报名 / 管理（仅管理者）/ 订阅`（全部回调）；`/activity signups <#码> +页码 [full]` 降级可用。
+  - 保留 `/activity create|set|open|close|cancel|join|quit|info|signups|list` 作为**降级路径**；
+    `/activity join|quit` 改用 `joinActivity()` / `cancelRegistrationWithPromotion()` 并返回 `CardResult`；
+    新增 `/activity subscribe|unsubscribe [群号|#群短码]`。
+  - **§B3 可选依赖**：统计图片与 CSV 导出做成**条件生成按钮**（`ActivityCardService` 的
+    `stats` / `exportService` 注入项，未装配时按钮不生成；`cb:activity:stats` 降级为文字统计卡，
+    `cb:activity:export` 提示未装配），B2 因此可以独立交付、之后接线即可。
+- `cardTemplate` 的**回调按钮也支持 `modal`**（报名 / 取消报名 / 取消活动等不可逆动作的二次确认）。
+
+### 变更
+
+- `/activity` 的活动卡片由「指令按钮」改为「回调按钮」：点击即出卡 / 生效，不用再发消息；
+  纯文本降级仍在 footer 保留 `/activity join|quit #码` 等可复制指令。
+- `/activity info` 改为**卡片**（原先只回文本），并根据查看者权限给出「管理 / 配置」或「订阅」入口。
+- 名单默认脱敏：`/activity signups` 与名额回调不再默认显示学号/学院，需点「完整信息」。
+- `/menu` 的「活动」「活动运营」子菜单补充订阅、配置卡、管理卡与 `[+页码] [full]` 等新用法。
+- `/activity set` 新增 `closeAt` / `waitlistPromotion` / `mentionAll` / `notifyCreator` 字段，
+  并在改到「当事人关心」的字段时给已报名 + 候补私信一次变更通知（`kind: "changed"`，去重 + 封顶）。
+
+### 修复
+
+- 无（§B2 不含 B1 的修复项）。
+
+### 已知限制
+
+- **无法自动修改群成员昵称/群名片**：官方开放平台「群聊管理」接口中没有该能力，已核对接口列表。入群审核识别到的「班级+姓名」会展示在 `/pending` 审核意见与日志中，供人工改名；若官方后续开放该接口，可在 `JoinRuleEvaluator` 输出之上直接接入。
+- **活动统计图片 / CSV 导出尚未启用**：`cb:activity:stats` 与 `cb:activity:export` 已接线，
+  但 `ActivityStatsService` / 导出服务属于 §B3，未装配时按钮不生成（统计回调降级为文字统计卡）。
+
 - **卡片标准（`docs/CARD-STANDARD.md`）**：所有 QQ 指令输出统一为菜单式卡片，定为项目标准。
+
   - 按钮分两类：**导航 / 查看 / 翻页 / 刷新用回调**（`cb:<namespace>:<action>[:args]`，
     点击即回包并重发卡片），**执行动作用指令按钮**（与手输指令同一条权限、审计、二次确认路径）；
   - 列表分页标准：每页固定条数 + 回调翻页，**正文必须给出 `+页码` 指令**（如 `/pending +2`），

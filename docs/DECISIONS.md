@@ -492,10 +492,57 @@
   - `user_profiles.year` 历史数据自动收敛（启动时写回），活动 `allowYears` 输入格式收紧；
   - 新增守卫测试 `test/privacyGuard.test.ts`，示例值统一为 `10001` / `654321` / `0123456789ABCDEF0123456789ABCDEF`。
 
+## ADR-0040：活动卡片改回调驱动 + 按群订阅推送（§B2）
 
-
-
-
-
-
-
+- 状态：已采纳
+- 背景：B1 已经把活动逻辑（候补、冻结名额、递补方式、截止时间）做进 `ActivityService`，
+  但交互仍是「Markdown + 指令按钮」：用户点「报名」只是把 `/activity join #码` 填进输入框，
+  要再发一次消息；活动配置只能手输 `/activity set`；「发布新活动」没有任何触达手段，
+  群里也没有可靠的 @全体（真机已确认做不到）。
+- 决策：
+  1. **成员卡 / 配置卡 / 管理卡 / 名单卡四张子卡**，全部 `renderCard()`（Markdown + 内嵌按钮 + 纯文本降级）。
+     按钮按 `docs/CARD-STANDARD.md` 分类：导航 / 查看 / 翻页 / 开关 / 枚举 / **固定动作**都用**回调**，
+     需要自由文本或不可逆的用**指令按钮**；回调按钮也支持官方 `modal` 二次确认
+     （报名 / 取消报名 / 取消活动）。
+  2. **回调命名空间 `activity`**（`cb:activity:<action>[:args]`），在 `runtime.ts` 的
+     `callbackRenderers` 注册；**renderer 内部必须重新做权限校验**（不能信按钮）：
+     报名 / 取消报名 / 订阅 = 任意成员；配置 / 发布 / 关停 / 释放 / 名单 / 导出 / 统计 =
+     `canManageActivity(userId, activity)`（超管 / 活动发布者 / 群管理员）或超管；
+     回调参数用**活动短码**（用户可见标识），解析失败回一张「活动不存在」卡。
+  3. **消息落点（隐私优先，用户确认）**：群里报名 / 候补只回 `<@!申请人>` + 非隐私文案
+     （`报名成功 · 当前 X/Y` / `已进入候补 · 第 N 位`），**不出现**姓名/学号/班级/学院；
+     报名失败的**具体原因只走私信**，群里只说「原因已私信」（私信失败时提示「先私聊机器人再试」，
+     **绝不**降级到群里）；私聊操作时回执可以包含姓名/学号/序号/人数；
+     `manual` 模式取消报名不在群里公开说明谁退出，只在管理卡体现「待释放名额 +1」。
+  4. **递补只私信**：`auto` 模式取消即递补、管理卡「释放名额」递补候补第一位，
+     被递补者私信收到「你已递补成功（当前 Y/Z）」，**不往群里发**。
+  5. **发布 / 变更 / 取消的通知**：发布 = 群里发成员卡 + 操作者私信回执 + **给该群订阅者私信活动卡**；
+     变更 = 私信已报名 + 候补（`kind: "changed"`）；取消 = 私信全部当事人。
+     因为真机确认**无法 @全体成员**，`mentionAll=true` 时只给操作者一条
+     「机器人无法 @全体成员，如需通知全群请手动 @ 一条」的提示，**不假装能 @**。
+  6. **新表 `activity_subscriptions`（按群订阅）与 `activity_notifications`（去重 + 每日计数）**：
+     主动私信有官方额度（单用户每天 1000 条、单关系 20 qpm、未认证 5 qps & 30 qpm），
+     用户还能关闭「允许主动发送」。因此通知**只发给订阅者 / 当事人**，
+     按 `(activity_id, user_id, kind)` **去重**（主键，重启后不重复），
+     并按 `ACTIVITY_NOTIFY_DAILY_LIMIT`（默认 3，`0` = 不限制）**每人每天封顶**；
+     发送失败只记 warn，不影响活动本身。
+  7. **§B3 是可选依赖**：统计图片与 CSV 导出通过 `ActivityCardService` 的
+     `stats` / `exportService` 注入项**条件生成按钮**；未装配时按钮不出现，
+     回调被直接调用也只会得到「文字统计卡」/「导出服务未装配」提示，不会抛错。
+- 理由：回调按钮把「查看 / 开关 / 枚举 / 固定动作」压缩成一次点击，是用户确认的交互方向；
+  活动配置项多（名额 / 限制 / 截止 / 递补 / 开关 / 起停），拆成子卡比在一张卡上硬塞更符合
+  官方 5 行 × 12 字约束；把「隐私字段只走私信」当成硬规则，避免群里刷屏与信息泄露；
+  去重 + 封顶是对官方主动消息额度的必要尊重，否则一次集中变更就会让后续通知全部失败。
+- 影响：
+  - 新增 `src/services/activityNotifications.ts`、`src/db/activitySubscriptionRepository.ts`、
+    `src/db/activityNotificationRepository.ts` 与两张新表（`CREATE TABLE IF NOT EXISTS`，老库无需 ALTER）；
+  - `src/services/activityCards.ts` 重写为 `ActivityCardService`（四类卡 + 学院/年级子卡 + 订阅按钮），
+    `ActivityCardInput` 改为「活动 + 报名 + 候补 + 查看者权限」；
+  - `AdminCommandService` 新增 `activityCallbackCard()`（回调总入口）、活动指令改为返回 `CardResult`、
+    私信回执统一走 `cardSender()`（优先 `richMessages`，其次通知服务的发送器）；
+  - `NotificationService` 新增 `richMessageSender` getter，让活动卡片与入群推送共用同一条通道
+    （同一个键盘降级状态）；
+  - 新增 env `ACTIVITY_NOTIFY_DAILY_LIMIT`；`/activity` 帮助主题、README、CONFIGURATION、
+    ACCEPTANCE（J32–J40）与 CHANGELOG 同步更新；
+  - `/activity` 列表卡改为按「报名中 / 草稿 / 已结束」分组，行按钮改为回调；
+    原有 `/activity` 全部子命令保留为降级路径。
