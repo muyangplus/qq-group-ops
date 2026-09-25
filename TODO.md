@@ -26,6 +26,9 @@
   `SendThrottle`，没有针对活动通知单独做令牌桶。
 - [ ] **`@全体成员` 官方能力不可用**：真机穷举 5 种写法（markdown `@everyone` / `<@!all>` / `<@!everyone>` /
   纯文字 / 纯文本 `<@!all>`）全部失效；当前方案是「发布回执提示管理员手动 @ 一条」+ 订阅私信兜底。
+- [ ] **`src/services/retention.ts` 行尾是 CRLF（内部整洁）**：与 `.gitattributes` 的
+  `* text=auto eol=lf` 不一致（该文件是历史提交留下的，仓库 blob 即为 CRLF）。修法：单独一次
+  `chore:` 提交把它统一成 LF（纯空白改动，`tsc` + 全量测试即可验证）。
 
 ## 待真机验收
 
