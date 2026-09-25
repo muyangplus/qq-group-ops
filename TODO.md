@@ -26,6 +26,10 @@
   `SendThrottle`，没有针对活动通知单独做令牌桶。
 - [ ] **`@全体成员` 官方能力不可用**：真机穷举 5 种写法（markdown `@everyone` / `<@!all>` / `<@!everyone>` /
   纯文字 / 纯文本 `<@!all>`）全部失效；当前方案是「发布回执提示管理员手动 @ 一条」+ 订阅私信兜底。
+- [ ] **门面残留死导入待清理（内部）**：R1 逐域拆分后 `src/services/adminCommands.ts` 仍有约 50 个
+  「只在 import 出现、正文未引用」的导入（如 `ActivityStatus`、`EXPIRY_ACTOR_ID`、`clampLimit`、`formatTime`、
+  `PROFILE_FIELD_LABELS` 等）。等 R1 剩余域（activity / rules / perm / bind）全部拆完，再一次性清理，
+  避免每拆一次又新增一批；`noUnusedLocals` 未开启，编译不会报，靠人工核对 + `tsc` + 全量测试验证。
 
 ## 待真机验收
 

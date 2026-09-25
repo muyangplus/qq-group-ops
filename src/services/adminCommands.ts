@@ -11,6 +11,16 @@ import { whoisCard } from "./commands/whoisCommands.js";
 import { handleProfile } from "./commands/profileCommands.js";
 import { handleHelp, helpCard } from "./commands/helpCommands.js";
 import {
+  approveCard,
+  auditCard,
+  handleApprove,
+  handleAudit,
+  handlePending,
+  handleReject,
+  pendingCard,
+  syncCard,
+} from "./commands/reviewCommands.js";
+import {
   mainMenu,
   menuContext,
   menuMessage,
@@ -539,7 +549,7 @@ export class AdminCommandService {
         );
       case "pending":
       case "待审批":
-        return this.handlePending(groupId, userId, parts);
+        return handlePending(this.context(), groupId, userId, parts);
       case "sync":
       case "同步":
         return this.handleSync(groupId, userId, parts);
@@ -566,16 +576,16 @@ export class AdminCommandService {
         return this.handleActivity(groupId, userId, parts);
       case "approve":
       case "通过":
-        return this.handleApprove(groupId, userId, parts);
+        return handleApprove(this.context(), groupId, userId, parts);
       case "reject":
       case "拒绝":
-        return this.handleReject(groupId, userId, parts);
+        return handleReject(this.context(), groupId, userId, parts);
       case "rules":
       case "规则":
         return this.handleRules(groupId, userId, parts);
       case "audit":
       case "日志":
-        return this.handleAudit(groupId, userId, parts);
+        return handleAudit(this.context(), groupId, userId, parts);
       case "status":
       case "状态":
         return handleStatus(this.context(), groupId, userId, parts);
@@ -729,41 +739,6 @@ export class AdminCommandService {
     };
   }
 
-  private resolveReviewTarget(
-    groupId: string | undefined,
-    parts: readonly string[],
-  ): {
-    targetGroupId: string | undefined;
-    requestId: string | undefined;
-    reasonParts: readonly string[];
-  } {
-    if (groupId) {
-      return {
-        targetGroupId: groupId,
-        requestId: this.resolveRequestId(parts[1]),
-        reasonParts: parts.slice(2),
-      };
-    }
-    const groupFromFirst = this.resolveTargetGroupId(undefined, parts[1]);
-    if (groupFromFirst) {
-      return {
-        targetGroupId: groupFromFirst,
-        requestId: this.resolveRequestId(parts[2]),
-        reasonParts: parts.slice(3),
-      };
-    }
-    const requestId = this.resolveRequestId(parts[1]);
-    let targetGroupId: string | undefined;
-    if (requestId) {
-      try {
-        targetGroupId = this.joinAudit.get(requestId).groupId;
-      } catch {
-        targetGroupId = undefined;
-      }
-    }
-    return { targetGroupId, requestId, reasonParts: parts.slice(2) };
-  }
-
   private resolveUserId(input: string | undefined): string | undefined {
     return resolveUserId(this.context(), input);
   }
@@ -829,134 +804,7 @@ export class AdminCommandService {
     parts: readonly string[],
     notice?: string,
   ): CardResult {
-    const { page, rest } = extractPageToken(parts);
-    const targetGroupId = this.resolveTargetGroupId(groupId, rest[0]);
-    if (!targetGroupId) {
-      const card = renderCard({
-        title: "待审批入群申请",
-        lines: [
-          "该指令需要在群内使用，或在私信中提供群号 / #群短码。",
-          "用法：/pending <群号|#群短码> [+页码]",
-        ],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
-      const card = renderCard({
-        title: "权限不足",
-        lines: ["需要审核员或以上权限。"],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-
-    const groupLabel = this.displayGroup(targetGroupId);
-    const pending = this.joinAudit.pending(targetGroupId);
-    if (pending.length === 0) {
-      return cardFromText(
-        "待审批入群申请",
-        [
-          ...this.renderNotice(notice),
-          `群 ${groupLabel}：当前没有待审批入群申请。`,
-        ].join("\n"),
-        {
-          rows: [
-            [viewButton("refresh", "刷新", "pending", "page", targetGroupId, 1)],
-          ],
-          footer: [`本群：${groupLabel}`],
-        },
-      );
-    }
-
-    const pageSize = 3;
-    const pageCount = Math.max(1, Math.ceil(pending.length / pageSize));
-    const current = Math.min(Math.max(page, 1), pageCount);
-    const slice = pending.slice((current - 1) * pageSize, current * pageSize);
-    const config = this.configStore.get(targetGroupId);
-    const withOpinion =
-      config.joinReviewOpinion && this.joinRules !== undefined;
-
-    const lines = [
-      `**群**：${groupLabel}`,
-      `**待审批**：${pending.length} 条 · 第 ${current} / ${pageCount} 页`,
-      ...this.renderNotice(notice),
-    ];
-    const rows: CardButton[][] = [];
-    for (const request of slice) {
-      const code = this.displayRequest(request.requestId);
-      lines.push(
-        "",
-        `**${escapeCardText(code)}** · 申请人：${escapeCardText(this.displayUser(request.userId))}`,
-        `理由：${escapeCardText(request.reason) || "（未填写）"}`,
-      );
-      if (withOpinion) {
-        const evaluation = this.joinRules?.evaluate(request.reason, {
-          mode: config.joinDecision,
-          requireClass: config.joinRequireClass,
-          requireName: config.joinRequireName,
-          answerPattern: config.joinAnswerPattern,
-          opinionEnabled: true,
-        });
-        if (evaluation?.opinion) {
-          lines.push(...quoteCardLines(evaluation.opinion));
-        }
-      }
-      rows.push([
-        // 「通过」是固定动作（无需参数）→ 回调自动完成，并回一张刷新后的列表
-        {
-          ...viewButton(
-            `approve-${code}`,
-            "通过",
-            "pending",
-            "approve",
-            targetGroupId,
-            request.requestId,
-            current,
-          ),
-          style: 1,
-        },
-        // 「拒绝」支持可选原因 → 保留指令按钮，用户可在发送前补上原因
-        actionButton(`reject-${code}`, "拒绝", `/reject ${code}`, {
-          style: 3,
-          modal: {
-            content: "确认拒绝该入群申请？（可先补上原因）",
-            confirmText: "拒绝",
-            cancelText: "取消",
-          },
-        }),
-      ]);
-    }
-
-    const paging: CardButton[] = [];
-    if (current > 1) {
-      paging.push(
-        viewButton("prev", "上一页", "pending", "page", targetGroupId, current - 1),
-      );
-    }
-    if (current < pageCount) {
-      paging.push(
-        viewButton("next", "下一页", "pending", "page", targetGroupId, current + 1),
-      );
-    }
-    paging.push(
-      viewButton("refresh", "刷新", "pending", "page", targetGroupId, current),
-    );
-    rows.push(paging);
-
-    const footer: string[] = [];
-    if (current < pageCount) {
-      footer.push(`下一页：/pending +${current + 1}`);
-    }
-    if (current > 1) {
-      footer.push(`上一页：/pending +${current - 1}`);
-    }
-
-    return cardFromText("待审批入群申请", lines.join("\n"), {
-      rows,
-      buttonHint: "点击审批：",
-      footer,
-    });
+    return pendingCard(this.context(), groupId, userId, parts, notice);
   }
 
   /**
@@ -972,47 +820,8 @@ export class AdminCommandService {
     page = 1,
     replyGroupId?: string,
   ): Promise<CardResult> {
-    const back = viewButton("back", "返回待审批", "pending", "page", targetGroupId, page);
-    if (!this.permissions.canApproveJoin(userId, targetGroupId)) {
-      const card = renderCard({
-        title: "权限不足",
-        lines: ["通过入群申请需要群管理员或以上权限。"],
-        rows: [[back]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    try {
-      const request = this.joinAudit.get(requestId);
-      if (request.groupId !== targetGroupId) {
-        const card = renderCard({
-          title: "审批失败",
-          lines: ["申请不属于该群。"],
-          rows: [[back]],
-        });
-        return { ok: false, text: card.text, rich: card };
-      }
-      await this.joinApproval.approve(targetGroupId, requestId, userId);
-    } catch (error) {
-      log.warn("approve via callback failed", {
-        requestId,
-        error: formatError(error),
-      });
-      const card = renderCard({
-        title: "审批失败",
-        lines: [formatError(error)],
-        rows: [[back]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    log.info("approved join request via callback", { requestId, userId });
-    return this.pendingCard(
-      undefined,
-      userId,
-      ["pending", targetGroupId, `+${page}`],
-      `${this.mention(replyGroupId, userId)}已通过 ${this.displayRequest(requestId)}`,
-    );
+    return approveCard(this.context(), targetGroupId, requestId, userId, page, replyGroupId);
   }
-
   /**
    * `/rules [群号|#群短码]`：规则概览卡（§C 重构）。
    *
@@ -1276,77 +1085,12 @@ export class AdminCommandService {
     page = 1,
     limit = 20,
   ): CardResult {
-    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
-      const card = renderCard({
-        title: "权限不足",
-        lines: ["需要审核员或以上权限。"],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    const groupLabel = this.displayGroup(targetGroupId);
-    const size = limit > 0 ? limit : 20;
-    // 最新的记录在前
-    const all = this.auditLog.findByGroup(targetGroupId).slice().reverse();
-    if (all.length === 0) {
-      return cardFromText("审计记录", `群 ${groupLabel}：暂无审计记录。`, {
-        rows: [
-          [viewButton("refresh", "刷新", "audit", "page", targetGroupId, size, 1)],
-        ],
-        footer: [`本群：${groupLabel}`],
-      });
-    }
-    const pageCount = Math.max(1, Math.ceil(all.length / size));
-    const current = Math.min(Math.max(page, 1), pageCount);
-    const slice = all.slice((current - 1) * size, current * size);
-    const lines = [
-      `**群**：${groupLabel}`,
-      `**审计记录**：${all.length} 条 · 第 ${current} / ${pageCount} 页（每页 ${size}）`,
-    ];
-    for (const record of slice) {
-      const target = record.targetUserId
-        ? ` → ${this.displayUser(record.targetUserId)}`
-        : "";
-      lines.push(
-        `${formatTime(record.createdAt)} ${record.action} ${record.status}${
-          record.actorId ? ` by ${this.displayUser(record.actorId)}` : ""
-        }${target}`,
-      );
-    }
-    const paging: CardButton[] = [];
-    if (current > 1) {
-      paging.push(
-        viewButton("prev", "上一页", "audit", "page", targetGroupId, size, current - 1),
-      );
-    }
-    if (current < pageCount) {
-      paging.push(
-        viewButton("next", "下一页", "audit", "page", targetGroupId, size, current + 1),
-      );
-    }
-    paging.push(
-      viewButton("refresh", "刷新", "audit", "page", targetGroupId, size, current),
-    );
-    const footer: string[] = [];
-    if (current < pageCount) {
-      footer.push(`下一页：/audit +${current + 1}`);
-    }
-    if (current > 1) {
-      footer.push(`上一页：/audit +${current - 1}`);
-    }
-    footer.push(`本群：${groupLabel}`);
-    return cardFromText("审计记录", lines.join("\n"), {
-      rows: [paging],
-      buttonHint: "翻页：",
-      footer,
-    });
+    return auditCard(this.context(), targetGroupId, userId, page, limit);
   }
-
   /** `/test`：自检结果卡 + 常用入口。 */
   public testCard(groupId: string | undefined, userId: string): CardResult {
     return testCard(this.context(), groupId, userId);
   }
-
   /**
    * `/sync [群号|#群短码]` 与 `cb:sync:run`：同步官方待审批申请。
    *
@@ -1358,90 +1102,9 @@ export class AdminCommandService {
     userId: string,
     replyGroupId?: string,
   ): Promise<CardResult> {
-    const back = viewButton(
-      "pending",
-      "查看待审批",
-      "pending",
-      "page",
-      targetGroupId,
-      1,
-    );
-    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
-      const card = renderCard({
-        title: "权限不足",
-        lines: ["需要审核员或以上权限。"],
-        rows: [[back]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    let pending;
-    try {
-      pending = await this.joinSync.syncGroup(targetGroupId);
-    } catch (error) {
-      log.warn("join sync failed", {
-        groupId: targetGroupId,
-        error: formatError(error),
-      });
-      const card = renderCard({
-        title: "同步失败",
-        lines: [
-          ...(this.mention(replyGroupId, userId).trimEnd()
-            ? [this.mention(replyGroupId, userId).trimEnd()]
-            : []),
-          formatError(error),
-        ],
-        rows: [[back]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    await this.notifyPending(targetGroupId, pending).catch(() => undefined);
-    const operator = this.mention(replyGroupId, userId).trimEnd();
-    const lines = [
-      ...(operator ? [operator] : []),
-      `**群**：${this.displayGroup(targetGroupId)}`,
-      `**结果**：已同步官方待审批申请，当前待审批 ${pending.length} 条`,
-    ];
-    for (const request of pending.slice(0, 5)) {
-      const reason = request.reason ? ` 理由：${request.reason}` : "";
-      lines.push(
-        `- ${escapeCardText(this.displayRequest(request.requestId))} 用户：${escapeCardText(this.displayUser(request.userId))}${escapeCardText(reason)}`,
-      );
-    }
-    if (pending.length > 5) {
-      lines.push("（仅显示前 5 条，点下方按钮查看全部）");
-    }
-    return cardFromText("同步结果", lines.join("\n"), {
-      rows: [[back]],
-      footer: ["待审批列表每页 3 条，可翻页"],
-    });
+    return syncCard(this.context(), targetGroupId, userId, replyGroupId);
   }
-
   /** 审批结果卡（通过 / 拒绝），标明操作人并给回列表入口。 */
-  private approvalResultCard(
-    targetGroupId: string,
-    userId: string,
-    message: string,
-    ok: boolean,
-    replyGroupId?: string,
-  ): CardResult {
-    const card = renderCard({
-      title: ok ? "审批结果" : "审批失败",
-      lines: [
-        ...(this.mention(replyGroupId, userId).trimEnd()
-          ? [this.mention(replyGroupId, userId).trimEnd()]
-          : []),
-        message,
-      ],
-      rows: [
-        [
-          viewButton("back", "返回待审批", "pending", "page", targetGroupId, 1),
-          viewButton("audit", "查看审计", "audit", "page", targetGroupId, 20, 1),
-        ],
-      ],
-
-    });
-    return { ok, text: card.text, rich: card };
-  }
   /**
    * 子卡：开关设置 / 入群审核 / 违规处理 / 关键词 / 名单筛选 / 更多设置（§C 重构）。
    *
@@ -2682,31 +2345,6 @@ export class AdminCommandService {
   }
 
   /** 同步补齐的申请也推送一次；投递表保证同一申请不会重复推给同一个人。 */
-  private async notifyPending(
-    groupId: string,
-    requests: readonly JoinRequest[],
-  ): Promise<void> {
-    if (!this.notifications) {
-      return;
-    }
-    for (const request of requests) {
-      await this.notifications
-        .notifyJoinRequest({
-          groupId,
-          requestId: request.requestId,
-          userId: request.userId,
-          reason: request.reason,
-        })
-        .catch((error: unknown) => {
-          log.warn("notify pending join request failed", {
-            groupId,
-            requestId: request.requestId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
-    }
-  }
-
   // ------------------------------------------------------------- /profile
 
   private async handleActivity(
@@ -4946,101 +4584,6 @@ export class AdminCommandService {
     return rich.text;
   }
 
-  private handlePending(
-    groupId: string | undefined,
-    userId: string,
-    parts: readonly string[],
-  ): CommandResult {
-    return this.pendingCard(groupId, userId, parts);
-  }
-
-  private async handleApprove(
-    groupId: string | undefined,
-    userId: string,
-    parts: readonly string[],
-  ): Promise<CommandResult> {
-    const resolved = this.resolveReviewTarget(groupId, parts);
-    const { targetGroupId, requestId } = resolved;
-    if (!targetGroupId || !requestId) {
-      return {
-        ok: false,
-        text:
-          "用法：\n" +
-          "  /approve <#申请短码>                         群内审批本群\n" +
-          "  /approve <群号|#群短码> <#申请短码>            私信中审批指定群\n" +
-          "  /approve <#申请短码>                         私信中也可以（自动定位该申请所属群）",
-      };
-    }
-    if (!this.permissions.canApproveJoin(userId, targetGroupId)) {
-      return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
-    }
-    try {
-      const request = this.joinAudit.get(requestId);
-      if (request.groupId !== targetGroupId) {
-        return { ok: false, text: "申请不属于该群。" };
-      }
-      await this.joinApproval.approve(targetGroupId, requestId, userId);
-    } catch (error) {
-      log.warn("approve failed", { requestId, error: formatError(error) });
-      return { ok: false, text: `审批失败：${formatError(error)}` };
-    }
-    log.info("approved join request", { requestId, userId });
-    return this.approvalResultCard(
-      targetGroupId,
-      userId,
-      `已通过入群申请 ${this.displayRequest(requestId)}。`,
-      true,
-      groupId,
-    );
-  }
-
-  private async handleReject(
-    groupId: string | undefined,
-    userId: string,
-    parts: readonly string[],
-  ): Promise<CommandResult> {
-    const { targetGroupId, requestId, reasonParts } = this.resolveReviewTarget(
-      groupId,
-      parts,
-    );
-    if (!targetGroupId || !requestId) {
-      return {
-        ok: false,
-        text:
-          "用法：\n" +
-          "  /reject <#申请短码> [原因]                    群内审批本群\n" +
-          "  /reject <群号|#群短码> <#申请短码> [原因]      私信中审批指定群\n" +
-          "  /reject <#申请短码> [原因]                    私信中也可以（自动定位该申请所属群）",
-      };
-    }
-    if (!this.permissions.canApproveJoin(userId, targetGroupId)) {
-      return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
-    }
-    const reason = reasonParts.join(" ").trim();
-    try {
-      const request = this.joinAudit.get(requestId);
-      if (request.groupId !== targetGroupId) {
-        return { ok: false, text: "申请不属于该群。" };
-      }
-      await this.joinApproval.reject(targetGroupId, requestId, userId, reason);
-    } catch (error) {
-      log.warn("reject failed", { requestId, error: formatError(error) });
-      return { ok: false, text: `审批失败：${formatError(error)}` };
-    }
-    log.info("rejected join request", {
-      requestId,
-      userId,
-      hasReason: reason.length > 0,
-    });
-    return this.approvalResultCard(
-      targetGroupId,
-      userId,
-      `已拒绝入群申请 ${this.displayRequest(requestId)}。`,
-      true,
-      groupId,
-    );
-  }
-
   private async handleRules(
     groupId: string | undefined,
     userId: string,
@@ -5289,28 +4832,6 @@ export class AdminCommandService {
       this.configStore.default,
       "全局默认规则（未单独配置的群继承）：",
     );
-  }
-
-  private handleAudit(
-    groupId: string | undefined,
-    userId: string,
-    parts: readonly string[],
-  ): CommandResult {
-    const { page, rest } = extractPageToken(parts);
-    const targetGroupId = this.resolveTargetGroupId(groupId, rest[0]);
-    if (!targetGroupId) {
-      const card = renderCard({
-        title: "审计记录",
-        lines: [
-          "该指令需要在群内使用，或在私信中提供群号 / #群短码。",
-          "用法：/audit [群号|#群短码] [每页数量] [+页码]",
-        ],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    const limit = clampLimit(groupId !== undefined ? rest[0] : rest[1]);
-    return this.auditCard(targetGroupId, userId, page, limit);
   }
 
   private handleTest(groupId: string | undefined, userId: string): CommandResult {
