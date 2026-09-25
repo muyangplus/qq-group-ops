@@ -227,4 +227,39 @@ describe("AdminCommandService · rules", () => {
     expect(result.rich.markdown).not.toContain("操作人：");
     expect(configStore.get("g1").wordFilterEnabled).toBe(false);
   });
+
+  it("configures raw message retention days", async () => {
+    const set = await service.handle("g1", "admin", "/rules set rawMessageRetentionDays 7");
+    expect(set.ok).toBe(true);
+    expect(configStore.get("g1").rawMessageRetentionDays).toBe(7);
+
+    // 0 = 不保留；clear 等同归零
+    await service.handle("g1", "admin", "/rules set rawMessageRetentionDays 0");
+    expect(configStore.get("g1").rawMessageRetentionDays).toBe(0);
+
+    await service.handle("g1", "admin", "/rules set rawMessageRetentionDays 7");
+    await service.handle("g1", "admin", "/rules set rawMessageRetentionDays clear");
+    expect(configStore.get("g1").rawMessageRetentionDays).toBe(0);
+
+    // 非法值：负数 / 非数字都拒绝，且不改配置
+    await service.handle("g1", "admin", "/rules set rawMessageRetentionDays 7");
+    for (const bad of ["-1", "abc", "1.5"]) {
+      const invalid = await service.handle("g1", "admin", `/rules set rawMessageRetentionDays ${bad}`);
+      expect(invalid.ok, bad).toBe(false);
+      expect(invalid.text, bad).toContain("需要 0 或正整数");
+      expect(configStore.get("g1").rawMessageRetentionDays, bad).toBe(7);
+    }
+    // 用法里也列出了这个字段
+    const usage = await service.handle("g1", "admin", "/rules set");
+    expect(usage.text).toContain("rawMessageRetentionDays");
+  });
+
+  it("lists the retention entry on the 更多设置 panel", () => {
+    const panel = service.rulesPanelCard("more", "g1", "admin");
+    const labels = (panel.rich.keyboard?.content.rows ?? [])
+      .flatMap((row) => row.buttons)
+      .map((button) => button.label);
+    expect(labels).toContain("消息保留");
+    expect(panel.rich.markdown).toContain("消息保留");
+  });
 });

@@ -812,6 +812,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 | `joinReviewOpinion` | `审核意见` | on / off | `/pending` 是否展示自动审核意见 |
 | `notifyAutoApproved` | `通知自动通过`、`autoNotify` | on / off | 机器人自动通过/拒绝的申请是否也推送给审核员（默认 off，只推需要人工处理的） |
 | `export` | `导出` | on / off | 导出开关（当前仅存储展示） |
+| `rawMessageRetentionDays` | `消息保留天数`、`messageRetention` | 天数（`0` = 不保留）；`clear` 归零 | 原始消息保留天数，供审计与申诉回看使用 |
 | `enabled` | `启用` | on / off | 本群机器人总开关 |
 
 作用域写法：

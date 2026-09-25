@@ -462,6 +462,7 @@ export const RULE_PANEL_FIELDS: Record<RulePanelId, readonly (keyof GroupConfigO
     "joinReviewOpinion",
     "warningMessage",
     "joinAnswerPattern",
+    "rawMessageRetentionDays",
   ],
 };
 
@@ -634,6 +635,7 @@ export const RULE_FIELDS_HELP = [
   "  notifyAutoApproved on|off             机器人自动通过/拒绝的申请是否也推送给审核员",
   "  allowColleges / denyColleges <学院列表>   学院白/黑名单（clear 清空）",
   "  allowYears / denyYears <年级列表>     年级白/黑名单（22/23/…，clear 清空）",
+  "  rawMessageRetentionDays <天数>        原始消息保留天数（0 = 不保留，clear 归零）",
 ];
 
 export const RULES_SET_USAGE = [
@@ -952,6 +954,16 @@ export function parsePositiveInt(field: string, value: string): number {
   return parsed;
 }
 
+/** 原始消息保留天数：`0` 表示不保留，其余必须是非负整数。 */
+export function parseRetentionDays(field: string, value: string): number {
+  const trimmed = value.trim();
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!/^\d+$/u.test(trimmed) || !Number.isFinite(parsed)) {
+    throw new Error(`${field} 需要 0 或正整数（天）`);
+  }
+  return parsed;
+}
+
 /** `/rules all`、`/rules 全局`、`/rules set default ...` 都指向全局规则。 */
 export function isGlobalTarget(value: string | undefined): boolean {
   return GLOBAL_TARGETS.has(normalize(value));
@@ -1096,6 +1108,13 @@ export function parseRuleSetting(
     case "不允许年级":
     case "年级黑名单":
       return { groupId, denyYears: cleared ? [] : parseListItems(value) };
+    case "rawmessageretentiondays":
+    case "messageretention":
+    case "消息保留天数":
+      return {
+        groupId,
+        rawMessageRetentionDays: cleared ? 0 : parseRetentionDays(field, value),
+      };
     default:
       throw new Error(`未知字段：${field}`);
   }

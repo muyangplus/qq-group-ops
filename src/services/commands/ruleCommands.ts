@@ -580,6 +580,7 @@ export function rulesMorePanel(
     [
       actionButton("mute-custom", "禁言时长", "/rules set muteDuration "),
       actionButton("answer-pattern", "回答正则", "/rules set joinAnswerPattern "),
+      actionButton("retention", "消息保留", "/rules set rawMessageRetentionDays "),
     ],
     [
       ruleRestoreButton(ctx, "more", targetGroupId, [
@@ -589,6 +590,7 @@ export function rulesMorePanel(
         "joinReviewOpinion",
         "warningMessage",
         "joinAnswerPattern",
+        "rawMessageRetentionDays",
       ]),
       ruleBackButton(ctx, targetGroupId),
     ],
@@ -603,6 +605,11 @@ export function rulesMorePanel(
       ruleInheritanceLine(ctx, targetGroupId, "enabled"),
       `**警告文案**：${config.warningMessage}`,
       `**禁言时长**：${config.muteDurationSeconds} 秒 · **回答正则**：${config.joinAnswerPattern || "（未设置）"}`,
+      `**消息保留**：${
+        config.rawMessageRetentionDays > 0
+          ? `${config.rawMessageRetentionDays} 天`
+          : "不保留原始消息"
+      }`,
       "要求班级 / 要求姓名在「入群审核」子卡；关键词在「关键词」子卡。",
     ],
   );
