@@ -33,6 +33,9 @@ export interface ActivityRules {
   denyYears: string[];
 }
 
+/** 候补递补方式：`auto` = 有人取消就自动递补第一位；`manual` = 等管理员手动释放名额。 */
+export type WaitlistPromotionMode = "auto" | "manual";
+
 export interface Activity {
   activityId: string;
   /** 6 位随机短码（展示为 `#A7K2Q9`）。 */
@@ -54,6 +57,8 @@ export interface Activity {
   mentionAll: boolean;
   /** 有人报名时是否私信通知活动发起人（默认关，避免群里刷屏）。 */
   notifyCreator: boolean;
+  /** 候补递补方式：自动递补 / 管理员手动释放名额（**默认手动**）。 */
+  waitlistPromotion: WaitlistPromotionMode;
   /** 报名截止时间；到期后**懒校验**拒绝报名（不再单独跑定时器）。 */
   closeAt?: Date;
   createdAt: Date;
@@ -93,6 +98,7 @@ export interface CreateActivityInput {
   denyYears?: string[];
   mentionAll?: boolean;
   notifyCreator?: boolean;
+  waitlistPromotion?: WaitlistPromotionMode;
   closeAt?: Date;
 }
 
@@ -108,6 +114,7 @@ export interface UpdateActivityInput {
   denyYears?: string[];
   mentionAll?: boolean;
   notifyCreator?: boolean;
+  waitlistPromotion?: WaitlistPromotionMode;
   closeAt?: Date | undefined;
 }
 
@@ -277,6 +284,7 @@ export class ActivityService {
       status: ActivityStatus.Draft,
       mentionAll: input.mentionAll ?? false,
       notifyCreator: input.notifyCreator ?? false,
+      waitlistPromotion: input.waitlistPromotion ?? "manual",
       ...(input.closeAt !== undefined ? { closeAt: input.closeAt } : {}),
       createdAt: utcNow(),
     };
@@ -370,6 +378,9 @@ export class ActivityService {
     }
     if (patch.notifyCreator !== undefined) {
       activity.notifyCreator = patch.notifyCreator;
+    }
+    if (patch.waitlistPromotion !== undefined) {
+      activity.waitlistPromotion = patch.waitlistPromotion;
     }
     if ("closeAt" in patch) {
       if (patch.closeAt === undefined) {
@@ -601,9 +612,11 @@ export class ActivityService {
   }
 
   /**
-   * 取消报名并自动递补候补第一位。
+   * 取消报名；**递补方式由活动配置决定**：
    *
-   * 返回被取消的报名与（如果有）被递补上来的候补条目，便于调用方私信通知。
+   * - `auto`（自动递补）：立刻把候补第一位转正；
+   * - `manual`（手动释放名额，默认）：空出来的名额留给管理员决定，
+   *   由管理端调用 `promoteNextWaitlist()` 手动释放/递补。
    */
   public cancelRegistrationWithPromotion(
     registrationId: string,
@@ -611,9 +624,14 @@ export class ActivityService {
   ): {
     cancelled: ActivityRegistration;
     promoted?: ActivityWaitlistEntry;
+    registration?: ActivityRegistration;
     position?: number;
   } {
     const cancelled = this.cancelRegistration(registrationId, userId);
+    const activity = this.getActivity(cancelled.activityId);
+    if (activity.waitlistPromotion !== "auto") {
+      return { cancelled };
+    }
     const promoted = this.promoteNextWaitlist(cancelled.activityId);
     return promoted ? { cancelled, ...promoted } : { cancelled };
   }
@@ -709,6 +727,13 @@ export class ActivityService {
         value: String(settings.notifyCreator),
       }),
     );
+    this.queue?.enqueue("activity.settings.waitlistPromotion", () =>
+      repository.save({
+        activityId: activity.activityId,
+        key: ACTIVITY_SETTING_KEYS.waitlistPromotion,
+        value: settings.waitlistPromotion,
+      }),
+    );
     if (settings.closeAt !== undefined) {
       this.queue?.enqueue("activity.settings.closeAt", () =>
         repository.save({
@@ -784,19 +809,25 @@ export const ACTIVITY_SETTING_KEYS = {
   mentionAll: "mentionAll",
   notifyCreator: "notifyCreator",
   closeAt: "closeAt",
+  waitlistPromotion: "waitlistPromotion",
 } as const;
 
-/** 把 KV 设置应用到活动对象上（缺省值保持不 @全体、不通知、无截止）。 */
+/** 把 KV 设置应用到活动对象上（缺省值：不 @全体、不通知、无截止、**手动释放名额**）。 */
 function applySettings(activity: Activity, bucket: ReadonlyMap<string, string>): Activity {
   const mentionAll = bucket.get(ACTIVITY_SETTING_KEYS.mentionAll);
   const notifyCreator = bucket.get(ACTIVITY_SETTING_KEYS.notifyCreator);
   const closeAt = bucket.get(ACTIVITY_SETTING_KEYS.closeAt);
+  const promotion = bucket.get(ACTIVITY_SETTING_KEYS.waitlistPromotion);
   const parsedCloseAt = closeAt ? new Date(closeAt) : undefined;
   return {
     ...activity,
     mentionAll: mentionAll === undefined ? activity.mentionAll : mentionAll === "true",
     notifyCreator:
       notifyCreator === undefined ? activity.notifyCreator : notifyCreator === "true",
+    waitlistPromotion:
+      promotion === "auto" || promotion === "manual"
+        ? promotion
+        : activity.waitlistPromotion,
     ...(parsedCloseAt && !Number.isNaN(parsedCloseAt.getTime())
       ? { closeAt: parsedCloseAt }
       : activity.closeAt !== undefined
@@ -809,11 +840,13 @@ function applySettings(activity: Activity, bucket: ReadonlyMap<string, string>):
 export function settingsOf(activity: Activity): {
   mentionAll: boolean;
   notifyCreator: boolean;
+  waitlistPromotion: WaitlistPromotionMode;
   closeAt?: string;
 } {
   return {
     mentionAll: activity.mentionAll,
     notifyCreator: activity.notifyCreator,
+    waitlistPromotion: activity.waitlistPromotion,
     ...(activity.closeAt !== undefined
       ? { closeAt: activity.closeAt.toISOString() }
       : {}),

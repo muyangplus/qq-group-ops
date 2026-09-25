@@ -343,14 +343,11 @@ describe("ActivityService", () => {
     expect(() => service.checkEligibility(activity, wrong)).toThrow(/仅限/u);
   });
 
-  it("puts overflow registrations on the waitlist and promotes on cancel", () => {
+  it("defaults to manual release: cancelling does not promote a waitlisted user", () => {
     const waitlist = new FakeActivityWaitlistRepository();
-    const withWaitlist = new ActivityService(
-      undefined,
-      undefined,
-      undefined,
-      { waitlistRepository: waitlist },
-    );
+    const withWaitlist = new ActivityService(undefined, undefined, undefined, {
+      waitlistRepository: waitlist,
+    });
     withWaitlist.createActivity({
       groupId: "g1",
       title: "限额活动",
@@ -360,38 +357,62 @@ describe("ActivityService", () => {
     });
     withWaitlist.openActivity("a1");
 
+    expect(withWaitlist.getActivity("a1").waitlistPromotion).toBe("manual");
     expect(
       withWaitlist.joinActivity({ activityId: "a1", userId: "u1", displayName: "小明" }),
     ).toMatchObject({ status: "registered" });
-    const overflow = withWaitlist.joinActivity({
-      activityId: "a1",
-      userId: "u2",
-      displayName: "小红",
-      note: "候补一下",
-    });
-    expect(overflow).toMatchObject({ status: "waitlisted", position: 1 });
-    expect(withWaitlist.waitlistPosition("a1", "u2")).toBe(1);
-    expect(withWaitlist.listWaitlist("a1").map((entry) => entry.displayName)).toEqual([
-      "小红",
-    ]);
-    // 重复报名/重复候补都要被拒绝
-    expect(() =>
-      withWaitlist.joinActivity({ activityId: "a1", userId: "u1" }),
-    ).toThrow(/已经报名/u);
-    expect(() =>
-      withWaitlist.joinActivity({ activityId: "a1", userId: "u2" }),
-    ).toThrow(/已经在候补名单/u);
+    expect(
+      withWaitlist.joinActivity({
+        activityId: "a1",
+        userId: "u2",
+        displayName: "小红",
+        note: "候补一下",
+      }),
+    ).toMatchObject({ status: "waitlisted", position: 1 });
 
-    // 有人取消 → 候补第一位自动递补，并带上原本的备注
+    // 手动模式：取消后候补**不自动递补**，等管理员显式释放
+    const registration = withWaitlist.findRegistration("a1", "u1")!;
+    const result = withWaitlist.cancelRegistrationWithPromotion(
+      registration.registrationId,
+      "u1",
+    );
+    expect(result.promoted).toBeUndefined();
+    expect(withWaitlist.listWaitlist("a1").map((entry) => entry.userId)).toEqual([
+      "u2",
+    ]);
+    expect(withWaitlist.listRegistrations("a1")).toEqual([]);
+
+    // 管理员手动释放名额 → 递补第一位，并带上原本的备注
+    const released = withWaitlist.promoteNextWaitlist("a1")!;
+    expect(released.promoted.userId).toBe("u2");
+    expect(released.registration.displayName).toBe("小红");
+    expect(released.registration.note).toBe("候补一下");
+    expect(withWaitlist.listWaitlist("a1")).toEqual([]);
+    expect(withWaitlist.listRegistrations("a1").map((item) => item.userId)).toEqual([
+      "u2",
+    ]);
+  });
+
+  it("auto-promotes the first waitlisted user when the activity says so", () => {
+    const withWaitlist = new ActivityService();
+    withWaitlist.createActivity({
+      groupId: "g1",
+      title: "自动递补活动",
+      createdBy: "admin",
+      activityId: "a1",
+      capacity: 1,
+      waitlistPromotion: "auto",
+    });
+    withWaitlist.openActivity("a1");
+    withWaitlist.joinActivity({ activityId: "a1", userId: "u1" });
+    withWaitlist.joinActivity({ activityId: "a1", userId: "u2", displayName: "小红" });
+
     const registration = withWaitlist.findRegistration("a1", "u1")!;
     const result = withWaitlist.cancelRegistrationWithPromotion(
       registration.registrationId,
       "u1",
     );
     expect(result.promoted?.userId).toBe("u2");
-    expect(result.registration.displayName).toBe("小红");
-    expect(result.registration.note).toBe("候补一下");
-    expect(withWaitlist.listWaitlist("a1")).toEqual([]);
     expect(withWaitlist.listRegistrations("a1").map((item) => item.userId)).toEqual([
       "u2",
     ]);
@@ -440,6 +461,7 @@ describe("ActivityService", () => {
     first.updateActivity("a1", {
       mentionAll: true,
       notifyCreator: true,
+      waitlistPromotion: "auto",
       closeAt: new Date("2026-12-31T23:59:00.000Z"),
     });
     first.joinActivity({ activityId: "a1", userId: "u1" });
@@ -450,6 +472,7 @@ describe("ActivityService", () => {
       "closeAt",
       "mentionAll",
       "notifyCreator",
+      "waitlistPromotion",
     ]);
     expect(waitlist.rows).toHaveLength(1);
 
@@ -461,6 +484,7 @@ describe("ActivityService", () => {
     expect(restarted.getActivity("a1")).toMatchObject({
       mentionAll: true,
       notifyCreator: true,
+      waitlistPromotion: "auto",
     });
     expect(restarted.getActivity("a1").closeAt?.toISOString()).toBe(
       "2026-12-31T23:59:00.000Z",

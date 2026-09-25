@@ -107,6 +107,7 @@ export class SqlActivityRepository implements ActivityRepository {
       // @全体 / 通知发起人 / 截止时间由 activity_settings 表合并进来
       mentionAll: false,
       notifyCreator: false,
+      waitlistPromotion: "manual",
       status: row.status as ActivityStatus,
       createdAt: toDate(row.created_at),
     }));
