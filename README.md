@@ -671,9 +671,40 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 - 封顶：每人每天最多 `ACTIVITY_NOTIFY_DAILY_LIMIT` 条（默认 `3`，`0` = 不限制），超限只记日志；
   这是为了不把官方主动私信额度（单用户每天 1000 条、单关系 20 qpm）打满。
 
-> **可选能力（§B3，未装配时优雅降级）**：管理卡的「统计图片」按钮与名单卡的「导出 CSV」按钮
-> 只在对应服务装配后才生成；未装配时 `cb:activity:stats` 会降级成**文字统计卡**，
-> `cb:activity:export` 会提示「导出服务未装配」。活动功能本身不依赖它们。
+### 统计图片与 CSV 导出
+
+管理卡的「统计图片」和名单卡的「导出 CSV」是两个**只对管理者开放**的查看/导出入口：
+
+- **统计图片**（`cb:activity:stats`）：渲染一张 PNG（宽度 720、高度自适应）并发到活动群，
+  内容为标题、`报名 X/Y`、`候补 N`、`待释放名额 M`、`截止`、学院分布与年级分布（横向条形 + 人数）；
+  操作者随后收到一张「已发送统计图片」卡；
+- **导出 CSV**（`cb:activity:export`）：列固定为 `序号,姓名,学号,班级,学院,备注,候补`（候补行最后一列 `候补`），
+  以代码块**私信给操作者本人**（群里不回执内容——学号 / 班级 / 学院都属于隐私字段）；
+  名单超过单条消息长度上限时不硬塞，改为私信提示用 `/export #短码` 拿完整文件。
+
+这两项都是**可选能力**，装配不上就降级，活动本身照常工作：
+
+| 情况 | 结果 |
+|---|---|
+| 没装 `@napi-rs/canvas`（可选原生依赖） | 「统计图片」按钮不生成；直接调用回调 → **文字统计卡** |
+| 系统没有中文字体、也下载不到字体 | 同上（先试 `ACTIVITY_STATS_FONT_URL`，仍失败就降级） |
+| 图片上传 / 发送失败 | 渲染成功也降级为**文字统计卡**（拿到数据比拿到半张图重要） |
+| 导出服务未装配 | 按钮不生成；调用回调提示「导出服务未装配」 |
+
+字体策略：**系统优先**（Windows `msyh.ttc`、Linux `NotoSansCJK*` / `wqy-*`、macOS 苹方），
+找不到才从 `ACTIVITY_STATS_FONT_URL`（默认 Noto Sans SC 官方发布地址）下载并缓存到
+`data/fonts/`（`data/` 已 gitignore，**字体缓存不随包提交**）。容器里想真正出图：
+
+```bash
+pnpm add @napi-rs/canvas              # 可选依赖；装不上只会降级，不影响启动
+# 也可以指向自建镜像的字体地址（留空 = 只用系统字体）
+ACTIVITY_STATS_FONT_URL=https://example.com/NotoSansSC-Regular.otf
+```
+
+> 官方群图片上传没有「multipart 直传字节」接口：群聊富媒体上传
+> （`POST /v2/groups/{group_id}/files`）只接受 `url` 直传或分片上传合并。本地渲染的 PNG 没有公网 URL，
+> 因此走分片（`upload_prepare` → 逐片 `PUT` → `upload_part_finish` → 带 `upload_id` 合并），
+> 拿到 `file_info` 后用 `msg_type: 7` 发送。端点可在 `QQOfficialEndpoints` 覆盖。
 
 ## 入群申请推送（卡片 + 快捷同意/拒绝）
 
@@ -1049,7 +1080,8 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 ├── test/                    # Vitest 测试
 ├── scripts/
 │   └── build-class-index.mjs # pnpm class:index：data/class.json → class-index.json + .sqlite
-├── data/                    # 本地数据（gitignored）：class.json、class-index.json / .sqlite、SQLite 文件
+├── data/                    # 本地数据（gitignored）：class.json、class-index.json / .sqlite、SQLite 文件、
+│                            #   统计图字体缓存（data/fonts/，不随包提交）
 ├── package.json
 ├── tsconfig.json
 ├── vitest.config.ts

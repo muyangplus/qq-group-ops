@@ -55,6 +55,32 @@
   - **§B3 可选依赖**：统计图片与 CSV 导出做成**条件生成按钮**（`ActivityCardService` 的
     `stats` / `exportService` 注入项，未装配时按钮不生成；`cb:activity:stats` 降级为文字统计卡，
     `cb:activity:export` 提示未装配），B2 因此可以独立交付、之后接线即可。
+- **活动统计图片 / 群图片上传 / CSV 导出（§B3）**：
+  - **群图片上传与发送**（`src/adapters/qqOfficial.ts`）：新增 `uploadGroupImage`（官方
+    「群聊富媒体上传」`POST /v2/groups/{group_openid}/files`，本地 PNG 没有公网 URL，因此走
+    `upload_prepare` → 逐片 `PUT` 预签名 URL → `upload_part_finish` → 带 `upload_id` 合并的分片路径）
+    与 `sendGroupImage`（`msg_type: 7` + `media.file_info`，官方要求 `file_info` 原样透传）；
+    三个端点路径都可在 `QQOfficialEndpoints` 覆盖（`groupFileUpload` / `groupFileUploadPrepare` /
+    `groupFileUploadPartFinish`）。`AsyncTransport` 新增**可选**的 `requestRaw`（分片 `PUT` 既不是 JSON
+    也不带机器人鉴权头），`FetchTransport` 实现它；`FakeQQOfficialAPI` 记录
+    `uploadedGroupImages` / `sentGroupImages` 并提供 `failGroupImages` 失败开关。
+  - **新服务 `src/services/activityStats.ts`**：用 `@napi-rs/canvas` 渲染 PNG（宽度 720、高度自适应）——
+    标题、`报名 X/Y`、`候补 N`、`待释放名额 M`、`截止`、学院分布与年级分布（横向条形 + 人数）。
+    **字体系统优先**（Windows 雅黑 / Linux Noto CJK / 文泉驿 / macOS 苹方），找不到才从
+    `ACTIVITY_STATS_FONT_URL` 下载并缓存到 `data/fonts/`（`data/` 已 gitignore，**缓存不随包提交**）。
+    `@napi-rs/canvas` 是**可选依赖**，用变量拼包名动态 `import()`（静态写法会变成编译期硬依赖）；
+    拿不到依赖或字体时 `render()` 返回 `undefined`，调用方降级为**文字统计卡**，
+    **绝不影响启动或活动回调**。
+  - **新服务 `src/services/activityExport.ts`**：CSV 列固定
+    `序号,姓名,学号,班级,学院,备注,候补`（候补行最后一列 `候补`），以代码块**私信给操作者本人**
+    （群里不回执内容）；超过单条消息长度上限（默认 1800 字符）时不硬塞，改为提示用 `/export #短码`
+    拿完整文件（避免被平台截断成半份名单）。
+  - **接线**（`src/runtime.ts`）：装配 `ActivityStatsService` + `ActivityExportService`，通过
+    `setActivityExtras()` 注入 `AdminCommandService` 与 `ActivityCardService`（两处同步，
+    否则会出现「有实现没入口」）；`cb:activity:stats` 渲染并发送图片，成功回「已发送统计图」卡，
+    渲染降级 / 上传失败 → 文字统计卡；`cb:activity:export` 生成 CSV 并私信操作者。
+    `ActivityStatsLike` 新增 `canSend`：只有**既能渲染又能发送**时才生成「统计图片」按钮。
+  - **新 env `ACTIVITY_STATS_FONT_URL`**（默认 Noto Sans SC 官方发布地址，留空 = 只用系统字体）。
 - `cardTemplate` 的**回调按钮也支持 `modal`**（报名 / 取消报名 / 取消活动等不可逆动作的二次确认）。
 
 ### 变更
@@ -66,16 +92,22 @@
 - `/menu` 的「活动」「活动运营」子菜单补充订阅、配置卡、管理卡与 `[+页码] [full]` 等新用法。
 - `/activity set` 新增 `closeAt` / `waitlistPromotion` / `mentionAll` / `notifyCreator` 字段，
   并在改到「当事人关心」的字段时给已报名 + 候补私信一次变更通知（`kind: "changed"`，去重 + 封顶）。
+- `<@!>` 与 `msg_type=7` 共用「发送群聊消息」接口：图片发送复用 `sendGroupMessage` 的节流与
+  被动回复配额，`sendGroupImage(groupId, fileInfo, msgId?)` 支持被动回复。
 
 ### 修复
 
-- 无（§B2 不含 B1 的修复项）。
+- 无（§B2 / §B3 不含 B1 的修复项）。
 
 ### 已知限制
 
 - **无法自动修改群成员昵称/群名片**：官方开放平台「群聊管理」接口中没有该能力，已核对接口列表。入群审核识别到的「班级+姓名」会展示在 `/pending` 审核意见与日志中，供人工改名；若官方后续开放该接口，可在 `JoinRuleEvaluator` 输出之上直接接入。
-- **活动统计图片 / CSV 导出尚未启用**：`cb:activity:stats` 与 `cb:activity:export` 已接线，
-  但 `ActivityStatsService` / 导出服务属于 §B3，未装配时按钮不生成（统计回调降级为文字统计卡）。
+- **统计图片是可选能力**：`@napi-rs/canvas` 是原生依赖，装不上时「统计图片」按钮不生成、
+  回调直接降级为文字统计卡（设计如此，不影响启动与报名）。官方群图片上传没有 multipart 直传接口，
+  本地 PNG 走分片上传；若平台调整 `upload_prepare` / `upload_part_finish` 的字段或路径，
+  需要按官方文档更新 `QQOfficialEndpoints`（已做成可配置）。
+- **CSV 超过单条消息上限时不给文件本体**：只私信提示用 `/export #短码`。当前没有对象存储，
+  无法提供下载链接；如需直接发文件，可用 `file_type: 4` 的群文件上传扩展这条路径。
 
 - **卡片标准（`docs/CARD-STANDARD.md`）**：所有 QQ 指令输出统一为菜单式卡片，定为项目标准。
 

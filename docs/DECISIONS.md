@@ -546,3 +546,56 @@
     ACCEPTANCE（J32–J40）与 CHANGELOG 同步更新；
   - `/activity` 列表卡改为按「报名中 / 草稿 / 已结束」分组，行按钮改为回调；
     原有 `/activity` 全部子命令保留为降级路径。
+
+## ADR-0040 补充：统计图片 / 富媒体上传 / CSV 导出（§B3）
+
+- 状态：已采纳
+- 背景：ADR-0040 把「统计图片 / 导出 CSV」两个按钮留成了可选接线点（未装配就不生成）。
+  B3 把实现补上时必须回答三个真机问题：官方**没有**「multipart 直传文件字节」的接口，
+  统计图的**中文字体**从哪来，以及名单里的学号 / 班级 / 学院怎么送出去才不泄露。
+- 决策：
+  1. **群图片上传走官方的两条官方路径，不做私造**：官方「群聊富媒体上传」
+     （`POST /v2/groups/{group_openid}/files`）只接受 `url` 直传或分片上传合并，请求体
+     `{ file_type, url?, srv_send_msg, file_name?, upload_id? }`，响应
+     `{ file_uuid, file_info, ttl }`；`file_info` 是序列化二进制，官方要求**原样透传**到
+     发消息接口的 `media.file_info`。本地渲染出来的 PNG 没有公网 URL，因此 `uploadGroupImage`
+     走**分片**：`upload_prepare` → 逐片 `PUT` 预签名 URL → `upload_part_finish` →
+     带 `upload_id` 调 `files` 合并。三条路径全部可在 `QQOfficialEndpoints` 覆盖
+     （`groupFileUpload` / `groupFileUploadPrepare` / `groupFileUploadPartFinish`）。
+     `AsyncTransport` 增加**可选**的 `requestRaw`（分片 `PUT` 既不是 JSON 也不带机器人鉴权头），
+     `FetchTransport` 实现它；没实现时直接抛错并降级，不伪造成功。
+  2. **发送图片 = `msg_type: 7`**：`{ msg_type: 7, media: { file_info }, msg_id? }`；
+     `QQOfficialAPI` 新增 `uploadGroupImage` / `sendGroupImage`，`FakeQQOfficialAPI`
+     记录 `uploadedGroupImages` / `sentGroupImages` 并提供 `failGroupImages` 失败开关。
+  3. **字体系统优先，下载兜底，缓存不随包提交**：先探测
+     `SYSTEM_FONT_PATHS`（Windows 雅黑 / Linux Noto CJK / 文泉驿 / macOS 苹方），
+     找不到才从 `ACTIVITY_STATS_FONT_URL`（默认 Noto Sans SC 官方发布地址）下载并缓存到
+     `data/fonts/`。`data/` 整目录已被 `.gitignore` 忽略，因此**缓存字体不随包提交**；
+     缓存文件名不带版本号（避免隐私守卫把长数字当成可疑标识）。
+  4. **`@napi-rs/canvas` 是可选依赖，缺失必须优雅降级**：用**变量拼包名**动态 `import()`
+     （静态可解析的 `import(...)` 会让 `tsc` 在依赖缺失时直接报「找不到模块」，把可选依赖
+     变成编译期硬依赖）。`ActivityStatsService.render()` 把「拿不到依赖 / 拿不到字体」统一
+     转成 `undefined`，由调用方降级为**文字统计卡**；**绝不让启动或活动回调失败**。
+     沙箱里装不上原生包时，这条降级路径正是被测对象（`test/activityStats.test.ts`）。
+  5. **发送能力单独判断**：`ActivityStatsLike` 增加 `canSend`，卡片服务只在**既能渲染又能发送**
+     时生成「统计图片」按钮——否则会出现「点了却没反应」的入口。渲染成功但上传/发送失败
+     时同样降级为文字统计卡（用户拿到数据比拿到半张图重要）。
+  6. **CSV 只私信给操作者**：`ActivityExportService` 生成
+     `序号,姓名,学号,班级,学院,备注,候补`（候补行最后一列 `候补`），用
+     `RichMessageSender.sendPlainToUser` 以代码块私信给操作者本人；学号 / 班级 / 学院
+     都是隐私字段，**群里不回执内容**。超过单条消息长度上限（默认 1800 字符）时不硬塞，
+     改成私信提示用 `/export #短码` —— 被平台截断的半份名单比没有名单更危险。
+- 理由：官方接口只有 URL 直传与分片两条上传路径，硬造 multipart 只会在真机上 400；
+  字体「系统优先」避免每次部署都下载几十 MB，而「下载兜底 + gitignored 缓存」又保证了
+  容器/服务器环境（往往没有中文字体）仍然能出图；把可选依赖做成**运行时动态加载**，
+  才能真正做到「装不上也不影响启动」——这是 B3 唯一的硬性可用性要求。
+- 影响：
+  - 新增 `src/services/activityStats.ts`（渲染 + 排版 + 字体解析 + 发送）、
+    `src/services/activityExport.ts`（CSV 生成 + 私信）；
+  - `src/adapters/qqOfficial.ts` 新增两个 API 方法、三个可配置 endpoint、
+    `requestRaw` 可选能力与 `buildGroupImagePayload` / `parsePreparedUpload` / `extractFileInfo`；
+    `src/adapters/fetchTransport.ts` 实现 `requestRaw`；`src/core/instrumentation.ts` 补齐两条日志；
+  - `ActivityCardService` / `AdminCommandService` 新增 `setActivityExtras()`（两处必须同步，
+    否则会出现「有实现没入口」）；`activity:stats` 成功回「已发送统计图」卡、失败或降级回文字统计卡；
+  - 新增 env `ACTIVITY_STATS_FONT_URL`；README / CONFIGURATION / ACCEPTANCE（J41–J44）/
+    CHANGELOG 同步更新。

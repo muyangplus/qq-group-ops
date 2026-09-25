@@ -574,6 +574,41 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 系统 / 管理 / 超
 - 主动私信**去重**（`activity_notifications` 的 `(活动, 用户, 类型)` 主键）+ **每人每天封顶**
   （`ACTIVITY_NOTIFY_DAILY_LIMIT`，默认 3），失败只记日志。
 
+### 活动统计图片与 CSV 导出（§B3）
+
+管理卡的「统计图片」与名单卡的「导出 CSV」是两个**可选能力**：
+
+- 统计图 = `ActivityStatsService`（`src/services/activityStats.ts`）：宽度固定 720、高度按内容自适应，
+  内容为标题、`报名 X/Y`、`候补 N`、`待释放名额 M`、`截止`、学院分布与年级分布（横向条形 + 人数）；
+- 导出 = `ActivityExportService`（`src/services/activityExport.ts`）：列固定为
+  `序号,姓名,学号,班级,学院,备注,候补`，以代码块**私信给操作者本人**（群里不回执内容）。
+
+依赖与字体（**任一项拿不到就降级为文字统计卡，绝不影响启动**）：
+
+| 项目 | 说明 |
+|---|---|
+| `@napi-rs/canvas` | **可选依赖**，用变量拼包名的动态 `import()` 加载；没装 → `render()` 返回 `undefined` → 文字统计卡 |
+| 系统字体（优先） | Windows `C:/Windows/Fonts/msyh.ttc` 等；Linux `/usr/share/fonts/**/NotoSansCJK*`、`wqy-*`；macOS 苹方 |
+| `ACTIVITY_STATS_FONT_URL` | 系统字体都没有时从这里下载并缓存到 `data/fonts/`；默认 Noto Sans SC 官方发布地址 |
+| 缓存目录 | `data/fonts/`（`data/` 已 gitignore，**字体缓存不随包提交**）；文件名固定 `activity-stats.otf` |
+| 发送 | 官方「群聊富媒体上传」（`{ file_type: 1, ... }` → `file_info`）+ `msg_type: 7` 富媒体消息；上传/发送失败同样降级为文字统计卡 |
+
+```bash
+# 没有系统中文字体（常见于容器）时，指向可达的字体地址；留空表示「只用系统字体」
+ACTIVITY_STATS_FONT_URL=https://example.com/NotoSansSC-Regular.otf
+
+# 容器里想真正出图，需要先装可选依赖（原生包）
+pnpm add @napi-rs/canvas
+```
+
+- 「统计图片」按钮只在**既能渲染又能发送**时生成（避免点了没反应的入口）；
+- CSV 超过单条消息长度上限（默认 1800 字符）时不硬塞，改为私信提示用 `/export #短码` 拿完整文件
+  —— 被平台截断的半份名单风险更高；
+- 官方群图片上传没有「multipart 直传字节」接口：`QQOfficialEndpoints` 里的
+  `groupFileUpload`（`/v2/groups/{groupId}/files`）、`groupFileUploadPrepare`
+  （`/v2/groups/{groupId}/upload_prepare`）、`groupFileUploadPartFinish`
+  （`/v2/groups/{groupId}/upload_part_finish`）都可按官方文档与自建代理覆盖。
+
 ### 关键词豁免（审核员及以上）
 
 操作 | 权限
@@ -683,6 +718,7 @@ pnpm db:up     # docker compose --profile postgres up -d db
 | `AUDIT_LOG_RETENTION_DAYS` | 否 | 审计记录保留天数，默认 `180`；`0` 表示不清理 |
 | `JOIN_REQUEST_TTL_DAYS` | 否 | 待审批入群申请有效期（天），默认 `7`；超过即标记 `expired`（不删数据，`/whois` 可追溯），`0` 表示不自动过期 |
 | `ACTIVITY_NOTIFY_DAILY_LIMIT` | 否 | **活动通知**每人每日上限，默认 `3`；非负整数，`0` = 不限制 |
+| `ACTIVITY_STATS_FONT_URL` | 否 | 统计图片的中文字体下载地址（系统字体都没有时才用）；默认 Noto Sans SC 官方发布地址，留空表示只用系统字体 |
 
 `ACTIVITY_NOTIFY_DAILY_LIMIT` 的用途：活动发布 / 变更 / 取消 / 递补的通知走**主动私信**，
 而官方对主动消息有限额（单用户每天 1000 条、单关系 20 qpm、未认证机器人 5 qps & 30 qpm），
@@ -702,6 +738,11 @@ pnpm db:up     # docker compose --profile postgres up -d db
 - 清理同时作用于内存缓存与数据库，避免启动全量载入导致内存无限增长。
 
 `RAW_MESSAGE_RETENTION_DAYS` 目前是「无数据可清理」的状态：项目默认不保存消息原文，只保存审核结果与规则命中信息。保留该变量是为了后续需要短期留存原文时使用。
+
+`ACTIVITY_STATS_FONT_URL` 只影响活动统计图片：系统已有中文字体（Windows 雅黑 / Linux Noto CJK 等）时
+根本不会请求它；下载成功的字体会缓存到 `data/fonts/activity-stats.otf`（`data/` 已 gitignore，
+**不随包提交**），重启后直接复用。字体与 `@napi-rs/canvas` 都拿不到时统计图降级为文字统计卡，
+**不会影响启动或活动本身**（清理行为同样不碰字体缓存）。
 
 合规建议见 [DATA-COMPLIANCE.md](DATA-COMPLIANCE.md)。
 
