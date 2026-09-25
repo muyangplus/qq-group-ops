@@ -1,6 +1,12 @@
-import { buildMenu, findMenuSection, type MenuContext } from "../menu.js";
+import {
+  buildMenu,
+  buildUnknownCommandMenu,
+  findMenuSection,
+  type MenuContext,
+} from "../menu.js";
 import type { RichMessage } from "../richMessages.js";
 import type { AdminCommandContext } from "./context.js";
+import type { CommandResult } from "./support.js";
 
 /**
  * `/menu` 领域模块：主菜单与各层级菜单的渲染入口。
@@ -56,4 +62,18 @@ export function menuContext(
     }
   }
   return context;
+}
+
+/** 未知指令：保留原来的报错文案，同时附上菜单入口按钮。 */
+export function unknownCommandResult(
+  ctx: AdminCommandContext,
+  groupId: string | undefined,
+  userId: string,
+  command: string | undefined,
+): CommandResult {
+  const rich = buildUnknownCommandMenu(
+    command ?? "",
+    menuContext(ctx, groupId, userId),
+  );
+  return { ok: false, text: rich.text, rich };
 }

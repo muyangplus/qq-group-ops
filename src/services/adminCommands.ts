@@ -13,6 +13,7 @@ import {
   mainMenu,
   menuContext,
   menuMessage,
+  unknownCommandResult,
 } from "./commands/menuCommands.js";
 import {
   resolveRequestId,
@@ -79,7 +80,6 @@ import { findHelpTopic, type HelpTopic } from "./helpTopics.js";
 const RULE_KEYWORD_MAX_LENGTH = 50;
 import {
   buildMenu,
-  buildUnknownCommandMenu,
   findMenuSection,
   resolveMenuAccess,
   type MenuContext,
@@ -2520,11 +2520,7 @@ export class AdminCommandService {
     userId: string,
     command: string | undefined,
   ): CommandResult {
-    const rich = buildUnknownCommandMenu(
-      command ?? "",
-      this.menuContext(groupId, userId),
-    );
-    return { ok: false, text: rich.text, rich };
+    return unknownCommandResult(this.context(), groupId, userId, command);
   }
 
   private menuContext(groupId: string | undefined, userId: string): MenuContext {
