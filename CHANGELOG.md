@@ -9,6 +9,30 @@
 
 （暂无未发布改动）
 
+## [0.11.0] - 2026-09-25
+
+### 新增
+
+- **活动定时提醒**：`/activity set <短码> remindAt MM-DD HH:mm`（`clear` 取消）设置提醒时间，
+  到点在**所有绑定群**各广播一次提醒卡；每个群只发一次、重启不重发
+  （`ACTIVITY_REMIND_INTERVAL_MS` 控制扫描间隔，默认 1 分钟）。活动已取消 / 已关闭 / 已过报名截止时
+  只清提醒、不广播；配置卡显示当前提醒时间。
+- **命中关键词的完整反馈卡片**：命中后在群里 @ 当事人，并给出「命中规则 / **实际执行**的处理动作
+  （含禁言时长）/ 群规则文案」，与审计记录保持一致。
+
+### 变更
+
+- **`/whois`、`/whois profile` 的查询结果一律走私信**：包括**未找到映射**、用法提示与**权限不足**——
+  群里只在私信发送失败时回一条 @ 发起人的「请先私聊机器人再试」提示。理由：查询失败本身也会泄露
+  「某个 QQ号 / 短码 / group_openid 是否存在」。
+- **满员广播覆盖「事后调小名额」**：管理员把名额调小到等于已报名数（含冻结名额）时，也会往所有绑定群
+  各发一次「活动已满」卡；仍复用去重表，每个群只发一次，名额大于已报名数时不广播。
+
+### 备注
+
+- 活动通知新增**令牌桶平滑**（`ACTIVITY_NOTIFY_RATE_PER_SECOND`，默认 5 条/秒，`0` = 关闭）：
+  桶空时排队等待下一个令牌而不是丢通知；只作用于活动通知，入群申请推送不受影响。
+
 ## [0.10.0] - 2026-09-25
 
 ### 新增
@@ -216,7 +240,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.8.0...v0.9.0
