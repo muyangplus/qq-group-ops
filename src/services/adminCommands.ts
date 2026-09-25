@@ -2,7 +2,12 @@ import type { CardResult, CommandResult } from "./commands/support.js";
 import { aliasCard } from "./commands/aliasCommands.js";
 import { whoisCard } from "./commands/whoisCommands.js";
 import { handleProfile } from "./commands/profileCommands.js";
-import { handleTestAt, handleTestMenu, testCard } from "./commands/testCommands.js";
+import {
+  handleTest,
+  handleTestAt,
+  handleTestMenu,
+  testCard,
+} from "./commands/testCommands.js";
 import { handleStatus, statusCard } from "./commands/statusCommands.js";
 import {
   handleNotify,
@@ -632,7 +637,7 @@ export class AdminCommandService {
         return handleStatus(this.context(), groupId, userId, parts);
       case "test":
       case "测试":
-        return this.handleTest(groupId, userId);
+        return handleTest(this.context(), groupId, userId);
       case "testmenu":
         return handleTestMenu(this.context(), userId, parts);
       case "testat":
@@ -5647,7 +5652,7 @@ export class AdminCommandService {
   }
 
   private handleTest(groupId: string | undefined, userId: string): CommandResult {
-    return this.testCard(groupId, userId);
+    return handleTest(this.context(), groupId, userId);
   }
 }
 

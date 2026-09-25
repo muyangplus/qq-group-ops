@@ -215,4 +215,13 @@ export function testCard(
   });
 }
 
+/** `/test` 的指令入口（回调 renderer 也走它）。 */
+export function handleTest(
+  ctx: AdminCommandContext,
+  groupId: string | undefined,
+  userId: string,
+): CommandResult {
+  return testCard(ctx, groupId, userId);
+}
+
 
