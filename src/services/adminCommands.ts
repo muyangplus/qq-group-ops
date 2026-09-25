@@ -21,11 +21,7 @@ import {
   syncCard,
 } from "./commands/reviewCommands.js";
 import { handleBind } from "./commands/bindCommands.js";
-import {
-  handleMyPermission,
-  handlePermissionConfig,
-  handleSync,
-} from "./commands/permCommands.js";
+import { handleMyPermission, handlePermissionConfig, handleSync } from "./commands/permCommands.js";
 import {
   mainMenu,
   menuContext,
@@ -33,18 +29,25 @@ import {
   unknownCommandResult,
 } from "./commands/menuCommands.js";
 import { resolveTargetGroupId } from "./commands/targetResolvers.js";
-import {
-  handleTest,
-  handleTestAt,
-  handleTestMenu,
-  testCard,
-} from "./commands/testCommands.js";
+import { handleTest, handleTestAt, handleTestMenu, testCard } from "./commands/testCommands.js";
 import {
   activityCallbackCard,
   activityListCard,
   activityMemberCard,
   handleActivity,
 } from "./commands/activityCommands.js";
+import {
+  clearKeywordsCard,
+  delKeywordCard,
+  handleRules,
+  resetAllRulesCard,
+  resetRulePageCard,
+  rosterToggleCard,
+  ruleOverridesCard,
+  rulesCard,
+  rulesPanelCard,
+  toggleRulesCard,
+} from "./commands/ruleCommands.js";
 import { handleStatus, statusCard } from "./commands/statusCommands.js";
 import {
   handleNotify,
@@ -53,158 +56,31 @@ import {
   notifyToggleCard,
 } from "./commands/notifyCommands.js";
 import type { AdminCommandContext, CommandHelpers } from "./commands/context.js";
-import { ActivityStatus } from "../core/enums.js";
-import type { KeyboardModal } from "../adapters/qqOfficial.js";
-import { encodeCallback, extractPageToken, pageCallback } from "./callbackData.js";
-import {
-  escapeCardText,
-  quoteCardLines,
-  renderCard,
-  type CardButton,
-  type CardButtonStyle,
-} from "./cardTemplate.js";
-import {
-  JoinDecisionMode,
-  KeywordPunish,
-  type JoinDecisionMode as JoinDecisionModeType,
-} from "../core/enums.js";
+import type { CardButton } from "./cardTemplate.js";
 import { getLogger } from "../core/logger.js";
 import type { AuditLog } from "./audit.js";
 import { ActivityCardService } from "./activityCards.js";
-import type {
-  ActivityCardInput,
-  ActivityExportLike,
-  ActivityStatsLike,
-} from "./activityCards.js";
-import { code as activityCode, formatCloseAt } from "./activityCards.js";
-import { ActivityRuleError } from "./activity.js";
-import type {
-  Activity,
-  ActivityLink,
-  ActivityRegistration,
-  ActivityService,
-  ActivityWaitlistEntry,
-} from "./activity.js";
+import type { ActivityExportLike, ActivityStatsLike } from "./activityCards.js";
+import type { Activity, ActivityService } from "./activity.js";
 import type { ActivityNotificationService } from "./activityNotifications.js";
 import type { DisplayNameService } from "./displayNames.js";
 import type { MemberRoster } from "./memberRoster.js";
-import {
-  DEFAULT_GROUP_ID,
-  type EffectiveGroupConfig,
-  type GroupConfigOverride,
-  type GroupConfigStore,
-} from "./groupConfig.js";
+import type { GroupConfigStore } from "./groupConfig.js";
 /** 关键词单条上限（与卡片标准一致：太长会挤爆按钮）。 */
-const RULE_KEYWORD_MAX_LENGTH = 50;
-import {
-  buildMenu,
-  findMenuSection,
-  type MenuContext,
-} from "./menu.js";
+import { buildMenu, findMenuSection, type MenuContext } from "./menu.js";
 import type { RichMessage, RichMessageSender } from "./richMessages.js";
 import type { JoinRuleEvaluator } from "./joinRules.js";
 import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
 import type { IdentityMapService } from "./identityMap.js";
 import type { JoinApprovalService } from "./joinApproval.js";
-import { EXPIRY_ACTOR_ID, type JoinAuditService, type JoinRequest } from "./joinAudit.js";
+import type { JoinAuditService } from "./joinAudit.js";
 import type { JoinRequestSyncService } from "./joinAuditSync.js";
-import {
-  CLASS_ALIAS_KIND_LABELS,
-  type ClassAliasService,
-} from "./classAliases.js";
-import { NOTIFY_SCOPE_ALL, type NotificationService } from "./notifications.js";
+import type { ClassAliasService } from "./classAliases.js";
+import type { NotificationService } from "./notifications.js";
 import type { PermissionService } from "./permissions.js";
-import { formatParseNotes, parseProfileInput } from "./profileParser.js";
-import {
-  normalizeYear,
-  PROFILE_ENTRY_YEARS,
-  UserProfileError,
-  yearFromStudentId,
-  type UserProfile,
-  type UserProfileField,
-  type UserProfileService,
-} from "./userProfiles.js";
+import type { UserProfileService } from "./userProfiles.js";
 
-import {
-  actionButton,
-  ACTIVITY_NOTIFY_FIELDS,
-  ACTIVITY_SET_USAGE,
-  ACTIVITY_USAGE,
-  ALIAS_USAGE,
-  AT_ALL_PROBES,
-  bindingFailureText,
-  cardFromText,
-  clampLimit,
-  CLEAR_WORDS,
-  confirmRuleResetModal,
-  DEFAULT_AUDIT_LIMIT,
-  formatEffectiveConfig,
-  formatError,
-  formatGroupList,
-  formatList,
-  formatTime,
-  GLOBAL_RULES_DENIED,
-  GLOBAL_RULES_SET_USAGE,
-  GLOBAL_TARGETS,
-  GROUP_SUPER_ROLES,
-  indentBlock,
-  isAllScope,
-  isGlobalTarget,
-  isRosterField,
-  isToggleOn,
-  isToggleValue,
-  listGroupOf,
-  MAX_AUDIT_LIMIT,
-  MAX_MUTE_DURATION_SECONDS,
-  normalize,
-  normalizeRulePanel,
-  NOTIFY_ALL_WORDS,
-  NOTIFY_PERMISSION_DENIED,
-  NOTIFY_USAGE,
-  parseCloseAt,
-  parseDuration,
-  parseJoinDecision,
-  parseKeywordPunish,
-  parseLink,
-  parseLinks,
-  parseList,
-  parseListItems,
-  parseMentionTarget,
-  parsePositiveInt,
-  parseRuleSetting,
-  parseSignupPage,
-  parseToggle,
-  parseYearList,
-  PERM_USAGE,
-  PROFILE_FIELD_ALIASES,
-  PROFILE_FIELD_LABELS,
-  PROFILE_USAGE,
-  requireValidRegex,
-  rosterModeButton,
-  RULE_COLLEGE_PAGE_SIZE,
-  RULE_FIELD_LABELS,
-  RULE_FIELD_SHORT_LABELS,
-  RULE_FIELDS_HELP,
-  RULE_KEYWORD_PAGE_SIZE,
-  RULE_PANEL_FIELDS,
-  ruleChoiceButton,
-  ruleDeleteLabel,
-  ruleFieldLabel,
-  ruleFieldShortLabel,
-  RulePanelId,
-  RULES_ADD_USAGE,
-  RULES_DEL_USAGE,
-  RULES_SET_USAGE,
-  ruleToggleButton,
-  RuleToggleSpec,
-  stripMarkdownForText,
-  TOGGLE_OFF,
-  TOGGLE_ON,
-  viewButton,
-  viewButtonWithOptions,
-  WHOIS_MENTION_HINT,
-  WHOIS_USAGE,
-} from "./commands/support.js";
+import { viewButton } from "./commands/support.js";
 const log = getLogger("admin-commands");
 
 export interface AdminCommandServiceOptions {
@@ -606,7 +482,7 @@ export class AdminCommandService {
         return handleReject(this.context(), groupId, userId, parts);
       case "rules":
       case "规则":
-        return this.handleRules(groupId, userId, parts);
+        return handleRules(this.context(), groupId, userId, parts);
       case "audit":
       case "日志":
         return handleAudit(this.context(), groupId, userId, parts);
@@ -633,7 +509,6 @@ export class AdminCommandService {
     return resolveTargetGroupId(this.context(), groupId, input);
   }
 
-  /** 申请参数：`#短码`（推荐）或完整 join_request_id。 */
   /**
    * `/help` 列出有权限执行的指令；`/help <主题>` 展示该指令的详细用法。
    *
@@ -716,100 +591,7 @@ export class AdminCommandService {
     parts: readonly string[],
     notice?: string,
   ): CardResult {
-    if (isGlobalTarget(parts[1])) {
-      return this.globalRulesCard(userId, 1);
-    }
-    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
-    if (!targetGroupId) {
-      if (!parts[1] && this.permissions.isSuperAdmin(userId)) {
-        return this.globalRulesCard(userId, 1);
-      }
-      const card = renderCard({
-        title: "群规则",
-        lines: [
-          "该指令需要在群内使用，或在私信中提供群号 / #群短码。",
-          "用法：/rules <群号|#群短码>；全局默认规则：/rules all",
-        ],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
-      const card = renderCard({
-        title: "权限不足",
-        lines: ["需要审核员或以上权限（查看）／群管理员或以上（修改）。"],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-
-    const config = this.configStore.get(targetGroupId);
-    const canManage =
-      this.permissions.canManageRules(userId, targetGroupId) ||
-      this.permissions.isSuperAdmin(userId);
-
-    const overridden = this.configStore.overriddenFields(targetGroupId);
-    const overrideNames = [...overridden]
-      .map((field) => ruleFieldLabel(field))
-      .filter((label) => label.length > 0);
-    const inheritanceLine =
-      overrideNames.length > 0
-        ? `**本群覆盖**：${overrideNames.join("、")}（其余继承全局）`
-        : "**本群覆盖**：全部继承全局";
-
-    const rows: CardButton[][] = [];
-    if (canManage) {
-      // 一行按钮文字总长 ≤12 字（见 docs/CARD-STANDARD.md）：
-      // 4+4+4=12 刚好，再加一个字就超。
-      rows.push([
-        viewButton("panel-toggle", "开关设置", "rules", "panel", targetGroupId, "toggle"),
-        viewButton("panel-decision", "入群审核", "rules", "panel", targetGroupId, "decision"),
-        viewButton("panel-punish", "违规处理", "rules", "panel", targetGroupId, "punish"),
-      ]);
-      rows.push([
-        viewButton("panel-keywords", "关键词", "rules", "panel", targetGroupId, "keyword"),
-        viewButton("panel-roster", "名单筛选", "rules", "panel", targetGroupId, "roster"),
-      ]);
-    }
-    const lastRow: CardButton[] = [];
-    if (canManage) {
-      rows.push([
-        viewButton("panel-more", "更多设置", "rules", "panel", targetGroupId, "more"),
-        viewButtonWithOptions(
-          "resetAll",
-          "恢复全部继承",
-          encodeCallback("rules", "resetAll", targetGroupId, "1"),
-          { modal: confirmRuleResetModal("本群全部规则") },
-        ),
-      ]);
-    }
-    if (this.permissions.isSuperAdmin(userId)) {
-      lastRow.push(viewButton("global", "全局规则", "rules", "all"));
-    }
-    lastRow.push(viewButton("help", "规则帮助", "help", "topic", "rules"));
-    rows.push(lastRow);
-
-    const lines = [
-      ...this.renderNotice(notice),
-      inheritanceLine,
-      "",
-      `**关键词**：${config.keywords.length > 0 ? config.keywords.join("、") : "（未配置）"}`,
-      `**警告文案**：${config.warningMessage}`,
-      `**禁言时长**：${config.muteDurationSeconds} 秒`,
-      `**入群要求**：班级 ${config.joinRequireClass} · 姓名 ${config.joinRequireName} · 审核意见 ${config.joinReviewOpinion}`,
-      `**名单筛选**：学院 ${config.allowColleges.length}/${config.denyColleges.length} · 年级 ${config.allowYears.length}/${config.denyYears.length}`,
-      `**机器人启用**：${config.enabled ? "开" : "关"} · 导出 ${config.exportEnabled ? "开" : "关"}`,
-    ];
-
-    return cardFromText("群规则", lines.join("\n"), {
-      rows,
-      buttonHint: canManage ? "设置入口（点击即生效）：" : "相关入口：",
-      footer: [
-        `本群：${this.displayGroup(targetGroupId)}`,
-        "完整字段用法：/help rules",
-        "「恢复本页继承」只清本页字段；「恢复全部继承」清空本群全部覆盖。",
-      ],
-    });
+    return rulesCard(this.context(), groupId, userId, parts, notice);
   }
 
   /**
@@ -887,7 +669,6 @@ export class AdminCommandService {
     return syncCard(this.context(), targetGroupId, userId, replyGroupId);
   }
 
-  /** 审批结果卡（通过 / 拒绝），标明操作人并给回列表入口。 */
   /**
    * 子卡：开关设置 / 入群审核 / 违规处理 / 关键词 / 名单筛选 / 更多设置（§C 重构）。
    *
@@ -902,552 +683,9 @@ export class AdminCommandService {
     page = 1,
     mode: "allow" | "deny" = "allow",
   ): CardResult {
-    const canManage =
-      this.permissions.canManageRules(userId, targetGroupId) ||
-      this.permissions.isSuperAdmin(userId);
-    if (!canManage) {
-      const card = renderCard({
-        title: "权限不足",
-        lines: ["修改规则需要群管理员或以上权限。"],
-        rows: [[viewButton("back", "返回规则", "rules", "view", targetGroupId)]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-
-    const normalized = normalizeRulePanel(panel);
-    switch (normalized) {
-      case "keyword":
-        return this.rulesKeywordPanel(targetGroupId, userId, page, notice);
-      case "roster":
-        return this.rulesRosterPanel(targetGroupId, userId, mode, page, notice);
-      case "toggle":
-        return this.rulesTogglePanel(targetGroupId, userId, notice);
-      case "decision":
-        return this.rulesDecisionPanel(targetGroupId, userId, notice, normalized);
-      case "punish":
-        return this.rulesPunishPanel(targetGroupId, userId, notice);
-      case "more":
-        return this.rulesMorePanel(targetGroupId, userId, notice);
-    }
+    return rulesPanelCard(this.context(), panel, targetGroupId, userId, notice, page, mode);
   }
 
-  /** 子卡：开关设置（一行 2 个，标签显示当前状态）。 */
-  private rulesTogglePanel(
-    targetGroupId: string,
-    userId: string,
-    notice?: string,
-  ): CardResult {
-    const config = this.configStore.get(targetGroupId);
-    const overridden = this.configStore.overriddenFields(targetGroupId);
-    const fields: Array<RuleToggleSpec> = [
-      { field: "wordFilterEnabled", label: "过滤", panel: "toggle", value: config.wordFilterEnabled },
-      { field: "keywordRecall", label: "撤回", panel: "toggle", value: config.keywordRecall },
-      { field: "joinAuditEnabled", label: "入群审核", panel: "toggle", value: config.joinAuditEnabled },
-      { field: "exportEnabled", label: "导出", panel: "toggle", value: config.exportEnabled },
-    ];
-    return this.rulesBoolPanel({
-      title: "群规则 · 开关设置",
-      targetGroupId,
-      userId,
-      panel: "toggle",
-      notice,
-      fields,
-      overridden,
-    });
-  }
-
-  /** 子卡：入群审核（5 个决策枚举 + 要求班级/姓名，`●` 标当前值）。 */
-  private rulesDecisionPanel(
-    targetGroupId: string,
-    userId: string,
-    notice: string | undefined,
-    panel: string,
-  ): CardResult {
-    const config = this.configStore.get(targetGroupId);
-    const rows: CardButton[][] = [];
-    rows.push([
-      ruleChoiceButton(
-        "decision-manual",
-        "人工",
-        targetGroupId,
-        "joinDecision",
-        "manual",
-        config.joinDecision === "manual",
-        panel,
-      ),
-      ruleChoiceButton(
-        "decision-match",
-        "命中通过",
-        targetGroupId,
-        "joinDecision",
-        "approve_on_match",
-        config.joinDecision === "approve_on_match",
-        panel,
-      ),
-      ruleChoiceButton(
-        "decision-reject",
-        "命中拒绝",
-        targetGroupId,
-        "joinDecision",
-        "reject_on_match",
-        config.joinDecision === "reject_on_match",
-        panel,
-      ),
-    ]);
-    rows.push([
-      ruleChoiceButton(
-        "decision-auto",
-        "全自动",
-        targetGroupId,
-        "joinDecision",
-        "auto_approve",
-        config.joinDecision === "auto_approve",
-        panel,
-      ),
-      ruleChoiceButton(
-        "decision-mismatch",
-        "未命中拒绝",
-        targetGroupId,
-        "joinDecision",
-        "reject_on_mismatch",
-        config.joinDecision === "reject_on_mismatch",
-        panel,
-      ),
-    ]);
-    rows.push([
-      ruleToggleButton(
-        "requireClass",
-        "要求班级",
-        targetGroupId,
-        "joinRequireClass",
-        config.joinRequireClass,
-        panel,
-      ),
-      ruleToggleButton(
-        "requireName",
-        "要求姓名",
-        targetGroupId,
-        "joinRequireName",
-        config.joinRequireName,
-        panel,
-      ),
-    ]);
-    rows.push([
-      this.ruleRestoreButton(panel, targetGroupId, ["joinDecision", "joinRequireClass", "joinRequireName"]),
-      this.ruleBackButton(targetGroupId),
-    ]);
-    return this.rulePanelCard(
-      "群规则 · 入群审核",
-      targetGroupId,
-      userId,
-      notice,
-      rows,
-      [
-        this.ruleInheritanceLine(targetGroupId, "joinDecision"),
-        `**回答正则**：${config.joinAnswerPattern || "（未设置，用指令按钮设置）"}`,
-      ],
-    );
-  }
-
-  /** 子卡：违规处理（命中处罚 + 禁言时长快捷按钮）。 */
-  private rulesPunishPanel(
-    targetGroupId: string,
-    userId: string,
-    notice?: string,
-  ): CardResult {
-    const config = this.configStore.get(targetGroupId);
-    const rows: CardButton[][] = [];
-    rows.push([
-      ruleChoiceButton("punish-none", "仅警告", targetGroupId, "keywordPunish", "none", config.keywordPunish === "none", "punish"),
-      ruleChoiceButton("punish-mute", "禁言", targetGroupId, "keywordPunish", "mute", config.keywordPunish === "mute", "punish"),
-    ]);
-    rows.push([
-      ruleChoiceButton("punish-kick", "移出", targetGroupId, "keywordPunish", "kick", config.keywordPunish === "kick", "punish"),
-      ruleChoiceButton("punish-blacklist", "拉黑", targetGroupId, "keywordPunish", "kick_blacklist", config.keywordPunish === "kick_blacklist", "punish"),
-    ]);
-    rows.push([
-      ruleChoiceButton("mute-60", "60秒", targetGroupId, "muteDurationSeconds", "60", config.muteDurationSeconds === 60, "punish"),
-      ruleChoiceButton("mute-600", "600秒", targetGroupId, "muteDurationSeconds", "600", config.muteDurationSeconds === 600, "punish"),
-      ruleChoiceButton("mute-3600", "1小时", targetGroupId, "muteDurationSeconds", "3600", config.muteDurationSeconds === 3600, "punish"),
-    ]);
-    rows.push([
-      this.ruleRestoreButton("punish", targetGroupId, ["keywordPunish", "muteDurationSeconds"]),
-      this.ruleBackButton(targetGroupId),
-    ]);
-    return this.rulePanelCard(
-      "群规则 · 违规处理",
-      targetGroupId,
-      userId,
-      notice,
-      rows,
-      [
-        this.ruleInheritanceLine(targetGroupId, "keywordPunish"),
-        `**禁言时长**：${config.muteDurationSeconds} 秒`,
-      ],
-    );
-  }
-
-  /** 子卡：关键词（分页逐条删除 + 加词 / 清空）。 */
-  private rulesKeywordPanel(
-    targetGroupId: string,
-    userId: string,
-    page: number,
-    notice?: string,
-  ): CardResult {
-    const config = this.configStore.get(targetGroupId);
-    const keywords = [...config.keywords];
-    const pageSize = RULE_KEYWORD_PAGE_SIZE;
-    const pageCount = Math.max(1, Math.ceil(keywords.length / pageSize));
-    const current = Math.min(Math.max(page, 1), pageCount);
-    const slice = keywords.slice((current - 1) * pageSize, current * pageSize);
-
-    const rows: CardButton[][] = [];
-    for (const [index, keyword] of slice.entries()) {
-      const serial = (current - 1) * pageSize + index;
-      rows.push([
-        viewButton(
-          `del-${serial}`,
-          ruleDeleteLabel(keyword),
-          "rules",
-          "delKeyword",
-          targetGroupId,
-          serial,
-          current,
-        ),
-      ]);
-    }
-    const paging: CardButton[] = [];
-    if (current > 1) {
-      paging.push(
-        viewButton("prev", "上一页", "rules", "panelPage", targetGroupId, "keyword", current - 1),
-      );
-    }
-    if (current < pageCount) {
-      paging.push(
-        viewButton("next", "下一页", "rules", "panelPage", targetGroupId, "keyword", current + 1),
-      );
-    }
-    // 第 4 行：加词 / 清空 / 翻页（每行总长 ≤12 字）
-    rows.push([
-      actionButton("add-keyword", "加词", "/rules add keyword "),
-      ...paging,
-      viewButtonWithOptions(
-        "clear-keywords",
-        "清空",
-        encodeCallback("rules", "clearKeyword", targetGroupId),
-        { modal: confirmRuleResetModal("本群关键词") },
-      ),
-    ]);
-    rows.push([
-      this.ruleRestoreButton("keyword", targetGroupId, ["keywords"], current),
-      this.ruleBackButton(targetGroupId),
-    ]);
-
-    const body: string[] = [
-      ...this.renderNotice(notice),
-      `**关键词**：${keywords.length > 0 ? `${keywords.length} 条 · 第 ${current} / ${pageCount} 页` : "（未配置）"}`,
-      ...(slice.length > 0
-        ? slice.map((keyword, index) => `${(current - 1) * pageSize + index + 1}. ${keyword}`)
-        : ["", "暂无关键词：点「加词」发送 `/rules add keyword <词>`，或手输 `/rules set keywords 广告,刷屏`。"]),
-      "",
-      this.ruleInheritanceLine(targetGroupId, "keywords"),
-    ];
-    const footer = [`本群：${this.displayGroup(targetGroupId)}`];
-    if (current < pageCount) {
-      footer.push(
-        `还有 ${pageCount - current} 页，点「下一页」继续（关键词只支持卡片翻页）。`,
-      );
-    }
-    return cardFromText("群规则 · 关键词", body.join("\n"), {
-      rows,
-      buttonHint: "每行一个关键词，点击即删除：",
-      footer,
-    });
-  }
-
-  /** 子卡：名单筛选（学院点选 + 年级点选，白/黑名单切换）。 */
-  private rulesRosterPanel(
-    targetGroupId: string,
-    userId: string,
-    mode: "allow" | "deny",
-    page: number,
-    notice?: string,
-  ): CardResult {
-    const config = this.configStore.get(targetGroupId);
-    const colleges = this.activityRoster?.listColleges() ?? [];
-    const pageSize = RULE_COLLEGE_PAGE_SIZE;
-    const pageCount = Math.max(1, Math.ceil(colleges.length / pageSize));
-    const current = Math.min(Math.max(page, 1), pageCount);
-    const slice = colleges.slice((current - 1) * pageSize, current * pageSize);
-    const selected = new Set(
-      mode === "allow" ? config.allowColleges : config.denyColleges,
-    );
-
-    // 5 行键盘上限：学院（≤4 行）+ 模式/翻页（1 行）+ 年级（1 行）+ 恢复/返回（1 行）
-    const rows: CardButton[][] = [];
-    for (const college of slice) {
-      rows.push([
-        ruleChoiceButton(
-          `college-${college}`,
-          college,
-          targetGroupId,
-          mode === "allow" ? "allowColleges" : "denyColleges",
-          college,
-          selected.has(college),
-          "roster",
-        ),
-      ]);
-    }
-    if (slice.length === 0) {
-      rows.push([
-        actionButton(
-          "college-manual",
-          "手输学院",
-          `/rules set ${mode === "allow" ? "allowColleges" : "denyColleges"} `,
-        ),
-      ]);
-    }
-    const modePaging: CardButton[] = [
-      rosterModeButton("roster-allow", "白名单", targetGroupId, "allow", mode === "allow"),
-      rosterModeButton("roster-deny", "黑名单", targetGroupId, "deny", mode === "deny"),
-    ];
-    if (current > 1) {
-      modePaging.push(
-        viewButton("prev", "上一页", "rules", "panelPage", targetGroupId, "roster", current - 1, mode),
-      );
-    }
-    if (current < pageCount) {
-      modePaging.push(
-        viewButton("next", "下一页", "rules", "panelPage", targetGroupId, "roster", current + 1, mode),
-      );
-    }
-    rows.push(modePaging);
-    rows.push(
-      PROFILE_ENTRY_YEARS.map((year) =>
-        ruleChoiceButton(
-          `year-${year}`,
-          year,
-          targetGroupId,
-          mode === "allow" ? "allowYears" : "denyYears",
-          year,
-          (mode === "allow" ? config.allowYears : config.denyYears).includes(year),
-          "roster",
-        ),
-      ),
-    );
-    rows.push([
-      this.ruleRestoreButton(
-        "roster",
-        targetGroupId,
-        ["allowColleges", "denyColleges", "allowYears", "denyYears"],
-        current,
-        mode,
-      ),
-      this.ruleBackButton(targetGroupId),
-    ]);
-
-    const collegeLine =
-      config.allowColleges.length > 0
-        ? `允许学院：${config.allowColleges.join("、")}`
-        : config.denyColleges.length > 0
-          ? `禁止学院：${config.denyColleges.join("、")}`
-          : "学院：不限";
-    const yearLine =
-      config.allowYears.length > 0
-        ? `允许年级：${config.allowYears.join("、")}`
-        : config.denyYears.length > 0
-          ? `禁止年级：${config.denyYears.join("、")}`
-          : "年级：不限";
-    return cardFromText(
-      "群规则 · 名单筛选",
-      [
-        ...this.renderNotice(notice),
-        `**当前模式**：${mode === "allow" ? "白名单（允许）" : "黑名单（禁止）"}`,
-        `**学院**：${collegeLine} · 第 ${current} / ${pageCount} 页`,
-        `**年级**：${yearLine}（点一下切换选中）`,
-        "",
-        this.ruleInheritanceLine(targetGroupId, "allowColleges"),
-      ].join("\n"),
-      {
-        rows,
-        buttonHint: "点击切换选中（● 为已选）：",
-        footer: [
-          `本群：${this.displayGroup(targetGroupId)}`,
-          "学院来自班级库点选；班级库缺失时可用指令按钮手输。",
-        ],
-      },
-    );
-  }
-
-  /** 子卡：更多设置（补齐所有尚未有按钮的字段）。 */
-  private rulesMorePanel(
-    targetGroupId: string,
-    userId: string,
-    notice?: string,
-  ): CardResult {
-    const config = this.configStore.get(targetGroupId);
-    const rows: CardButton[][] = [
-      [
-        ruleToggleButton("enabled", "机器人", targetGroupId, "enabled", config.enabled, "more"),
-        ruleToggleButton("autoApprove", "自动通过", targetGroupId, "autoApprove", config.autoApproveJoin, "more"),
-      ],
-      [
-        ruleToggleButton("notifyAuto", "处理通知", targetGroupId, "notifyAutoApproved", config.notifyAutoApproved, "more"),
-        ruleToggleButton("joinNotify", "审核意见", targetGroupId, "joinReviewOpinion", config.joinReviewOpinion, "more"),
-      ],
-      [
-        actionButton("warning", "警告文案", "/rules set warning "),
-        actionButton("keyword-manual", "关键词", "/rules set keywords "),
-      ],
-      [
-        actionButton("mute-custom", "禁言时长", "/rules set muteDuration "),
-        actionButton("answer-pattern", "回答正则", "/rules set joinAnswerPattern "),
-      ],
-      [
-        this.ruleRestoreButton("more", targetGroupId, [
-          "enabled",
-          "autoApproveJoin",
-          "notifyAutoApproved",
-          "joinReviewOpinion",
-          "warningMessage",
-          "joinAnswerPattern",
-        ]),
-        this.ruleBackButton(targetGroupId),
-      ],
-    ];
-    return this.rulePanelCard(
-      "群规则 · 更多设置",
-      targetGroupId,
-      userId,
-      notice,
-      rows,
-      [
-        this.ruleInheritanceLine(targetGroupId, "enabled"),
-        `**警告文案**：${config.warningMessage}`,
-        `**禁言时长**：${config.muteDurationSeconds} 秒 · **回答正则**：${config.joinAnswerPattern || "（未设置）"}`,
-        "要求班级 / 要求姓名在「入群审核」子卡；关键词在「关键词」子卡。",
-      ],
-    );
-  }
-
-  /** 通用布尔开关子卡：一行 2 个，正文逐条列出「字段：当前值（继承 / 本群覆盖）」。 */
-  private rulesBoolPanel(input: {
-    title: string;
-    targetGroupId: string;
-    userId: string;
-    panel: string;
-    notice?: string | undefined;
-    fields: readonly RuleToggleSpec[];
-    overridden: ReadonlySet<keyof GroupConfigOverride>;
-  }): CardResult {
-    const rows: CardButton[][] = [];
-    for (let index = 0; index < input.fields.length; index += 2) {
-      const pair = input.fields.slice(index, index + 2);
-      rows.push(
-        pair.map((spec) =>
-          ruleToggleButton(
-            spec.field,
-            spec.label,
-            input.targetGroupId,
-            spec.field,
-            spec.value,
-            spec.panel,
-          ),
-        ),
-      );
-    }
-    rows.push([
-      this.ruleRestoreButton(
-        input.panel,
-        input.targetGroupId,
-        input.fields.map((spec) => spec.field),
-      ),
-      this.ruleBackButton(input.targetGroupId),
-    ]);
-    const lines = input.fields.map(
-      (spec) =>
-        `${spec.label}：${spec.value ? "开" : "关"}（${
-          input.overridden.has(spec.field) ? "本群覆盖" : "继承全局"
-        }）`,
-    );
-    return this.rulePanelCard(
-      input.title,
-      input.targetGroupId,
-      input.userId,
-      input.notice,
-      rows,
-      lines,
-    );
-  }
-
-  /** 规则子卡的统一外壳：正文行 + 权限已校验后的按钮。 */
-  private rulePanelCard(
-    title: string,
-    targetGroupId: string,
-    userId: string,
-    notice: string | undefined,
-    rows: CardButton[][],
-    body: readonly string[],
-  ): CardResult {
-    void userId;
-    const isGlobal = targetGroupId === DEFAULT_GROUP_ID;
-    return cardFromText(
-      isGlobal ? `${title}（全局）` : title,
-      [
-        ...(isGlobal ? ["**全局默认规则**：只影响未单独覆盖该字段的群。"] : []),
-        ...this.renderNotice(notice),
-        ...body,
-      ].join("\n"),
-      {
-        rows,
-        buttonHint: "点击即生效：",
-        footer: [
-          isGlobal ? "全局规则仅超管可改。" : `本群：${this.displayGroup(targetGroupId)}`,
-        ],
-      },
-    );
-  }
-
-  /** 正文里的「字段：当前值（继承全局 / 本群覆盖）」。 */
-  private ruleInheritanceLine(
-    targetGroupId: string,
-    field: keyof GroupConfigOverride,
-  ): string {
-    const overridden = this.configStore.overriddenFields(targetGroupId);
-    return `**${ruleFieldLabel(field)}**：${
-      overridden.has(field) ? "本群覆盖" : "继承全局"
-    }`;
-  }
-
-  /** 「恢复本页继承」按钮（二次确认，调用 `clearFields`）。 */
-  private ruleRestoreButton(
-    panel: string,
-    targetGroupId: string,
-    fields: readonly (keyof GroupConfigOverride)[],
-    page = 1,
-    mode: "allow" | "deny" = "allow",
-  ): CardButton {
-    return viewButtonWithOptions(
-      `reset-${panel}`,
-      "恢复本页继承",
-      encodeCallback(
-        "rules",
-        "resetPage",
-        targetGroupId,
-        panel,
-        fields.join(","),
-        page,
-        mode,
-      ),
-      { modal: confirmRuleResetModal("本页字段") },
-    );
-  }
-
-  private ruleBackButton(targetGroupId: string): CardButton {
-    return viewButton("back", "返回规则", "rules", "view", targetGroupId);
-  }
-
-  /** 回调：规则开关/枚举切换（固定动作 → 自动执行并回刷新后的卡片）。 */
   public async toggleRulesCard(
     targetGroupId: string,
     field: string,
@@ -1458,51 +696,7 @@ export class AdminCommandService {
     page = 1,
     mode: "allow" | "deny" = "allow",
   ): Promise<CardResult> {
-    const result = await this.handleRulesSet(undefined, userId, [
-      "rules",
-      "set",
-      targetGroupId,
-      field,
-      value,
-    ]);
-    const notice = `${this.mention(replyGroupId, userId)}已更新：${ruleFieldLabel(field)} = ${value}`;
-    const targetPanel = normalizeRulePanel(panel);
-    if (!result.ok) {
-      const card = renderCard({
-        title: "规则未修改",
-        lines: [notice, "", ...result.text.split("\n")],
-        rows: [
-          [
-            viewButton(
-              "back",
-              "返回规则",
-              "rules",
-              "panel",
-              targetGroupId,
-              targetPanel,
-            ),
-          ],
-        ],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    log.info("rule updated via callback", {
-      targetGroupId,
-      field,
-      value,
-      userId,
-    });
-    if (!panel) {
-      return this.rulesCard(undefined, userId, ["rules", targetGroupId], notice);
-    }
-    return this.rulesPanelCard(
-      targetPanel,
-      targetGroupId,
-      userId,
-      notice,
-      page,
-      mode,
-    );
+    return toggleRulesCard(this.context(), targetGroupId, field, value, userId, panel, replyGroupId, page, mode);
   }
 
   /**
@@ -1517,57 +711,15 @@ export class AdminCommandService {
     userId: string,
     replyGroupId?: string,
   ): CardResult {
-    const canManage =
-      this.permissions.canManageRules(userId, targetGroupId) ||
-      this.permissions.isSuperAdmin(userId);
-    if (!canManage) {
-      return this.ruleDeniedCard(targetGroupId, "删除关键词需要群管理员或以上权限。");
-    }
-    const config = this.configStore.get(targetGroupId);
-    const keywords = [...config.keywords];
-    const index = serial;
-    if (index < 0 || index >= keywords.length) {
-      return this.ruleDeniedCard(targetGroupId, "该关键词已不存在，可能已被其它操作删除。");
-    }
-    const removed = keywords[index]!;
-    keywords.splice(index, 1);
-    this.configStore.setOverride({
-      groupId: targetGroupId,
-      keywords: keywords.length > 0 ? keywords : [],
-    });
-    log.info("rule keyword deleted via callback", {
-      targetGroupId,
-      removed,
-      userId,
-    });
-    const nextPage = Math.min(
-      Math.max(page, 1),
-      Math.max(1, Math.ceil(keywords.length / RULE_KEYWORD_PAGE_SIZE)),
-    );
-    const notice = `${this.mention(replyGroupId, userId)}已删除关键词：${removed}`;
-    return this.rulesKeywordPanel(targetGroupId, userId, nextPage, notice);
+    return delKeywordCard(this.context(), targetGroupId, serial, page, userId, replyGroupId);
   }
 
-  /** 回调：清空关键词（二次确认后走 setOverride，保留字段级覆盖语义）。 */
   public clearKeywordsCard(
     targetGroupId: string,
     userId: string,
     replyGroupId?: string,
   ): CardResult {
-    const canManage =
-      this.permissions.canManageRules(userId, targetGroupId) ||
-      this.permissions.isSuperAdmin(userId);
-    if (!canManage) {
-      return this.ruleDeniedCard(targetGroupId, "清空关键词需要群管理员或以上权限。");
-    }
-    this.configStore.setOverride({ groupId: targetGroupId, keywords: [] });
-    log.info("rule keywords cleared via callback", { targetGroupId, userId });
-    return this.rulesKeywordPanel(
-      targetGroupId,
-      userId,
-      1,
-      `${this.mention(replyGroupId, userId)}已清空关键词。`,
-    );
+    return clearKeywordsCard(this.context(), targetGroupId, userId, replyGroupId);
   }
 
   /**
@@ -1584,38 +736,7 @@ export class AdminCommandService {
     page = 1,
     mode: "allow" | "deny" = "allow",
   ): CardResult {
-    const canManage =
-      this.permissions.canManageRules(userId, targetGroupId) ||
-      this.permissions.isSuperAdmin(userId);
-    if (!canManage) {
-      return this.ruleDeniedCard(targetGroupId, "恢复继承需要群管理员或以上权限。");
-    }
-    const normalized = normalizeRulePanel(panel);
-    const allowed = new Set<keyof GroupConfigOverride>(
-      RULE_PANEL_FIELDS[normalized],
-    );
-    const fields = rawFields
-      .split(",")
-      .map((field) => field.trim())
-      .filter((field): field is keyof GroupConfigOverride =>
-        allowed.has(field as keyof GroupConfigOverride),
-      );
-    if (fields.length === 0) {
-      return this.ruleDeniedCard(targetGroupId, "本页没有可恢复的字段。");
-    }
-    this.configStore.clearFields(targetGroupId, fields);
-    log.info("rule page reset", { targetGroupId, panel: normalized, fields, userId });
-    const notice = `${this.mention(replyGroupId, userId)}已恢复本页继承：${fields
-      .map((field) => ruleFieldLabel(field))
-      .join("、")}`;
-    return this.rulesPanelCard(
-      normalized,
-      targetGroupId,
-      userId,
-      notice,
-      page,
-      mode,
-    );
+    return resetRulePageCard(this.context(), targetGroupId, panel, rawFields, userId, replyGroupId, page, mode);
   }
 
   /**
@@ -1628,15 +749,7 @@ export class AdminCommandService {
     userId: string,
     replyGroupId?: string,
   ): CardResult {
-    const canManage =
-      this.permissions.canManageRules(userId, targetGroupId) ||
-      this.permissions.isSuperAdmin(userId);
-    if (!canManage) {
-      return this.ruleDeniedCard(targetGroupId, "恢复继承需要群管理员或以上权限。");
-    }
-    this.configStore.removeOverride(targetGroupId);
-    log.info("rule overrides reset", { targetGroupId, userId });
-    return this.rulesCard(undefined, userId, ["rules", targetGroupId], `${this.mention(replyGroupId, userId)}已恢复全部继承。`);
+    return resetAllRulesCard(this.context(), targetGroupId, userId, replyGroupId);
   }
 
   /**
@@ -1653,104 +766,7 @@ export class AdminCommandService {
     replyGroupId?: string,
     page = 1,
   ): CardResult {
-    const canManage =
-      this.permissions.canManageRules(userId, targetGroupId) ||
-      this.permissions.isSuperAdmin(userId);
-    if (!canManage) {
-      return this.ruleDeniedCard(targetGroupId, "修改名单需要群管理员或以上权限。");
-    }
-    if (!isRosterField(field)) {
-      return this.ruleDeniedCard(targetGroupId, "未知的名单字段。");
-    }
-    const cleaned = option.trim();
-    if (cleaned.length === 0) {
-      return this.ruleDeniedCard(targetGroupId, "没有识别到要切换的取值。");
-    }
-    const config = this.configStore.get(targetGroupId);
-    const current = new Set<string>(config[field]);
-    if (current.has(cleaned)) {
-      current.delete(cleaned);
-    } else {
-      current.add(cleaned);
-    }
-    const next = [...current].sort();
-    this.configStore.setOverride({
-      groupId: targetGroupId,
-      [field]: next,
-    } as GroupConfigOverride);
-    log.info("rule roster toggled via callback", {
-      targetGroupId,
-      field,
-      option: cleaned,
-      userId,
-    });
-    const action = current.has(cleaned) ? "已选中" : "已取消";
-    const notice = `${this.mention(replyGroupId, userId)}${action}：${cleaned}`;
-    return this.rulesPanelCard(
-      "roster",
-      targetGroupId,
-      userId,
-      notice,
-      page,
-      mode,
-    );
-  }
-
-  /** 权限不足 / 目标非法时的统一子卡提示（可返回规则概览）。 */
-  private ruleDeniedCard(
-    targetGroupId: string,
-    reason: string,
-  ): CardResult {
-    const card = renderCard({
-      title: "权限不足",
-      lines: [reason],
-      rows: [
-        [viewButton("back", "返回规则", "rules", "view", targetGroupId)],
-      ],
-    });
-    return { ok: false, text: card.text, rich: card };
-  }
-
-  /**
-   * `/rules all`：全局默认规则卡（仅超级管理员）。
-   *
-   * 与群规则**同一套子卡结构**，目标 `DEFAULT_GROUP_ID`；正文标明「只影响未覆盖的群」，
-   * 底部是「覆盖率总览」（列出 `listOverrideSummaries()`）+ 刷新 + 规则帮助。
-   */
-  private globalRulesCard(userId: string, page = 1): CardResult {
-    if (!this.permissions.isSuperAdmin(userId)) {
-      const card = renderCard({
-        title: "权限不足",
-        lines: [GLOBAL_RULES_DENIED],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    const rows: CardButton[][] = [
-      [
-        viewButton("panel-toggle", "开关设置", "rules", "panel", DEFAULT_GROUP_ID, "toggle"),
-        viewButton("panel-decision", "入群审核", "rules", "panel", DEFAULT_GROUP_ID, "decision"),
-        viewButton("panel-punish", "违规处理", "rules", "panel", DEFAULT_GROUP_ID, "punish"),
-      ],
-      [
-        viewButton("panel-keywords", "关键词", "rules", "panel", DEFAULT_GROUP_ID, "keyword"),
-        viewButton("panel-roster", "名单筛选", "rules", "panel", DEFAULT_GROUP_ID, "roster"),
-        viewButton("panel-more", "更多设置", "rules", "panel", DEFAULT_GROUP_ID, "more"),
-      ],
-      [
-        viewButton("overrides", "覆盖率总览", "rules", "overrides", "1"),
-        viewButton("refresh", "刷新", "rules", "all"),
-        viewButton("help", "规则帮助", "help", "topic", "rules"),
-      ],
-    ];
-    return cardFromText("全局规则（默认）", this.formatGlobalRules(), {
-      rows,
-      buttonHint: "点击即生效：",
-      footer: [
-        "只影响未单独覆盖该字段的群；单个群可用「恢复本页继承」回落到这里。",
-        "手输：/rules set all <字段> <值>",
-      ],
-    });
+    return rosterToggleCard(this.context(), targetGroupId, field, mode, option, userId, replyGroupId, page);
   }
 
   /**
@@ -1759,59 +775,7 @@ export class AdminCommandService {
    * 每页 10 个群，列出该群显式覆盖的字段；没有覆盖的显示「全部继承全局」。
    */
   public ruleOverridesCard(userId: string, page = 1): CardResult {
-    if (!this.permissions.isSuperAdmin(userId)) {
-      const card = renderCard({
-        title: "权限不足",
-        lines: [GLOBAL_RULES_DENIED],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    const summaries = this.configStore.listOverrideSummaries();
-    const pageSize = 10;
-    const pageCount = Math.max(1, Math.ceil(summaries.length / pageSize));
-    const current = Math.min(Math.max(page, 1), pageCount);
-    const slice = summaries.slice((current - 1) * pageSize, current * pageSize);
-    const lines: string[] = [
-      "全局默认规则只影响**未覆盖**的群；下面是各群的字段级覆盖情况。",
-      `共 ${summaries.length} 个群有覆盖 · 第 ${current} / ${pageCount} 页`,
-      "",
-    ];
-    if (slice.length === 0) {
-      lines.push("目前没有任何群覆盖全局规则（全部继承全局）。");
-    }
-    for (const summary of slice) {
-      lines.push(
-        `**${this.displayGroup(summary.groupId)}**：${summary.fields.length} 个字段（${summary.fields
-          .map((field) => ruleFieldShortLabel(field))
-          .join("、")}）`,
-      );
-    }
-    const rows: CardButton[][] = [];
-    const paging: CardButton[] = [];
-    if (current > 1) {
-      paging.push(viewButton("prev", "上一页", "rules", "overrides", current - 1));
-    }
-    if (current < pageCount) {
-      paging.push(viewButton("next", "下一页", "rules", "overrides", current + 1));
-    }
-    rows.push(
-      paging.length > 0
-        ? paging
-        : [viewButton("overrides", "刷新总览", "rules", "overrides", current)],
-    );
-    rows.push([
-      viewButton("back-global", "返回全局规则", "rules", "all"),
-      viewButton("help", "规则帮助", "help", "topic", "rules"),
-    ]);
-    const footer = [`全局：${this.formatGlobalRules().split("\n")[0] ?? ""}`];
-    if (current < pageCount) {
-      footer.push(`下一页：/rules overrides +${current + 1}`);
-    }
-    return cardFromText("规则覆盖率总览", lines.join("\n"), {
-      rows,
-      footer,
-    });
+    return ruleOverridesCard(this.context(), userId, page);
   }
 
   /**
@@ -1934,256 +898,6 @@ export class AdminCommandService {
     replyGroupId?: string,
   ): Promise<CardResult | undefined> {
     return activityCallbackCard(this.context(), action, args, userId, replyGroupId);
-  }
-
-  private async handleRules(
-    groupId: string | undefined,
-    userId: string,
-    parts: readonly string[],
-  ): Promise<CommandResult> {
-    const action = normalize(parts[1]);
-    if (action === "set" || action === "设置") {
-      return this.handleRulesSet(groupId, userId, parts);
-    }
-    if (action === "add" || action === "新增" || action === "加") {
-      return this.handleRulesKeywordAdd(groupId, userId, parts);
-    }
-    if (action === "del" || action === "delete" || action === "删除") {
-      return this.handleRulesKeywordDelete(groupId, userId, parts);
-    }
-    if (action === "overrides" || action === "覆盖") {
-      const { page } = extractPageToken(parts.slice(1));
-      return this.ruleOverridesCard(userId, page);
-    }
-    return this.rulesCard(groupId, userId, parts);
-  }
-
-  /**
-   * `/rules add keyword <词>`：逐条追加关键词（权限同 `/rules set`）。
-   *
-   * 去重、trim、单条 ≤ {@link RULE_KEYWORD_MAX_LENGTH} 字；目标群解析与 `/rules set` 一致。
-   */
-  private async handleRulesKeywordAdd(
-    groupId: string | undefined,
-    userId: string,
-    parts: readonly string[],
-  ): Promise<CommandResult> {
-    const target = this.resolveRuleTarget(groupId, parts);
-    if (!target.ok) {
-      return { ok: false, text: target.text };
-    }
-    if (!this.permissions.canManageRules(userId, target.groupId)) {
-      return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
-    }
-    const { field, value } = target;
-    if (field !== "keyword" && field !== "keywords" && field !== "关键词") {
-      return { ok: false, text: RULES_ADD_USAGE };
-    }
-    const keyword = value.trim();
-    if (keyword.length === 0) {
-      return { ok: false, text: RULES_ADD_USAGE };
-    }
-    if (keyword.length > RULE_KEYWORD_MAX_LENGTH) {
-      return {
-        ok: false,
-        text: `关键词单条不能超过 ${RULE_KEYWORD_MAX_LENGTH} 个字符。`,
-      };
-    }
-    const config = this.configStore.get(target.groupId);
-    if (config.keywords.includes(keyword)) {
-      return {
-        ok: false,
-        text: `关键词已存在：${keyword}`,
-      };
-    }
-    const next = [...config.keywords, keyword];
-    this.configStore.setOverride({ groupId: target.groupId, keywords: next });
-    log.info("rule keyword added", { targetGroupId: target.groupId, keyword, userId });
-    const base =
-      target.groupId === DEFAULT_GROUP_ID
-        ? "已更新全局规则"
-        : "已更新群规则";
-    return {
-      ok: true,
-      text: `${base}。\n\n${this.formatRules(target.groupId)}`,
-    };
-  }
-
-  /**
-   * `/rules del keyword <词>`：逐条删除关键词（权限同 `/rules set`）。
-   *
-   * 不存在时明确报错，不静默成功。
-   */
-  private async handleRulesKeywordDelete(
-    groupId: string | undefined,
-    userId: string,
-    parts: readonly string[],
-  ): Promise<CommandResult> {
-    const target = this.resolveRuleTarget(groupId, parts);
-    if (!target.ok) {
-      return { ok: false, text: target.text };
-    }
-    if (!this.permissions.canManageRules(userId, target.groupId)) {
-      return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
-    }
-    const { field, value } = target;
-    if (field !== "keyword" && field !== "keywords" && field !== "关键词") {
-      return { ok: false, text: RULES_DEL_USAGE };
-    }
-    const keyword = value.trim();
-    if (keyword.length === 0) {
-      return { ok: false, text: RULES_DEL_USAGE };
-    }
-    const config = this.configStore.get(target.groupId);
-    if (!config.keywords.includes(keyword)) {
-      return { ok: false, text: `关键词不存在：${keyword}` };
-    }
-    const next = config.keywords.filter((item) => item !== keyword);
-    this.configStore.setOverride({ groupId: target.groupId, keywords: next });
-    log.info("rule keyword deleted", {
-      targetGroupId: target.groupId,
-      keyword,
-      userId,
-    });
-    const base =
-      target.groupId === DEFAULT_GROUP_ID
-        ? "已更新全局规则"
-        : "已更新群规则";
-    return {
-      ok: true,
-      text: `${base}。\n\n${this.formatRules(target.groupId)}`,
-    };
-  }
-
-  /**
-   * `/rules add|del keyword` 的目标解析：与 `/rules set` 相同的「群内 / 私信带群号 / all」规则。
-   *
-   * 私信：`/rules add <群号|#群短码> keyword <词>`；
-   * 全局：`/rules add all keyword <词>`。
-   */
-  private resolveRuleTarget(
-    groupId: string | undefined,
-    parts: readonly string[],
-  ): { ok: true; groupId: string; field: string; value: string } | { ok: false; text: string } {
-    const args = parts.slice(2);
-    if (isGlobalTarget(args[0])) {
-      return { ok: true, groupId: DEFAULT_GROUP_ID, field: args[1] ?? "", value: args.slice(2).join(" ") };
-    }
-    if (groupId) {
-      return { ok: true, groupId, field: args[0] ?? "", value: args.slice(1).join(" ") };
-    }
-    const targetGroupId = this.resolveTargetGroupId(undefined, args[0]);
-    if (!targetGroupId) {
-      return {
-        ok: false,
-        text: "私信中需要提供已绑定的群号或 #群短码：/rules add <群号|#群短码> keyword <词>",
-      };
-    }
-    return {
-      ok: true,
-      groupId: targetGroupId,
-      field: args[1] ?? "",
-      value: args.slice(2).join(" "),
-    };
-  }
-
-  /** 全局规则：仅超级管理员可查看。 */
-  private handleGlobalRulesView(userId: string): CommandResult {
-    if (!this.permissions.isSuperAdmin(userId)) {
-      return { ok: false, text: GLOBAL_RULES_DENIED };
-    }
-    return { ok: true, text: this.formatGlobalRules() };
-  }
-
-  private async handleRulesSet(
-    groupId: string | undefined,
-    userId: string,
-    parts: readonly string[],
-  ): Promise<CommandResult> {
-    const args = parts.slice(2);
-    if (isGlobalTarget(args[0])) {
-      return this.handleGlobalRulesSet(userId, args.slice(1));
-    }
-
-    const targetGroupId = groupId ?? this.resolveTargetGroupId(undefined, args[0]);
-    const field = groupId ? args[0] : args[1];
-    const valueParts = groupId ? args.slice(1) : args.slice(2);
-
-    if (!targetGroupId) {
-      return {
-        ok: false,
-        text: "私信中设置规则需要提供已绑定的群号或 #群短码。用法：/rules set <群号|#群短码> <字段> <值>",
-      };
-    }
-    if (!this.permissions.canManageRules(userId, targetGroupId)) {
-      return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
-    }
-    if (!field || valueParts.length === 0) {
-      return { ok: false, text: RULES_SET_USAGE };
-    }
-
-    const value = valueParts.join(" ").trim();
-    let override: GroupConfigOverride;
-    try {
-      override = parseRuleSetting(targetGroupId, field, value, this.configStore);
-    } catch (error) {
-      return { ok: false, text: `设置失败：${formatError(error)}` };
-    }
-
-    this.configStore.setOverride(override);
-    log.info("group rules updated", {
-      groupId: targetGroupId,
-      userId,
-      field: normalize(field),
-    });
-    return {
-      ok: true,
-      text: `已更新群规则。\n\n${this.formatRules(targetGroupId)}`,
-    };
-  }
-
-  /** 全局规则：仅超级管理员可修改。 */
-  private async handleGlobalRulesSet(
-    userId: string,
-    args: readonly string[],
-  ): Promise<CommandResult> {
-    if (!this.permissions.isSuperAdmin(userId)) {
-      return { ok: false, text: GLOBAL_RULES_DENIED };
-    }
-    const field = args[0];
-    const valueParts = args.slice(1);
-    if (!field || valueParts.length === 0) {
-      return { ok: false, text: GLOBAL_RULES_SET_USAGE };
-    }
-
-    const value = valueParts.join(" ").trim();
-    let override: GroupConfigOverride;
-    try {
-      override = parseRuleSetting(DEFAULT_GROUP_ID, field, value, this.configStore);
-    } catch (error) {
-      return { ok: false, text: `设置失败：${formatError(error)}` };
-    }
-
-    this.configStore.setOverride(override);
-    log.info("global rules updated", { userId, field: normalize(field) });
-    return {
-      ok: true,
-      text: `已更新全局规则（影响所有未单独覆盖的群）。\n\n${this.formatGlobalRules()}`,
-    };
-  }
-
-  private formatRules(targetGroupId: string): string {
-    return formatEffectiveConfig(
-      this.configStore.get(targetGroupId),
-      `群 ${this.displayGroup(targetGroupId)} 规则配置：`,
-    );
-  }
-
-  private formatGlobalRules(): string {
-    return formatEffectiveConfig(
-      this.configStore.default,
-      "全局默认规则（未单独配置的群继承）：",
-    );
   }
 
   private handleTest(groupId: string | undefined, userId: string): CommandResult {
