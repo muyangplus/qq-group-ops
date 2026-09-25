@@ -3,6 +3,11 @@ import { aliasCard } from "./commands/aliasCommands.js";
 import { whoisCard } from "./commands/whoisCommands.js";
 import { handleProfile } from "./commands/profileCommands.js";
 import {
+  mainMenu,
+  menuContext,
+  menuMessage,
+} from "./commands/menuCommands.js";
+import {
   handleTest,
   handleTestAt,
   handleTestMenu,
@@ -871,7 +876,7 @@ export class AdminCommandService {
    */
   /** 主菜单富消息（首次私信推送与未知指令回复复用）。 */
   public mainMenu(groupId: string | undefined, userId: string): RichMessage {
-    return buildMenu("main", this.menuContext(groupId, userId)).message;
+    return mainMenu(this.context(), groupId, userId);
   }
 
   /** 回调 renderer 用：渲染菜单的某一级（`cb:menu:open:<section>`）。 */
@@ -880,10 +885,7 @@ export class AdminCommandService {
     groupId: string | undefined,
     userId: string,
   ): RichMessage {
-    return buildMenu(
-      findMenuSection(section) ?? "main",
-      this.menuContext(groupId, userId),
-    ).message;
+    return menuMessage(this.context(), section, groupId, userId);
   }
 
   /**
@@ -2612,25 +2614,7 @@ export class AdminCommandService {
   }
 
   private menuContext(groupId: string | undefined, userId: string): MenuContext {
-    const context: MenuContext = {
-      userId,
-      groupId,
-      // 与 buildHelp 保持一致：未注入身份映射时（单元测试）视为已绑定
-      bound: this.identityMap ? Boolean(this.identityMap.getQq(userId)) : true,
-      permissions: this.permissions,
-    };
-    if (this.display) {
-      context.userLabel = this.display.user(userId);
-    }
-    if (groupId !== undefined) {
-      if (this.display) {
-        context.groupLabel = this.display.group(groupId);
-      }
-      if (this.identityMap) {
-        context.groupBound = Boolean(this.identityMap.getGroupNumber(groupId));
-      }
-    }
-    return context;
+    return menuContext(this.context(), groupId, userId);
   }
 
   private handleHelp(
