@@ -345,15 +345,17 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 系统 / 管理 / 超
 
 ```text
 /testat         发 3 条：纯文本 @、Markdown 首行 @、Markdown 正文中间 @
-/testat all     额外发一条纯文本 @everyone（真的 @ 全群，谨慎）
+/testat all     再多发 5 条 @全体候选（@everyone / <@!all> / <@!everyone> / 文字 / 纯文本），会打扰全群
 ```
 
-- 官方内嵌格式（`<@!openid>` 与 `@everyone`）**只在 `content` 生效**；Ark / Embed 明确不生效；
-- Markdown 卡片是 `msg_type=2`，payload 里只有 `markdown.content`、**没有 `content`**，
-  所以卡片里的 @ 到底有没有效果只能真机验证（第 2、3 条就是验证这个）；
-- `@everyone` 需要机器人拥有发送 @所有人 消息的权限，失败时汇总卡直接给出错误原因；
-- 纯文本通道由 `RichMessageSender.sendPlainToGroup()/sendPlainToUser()` 提供（不带 `markdown` 选项）；
-- 测完按汇总卡回复「哪几条真的 @ 到了」，再决定是否把所有 @ 统一改成「纯文本 @ [+ 卡片]」两条消息。
+**真机实测结论（本机群聊，2026-09）**：
+
+- Markdown 卡片里的 `<@!openid>`（首行、正文中间都算）**生效** → 项目所有 @ 反馈继续用卡片内 @；
+- 纯文本 `content` 里的 `<@!openid>` **不生效**，纯文本 `@everyone` **也不生效**；
+- 所以**官方「内嵌格式只在 content 生效」这条文档在群聊 Markdown 上不成立**，以实测为准；
+- `@everyone` 在 Markdown 卡片里能否生效由 `/testat all` 的 5 条候选实测（`@everyone`、`<@!all>`、
+  `<@!everyone>`、纯文字 `@全体成员`、纯文本 `<@!all>`）；都没有则活动发布改用替代提醒方案；
+- 纯文本通道仍保留在 `RichMessageSender.sendPlainToGroup()/sendPlainToUser()`（`/testat` 的对照项在用）。
 
 ### 卡片标准与分页
 

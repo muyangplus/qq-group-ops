@@ -1962,14 +1962,21 @@ describe("AdminCommandService", async () => {
     expect(api.sentMessages).toHaveLength(3);
   });
 
-  it("adds an @everyone probe for /testat all and reports failures", async () => {
+  it("probes several @everyone spellings for /testat all and reports failures", async () => {
     const svc = withSender();
 
     const all = await svc.handle("g1", "root", "/testat all");
     expect(all.ok).toBe(true);
-    expect(all.text).toContain("已在群里发送 4 条测试消息");
-    expect(api.sentMessages).toHaveLength(4);
-    expect(String(api.sentMessages[3]!.content).startsWith("@everyone")).toBe(true);
+    // 3 条基础测试 + 5 条 @全体候选
+    expect(all.text).toContain("已在群里发送 8 条测试消息");
+    expect(api.sentMessages).toHaveLength(8);
+    const probeTexts = api.sentMessages
+      .slice(3)
+      .map((message) => String(message.markdown ?? message.content ?? ""));
+    expect(probeTexts.join("\n")).toContain("@everyone");
+    expect(probeTexts.join("\n")).toContain("<@!all>");
+    expect(probeTexts.join("\n")).toContain("<@!everyone>");
+    expect(probeTexts.join("\n")).toContain("@全体成员");
 
     // 群发送整体失败：汇总卡如实报告，不抛错
     api.failGroupMessages = true;

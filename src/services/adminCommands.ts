@@ -2101,16 +2101,16 @@ export class AdminCommandService {
   /**
    * `/testat [all]`：真机自检「群里 @ 到底怎么发才生效」（仅全局超级管理员）。
    *
-   * 官方的内嵌格式（`<@!openid>` / `@everyone`）只在 `content` 生效，而 Markdown
-   * 卡片（`msg_type=2`）不带 `content`，所以卡片里的 `@` 到底有没有效果必须实测。
-   * 依次发送：
+   * 已实测（本机真机）：**Markdown 卡片里的 `<@!openid>` 生效**，纯文本 `content` 里的
+   * `<@!openid>` 与 `@everyone` 都不生效 —— 与官方内嵌格式文档的暗示相反。所以：
    *
-   * 1. 纯文本 `content` + `<@!我>`（理论上必然生效）；
-   * 2. Markdown 卡片，首行 `<@!我>`；
-   * 3. Markdown 卡片，正文中间的 `<@!我>`；
-   * 4. 仅 `/testat all`：纯文本 `@everyone`（会真的 @ 全群）。
+   * 1. 纯文本 `content` + `<@!我>`（实测无效，保留作对照）；
+   * 2. Markdown 卡片，首行 `<@!我>`（实测有效）；
+   * 3. Markdown 卡片，正文中间的 `<@!我>`（实测有效）；
+   * 4. 仅 `/testat all`：一组 @全体候选写法（markdown 里的 `@everyone` / `<@!all>` /
+   *    `<@!everyone>` / `@全体成员`，以及纯文本 `<@!all>`），找出哪个（如果有）真能 @ 全群。
    *
-   * 最后回一张汇总卡，请操作者回答哪几条真的 @ 到了，据此决定后续统一用哪种通道。
+   * 最后回一张汇总卡，请操作者回答哪几条真的 @ 到了，据此决定活动发布的 @全体实现方式。
    */
   private async handleTestAt(
     groupId: string | undefined,
@@ -2129,61 +2129,59 @@ export class AdminCommandService {
         ok: false,
         text:
           "请在群里执行 /testat（要验证的是群消息里的 @ 渲染）。\n" +
-          "额外验证 @全体成员：/testat all（会真的 @ 全群，请谨慎）。",
+          "额外验证 @全体成员候选写法：/testat all（会真的打扰全群，请谨慎）。",
       };
     }
     const wantAll = normalize(parts[1]) === "all" || parts[1] === "全体";
     const mention = `<@!${userId}>`;
     const lines: string[] = [];
-    let sent = 0;
+    const failures: string[] = [];
+
+    const record = async (
+      label: string,
+      result: { ok: boolean; detail: string; mode: string },
+    ): Promise<void> => {
+      lines.push(
+        `${label}：${result.ok ? `已发送（${result.mode}）` : `失败（${result.detail}）`}`,
+      );
+      if (!result.ok) {
+        failures.push(label);
+      }
+    };
 
     const first = await sender.sendPlainToGroup(
       groupId,
       `【@测试 1】纯文本 content + 提及：${mention} 这条走 msg_type=0。`,
     );
-    sent += 1;
-    lines.push(
-      `1. 纯文本 content + \`<@!我>\`：${first.ok ? "已发送" : `失败（${first.detail}）`}`,
-    );
+    await record("1. 纯文本 `content` + `<@!我>`（已知无效，对照）", first);
 
     const cardFirst = await sender.sendToGroup(groupId, {
       markdown: `${mention}\n\n【@测试 2】这是 Markdown 卡片，**提及放在第一行**。`,
       text: `【@测试 2】Markdown 卡片，提及放在第一行：${mention}`,
     });
-    sent += 1;
-    lines.push(
-      `2. Markdown 卡片（首行 @）：${
-        cardFirst.ok
-          ? `已发送（${cardFirst.mode}）`
-          : `失败（${cardFirst.detail}）`
-      }`,
-    );
+    await record("2. Markdown 卡片（首行 @，已知有效）", cardFirst);
 
     const cardMiddle = await sender.sendToGroup(groupId, {
       markdown: `【@测试 3】这是 Markdown 卡片，提及放在**正文中间**：${mention} 后面还有字。`,
       text: `【@测试 3】Markdown 卡片，提及在正文中间：${mention}`,
     });
-    sent += 1;
-    lines.push(
-      `3. Markdown 卡片（正文中间 @）：${
-        cardMiddle.ok
-          ? `已发送（${cardMiddle.mode}）`
-          : `失败（${cardMiddle.detail}）`
-      }`,
-    );
+    await record("3. Markdown 卡片（正文中间 @，已知有效）", cardMiddle);
 
     if (wantAll) {
-      const every = await sender.sendPlainToGroup(
-        groupId,
-        `@everyone\n【@测试 4】@全体成员测试（纯文本 content）。`,
-      );
-      sent += 1;
-      lines.push(
-        `4. 纯文本 \`@everyone\`：${
-          every.ok ? "已发送" : `失败（${every.detail}）`
-        }`,
-      );
+      let index = 4;
+      for (const probe of AT_ALL_PROBES) {
+        const result =
+          probe.kind === "card"
+            ? await sender.sendToGroup(groupId, {
+                markdown: probe.content,
+                text: stripMarkdownForText(probe.content),
+              })
+            : await sender.sendPlainToGroup(groupId, probe.content);
+        await record(`${index}. ${probe.label}`, result);
+        index += 1;
+      }
     }
+    const sent = lines.length;
 
     const card = renderCard({
       title: "@ 测试结果",
@@ -2191,41 +2189,33 @@ export class AdminCommandService {
         `已在群里发送 ${sent} 条测试消息（本条是汇总）：`,
         ...lines,
         "",
-        "**请回复：哪几条真的 @ 到了你？**（例如「只有 1」「1 和 4」）",
-        "判断标准：昵称被高亮（蓝色）/ 收到 @ 提醒 / 手机收到通知。",
+        "**请回复：哪几条真的 @ 到了你 / 全体员工？**",
+        "判断标准：昵称/「全体成员」被高亮、收到 @ 提醒、手机收到通知。",
         wantAll
-          ? "若第 4 条失败，说明当前机器人没有 @全体权限。"
-          : "想额外验证 @全体成员：点下面按钮（会真的 @ 全群）。",
+          ? "上面 4 起的几条是 @全体候选写法，只要有一条真的提醒了全群，就告诉我它的编号。"
+          : "想继续找能真正 @ 全群的写法：点下面按钮（会再次打扰全群）。",
+        failures.length > 0
+          ? `发送失败的条目：${failures.join("、")}`
+          : "",
         "",
-        `操作人：${this.displayUser(userId)}（${this.describeDelivery(first, cardFirst, cardMiddle)}）`,
-      ],
+        `操作人：${this.displayUser(userId)}`,
+      ].filter((line) => line.length > 0),
       rows: [
         [
           actionButton("again", "再测一次", "/testat"),
-          actionButton("all", "@全体测试", "/testat all", {
+          actionButton("all", "@全体候选", "/testat all", {
             style: 3,
             modal: {
-              content: "会真的 @ 全群成员，确认发送？",
+              content: "会向全群发多条 @全体候选消息，确认发送？",
               confirmText: "发送",
               cancelText: "取消",
             },
           }),
         ],
       ],
-      footer: ["测完请把结果告诉开发者，据此统一所有 @ 的实现方式。"],
+      footer: ["测完请把有效的编号告诉开发者，据此实现活动发布的 @全体。"],
     });
     return { ok: true, text: card.text, rich: card };
-  }
-
-  /** 汇总三/四条测试消息的投递方式，便于排查。 */
-  private describeDelivery(
-    first: { ok: boolean; mode: string },
-    second: { ok: boolean; mode: string },
-    third: { ok: boolean; mode: string },
-  ): string {
-    const list = [first, second, third];
-    const okCount = list.filter((item) => item.ok).length;
-    return `发送成功 ${okCount}/${list.length}`;
   }
 
   /** `/menu [系统|管理|超管|活动|审核|运营]`：渲染对应层级的交互菜单。 */
@@ -3677,6 +3667,56 @@ function parseMentionTarget(text: string): string | undefined {
   const match = /<@!?([^>\s]+)>/u.exec(text);
   const value = match?.[1]?.trim();
   return value && value.length > 0 ? value : undefined;
+}
+
+/**
+ * `/testat all` 的 @全体候选写法。
+ *
+ * 真机已确认：Markdown 卡片里的 `<@!openid>` 能 @ 到人，纯文本 `content` 里的却不行；
+ * 而 `@everyone` 在纯文本里无效。于是这里把所有「可能让全群收到提醒」的候选写法各发一条，
+ * 由真机结果来判定到底有没有可用的一条（官方群聊能力文档没有明确支持 @所有人）。
+ */
+const AT_ALL_PROBES: readonly {
+  label: string;
+  kind: "card" | "text";
+  content: string;
+}[] = [
+  {
+    label: "Markdown 卡片正文含 `@everyone`",
+    kind: "card",
+    content: "【@测试】@全体候选：@everyone 这一条是 markdown 卡片。",
+  },
+  {
+    label: "Markdown 卡片正文含 `<@!all>`",
+    kind: "card",
+    content: "【@测试】@全体候选：<@!all> 这一条是 markdown 卡片。",
+  },
+  {
+    label: "Markdown 卡片正文含 `<@!everyone>`",
+    kind: "card",
+    content: "【@测试】@全体候选：<@!everyone> 这一条是 markdown 卡片。",
+  },
+  {
+    label: "Markdown 卡片正文含纯文字 `@全体成员`",
+    kind: "card",
+    content: "【@测试】@全体候选：@全体成员 这一条只是文字，预期不会提醒。",
+  },
+  {
+    label: "纯文本 `content` 含 `<@!all>`",
+    kind: "text",
+    content: "【@测试】@全体候选（纯文本）：<@!all>",
+  },
+];
+
+/** 把 markdown 卡片正文压成纯文本降级文案（按钮不可用时的兜底）。 */
+function stripMarkdownForText(markdown: string): string {
+  return markdown
+    .replace(/\*\*/gu, "")
+    .replace(/`/gu, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join("\n");
 }
 
 function bindingFailureText(): string {
