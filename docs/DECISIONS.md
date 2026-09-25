@@ -49,6 +49,8 @@
 - ADR-0040 补充：统计图片 / 富媒体上传 / CSV 导出（§B3）
 - ADR-0040 补充：群内静默 + 多群绑定 + 满员广播（§B4）
 - ADR-0041：规则菜单重构 + 字段级继承 / 恢复（§C）
+- ADR-0042：黑名单双层作用域 + 处罚/申诉短码记录 + 处罚通知独立订阅频道（§A5 / §B7 / §B8）
+- ADR-0043：申诉入口用「群内按钮 + 私信指令」双通道，且按钮不直接建单
 
 ---
 
@@ -769,3 +771,62 @@
   - `src/runtime.ts`：rules renderer 覆盖新 action 并透传分页 / 模式参数；
   - `src/services/menu.ts` / `helpTopics.ts`、README、CONFIGURATION、ACCEPTANCE（J49–J56）、
     CHANGELOG 同步更新。
+
+## ADR-0042：黑名单双层作用域 + 处罚/申诉短码记录 + 处罚通知独立订阅频道（§A5 / §B7 / §B8）
+
+- 状态：已采纳（0.12.0）
+- 背景：
+  - 群管理需要「本群拉黑」与「全站拉黑」两种粒度，且必须**先于一切入群规则**生效，
+    否则自动通过 / 名单筛选会把黑名单用户放进来；
+  - 审核员希望处罚后能立刻在**私信卡片**上改处罚（解除 / 改时长 / 踢出 / 拉黑），
+    而不是回到群里手输指令；被处罚人需要有申诉入口；
+  - 官方对「处罚 / 申诉」没有任何结构化载体，只能自己建记录并给出**对外可读**的编号。
+- 决策：
+  1. **黑名单分两层**：`blacklist_entries` 的 `scope` 取 `group`（`group_id` 非空）或
+     `global`（`group_id` 空串）。本群黑名单在审批时只影响该群；全局黑名单影响机器人
+     **所有已绑定群**（`identity_bindings` 里 `kind=group` 的群）。命中即拒绝，
+     优先级高于 `joinDecision` / 名单筛选 / 班级姓名等一切规则。
+  2. **本群黑名单同时调官方群拉黑接口**：官方接口要求目标不在群中，所以顺序是
+     **先 `removeGroupMember`、再 `updateMemberBlacklist(add)`**；官方调用失败只记日志，
+     本地表仍然拦截（审批拒绝 + 已在群内踢出）。全局黑名单不调官方接口（它是群级的）。
+  3. **处罚记录用 6 位随机短码**（`punishment_records.record_id`），不复用 `short_codes`
+     表：老库的 `short_codes.kind` CHECK 约束加不了新类型，而短码生成本来就是纯函数
+     （`randomCode()`），内置一份即可。申诉记录同理（`appeal_records.appeal_id`）。
+  4. **处罚记录不保存消息原文**（延续 ADR-0005）：只存命中规则说明、实际动作、
+     `message_id` 与执行结果，卡片上不展示原消息。
+  5. **处罚通知是独立订阅频道**：复用 `notification_subscriptions` 表，存储 scope 加
+     `punish:` 前缀区分于入群申请的裸 scope；频道内接收人按 `canReviewContent`（审核员+）
+     过滤，`join` 频道仍按 `canApproveJoin`（群管理员+）过滤。因此 `punish:` 前缀对老数据
+     是向后兼容的（老行天然属于 `join` 频道，无需迁移）。
+  6. **申诉不要求绑定 QQ 号**：被处罚的人可能从未 `/bind`，`/appeal` 因此加入绑定豁免，
+     且群内提交**完全静默**（结果只走私信），避免在群里暴露申诉行为。
+- 理由：
+  - 双层作用域把「影响面」显式化，权限也随之分层（本群=审核员+，全局=仅全局超管）；
+  - 内置短码比扩 `short_codes` 表安全：不动老库约束、不需要迁移，也不影响已有短码；
+  - 独立频道让审核员能只订阅自己关心的那一类通知，避免处罚通知与入群申请互相打扰；
+  - 不保存原文是隐私底线，卡片只给「谁、因什么规则、被怎么处理、记录号是多少」。
+- 影响：
+  - `src/db/schema.ts` / `persistence.ts`：新增 `blacklist_entries` / `punishment_records` /
+    `appeal_records`（`CREATE TABLE IF NOT EXISTS`，老库自动补表）；
+  - 新增 `BlacklistService` / `PunishmentService` / `AppealService` / `ModerationNotifier`
+    与 `commands/{blacklist,punish,appeal}Commands.ts`、`moderationCards.ts`；
+  - `NotificationService` 扩展 `NotifyChannel`（`join` / `punish`）与 `pushToSubscribers()`；
+  - `JoinApprovalService` 新增黑名单短路（官方拒绝失败则退回人工，避免本地与官方不一致）；
+  - `MessageGuardService` 在处罚后建记录并推送，群内警告卡带「我要申诉」按钮；
+  - `RetentionService` 清理超期处罚记录与**已处理**申诉（待处理申诉不自动清理）；
+  - 新增回调命名空间 `cb:blacklist:*`、`cb:punish:*`、`cb:appeal:*`，runtime 统一重新鉴权。
+
+## ADR-0043：申诉入口用「群内按钮 + 私信指令」双通道，且按钮不直接建单
+
+- 状态：已采纳（0.12.0）
+- 背景：官方按钮没有输入框（`action.modal` 只有确认/取消），申诉又需要「理由」这种自由文本；
+  回调按钮在群聊里点击后，`CallbackRouter` 默认把返回的卡片发到**群**里，会泄露申诉行为。
+- 决策：
+  1. 群内警告卡片上的「我要申诉」是**回调按钮**（`cb:appeal:new:<短码>`，带
+     `permission.specifyUserIds=[当事人]`）。renderer **不返回卡片**（`undefined`，只回包），
+     而是主动**私信**一张引导卡，卡片里给出 `command` 按钮 `/appeal #短码`；
+  2. 真正的申诉单由 `/appeal #短码 [理由]` 创建（私信里命令按钮会自动发送，群里则填入输入框）；
+  3. 按钮点击不建单，因此不存在「空理由申诉单」；同一处罚的同一人重复提交只更新理由。
+- 理由：既保留「一键入口」的便利，又不把申诉内容暴露在群里，也不依赖官方按钮支持输入框。
+- 影响：`src/services/messageGuard.ts`（警告卡加按钮）、`appealCommands.ts`（`new` 分支返回
+  `undefined` + 私信引导）、`moderationCards.ts`（`buildAppealGuideCard`）。

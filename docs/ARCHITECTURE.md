@@ -52,6 +52,11 @@ TypeScript 核心服务
   ├── services/memberRoster.ts   班级/专业索引加载与姓名抽取
   ├── services/joinRequestCard.ts 入群申请推送卡片（Markdown + 指令按钮）
   ├── services/notifications.ts  入群申请推送（订阅、权限过滤、三级降级、投递去重）
+  ├── services/blacklist.ts      黑名单（本群 / 全局；踢出 + 官方群拉黑，审批最高优先级拦截）
+  ├── services/punishments.ts    处罚记录与卡片动作（解除 / 改禁言时长 / 踢出 / 拉黑）
+  ├── services/appeals.ts        申诉记录（同一处罚的同一人只保留一条待处理）
+  ├── services/moderationNotifier.ts 处罚 / 申诉私信推送（`punish` 频道，按接收者渲染卡片）
+  ├── services/moderationCards.ts 处罚通知 / 申诉通知 / 时长子卡 / 申诉引导卡渲染
   ├── services/shortCodes.ts     随机短码（数字+大写字母，生成/解析/持久化，替代系统 id 展示）
   ├── services/displayNames.ts   统一展示与命令参数解析（QQ号/群号/短码）
   ├── services/userProfiles.ts   个人资料（班级/学院/姓名/学号，学号 11 位 + 年级推导）
@@ -89,6 +94,9 @@ TypeScript 核心服务
   ├── db/groupMessageModeRepository.ts 全量消息模式仓储
   ├── db/activityRepository.ts   活动与报名仓储
   ├── db/menuDeliveryRepository.ts 主菜单首次推送去重仓储
+  ├── db/blacklistRepository.ts  黑名单仓储（本群 / 全局）
+  ├── db/punishmentRepository.ts 处罚记录仓储（动作 JSON，不含消息原文）
+  ├── db/appealRepository.ts     申诉记录仓储
   └── persistence.ts             数据库连接、迁移与仓储装配
       │
       ▼
@@ -151,6 +159,7 @@ QQ 官方开放平台
 QQ Group Ops 核心服务
   ├── 入群审核 / 同步 / 规则引擎（班级库）
   ├── 入群申请推送（Markdown 卡片 + 快捷按钮）
+  ├── 黑名单（本群 / 全局）· 处罚记录与卡片改处罚 · 申诉
   ├── 规则引擎 / 消息审核
   ├── 管理员命令
   ├── 活动报名
@@ -207,6 +216,8 @@ QQ Group Ops 核心服务
 
 - `restrict_chat_setting`：请求体为 `{ members: [{ op, member_openid, mute_expire_at }] }`，限频 60 QPM，最长 30 天。
 - `batch_remove_members`：请求体为 `{ member_openids }`，**仅白名单机器人可用**（错误码 11253）。
+- `member_blacklist`：请求体为 `{ op: "add" | "del", member_openids }`，同样**仅白名单机器人可用**；
+  加入黑名单要求目标不在群中，因此本项目的顺序是「先移出群、再拉黑」。
 - `approval_join_request`：请求体为 `{ op, join_request_id, reject_reason }`。
 - `join_request_list`：返回 `{ list, next_cursor }`。
 
