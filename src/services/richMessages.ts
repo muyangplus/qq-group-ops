@@ -73,6 +73,46 @@ export class RichMessageSender {
     return this.run("group", groupId, message, {});
   }
 
+  /**
+   * 主动发一条**纯文本**群消息。
+   *
+   * 官方的内嵌格式（`<@!openid>` 提及、`@everyone`）**只在 `content` 里生效**，
+   * 而 Markdown 消息（`msg_type=2`）的 payload 不带 `content`，所以「真 @ 到人」
+   * 必须走这条纯文本通道；需要正文时再补发一张卡片。
+   */
+  public async sendPlainToGroup(
+    groupId: string,
+    content: string,
+  ): Promise<RichSendResult> {
+    try {
+      await this.api.sendGroupMessage(groupId, content);
+      return { ok: true, detail: "", mode: "text" };
+    } catch (error) {
+      return {
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error),
+        mode: "none",
+      };
+    }
+  }
+
+  /** 主动发一条**纯文本**私聊消息（同样用于内嵌格式）。 */
+  public async sendPlainToUser(
+    userOpenid: string,
+    content: string,
+  ): Promise<RichSendResult> {
+    try {
+      await this.api.sendPrivateMessage(userOpenid, content);
+      return { ok: true, detail: "", mode: "text" };
+    } catch (error) {
+      return {
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error),
+        mode: "none",
+      };
+    }
+  }
+
   /** 回复用户：优先被动回复，失败降级为主动发送。 */
   public replyToUser(
     userOpenid: string,

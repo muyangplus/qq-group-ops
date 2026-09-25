@@ -89,4 +89,30 @@ describe("RichMessageSender", () => {
     expect(result.mode).toBe("none");
     expect(result.detail.length).toBeGreaterThan(0);
   });
+
+  it("sends plain text where inline mentions (@user / @everyone) can work", async () => {
+    const api = new FakeQQOfficialAPI();
+    const sender = new RichMessageSender(api);
+
+    const plain = await sender.sendPlainToGroup("g1", "hello <@!u1>");
+    expect(plain).toMatchObject({ ok: true, mode: "text" });
+    // 纯文本通道不带 markdown，提及才会被官方解析
+    expect(api.sentMessages[0]).toMatchObject({ groupId: "g1", content: "hello <@!u1>" });
+    expect(api.sentMessages[0]?.markdown).toBeUndefined();
+
+    await expect(sender.sendPlainToUser("u1", "@everyone")).resolves.toMatchObject({
+      ok: true,
+      mode: "text",
+    });
+    expect(api.sentPrivateMessages[0]).toMatchObject({
+      userOpenid: "u1",
+      content: "@everyone",
+    });
+
+    api.failGroupMessages = true;
+    const failed = await sender.sendPlainToGroup("g1", "x");
+    expect(failed.ok).toBe(false);
+    expect(failed.mode).toBe("none");
+    expect(failed.detail).toContain("fake group message failure");
+  });
 });

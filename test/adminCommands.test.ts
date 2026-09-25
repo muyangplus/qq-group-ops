@@ -18,6 +18,7 @@ import {
   NotificationService,
 } from "../src/services/notifications.js";
 import { PermissionService } from "../src/services/permissions.js";
+import { RichMessageSender } from "../src/services/richMessages.js";
 import { ShortCodeService } from "../src/services/shortCodes.js";
 import { UserProfileService } from "../src/services/userProfiles.js";
 import { FakeIdentityBindingRepository } from "./helpers/fakeIdentityBindingRepository.js";
@@ -41,6 +42,23 @@ describe("AdminCommandService", async () => {
       .filter((item) => item.userOpenid === userId)
       .at(-1);
     return String(message?.markdown ?? message?.content ?? "");
+  }
+
+  /** 带富消息发送器的服务（`/testat` 需要纯文本通道）。 */
+  function withSender(): AdminCommandService {
+    shortCodes = new ShortCodeService();
+    return new AdminCommandService({
+      permissions,
+      joinAudit,
+      configStore,
+      joinApproval,
+      joinSync,
+      auditLog,
+      identityMap,
+      notifications,
+      display: new DisplayNameService(identityMap, shortCodes),
+      richMessages: new RichMessageSender(api),
+    });
   }
 
   /** 带短码展示的服务：生产装配路径（DisplayNameService）的最小替身。 */
@@ -1910,5 +1928,53 @@ describe("AdminCommandService", async () => {
     const usage = await svc.handle("g1", "root", "/alias set 只有一个参数");
     expect(usage.ok).toBe(false);
     expect(usage.text).toContain("用法");
+  });
+
+  it("sends /testat variants so the @ rendering can be checked on device", async () => {
+    const svc = withSender();
+
+    // 只有全局超管能用；私聊里没意义
+    const denied = await svc.handle("g1", "admin", "/testat");
+    expect(denied.ok).toBe(false);
+    expect(denied.text).toContain("权限不足");
+    const inPrivate = await svc.handle(undefined, "root", "/testat");
+    expect(inPrivate.ok).toBe(false);
+    expect(inPrivate.text).toContain("请在群里执行 /testat");
+    expect(api.sentMessages).toHaveLength(0);
+
+    const result = await svc.handle("g1", "root", "/testat");
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("已在群里发送 3 条测试消息");
+
+    // 第 1 条是纯文本（无 markdown），提及走 content
+    const plain = api.sentMessages[0]!;
+    expect(plain.groupId).toBe("g1");
+    expect(plain.markdown).toBeUndefined();
+    expect(String(plain.content)).toContain("<@!root>");
+    expect(String(plain.content)).toContain("@测试 1");
+
+    // 第 2、3 条是 Markdown 卡片：一个首行 @、一个正文中间 @
+    const cardFirst = api.sentMessages[1]!;
+    const cardMiddle = api.sentMessages[2]!;
+    expect(String(cardFirst.markdown).startsWith("<@!root>")).toBe(true);
+    expect(String(cardMiddle.markdown)).toContain("<@!root>");
+    expect(String(cardMiddle.markdown).startsWith("<@!root>")).toBe(false);
+    expect(api.sentMessages).toHaveLength(3);
+  });
+
+  it("adds an @everyone probe for /testat all and reports failures", async () => {
+    const svc = withSender();
+
+    const all = await svc.handle("g1", "root", "/testat all");
+    expect(all.ok).toBe(true);
+    expect(all.text).toContain("已在群里发送 4 条测试消息");
+    expect(api.sentMessages).toHaveLength(4);
+    expect(String(api.sentMessages[3]!.content).startsWith("@everyone")).toBe(true);
+
+    // 群发送整体失败：汇总卡如实报告，不抛错
+    api.failGroupMessages = true;
+    const failed = await svc.handle("g1", "root", "/testat");
+    expect(failed.ok).toBe(true);
+    expect(failed.text).toContain("失败");
   });
 });

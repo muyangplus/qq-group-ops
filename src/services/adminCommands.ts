@@ -38,7 +38,7 @@ import {
   resolveMenuAccess,
   type MenuContext,
 } from "./menu.js";
-import type { RichMessage } from "./richMessages.js";
+import type { RichMessage, RichMessageSender } from "./richMessages.js";
 import { buildTestMenuCard, TEST_MENU_PAGE_COUNT } from "./testMenu.js";
 import type { JoinRuleEvaluator } from "./joinRules.js";
 import type { GroupMessageModeRegistry } from "./groupMessageMode.js";
@@ -125,6 +125,8 @@ export interface AdminCommandServiceOptions {
   activityCards?: ActivityCardService | undefined;
   /** 入群申请推送（`/notify`）。 */
   notifications?: NotificationService | undefined;
+  /** 富消息发送器（`/testat` 与活动发布需要「纯文本 + 卡片」两条通道）。 */
+  richMessages?: RichMessageSender | undefined;
 }
 
 export class AdminCommandService {
@@ -143,6 +145,7 @@ export class AdminCommandService {
   private readonly activity: ActivityService | undefined;
   private readonly activityCards: ActivityCardService | undefined;
   private readonly notifications: NotificationService | undefined;
+  private readonly richMessages: RichMessageSender | undefined;
 
   public constructor(options: AdminCommandServiceOptions) {
     this.permissions = options.permissions;
@@ -160,6 +163,7 @@ export class AdminCommandService {
     this.activity = options.activity;
     this.activityCards = options.activityCards;
     this.notifications = options.notifications;
+    this.richMessages = options.richMessages;
   }
 
   public async handle(
@@ -419,6 +423,9 @@ export class AdminCommandService {
         return this.handleTest(groupId, userId);
       case "testmenu":
         return this.handleTestMenu(userId, parts);
+      case "testat":
+      case "@测试":
+        return this.handleTestAt(groupId, userId, parts);
       default:
         return this.unknownCommandResult(groupId, userId, parts[0]);
     }
@@ -2089,6 +2096,136 @@ export class AdminCommandService {
     }
     const card = buildTestMenuCard(page);
     return { ok: true, text: card.text, rich: card };
+  }
+
+  /**
+   * `/testat [all]`：真机自检「群里 @ 到底怎么发才生效」（仅全局超级管理员）。
+   *
+   * 官方的内嵌格式（`<@!openid>` / `@everyone`）只在 `content` 生效，而 Markdown
+   * 卡片（`msg_type=2`）不带 `content`，所以卡片里的 `@` 到底有没有效果必须实测。
+   * 依次发送：
+   *
+   * 1. 纯文本 `content` + `<@!我>`（理论上必然生效）；
+   * 2. Markdown 卡片，首行 `<@!我>`；
+   * 3. Markdown 卡片，正文中间的 `<@!我>`；
+   * 4. 仅 `/testat all`：纯文本 `@everyone`（会真的 @ 全群）。
+   *
+   * 最后回一张汇总卡，请操作者回答哪几条真的 @ 到了，据此决定后续统一用哪种通道。
+   */
+  private async handleTestAt(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): Promise<CommandResult> {
+    if (!this.permissions.isSuperAdmin(userId)) {
+      return { ok: false, text: "权限不足：/testat 需要全局超级管理员权限。" };
+    }
+    const sender = this.richMessages;
+    if (!sender) {
+      return { ok: false, text: "发送通道未启用，无法自检。" };
+    }
+    if (!groupId) {
+      return {
+        ok: false,
+        text:
+          "请在群里执行 /testat（要验证的是群消息里的 @ 渲染）。\n" +
+          "额外验证 @全体成员：/testat all（会真的 @ 全群，请谨慎）。",
+      };
+    }
+    const wantAll = normalize(parts[1]) === "all" || parts[1] === "全体";
+    const mention = `<@!${userId}>`;
+    const lines: string[] = [];
+    let sent = 0;
+
+    const first = await sender.sendPlainToGroup(
+      groupId,
+      `【@测试 1】纯文本 content + 提及：${mention} 这条走 msg_type=0。`,
+    );
+    sent += 1;
+    lines.push(
+      `1. 纯文本 content + \`<@!我>\`：${first.ok ? "已发送" : `失败（${first.detail}）`}`,
+    );
+
+    const cardFirst = await sender.sendToGroup(groupId, {
+      markdown: `${mention}\n\n【@测试 2】这是 Markdown 卡片，**提及放在第一行**。`,
+      text: `【@测试 2】Markdown 卡片，提及放在第一行：${mention}`,
+    });
+    sent += 1;
+    lines.push(
+      `2. Markdown 卡片（首行 @）：${
+        cardFirst.ok
+          ? `已发送（${cardFirst.mode}）`
+          : `失败（${cardFirst.detail}）`
+      }`,
+    );
+
+    const cardMiddle = await sender.sendToGroup(groupId, {
+      markdown: `【@测试 3】这是 Markdown 卡片，提及放在**正文中间**：${mention} 后面还有字。`,
+      text: `【@测试 3】Markdown 卡片，提及在正文中间：${mention}`,
+    });
+    sent += 1;
+    lines.push(
+      `3. Markdown 卡片（正文中间 @）：${
+        cardMiddle.ok
+          ? `已发送（${cardMiddle.mode}）`
+          : `失败（${cardMiddle.detail}）`
+      }`,
+    );
+
+    if (wantAll) {
+      const every = await sender.sendPlainToGroup(
+        groupId,
+        `@everyone\n【@测试 4】@全体成员测试（纯文本 content）。`,
+      );
+      sent += 1;
+      lines.push(
+        `4. 纯文本 \`@everyone\`：${
+          every.ok ? "已发送" : `失败（${every.detail}）`
+        }`,
+      );
+    }
+
+    const card = renderCard({
+      title: "@ 测试结果",
+      lines: [
+        `已在群里发送 ${sent} 条测试消息（本条是汇总）：`,
+        ...lines,
+        "",
+        "**请回复：哪几条真的 @ 到了你？**（例如「只有 1」「1 和 4」）",
+        "判断标准：昵称被高亮（蓝色）/ 收到 @ 提醒 / 手机收到通知。",
+        wantAll
+          ? "若第 4 条失败，说明当前机器人没有 @全体权限。"
+          : "想额外验证 @全体成员：点下面按钮（会真的 @ 全群）。",
+        "",
+        `操作人：${this.displayUser(userId)}（${this.describeDelivery(first, cardFirst, cardMiddle)}）`,
+      ],
+      rows: [
+        [
+          actionButton("again", "再测一次", "/testat"),
+          actionButton("all", "@全体测试", "/testat all", {
+            style: 3,
+            modal: {
+              content: "会真的 @ 全群成员，确认发送？",
+              confirmText: "发送",
+              cancelText: "取消",
+            },
+          }),
+        ],
+      ],
+      footer: ["测完请把结果告诉开发者，据此统一所有 @ 的实现方式。"],
+    });
+    return { ok: true, text: card.text, rich: card };
+  }
+
+  /** 汇总三/四条测试消息的投递方式，便于排查。 */
+  private describeDelivery(
+    first: { ok: boolean; mode: string },
+    second: { ok: boolean; mode: string },
+    third: { ok: boolean; mode: string },
+  ): string {
+    const list = [first, second, third];
+    const okCount = list.filter((item) => item.ok).length;
+    return `发送成功 ${okCount}/${list.length}`;
   }
 
   /** `/menu [系统|管理|超管|活动|审核|运营]`：渲染对应层级的交互菜单。 */

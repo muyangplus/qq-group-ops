@@ -38,6 +38,10 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
   public failPrivateRichMessages = false;
   /** 置为 true 后带按钮的 Markdown 单聊消息抛出错误，便于测试「按钮未开通」降级。 */
   public failPrivateKeyboardMessages = false;
+  /** 置为 true 后所有群消息抛出错误，便于测试群发送失败（如 `/testat`）。 */
+  public failGroupMessages = false;
+  /** 置为 true 后 Markdown 群消息抛出错误（纯文本仍可发送）。 */
+  public failGroupRichMessages = false;
 
   public async getAccessToken(): Promise<string> {
     return "fake-token";
@@ -53,6 +57,12 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
     msgId?: string,
     options?: RichMessageOptions,
   ): Promise<Record<string, unknown>> {
+    if (this.failGroupMessages) {
+      throw new Error("fake group message failure");
+    }
+    if (options?.markdown && this.failGroupRichMessages) {
+      throw new Error("fake group rich message failure");
+    }
     const messageId = randomUUID();
     this.sentMessages.push({
       groupId,

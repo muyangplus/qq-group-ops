@@ -210,6 +210,7 @@ export function createRuntime(
     activity,
     activityCards,
     notifications,
+    richMessages,
   });
   const menuState = createFirstMenuPushState(settings, repositories.menuDeliveries, writeQueue);
   // 回调 renderer 表：导航/查看类按钮点击后由此渲染新卡片（见 docs/CARD-STANDARD.md）

@@ -394,6 +394,7 @@ function superCard(context: MenuContext): CardSpec {
       "全局规则：/rules set all <字段> <值>",
       "全局推送：/notify all on|off",
       "班级别名：/alias set <别名> <规范名>",
+      "@ 自检：/testat（群内测 @ 是否生效，/testat all 测 @全体）",
     ],
     rows: [
       [
@@ -404,6 +405,7 @@ function superCard(context: MenuContext): CardSpec {
       [
         cmdButton("notify", "通知订阅", "/notify"),
         cmdButton("testmenu", "翻页测试", "/testmenu"),
+        cmdButton("testat", "@测试", "/testat"),
       ],
       [cmdButton("pending", "待审批", "/pending"), backButton()],
     ],
