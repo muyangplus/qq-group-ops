@@ -206,10 +206,10 @@ describe("AdminCommandService · misc", () => {
     expect(dm).toContain("userId：u3");
     expect(dm).toContain("QQ：10005");
 
-    // @昵称 无法反查：给出提示，不猜
+    // @昵称 无法反查：A4 起也只走私信（群里静默）
     const nickname = await service.handle("g1", "root", "/whois @张三");
-    expect(nickname.ok).toBe(false);
-    expect(nickname.text).toContain("无法从 @昵称 反查用户");
+    expect(nickname.silent).toBe(true);
+    expect(privateText("root")).toContain("无法从 @昵称 反查用户");
   });
 
   it("resolves #group and #user short codes in commands", async () => {

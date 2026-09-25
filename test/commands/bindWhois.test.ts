@@ -132,8 +132,9 @@ describe("AdminCommandService · bindWhois", () => {
     const code = /#[0-9A-Za-z]{6}/u.exec(pending.text)?.[0] ?? "";
 
     const denied = await scoped.handle("g1", "admin", `/whois ${code}`);
-    expect(denied.ok).toBe(false);
-    expect(denied.text).toContain("权限不足");
+    // A4：权限不足也只走私信，群里完全静默
+    expect(denied.silent).toBe(true);
+    expect(privateText("admin")).toContain("权限不足");
 
     const result = await scoped.handle("g1", "root", `/whois ${code}`);
     expect(result.ok).toBe(true);
@@ -162,10 +163,10 @@ describe("AdminCommandService · bindWhois", () => {
     expect(inPrivate.text).toContain("类型：用户（你自己）");
     expect(inPrivate.text).toContain("10004");
 
-    // 非超管照旧被拒（这类提示不含隐私，仍在原处回）
+    // 非超管照旧被拒（A4 起这类提示也走私信，群里静默）
     const denied = await service.handle("g1", "member", "/whois");
-    expect(denied.ok).toBe(false);
-    expect(denied.text).toContain("仅超级管理员");
+    expect(denied.silent).toBe(true);
+    expect(privateText("member")).toContain("仅超级管理员");
   });
 
   it("delivers /whois results privately and never falls back to the group", async () => {
@@ -250,13 +251,13 @@ describe("AdminCommandService · bindWhois", () => {
     expect(blank.silent).toBe(true);
     expect(privateText("root")).toContain("个人资料：尚未填写");
 
-    // 未知映射 / 权限：不含隐私，群里直接回
+    // A4：未知映射 / 权限不足也都只走私信，群里完全静默
     const missing = await svc.handle("g1", "root", "/whois profile nope");
-    expect(missing.ok).toBe(false);
-    expect(missing.text).toContain("未找到");
+    expect(missing.silent).toBe(true);
+    expect(privateText("root")).toContain("未找到");
 
     const denied = await svc.handle("g1", "admin", "/whois profile 10001");
-    expect(denied.ok).toBe(false);
-    expect(denied.text).toContain("权限不足");
+    expect(denied.silent).toBe(true);
+    expect(privateText("admin")).toContain("权限不足");
   });
 });

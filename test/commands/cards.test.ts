@@ -138,7 +138,7 @@ describe("AdminCommandService · cards", () => {
     const cases: Array<[string, string]> = [
       ["/myperm", "我的权限"],
       ["/bind", "绑定"],
-      ["/whois nope", "映射查询"],
+      // `/whois` 在群里一律走私信（A4），群里只留静默占位卡，不再断言按钮
       ["/perm list", "权限配置"],
       ["/profile", "个人资料"],
     ];

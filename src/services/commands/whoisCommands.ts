@@ -167,12 +167,14 @@ export function userMapping(
   }
 
   /**
-   * `/whois` 的投递层：**结果只走私信**。
+   * `/whois` 的投递层：**所有结果只走私信**（A4）。
    *
    * - 私聊里发指令：直接回复（本来就只有本人能看到）；
-   * - 群聊里发指令且私信成功：**群里完全静默**（`silent: true`，连「已私信发送」都不回）；
-   * - 私信发送失败：群里回唯一一条不含结果的提示（「先私聊机器人再试」），**绝不降级显示结果**；
-   * - 权限不足 / 用法 / 未找到映射这类不含隐私的结果，仍在原处直接回。
+   * - 群聊里发指令：无论查询成功、**未找到映射**、用法提示还是权限不足，内容都只走私信；
+   *   私信成功 → **群里完全静默**（`silent: true`，连「已私信发送」都不回）；
+   * - 私信发送失败：群里回唯一一条不含结果的提示（「先私聊机器人再试」），**绝不降级显示结果**。
+   *
+   * 之所以连「未找到映射」也走私信：查询失败本身就会泄露信息（某个 QQ号 / 短码是否存在）。
    */
 export async function whoisCard(
   ctx: AdminCommandContext,
@@ -188,19 +190,17 @@ export async function whoisCard(
     ];
     const result = handleWhois(ctx, groupId, userId, parts);
     const card = ctx.helpers.cardify("映射查询", result, rows, ["详细用法：/help"]);
-    if (!groupId || !result.ok) {
+    if (!groupId) {
       return card;
     }
-    const rich = card.rich;
-    if (!rich) {
-      return card;
-    }
+    // 群内：一律尝试私信投递（卡片一定是卡片，兜底用正文构造）
+    const rich = card.rich ?? { markdown: card.text, text: card.text };
     const sender = ctx.notifications;
     const sent = sender
       ? await sender.sendPrivateCard(userId, rich)
       : { ok: false, detail: "私信通道未启用" };
     if (sent.ok) {
-      // 群内完全静默：结果已经私信出去，群里连「已私信发送」都不回。
+      // 群内完全静默：内容已经私信出去，群里连「已私信发送」都不回。
       // `silent: true` 由 gatewayRunner 拦下；这里的 rich 只是不含隐私的占位，
       // 万一静默标志失效也不会把查询结果泄露到群里。
       return {
