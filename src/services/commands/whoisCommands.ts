@@ -170,8 +170,8 @@ export function userMapping(
    * `/whois` 的投递层：**结果只走私信**。
    *
    * - 私聊里发指令：直接回复（本来就只有本人能看到）；
-   * - 群聊里发指令：结果私信给操作人，群里只回一张不含任何内容的提示卡；
-   * - 私信发送失败：只提示「先私聊机器人再试」，**绝不在群里降级显示结果**；
+   * - 群聊里发指令且私信成功：**群里完全静默**（`silent: true`，连「已私信发送」都不回）；
+   * - 私信发送失败：群里回唯一一条不含结果的提示（「先私聊机器人再试」），**绝不降级显示结果**；
    * - 权限不足 / 用法 / 未找到映射这类不含隐私的结果，仍在原处直接回。
    */
 export async function whoisCard(
@@ -199,13 +199,27 @@ export async function whoisCard(
     const sent = sender
       ? await sender.sendPrivateCard(userId, rich)
       : { ok: false, detail: "私信通道未启用" };
+    if (sent.ok) {
+      // 群内完全静默：结果已经私信出去，群里连「已私信发送」都不回。
+      // `silent: true` 由 gatewayRunner 拦下；这里的 rich 只是不含隐私的占位，
+      // 万一静默标志失效也不会把查询结果泄露到群里。
+      return {
+        ok: true,
+        text: "结果已私信发送。",
+        rich: renderCard({
+          title: "映射查询",
+          lines: ["结果已私信发送，请查看私聊。"],
+        }),
+        silent: true,
+      };
+    }
     const mention = ctx.helpers.mention(groupId, userId).trimEnd();
-    const body = sent.ok
-      ? "**结果**：已私信发送，请在私聊里查看。\n（/whois 的结果涉及隐私，不在群里展示）"
-      : `**结果**：私信发送失败（${sent.detail}），请先私聊机器人再试。\n（/whois 的结果涉及隐私，不会在群里展示）`;
     const notice = renderCard({
       title: "映射查询",
-      lines: [...(mention ? [mention] : []), body],
+      lines: [
+        ...(mention ? [mention] : []),
+        `**结果**：私信发送失败（${sent.detail}），请先私聊机器人再试。\n（/whois 的结果涉及隐私，不会在群里展示）`,
+      ],
       rows,
       footer: ["详细用法：/help"],
     });

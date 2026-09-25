@@ -137,8 +137,8 @@ describe("AdminCommandService · bindWhois", () => {
 
     const result = await scoped.handle("g1", "root", `/whois ${code}`);
     expect(result.ok).toBe(true);
-    // 群内只回提示：结果只走私信，群里不出现真实 id
-    expect(result.text).toContain("已私信发送");
+    // 群内完全静默（silent 由 gatewayRunner 拦下）：群里不出现真实 id
+    expect(result.silent).toBe(true);
     expect(result.text).not.toContain("真实申请 ID");
     expect(result.text).not.toContain("r1");
     const dm = privateText("root");
@@ -147,10 +147,10 @@ describe("AdminCommandService · bindWhois", () => {
   });
 
   it("defaults /whois to the current context", async () => {
-    // 群里：结果私信给操作人，群里只回提示
+    // 群里：结果私信给操作人，群里完全静默（不发任何提示）
     const inGroup = await service.handle("g1", "root", "/whois");
     expect(inGroup.ok).toBe(true);
-    expect(inGroup.text).toContain("已私信发送");
+    expect(inGroup.silent).toBe(true);
     expect(inGroup.text).not.toContain("654321");
     const dm = privateText("root");
     expect(dm).toContain("类型：群（当前群）");
@@ -190,7 +190,7 @@ describe("AdminCommandService · bindWhois", () => {
     const result = await scoped.handle("g1", "root", `/whois ${code}`);
 
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("已私信发送");
+    expect(result.silent).toBe(true);
     const dm = privateText("root");
     expect(dm).toContain("类型：入群申请");
     expect(dm).toContain("申请人：");
@@ -211,10 +211,10 @@ describe("AdminCommandService · bindWhois", () => {
     const { svc, profiles } = withProfiles();
     await svc.handle("g1", "member", "/profile set 22123456789 材化2211 张三");
 
-    // 群内：只回提示，详情走私信
+    // 群内：完全静默，详情走私信
     const byQq = await svc.handle("g1", "root", "/whois profile 10001");
     expect(byQq.ok).toBe(true);
-    expect(byQq.text).toContain("已私信发送");
+    expect(byQq.silent).toBe(true);
     expect(byQq.text).not.toContain("张三");
     const dm = privateText("root");
     expect(dm).toContain("类型：用户资料");
@@ -244,10 +244,10 @@ describe("AdminCommandService · bindWhois", () => {
     expect(byMention.ok).toBe(true);
     expect(privateText("root")).toContain("姓名：张三");
 
-    // 未填写资料：同样只走私信
+    // 未填写资料：同样静默，只走私信
     const blank = await svc.handle("g1", "root", "/whois profile 10002");
     expect(blank.ok).toBe(true);
-    expect(blank.text).toContain("已私信发送");
+    expect(blank.silent).toBe(true);
     expect(privateText("root")).toContain("个人资料：尚未填写");
 
     // 未知映射 / 权限：不含隐私，群里直接回
