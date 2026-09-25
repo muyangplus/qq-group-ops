@@ -1,6 +1,7 @@
 import type { CardResult, CommandResult } from "./commands/support.js";
 import { aliasCard } from "./commands/aliasCommands.js";
 import { whoisCard } from "./commands/whoisCommands.js";
+import { handleProfile } from "./commands/profileCommands.js";
 import {
   handleNotify,
   notifyCard,
@@ -600,7 +601,7 @@ export class AdminCommandService {
       case "资料":
         return this.cardify(
           "个人资料",
-          this.handleProfile(userId, parts),
+          handleProfile(this.context(), userId, parts),
           [
             [
               viewButton("activity", "活动", "activity", "page", groupId ?? "", 1),
@@ -3273,145 +3274,6 @@ export class AdminCommandService {
   }
 
   // ------------------------------------------------------------- /profile
-
-  private handleProfile(userId: string, parts: readonly string[]): CommandResult {
-    const profiles = this.userProfiles;
-    if (!profiles) {
-      return { ok: false, text: "个人资料服务未启用。" };
-    }
-    const action = normalize(parts[1]);
-    if (!action) {
-      return { ok: true, text: this.formatProfile(userId) };
-    }
-    if (action === "set" || action === "设置") {
-      const field = PROFILE_FIELD_ALIASES[normalize(parts[2])];
-      if (!field) {
-        return this.updateProfileSmart(userId, parts.slice(2).join(" "));
-      }
-      const value = parts.slice(3).join(" ").trim();
-      if (value.length === 0) {
-        return { ok: false, text: PROFILE_USAGE };
-      }
-      if (CLEAR_WORDS.has(value.toLowerCase())) {
-        profiles.clear(userId, field);
-        return {
-          ok: true,
-          text: `已清除：${PROFILE_FIELD_LABELS[field]}\n\n${this.formatProfile(userId)}`,
-        };
-      }
-      try {
-        profiles.set(userId, field, value);
-      } catch (error) {
-        return { ok: false, text: `设置失败：${formatError(error)}` };
-      }
-      return {
-        ok: true,
-        text: `已更新：${PROFILE_FIELD_LABELS[field]}\n\n${this.formatProfile(userId)}`,
-      };
-    }
-    if (action === "clear" || action === "清除" || action === "重置") {
-      profiles.clear(userId);
-      return { ok: true, text: "已清空个人资料。" };
-    }
-    return { ok: false, text: PROFILE_USAGE };
-  }
-
-  /**
-   * 智能 `/profile set`：一次给班级/姓名/学号，顺序与分隔符随意。
-   * 有歧义或残留时整体不写入，只回报识别结果，让用户改用 `字段=值`。
-   */
-  private updateProfileSmart(userId: string, raw: string): CommandResult {
-    const profiles = this.userProfiles;
-    if (!profiles) {
-      return { ok: false, text: "个人资料服务未启用。" };
-    }
-    const parsed = parseProfileInput(raw, {
-      roster: profiles.rosterRef,
-      aliases: this.classAliases,
-    });
-    if (parsed.error) {
-      return {
-        ok: false,
-        text: `${parsed.error}\n\n${formatParseNotes(parsed)}\n\n${PROFILE_USAGE}`,
-      };
-    }
-    if (parsed.fields.name === undefined
-      && parsed.fields.studentId === undefined
-      && parsed.fields.className === undefined
-      && parsed.fields.college === undefined
-      && parsed.fields.year === undefined) {
-      return { ok: false, text: PROFILE_USAGE };
-    }
-    // 先整体校验再写入，避免"写一半失败"。
-    try {
-      if (parsed.fields.studentId !== undefined) {
-        yearFromStudentId(parsed.fields.studentId);
-      }
-      if (parsed.fields.className !== undefined) {
-        const roster = profiles.rosterRef;
-        if (!roster) {
-          throw new UserProfileError("班级库未加载，请联系管理员");
-        }
-        if (!roster.hasClass(parsed.fields.className)) {
-          throw new UserProfileError(`班级「${parsed.fields.className}」不在班级库中`);
-        }
-      }
-      if (parsed.fields.name !== undefined) {
-        const name = parsed.fields.name.replace(/\s+/gu, "");
-        if (name.length === 0 || name.length > 20) {
-          throw new UserProfileError("姓名需要 1-20 个字符（不含空格）");
-        }
-      }
-    } catch (error) {
-      return {
-        ok: false,
-        text: `设置失败：${formatError(error)}\n\n${formatParseNotes(parsed)}`,
-      };
-    }
-    // 学号先写（确定年级），班级再写（自动带出学院/年级），显式学院/年级最后覆盖，姓名垫底。
-    const order: UserProfileField[] = ["studentId", "className", "college", "year", "name"];
-    const applied: string[] = [];
-    for (const key of order) {
-      const value = parsed.fields[key];
-      if (value === undefined) {
-        continue;
-      }
-      try {
-        profiles.set(userId, key, value);
-      } catch (error) {
-        return { ok: false, text: `设置失败：${formatError(error)}` };
-      }
-      applied.push(PROFILE_FIELD_LABELS[key]);
-    }
-    const lines = [`已更新：${applied.join("、")}`];
-    const notes = formatParseNotes(parsed);
-    if (notes.length > 0) {
-      lines.push(notes);
-    }
-    lines.push("", this.formatProfile(userId));
-    return { ok: true, text: lines.join("\n") };
-  }
-
-  private formatProfile(userId: string): string {
-    const profile = this.userProfiles?.get(userId);
-    const userLabel = this.displayUser(userId);
-    if (!profile) {
-      return `个人资料（${userLabel}）：尚未填写\n\n${PROFILE_USAGE}`;
-    }
-    return [
-      `个人资料（${userLabel}）：`,
-      `姓名：${profile.name || "（未填）"}`,
-      `学号：${profile.studentId || "（未填）"}${
-        profile.studentId && profile.year ? `（${profile.year} 级）` : ""
-      }`,
-      `班级：${profile.className || "（未填）"}`,
-      `学院：${profile.college || "（未填）"}`,
-      "",
-      PROFILE_USAGE,
-    ].join("\n");
-  }
-
-  // ------------------------------------------------------------ /activity
 
   private async handleActivity(
     groupId: string | undefined,
