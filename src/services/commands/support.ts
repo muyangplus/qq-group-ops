@@ -216,6 +216,32 @@ export function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * 把反馈文案渲染成卡片行：如果第一行是提及（`<@!...>`），保持它单独成行且不转义，
+ * 其余内容作为「**结果**：…」展示。
+ *
+ * 纯函数（R1 拆分时从门面搬出），供 `AdminCommandService` 与各领域模块复用。
+ */
+export function renderNotice(notice: string | undefined): string[] {
+  if (!notice) {
+    return [];
+  }
+  const [first = "", ...rest] = notice.split("\n");
+  const lines: string[] = [];
+  let body = first;
+  if (body.startsWith("<@!")) {
+    lines.push(body);
+    body = rest.shift() ?? "";
+  }
+  if (body.length > 0) {
+    lines.push(`**结果**：${escapeCardText(body)}`);
+  }
+  for (const line of rest) {
+    lines.push(escapeCardText(line));
+  }
+  return lines;
+}
+
 /** 从官方 at 段（`<@!openid>` / `<@openid>`）里取出对方 id。 */
 export function parseMentionTarget(text: string): string | undefined {
   const match = /<@!?([^>\s]+)>/u.exec(text);

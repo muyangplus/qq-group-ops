@@ -1,4 +1,5 @@
 import type { CardResult, CommandResult } from "./commands/support.js";
+import { renderNotice } from "./commands/support.js";
 import { aliasCard } from "./commands/aliasCommands.js";
 import { whoisCard } from "./commands/whoisCommands.js";
 import { handleProfile } from "./commands/profileCommands.js";
@@ -433,23 +434,7 @@ export class AdminCommandService {
    * 其余内容作为「**结果**：…」展示。
    */
   private renderNotice(notice: string | undefined): string[] {
-    if (!notice) {
-      return [];
-    }
-    const [first = "", ...rest] = notice.split("\n");
-    const lines: string[] = [];
-    let body = first;
-    if (body.startsWith("<@!")) {
-      lines.push(body);
-      body = rest.shift() ?? "";
-    }
-    if (body.length > 0) {
-      lines.push(`**结果**：${escapeCardText(body)}`);
-    }
-    for (const line of rest) {
-      lines.push(escapeCardText(line));
-    }
-    return lines;
+    return renderNotice(notice);
   }
 
   /**
