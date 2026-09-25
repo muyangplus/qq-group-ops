@@ -32,10 +32,12 @@ import { resolveTargetGroupId } from "./commands/targetResolvers.js";
 import { handleTest, handleTestAt, handleTestMenu, testCard } from "./commands/testCommands.js";
 import {
   activityCallbackCard,
-  activityListCard,
-  activityMemberCard,
   handleActivity,
 } from "./commands/activityCommands.js";
+import {
+  activityListCard,
+  activityMemberCard,
+} from "./commands/activityCardCommands.js";
 import {
   clearKeywordsCard,
   delKeywordCard,
