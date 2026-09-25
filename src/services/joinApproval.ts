@@ -67,6 +67,10 @@ export class JoinApprovalService {
       requireClass: config.joinRequireClass,
       requireName: config.joinRequireName,
       answerPattern: config.joinAnswerPattern,
+      allowColleges: config.allowColleges,
+      denyColleges: config.denyColleges,
+      allowYears: config.allowYears,
+      denyYears: config.denyYears,
       opinionEnabled: config.joinReviewOpinion,
     }) ?? { action: "approve" as const, matched: true, opinion: "" };
 
