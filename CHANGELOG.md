@@ -6,6 +6,37 @@
 
 ### 新增
 
+- **规则菜单重构（§C）**：`/rules` 从「三张只读子卡」升级为**字段级继承 + 卡片直改**。
+  - **概览卡 + 5 个子卡**：概览卡正文标明「本群覆盖」了哪些字段（无覆盖显示「全部继承全局」），
+    入口为 `开关设置` / `入群审核` / `违规处理` / `关键词` / `名单筛选` / `更多设置`；
+    末行是 `恢复全部继承`（二次确认，等价旧 `removeOverride`）与（超管）`全局规则` / `规则帮助`。
+  - **按钮显示当前状态**：开关标签写成 `过滤 开` / `入群审核 开`（当前值），点击即切换并回到同一张子卡；
+    枚举当前值用 `● ` + 高亮。每张子卡正文逐条列 `字段：当前值（继承全局 / 本群覆盖）`，
+    底部 `恢复本页继承`（二次确认，只清本页字段的覆盖）与 `返回规则`。
+  - **关键词逐条增删**：新增 `/rules add keyword <词>`、`/rules del keyword <词>`
+    （权限同 `canManageRules`；trim、去重、单条 ≤50 字；重复/不存在都明确报错）；
+    关键词子卡每页 3 条、每条一个「删」回调（`cb:rules:delKeyword`），另有「加词」（指令按钮预填）
+    与「清空」（二次确认，`cb:rules:clearKeyword`）。
+  - **学院 / 年级点选**：学院来自 `MemberRoster.listColleges()`（每页 4 个、`●` 标记、点击切换、翻页回调），
+    年级用 `PROFILE_ENTRY_YEARS`（22–26）；白名单 / 黑名单两个模式在同一子卡上切换，
+    落地为 `allowColleges` / `denyColleges` / `allowYears` / `denyYears` **字段级覆盖**。
+  - **全局规则卡同构 + 覆盖率总览**：`/rules all` 改成与群规则**同一套子卡结构**（目标 `DEFAULT_GROUP_ID`），
+    正文标明「只影响未覆盖的群」；底部 `覆盖率总览`（也是 `/rules overrides [+页码]`）用
+    `listOverrideSummaries()` 分页列出「群 + 覆盖字段数 / 字段名」。
+  - **新的字段级底层能力**（`src/services/groupConfig.ts`）：`overriddenFields(groupId)`、
+    `clearFields(groupId, fields)`、`listOverrideSummaries()`；`clearFields` 只把
+    `group_configs` 对应列置 `NULL`（仓储层新增 `clearColumns`，**只清列**）并删除
+    `group_settings` 对应 KV 行，全局清字段回落到种子默认。`GroupConfig` 新增
+    `allowColleges/denyColleges/allowYears/denyYears`（进 `SETTING_FIELDS`，无需迁移）。
+  - **回调命名空间 `rules`** 新增 action：`resetPage`（恢复本页继承）、`resetAll`（恢复全部继承）、
+    `delKeyword`、`clearKeyword`、`panelPage`、`rosterToggle`、`overrides`；
+    全部在 `runtime.ts` 的 renderer 里**重新做权限校验**（修改 = `canManageRules` 或超管；
+    查看 = `canReviewContent`；全局 = `isSuperAdmin`），越权返回「权限不足」卡。
+  - **保留降级路径与权限**：`/rules set <字段> <值>`（含 `all`）、`/rules all`、`/rules` 行为兼容；
+    关键词子卡分页与恢复继承只走卡片按钮（没有可复制的等价指令，正文已说明）。
+  - `/help rules` 主题重写（含 add/del keyword、名单字段、卡片操作与恢复继承说明）；
+    README / CONFIGURATION 同步，ACCEPTANCE 新增 J49–J56，ADR-0041 记录设计取舍。
+
 - **活动卡片 / 回调 / 订阅（§B2）**：活动管理从「指令按钮 + 手动指令」升级为**回调驱动**，并补上按群订阅推送。
   - **三种视图 + 名单卡**（全部 `renderCard()`，Markdown + 内嵌按钮 + 纯文本降级）：
     - **成员卡**（群里那张）：`我要报名` / `取消报名`（回调 + 官方 `modal` 二次确认）、

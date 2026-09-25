@@ -655,3 +655,68 @@
     新增 `announceActivityFull()`（满员广播）；
   - `ActivityNotificationKind` 增加 `full`；`notifyGroupsCard()` / `isGroupCardSent()`；
   - 帮助主题（activity）、README、CONFIGURATION、ACCEPTANCE（J45–J48）、CHANGELOG 同步更新。
+
+## ADR-0041：规则菜单重构 + 字段级继承 / 恢复（§C）
+
+- 状态：已采纳
+- 背景：旧 `/rules` 只有「概览 + 开关 / 入群决策 / 命中处罚」三张子卡，
+  开关标签显示的是「点一下会变成的结果」（`过滤 关` = 点击后变关），与卡片标准
+  「按钮显示当前状态」相反；关键词只能整表用 `/rules set keywords a,b,c` 覆盖（不能在卡片上逐条增删）；
+  学院 / 年级白黑名单只能手输；全局规则卡是纯文本，看不到「哪些群覆盖了哪些字段」；
+  而且**覆盖与继承在展示上区分不出来**——用户无法判断某个值是本群设置的还是继承来的。
+- 决策：
+  1. **字段级覆盖查询与清除**（`src/services/groupConfig.ts`）：
+     `overriddenFields(groupId): Set<keyof GroupConfigOverride>` 返回显式覆盖过的字段
+     （内存 override 行 + `group_settings` KV；`__default__` 是全局）；
+     `clearFields(groupId, fields)` 只清这些字段的覆盖：`group_configs` 对应列置 `NULL`
+     （**只清列，不动其它列**，避免整行快照把别的列清空）、`group_settings` 对应 KV 行删除；
+     全局清字段回落到 `builtinDefault`（种子默认），其它全局覆盖保留。
+     `listOverrideSummaries()` 给全局卡「覆盖率总览」用。
+  2. **「显式设置」与「继承」分开记录**：新增 `overridden` / `overriddenDefault` 集合，
+     值等于默认值的显式设置**也算覆盖**（否则「恢复本页继承」会无法区分
+     「明明设置过、只是恰好等于默认」与「从未设置」）。构造函数传入的默认值等价于
+     「显式配置的种子默认」，清掉持久化覆盖后仍算显式（回落目标是种子而不是内置空值）。
+  3. **仓储层配合**：`GroupConfigRepository` 增加 `clearColumns(groupId, fields)`
+     （`GROUP_CONFIG_COLUMNS` 白名单拼 `UPDATE ... SET col = NULL`，关键词不在列里、
+     仍由 `replaceKeywords` 负责）；`GroupSettingsRepository.remove` 已存在，直接复用。
+  4. **按钮语义统一为「显示当前状态」**：开关标签 `关键词过滤 开`（当前=开），
+     点击后切换并回到同一张子卡；枚举当前值用 `● ` + 高亮。每张子卡正文逐条列
+     `字段：当前值（继承全局 / 本群覆盖）`，底部是「恢复本页继承」（二次确认，
+     调 `clearFields`，只清本页字段白名单）+「返回规则」；概览卡是
+     「本群覆盖：…（其余继承全局）」+ 5 个子卡 + 「恢复全部继承」（二次确认，等价旧 `removeOverride`）。
+  5. **关键词逐条增删**：新增 `/rules add keyword <词>`、`/rules del keyword <词>`
+     （权限同 `canManageRules`；trim、去重、单条 ≤50 字；不存在会明确报错）。
+     关键词子卡每页 3 条、每条一个「删」回调，另有「加词」（指令按钮预填）与「清空」（二次确认）。
+     回调 `cb:rules:delKeyword:<群>:<序号>:<页码>` / `cb:rules:clearKeyword:<群>`。
+  6. **学院 / 年级点选子卡**：学院来自 `MemberRoster.listColleges()`（每页 4 个、一行一个，
+     `●` 标记已选、点一下切换、翻页回调、白/黑名单切换）；年级用 `PROFILE_ENTRY_YEARS`（22–26）。
+     落地为 `allowColleges/denyColleges/allowYears/denyYears` **字段级覆盖**
+     （为此给 `GroupConfig` 增加这四个列表字段，加入 `SETTING_FIELDS` 走 KV，不需要迁移）。
+  7. **全局规则卡同构 + 覆盖率总览**：`/rules all` 改成与群规则**同一套子卡结构**
+     （目标 `DEFAULT_GROUP_ID`），正文标明「只影响未覆盖的群」；
+     底部「覆盖率总览」用 `listOverrideSummaries()` 分页列出「群 + 覆盖字段数 / 字段名」。
+  8. **保留降级路径与权限**：`/rules set <字段> <值>`（含 `all`）、`/rules all`、`/rules` 行为兼容；
+     新增回调 action `resetPage` / `resetAll` / `delKeyword` / `clearKeyword` / `panelPage` /
+     `rosterToggle` / `overrides`，全部在 `runtime.ts` 的 rules renderer 里**重新做权限校验**
+     （查看 = `canReviewContent`，修改 = `canManageRules` 或超管；全局 = `isSuperAdmin`）。
+- 理由：卡片标准要求「按钮显示当前状态 + 列表分页 + 越权不静默」，
+  而字段级继承是「多群配置」能力的关键——看不到继承关系就没人敢改规则。
+  把「清除」做在**字段**粒度（而不是整群 `removeOverride`）是必要的：
+  大多数场景只想恢复某一项（比如把关键词恢复成全局默认），而不是丢掉本群全部定制。
+- 影响：
+  - `src/services/groupConfig.ts`：新增 `overriddenFields` / `clearFields` / `listOverrideSummaries`
+    与 `overridden` / `overriddenDefault` / `seedDefault` 状态；`GroupConfig` 新增
+    `allowColleges/denyColleges/allowYears/denyYears`；`SETTING_FIELDS` 同步扩展
+    （`PERSISTED_CONFIG_FIELDS` 仍等于全部生效字段，`test/groupConfig.test.ts` 的清单断言继续成立）；
+  - `src/db/groupConfigRepository.ts`：新增导出 `GROUP_CONFIG_COLUMNS` 与 `clearColumns`；
+    `test/helpers/fakeGroupConfigRepositories.ts` 的 `saveOverride` 改为**只落列字段**
+    （之前整份快照会把 KV 字段也塞进 `group_configs` 行，导致 `clearFields` 后重载又「复活」）；
+  - `src/services/adminCommands.ts`：重写 `rulesCard` / `rulesPanelCard` / `toggleRulesCard` /
+    `globalRulesCard`，新增 `delKeywordCard` / `clearKeywordsCard` / `resetRulePageCard` /
+    `resetAllRulesCard` / `rosterToggleCard` / `ruleOverridesCard` 与关键词增删命令；
+    `parseRuleSetting` 增加 `allowColleges/denyColleges/allowYears/denyYears` 与
+    `wordFilterEnabled` 等字段别名；
+  - `src/runtime.ts`：rules renderer 覆盖新 action 并透传分页 / 模式参数；
+  - `src/services/menu.ts` / `helpTopics.ts`、README、CONFIGURATION、ACCEPTANCE（J49–J56）、
+    CHANGELOG 同步更新。
+

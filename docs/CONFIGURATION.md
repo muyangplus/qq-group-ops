@@ -136,8 +136,8 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 
 | 能力 | 全局超管 | 本群超管 | 群管理员 | 审核员 | 成员 |
 |---|---|---|---|---|---|
-| `/perm`、`/rules all`、`/bind user\|groupid`、`/whois`、`/alias` | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `/approve`、`/reject`、`/rules set`、`/bind group`、`/notify` | ✅ | ✅（本群） | ✅（本群） | ❌ | ❌ |
+| `/perm`、`/rules all`、`/rules overrides`、`/bind user\|groupid`、`/whois`、`/alias` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `/approve`、`/reject`、`/rules set`、`/rules add\|del keyword`、`/bind group`、`/notify` | ✅ | ✅（本群） | ✅（本群） | ❌ | ❌ |
 | `/pending`、`/sync`、`/audit`、`/test`、`/rules`、`/status` | ✅ | ✅（本群） | ✅（本群） | ✅（本群） | ❌ |
 | `/myperm`、`/help` | ✅ | ✅ | ✅ | ✅ | ✅ |
 
@@ -150,9 +150,11 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 群管理员在群内（或私信中带群号）配置规则：
 
 ```text
-/rules                                             # 查看当前群规则
+/rules                                             # 查看当前群规则（概览卡 + 5 个子卡）
 /rules set keywords 广告,刷屏,加群                  # 设置关键词（逗号、顿号或空格分隔）
 /rules set keywords clear                          # 清空关键词
+/rules add keyword 广告                              # 逐条追加关键词（trim、去重、单条 ≤50 字）
+/rules del keyword 广告                              # 逐条删除关键词（不存在会明确报错）
 /rules set warning 本群禁止广告，请撤回。           # 自定义警告文案
 /rules set warning clear                           # 恢复默认警告文案
 /rules set keywordRecall on|off                    # 命中后是否撤回消息
@@ -167,15 +169,33 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 /rules set joinAnswerPattern <正则>|clear          # 追加自定义正则
 /rules set joinReviewOpinion on|off                # /pending 是否展示审核意见
 /rules set notifyAutoApproved on|off               # 机器人自动通过/拒绝的申请是否也推送通知
+/rules set allowColleges 某学院,某学院              # 学院白名单（空 = 不限）
+/rules set denyColleges 某学院                      # 学院黑名单（优先于白名单）
+/rules set allowYears 22,23                         # 年级白名单（两位）
+/rules set denyYears 26                             # 年级黑名单
 /rules set export on|off                           # 导出功能开关
 /rules set enabled on|off                          # 机器人本群总开关
+/rules overrides [+页码]                            # 覆盖率总览（仅超管）：哪些群覆盖了哪些字段
 ```
 
 私信中使用时需要在 `set` 后加群号：
 
 ```text
 /rules set <group_openid|群号> keywords 广告,刷屏
+/rules add <group_openid|群号> keyword 刷屏
 ```
+
+规则卡片（§C）：
+
+- `/rules` 返回**概览卡**：正文标明「本群覆盖」了哪些字段（其余继承全局），入口为
+  开关设置 / 入群审核 / 违规处理 / 关键词 / 名单筛选 / 更多设置；末行是 `恢复全部继承` 与（超管）`全局规则`；
+- **按钮显示当前状态**（`过滤 开` = 当前开启），点击开关/枚举即生效并回到同一张子卡；
+- 每张子卡正文逐条列 `字段：当前值（继承全局 / 本群覆盖）`，底部 `恢复本页继承`（二次确认）
+  只清本页字段的覆盖，其余覆盖保持不变；`恢复全部继承` 等价旧的整群 `removeOverride`；
+- 关键词子卡每页 3 条，每条一个「删」回调；学院每页 4 个（来自班级库）、年级 22–26 一行点选，白/黑名单切换；
+- 全局规则卡（`/rules all`）与群规则同构（目标 `__default__`），底部 `覆盖率总览`
+  分页列出 `listOverrideSummaries()` 的结果；
+- **降级路径**：`/rules set <字段> <值>`（含 `all`）行为与权限完全保留；卡片按钮不可用时仍可手输。
 
 审核行为：
 
@@ -200,8 +220,11 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 - `GroupConfigStore.load()` 启动时读两张表并按字段合并：群覆盖 > 全局默认 > 内置默认；
 - 单群「只有扩展字段」时不会写 `group_configs` 行，但重启后依然能从 `group_settings` 恢复出该群覆盖；
 - `removeOverride` 会同时清理两张表；
+- **字段级恢复继承**：`clearFields(groupId, fields)` 只清指定字段——`group_configs` 对应列置 `NULL`
+  （仓储层 `clearColumns`，**只清列不动其它列**）、`group_settings` 对应 KV 行删除；全局清字段回落到
+  种子默认（内置默认 / 启动配置）。「恢复本页继承」按钮与 `/rules set <字段> clear` 走的就是这条路径；
 - **新增规则字段的硬约束**：`EffectiveGroupConfig` 的每个字段都必须在 `SQL_FIELDS` 或 `SETTING_FIELDS` 中（`PERSISTED_CONFIG_FIELDS` 导出供测试双向校验），遗漏会导致 `pnpm test` 失败；
-- `/rules set` 的逐字段持久化回归见 `test/rulesPersistence.test.ts`。
+- `/rules set`、`/rules add|del keyword` 与 `clearFields` 的持久化回归见 `test/rulesPersistence.test.ts`。
 
 ### 入群审核与班级库
 
@@ -274,6 +297,10 @@ CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json \
 - `all` 的别名：`global`、`default`、`全局`、`默认`；
 - 全局规则只存一行：`group_configs` 中 `group_id = __default__` 的完整快照 + `group_keywords` 中 `group_id = __default__` 的关键词；
 - 每次全局修改都会写入**完整快照**，因此多次局部修改不会互相覆盖；重启后由 `GroupConfigStore.load()` 合并回全局默认。
+- 全局卡与群规则卡**同一套子卡结构**（`/rules all`）；在任意子卡点「恢复本页继承」会删掉该页字段的全局覆盖，
+  回落到**种子默认**（`builtinDefault`），没被清的全局覆盖保持不变；
+- `/rules overrides [+页码]`（或全局卡上的「覆盖率总览」）分页列出每个群显式覆盖的字段，便于排查继承差异；
+  仅全局超管可用，群角色调用返回「权限不足」卡。
 - 入群申请审批：
 
 ```text

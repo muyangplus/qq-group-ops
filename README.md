@@ -12,7 +12,8 @@
 - 交互菜单：QQ 端 `/menu` 三级菜单（系统 / 管理 / 超管），按权限过滤入口，按钮即指令、自动三级降级；空 `@机器人`、未知指令、私信首次交互都会回到菜单主入口。
 - 回调链路：新增 `INTERACTION (1<<26)` intent 与 `INTERACTION_CREATE` 事件处理，`/testmenu` 用回调按钮翻页（回包 `PUT /interactions/{id}` + 主动发送新一页；官方没有更新原卡片的能力，旧卡片会保留）。
 - 卡片标准：**所有指令输出统一为菜单式卡片**（导航/查看/开关/枚举用回调自动完成、需要参数或不可逆的动作用指令按钮、列表用回调翻页 + `+页码` 降级），规范见 [docs/CARD-STANDARD.md](docs/CARD-STANDARD.md)；已迁移 `/help`、`/status`、`/pending`、`/rules`、`/audit`、`/test`、`/sync`、`/approve`、`/reject`、`/notify`，其余指令按批次迁移。
-- 测试：Vitest，共 507 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
+- 规则菜单（§C）：`/rules` 为**概览卡 + 5 个子卡**（开关设置 / 入群审核 / 违规处理 / 关键词 / 名单筛选 / 更多设置），开关标签显示**当前状态**，每张子卡可「恢复本页继承」、概览可「恢复全部继承」；新增 `/rules add|del keyword` 逐条增删与 `/rules overrides` 覆盖率总览；全局规则卡与群规则同构（只影响未覆盖的群）。
+- 测试：Vitest，共 685 个测试（含端到端验收干跑；SQLite 与 PostgreSQL 方言均覆盖）。
 
 ## 技术栈
 
@@ -337,7 +338,8 @@ QQ 端的图形化入口：**Markdown 卡片 + 按钮**，三级结构（主菜�
 /help            指令列表卡（伞形；/help all 为完整列表）；/help rules 为主题详情卡
 /status          运行状态卡 + 刷新/待审批/群规则/帮助 + 自检
 /pending         待审批卡：每页 3 条，每条「通过」回调自动完成、「拒绝」指令可补原因
-/rules           群规则概览 + 开关设置 / 入群决策 / 命中处罚 三个子卡（全回调自动生效）
+/rules           群规则概览（标明本群覆盖字段）+ 5 个子卡：开关设置 / 入群审核 / 违规处理 / 关键词 / 名单筛选 / 更多设置（全回调自动生效，可恢复本页或全部继承）；`/rules all` 全局卡同构 + 覆盖率总览
+/rules overrides 规则覆盖率总览：哪些群覆盖了哪些字段（仅超管）
 /audit           审计分页卡（默认每页 10 条）+ 翻页/刷新回调
 /activity        活动列表卡：按「报名中 / 草稿 / 已结束」分组，每个一行「详情 / 报名 / 管理 / 订阅」回调；另有三张子卡（配置 / 管理 / 名单）
 /test            自检卡 + 刷新/待审批/群规则
@@ -846,19 +848,35 @@ ACTIVITY_STATS_FONT_URL=https://example.com/NotoSansSC-Regular.otf
 /rules 0123456789ABCDEF0123456789ABCDEF
 ```
 
-返回示例：
+`/rules` 返回**规则概览卡**（不是纯文本）：正文顶部标明「本群覆盖」了哪些字段
+（没有覆盖时显示「全部继承全局」），随后是 5 个子卡入口：
 
 ```text
-群 0123456789ABCDEF0123456789ABCDEF 规则配置：
-启用：true
-关键词过滤：true
-关键词：（未配置）
-入群审核：true
-自动通过：false
-导出功能：false
-警告文案：请遵守群规，不要发送违规内容。
-禁言时长：600 秒
+## 群规则
+**本群覆盖**：关键词过滤（其余继承全局）
+
+**关键词**：刷屏、广告
+**警告文案**：请遵守群规，不要发送违规内容。
+**禁言时长**：600 秒
+**入群要求**：班级 false · 姓名 false · 审核意见 true
+**名单筛选**：学院 0/0 · 年级 0/0
+**机器人启用**：开 · 导出 关
+
+设置入口（点击即生效）：
+[开关设置] [入群审核] [违规处理] [关键词] [名单筛选]
+[更多设置] [恢复全部继承]
+[全局规则] [规则帮助]
 ```
+
+- 5 个子卡分别是：**开关设置**（关键词过滤 / 入群审核 / 命中撤回 / 导出）、
+  **入群审核**（5 档决策 + 要求班级/姓名）、**违规处理**（命中处罚 + 禁言时长）、
+  **关键词**（逐条增删 + 分页）、**名单筛选**（学院/年级白黑名单）、**更多设置**（补齐其余字段）；
+- 每张子卡正文逐条列 `字段：当前值（继承全局 / 本群覆盖）`，底部是
+  **恢复本页继承**（二次确认，只清本页字段的覆盖）与 **返回规则**；
+- 概览卡的 **恢复全部继承**（二次确认）会清空本群全部字段级覆盖，等价于把本群规则全部交回全局默认；
+- 开关按钮标签显示的是**当前状态**（如 `过滤 开`），点击后切换并回到同一张子卡，标签随之变化；
+- 超管在概览卡还能看到 **全局规则** 入口；全局卡与群规则**同一套子卡结构**，
+  正文标明「只影响未单独覆盖的群」，底部有 **覆盖率总览**（`/rules overrides`）。
 
 ### 2. 配置关键词（最常用）
 
@@ -871,20 +889,47 @@ ACTIVITY_STATS_FONT_URL=https://example.com/NotoSansSC-Regular.otf
 /rules set keywords clear
 ```
 
+也可以**逐条增删**（推荐，卡片上的「加词 / 删」按钮发送的就是这两条）：
+
+```text
+/rules add keyword 广告
+/rules del keyword 广告
+```
+
 私信（带群号，`<group_openid|群号>` 二者皆可）：
 
 ```text
 /rules set 654321 keywords 广告,刷屏
-/rules set 0123456789ABCDEF0123456789ABCDEF keywords 广告,刷屏
+/rules add 654321 keyword 刷屏
 ```
 
 说明：
 
 - 分隔符支持英文逗号 `,`、中文逗号 `，`、顿号 `、` 和空格，可混用；
 - 关键词会**去重、去空白并按字典序保存**，所以 `/rules` 里显示的顺序可能和输入顺序不同；
+- `/rules add keyword <词>` 逐条追加：trim、去重（已存在会明确报错）、单条 ≤50 字；
+  `/rules del keyword <词>` 逐条删除（不存在会明确报错），权限与 `/rules set` 相同；
+- 「关键词」子卡每页 3 条、每条一个「删」按钮（点一下即删并回到本页），
+  另有「加词」（指令按钮预填 `/rules add keyword `）与「清空」（二次确认）；
 - 命中任一关键词即触发一次审核动作：默认发送下面的「警告文案」，若配置了 `keywordRecall` / `keywordPunish` 还会撤回、禁言、移出或拉黑（见「关键词处罚与入群审核规则」），并写一条审计记录（`/audit` 可查）；
 - `clear`（也接受 `清空`、`默认`、`reset`）表示清空关键词；
 - 修改立即生效。
+
+### 2.1 学院 / 年级名单筛选
+
+「名单筛选」子卡从**班级库**出按钮点选（学院每页 4 个、年级 22–26 一行），
+`●` 表示已选，点一下切换选中；白名单 / 黑名单是同一子卡上的两个模式按钮：
+
+```text
+/rules set allowColleges 化学与生命科学学院
+/rules set denyColleges 环境科学与工程学院
+/rules set allowYears 22,23
+/rules set denyYears 26
+```
+
+- 落地为**字段级覆盖**：清空（`clear`）或「恢复本页继承」后回落全局；
+- 名单字段同样遵循「白名单为空表示不限、黑名单优先」的语义（随入群审核规则一起生效）；
+- 班级索引缺失时学院列表为空，子卡会给「手输学院」的指令按钮兜底。
 
 ### 3. 自定义警告文案
 
@@ -955,7 +1000,12 @@ ACTIVITY_STATS_FONT_URL=https://example.com/NotoSansSC-Regular.otf
 - **全局规则仅超级管理员可以查看与修改**（群管理员只能改自己群的规则）；
 - 全局规则持久化在数据库里（`group_configs` 中 `group_id = __default__` 的那一行 + `group_keywords`，扩展字段在 `group_settings` 里同用 `__default__`），重启不丢；
 - 群内执行时会照常要求「本群已绑定」；私信中直接执行即可（需要超级管理员且已绑定 QQ 号）；
-- 继承是**按字段**生效的：例如全局设了 `keywords 广告`，某群只设了 `autoApprove on`，那么该群仍然是「全局关键词 + 自己的 autoApprove」。
+- 继承是**按字段**生效的：例如全局设了 `keywords 广告`，某群只设了 `autoApprove on`，那么该群仍然是「全局关键词 + 自己的 autoApprove」；
+- 全局卡与群规则卡**同一套子卡结构**：在任意子卡点「恢复本页继承」会把该页字段的全局覆盖删掉，
+  回落到**种子默认**（内置默认 / 启动配置）；没被清的全局覆盖保持不变；
+- `覆盖率总览`（也支持 `/rules overrides [+页码]`）列出每个群**显式覆盖**了哪些字段，便于排查
+  「为什么这个群的规则和别的不一样」；
+- 全局规则卡仅超管可打开，群管理员调用 `/rules overrides` 会得到「权限不足」卡。
 
 继承与覆盖示例：
 
@@ -1040,15 +1090,20 @@ ACTIVITY_STATS_FONT_URL=https://example.com/NotoSansSC-Regular.otf
 | 写法 | 作用 | 需要权限 |
 |---|---|---|
 | `/rules set <字段> <值>` | 当前群 | 群管理员 |
+| `/rules add\|del keyword <词>` | 当前群：关键词逐条增 / 删 | 群管理员 |
 | `/rules set <group_openid\|群号> <字段> <值>` | 指定群（私信） | 群管理员 |
+| `/rules add\|del <群号\|#群短码> keyword <词>` | 指定群（私信）：关键词逐条增 / 删 | 群管理员 |
 | `/rules set all <字段> <值>`（或 `global`/`default`/`全局`/`默认`） | 全局默认，所有未单独覆盖的群继承 | 超级管理员 |
+| `/rules overrides [+页码]` | 覆盖率总览：哪些群覆盖了哪些字段 | 超级管理员 |
 
 ### 10. 常见报错
 
 | 提示 | 原因与处理 |
 |---|---|
-| `权限不足：需要群管理员或以上权限。` | `/rules set` 需要群管理员或超管；`/rules` 只需审核员及以上 |
-| `权限不足：全局规则仅超级管理员可以查看与修改。` | `/rules all`、`/rules set all ...` 仅超管可用 |
+| `权限不足：需要群管理员或以上权限。` | `/rules set`、`/rules add\|del keyword` 与规则子卡的回调需要群管理员；`/rules` 只需审核员及以上 |
+| `权限不足：全局规则仅超级管理员可以查看与修改。` | `/rules all`、`/rules set all ...`、`/rules overrides` 仅超管可用 |
+| `关键词已存在：xxx` / `关键词不存在：xxx` | `/rules add\|del keyword` 的逐条增删结果；去重与存在性由服务端判定，不会静默成功 |
+| `关键词单条不能超过 50 个字符。` | 单条太长的关键词会挤爆卡片按钮，请拆分或改用 `/rules set keywords` |
 | `请先绑定 QQ 号：/bind qq <QQ号>` | 先绑定自己的 QQ 号 |
 | `请先绑定本群：/bind group <群号>` | 群管理员先在群里绑定群号 |
 | `设置失败：未知字段：xxx` | 字段名写错，对照上面的速查表 |
@@ -1072,8 +1127,12 @@ ACTIVITY_STATS_FONT_URL=https://example.com/NotoSansSC-Regular.otf
 - 扩展字段（命中动作、入群审核规则等）写 `group_settings` 键值表，因此新增字段**不需要改表结构**；
 - 全局默认用 `group_id = __default__`，与单群覆盖走同一套读写路径；
 - `GroupConfigStore.load()` 会同时读两张表并合并（按字段继承：群覆盖 > 全局默认 > 内置默认）；
+- **字段级恢复继承**：`clearFields(groupId, fields)` 只把指定字段的覆盖清掉——`group_configs` 对应列置 `NULL`
+  （仓储层 `clearColumns`，只清列不动其它列）、`group_settings` 对应 KV 行删除；全局清字段回落到
+  种子默认。与整群重置（`removeOverride`）不同，其余覆盖保持不变；
 - **新增字段的硬约束**：`EffectiveGroupConfig` 的每个字段都必须出现在 `SQL_FIELDS` 或 `SETTING_FIELDS` 中。`src/services/groupConfig.ts` 导出的 `PERSISTED_CONFIG_FIELDS` 与 `test/groupConfig.test.ts` 会双向校验「生效字段 = 可持久化字段」，漏加字段会直接测试失败；
-- 每条 `/rules set <字段>` 的端到端持久化（写入 → 重新装配 store → 恢复）由 `test/rulesPersistence.test.ts` 覆盖，包括「只有扩展字段的群」和「全局规则继承」。
+- 每条 `/rules set <字段>` 与 `/rules add|del keyword` 的端到端持久化（写入 → 重新装配 store → 恢复）由
+  `test/rulesPersistence.test.ts` 覆盖，包括「只有扩展字段的群」「字段级 `clearFields` 后重载回落」与「全局规则继承」。
 
 更多细节见 [配置说明](docs/CONFIGURATION.md) 与 [真实环境验收清单](docs/ACCEPTANCE.md)。
 
