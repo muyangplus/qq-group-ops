@@ -226,9 +226,12 @@ export function statusCard(
     });
   }
 
-  /**
-   * `/pending [群号|#群短码] [+页码]`：待审批列表卡。
-   *
-   * 每页 3 条（含审核意见会占多行），每条给「通过 / 拒绝」**指令按钮**（走正常审批权限
-   * 与二次确认），翻页用**回调按钮**；纯文本降级给出 `/pending +<页码>` 指令。
-   */
+/** `/status` 的指令入口（回调 renderer 也走它）。 */
+export function handleStatus(
+  ctx: AdminCommandContext,
+  groupId: string | undefined,
+  userId: string,
+  parts: readonly string[],
+): CommandResult {
+  return statusCard(ctx, groupId, userId, parts);
+}

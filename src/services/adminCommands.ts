@@ -3,7 +3,7 @@ import { aliasCard } from "./commands/aliasCommands.js";
 import { whoisCard } from "./commands/whoisCommands.js";
 import { handleProfile } from "./commands/profileCommands.js";
 import { handleTestAt, handleTestMenu } from "./commands/testCommands.js";
-import { statusCard } from "./commands/statusCommands.js";
+import { handleStatus, statusCard } from "./commands/statusCommands.js";
 import {
   handleNotify,
   notifyCard,
@@ -629,7 +629,7 @@ export class AdminCommandService {
         return this.handleAudit(groupId, userId, parts);
       case "status":
       case "状态":
-        return this.handleStatus(groupId, userId, parts);
+        return handleStatus(this.context(), groupId, userId, parts);
       case "test":
       case "测试":
         return this.handleTest(groupId, userId);
@@ -5679,14 +5679,6 @@ export class AdminCommandService {
     }
     const limit = clampLimit(groupId !== undefined ? rest[0] : rest[1]);
     return this.auditCard(targetGroupId, userId, page, limit);
-  }
-
-  private handleStatus(
-    groupId: string | undefined,
-    userId: string,
-    parts: readonly string[],
-  ): CommandResult {
-    return this.statusCard(groupId, userId, parts);
   }
 
   private handleTest(groupId: string | undefined, userId: string): CommandResult {
