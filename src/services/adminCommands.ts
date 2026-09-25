@@ -66,6 +66,7 @@ import {
   normalizeYear,
   UserProfileError,
   yearFromStudentId,
+  type UserProfile,
   type UserProfileField,
   type UserProfileService,
 } from "./userProfiles.js";
@@ -210,6 +211,9 @@ export class AdminCommandService {
    *
    * 未装配时活动管理卡不出「统计图片」按钮、名单卡不出「导出 CSV」按钮（条件渲染），
    * 回调被直接调用时也只会得到友好提示，不会抛错。
+   *
+   * 注意要**同时**同步给已装配的 `ActivityCardService`：它自己按能力做条件渲染，
+   * 只改这里的字段会让「按钮入口」和「回调实现」不一致（有实现没入口）。
    */
   public setActivityExtras(extras: {
     stats?: ActivityStatsLike | undefined;
@@ -221,6 +225,7 @@ export class AdminCommandService {
     if (extras.exportService !== undefined) {
       this.activityExportService = extras.exportService;
     }
+    this.activityCards?.setActivityExtras(extras);
   }
 
   public async handle(
@@ -3109,7 +3114,10 @@ export class AdminCommandService {
       display: this.display,
       ...(this.userProfiles ? { profiles: this.userProfiles } : {}),
       ...(this.activityRoster ? { roster: this.activityRoster } : {}),
-      ...(this.activityStatsService ? { stats: this.activityStatsService } : {}),
+      // 「统计图片」按钮只在**既能渲染又能发送**时生成，避免出现点了没反应的入口
+      ...(this.activityStatsService?.canSend
+        ? { stats: this.activityStatsService }
+        : {}),
       ...(this.activityExportService
         ? { exportService: this.activityExportService }
         : {}),
@@ -3489,20 +3497,28 @@ export class AdminCommandService {
       const buffer = await stats.render(
         activity,
         this.activity!.listRegistrations(activity.activityId),
+        this.activityProfiles(activity.activityId),
       );
       if (!buffer) {
         return this.activityStatsFallback(userId, activity, replyGroupId);
       }
-      const sent = await this.cardSender()?.sendToGroup(activity.groupId, {
-        markdown: `## 活动统计 ${activityCode(activity)}\n已生成统计图片。`,
-        text: `活动统计 ${activityCode(activity)} 已生成。`,
-      });
+      const sent = await stats.sendImageToGroup?.(
+        activity.groupId,
+        buffer,
+        `activity-${activity.code}.png`,
+      );
+      if (!sent?.ok) {
+        // 渲染成功但发送失败（未装配通道 / 上传失败）：同样降级为文字统计
+        log.warn("activity stats image delivery unavailable", {
+          activityId: activity.activityId,
+          detail: sent?.detail ?? "未装配发送通道",
+        });
+        return this.activityStatsFallback(userId, activity, replyGroupId);
+      }
       return this.activityNoticeCard(
         replyGroupId,
         userId,
-        sent?.ok === false
-          ? "统计图片发送失败，请改用文字统计。"
-          : "**结果**：已发送统计图片。",
+        "**结果**：已发送统计图片。",
       );
     } catch (error) {
       log.warn("activity stats render failed", {
@@ -3511,6 +3527,24 @@ export class AdminCommandService {
       });
       return this.activityStatsFallback(userId, activity, replyGroupId);
     }
+  }
+
+  /** 统计/导出用的资料表：只带上确实有资料的报名者。 */
+  private activityProfiles(
+    activityId: string,
+  ): Map<string, UserProfile> | undefined {
+    const profiles = this.userProfiles;
+    if (!profiles) {
+      return undefined;
+    }
+    const map = new Map<string, UserProfile>();
+    for (const registration of this.activity!.listRegistrations(activityId)) {
+      const profile = profiles.get(registration.userId);
+      if (profile) {
+        map.set(registration.userId, profile);
+      }
+    }
+    return map;
   }
 
   /** 统计降级：管理卡同款文字统计。 */
@@ -3562,6 +3596,7 @@ export class AdminCommandService {
     const result = await exporter.exportCsv({
       activity,
       registrations: this.activity!.listRegistrations(activity.activityId),
+      waitlist: this.activity!.listWaitlist(activity.activityId),
       operatorId: userId,
     });
     return this.activityNoticeCard(

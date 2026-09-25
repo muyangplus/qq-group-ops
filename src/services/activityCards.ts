@@ -37,9 +37,33 @@ import type { RichMessage } from "./richMessages.js";
  * 对应的按钮不生成（条件渲染），因此 B2 可以独立交付，之后接线即可。
  */
 
-/** 统计图片渲染（§B3）：拿不到依赖/字体时返回 `undefined`，调用方降级为文字统计。 */
+/**
+ * 统计图片渲染（§B3）。
+ *
+ * - `render(...)` 拿不到 canvas 依赖 / 字体时返回 `undefined`，调用方降级为文字统计卡；
+ * - `sendToGroup(...)` 可选：装配了解释「怎么把 PNG 发到群里」的实现（上传 + `msg_type=7`）
+ *   才会生成「统计图片」按钮。只实现了渲染、没实现发送时按钮不生成，
+ *   避免出现「点了没反应」的入口。
+ */
 export interface ActivityStatsLike {
-  render(activity: Activity, registrations: readonly ActivityRegistration[]): Promise<Buffer | undefined>;
+  /**
+   * 是否具备「把渲染结果发到群里」的能力。
+   *
+   * 管理卡据此决定是否生成「统计图片」按钮：只有渲染、没有发送通道时按钮不生成，
+   * 避免出现「点了却没反应」的入口。
+   */
+  readonly canSend?: boolean | undefined;
+  render(
+    activity: Activity,
+    registrations: readonly ActivityRegistration[],
+    profiles?: ReadonlyMap<string, UserProfile> | undefined,
+  ): Promise<Buffer | undefined>;
+  /** 把渲染好的 PNG 发到活动群；失败返回 `{ ok: false }`，调用方降级。 */
+  sendImageToGroup?(
+    groupId: string,
+    png: Buffer,
+    fileName: string,
+  ): Promise<{ ok: boolean; detail: string }>;
 }
 
 /** CSV 导出（§B3）：由调用方保证只私信给操作者本人。 */
@@ -47,6 +71,8 @@ export interface ActivityExportLike {
   exportCsv(input: {
     activity: Activity;
     registrations: readonly ActivityRegistration[];
+    /** 候补名单（带「候补」标记，排在正式报名之后）。 */
+    waitlist?: readonly ActivityWaitlistEntry[] | undefined;
     operatorId: string;
   }): Promise<{ ok: boolean; text: string }>;
 }
@@ -102,6 +128,24 @@ export class ActivityCardService {
   public constructor(options: ActivityCardServiceOptions = {}) {
     this.options = options;
     this.now = options.now ?? (() => new Date());
+  }
+
+  /**
+   * §B3 后接线：装配统计图片 / CSV 导出。
+   *
+   * 未装配时管理卡不出「统计图片」、名单卡不出「导出 CSV」（条件渲染）；
+   * runtime 在服务创建后调用一次即可（与 `AdminCommandService.setActivityExtras` 同套路）。
+   */
+  public setActivityExtras(extras: {
+    stats?: ActivityStatsLike | undefined;
+    exportService?: ActivityExportLike | undefined;
+  }): void {
+    if (extras.stats !== undefined) {
+      this.options.stats = extras.stats;
+    }
+    if (extras.exportService !== undefined) {
+      this.options.exportService = extras.exportService;
+    }
   }
 
   public get statsAvailable(): boolean {

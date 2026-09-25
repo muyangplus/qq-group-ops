@@ -43,6 +43,8 @@ import {
 } from "./services/callbackRouter.js";
 import { ActivityService } from "./services/activity.js";
 import { ActivityCardService } from "./services/activityCards.js";
+import { ActivityExportService } from "./services/activityExport.js";
+import { ActivityStatsService } from "./services/activityStats.js";
 import { ActivityNotificationService } from "./services/activityNotifications.js";
 import { AdminCommandService } from "./services/adminCommands.js";
 import { AuditLogStore } from "./services/audit.js";
@@ -218,6 +220,30 @@ export function createRuntime(
     repositories.activityNotifications,
     { dailyLimit: settings.activityNotifyDailyLimit },
   );
+  /**
+   * §B3 统计图片与 CSV 导出。
+   *
+   * - **统计图片**：`@napi-rs/canvas` 是**可选**依赖（动态 import）。字体系统优先
+   *   （Windows 雅黑 / Linux Noto CJK / macOS 苹方），找不到才从
+   *   `ACTIVITY_STATS_FONT_URL` 下载并缓存到 `data/fonts/`（gitignored，不随包提交）。
+   *   拿不到依赖或字体只返回 `undefined`，由 `AdminCommandService` 降级为文字统计卡
+   *   —— 统计图是锦上添花，绝不能让启动或活动回调失败。
+   * - **CSV 导出**：含学号/班级/学院等隐私字段，只私信给操作者本人。
+   */
+  const activityStats = new ActivityStatsService({
+    api,
+    fontUrl: settings.activityStatsFontUrl,
+  });
+  const activityExport = new ActivityExportService({
+    sender: richMessages,
+    profiles: userProfiles,
+  });
+  // 卡片服务与降级路径共用同一份能力判断：装配后管理卡才出现「统计图片」、
+  // 名单卡才出现「导出 CSV」（条件渲染在 ActivityCardService 里）。
+  activityCards.setActivityExtras({
+    stats: activityStats,
+    exportService: activityExport,
+  });
   const adminCommands = new AdminCommandService({
     permissions,
     joinAudit,

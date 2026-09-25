@@ -146,6 +146,34 @@ export interface QQOfficialAPI {
     options?: ApproveJoinRequestOptions,
   ): Promise<void>;
   getJoinRequests(groupId: string): Promise<Record<string, unknown>[]>;
+  /**
+   * 上传一张图片到群聊，返回官方响应（含 `file_info`）。
+   *
+   * 官方没有「multipart 直传字节」的接口，图片只能两条路进平台：
+   * 1. `url` 直传（平台自己去下载转存）；
+   * 2. `upload_prepare` → 分片 `PUT` 预签名 URL → `upload_part_finish` → 本接口带 `upload_id` 合并。
+   *
+   * 这里实现第 2 条（本地生成的 PNG 没有公网 URL）：先预上传、再逐片直传、
+   * 最后带 `upload_id` 调 `POST /v2/groups/{group_openid}/files` 完成合并，
+   * 得到 `{ file_info }` 供 `sendGroupImage` 使用。任何一步失败都抛错，
+   * 调用方（活动统计）据此降级为文字统计卡。
+   */
+  uploadGroupImage(
+    groupId: string,
+    fileName: string,
+    data: Uint8Array,
+  ): Promise<Record<string, unknown>>;
+  /**
+   * 发送一张已上传的群图片（官方 `msg_type=7` 富媒体消息）。
+   *
+   * 请求体：`{ msg_type: 7, media: { file_info }, msg_id? }`；`file_info` 直接透传
+   * 上传接口的返回值（内部是序列化二进制，官方要求不要解析）。
+   */
+  sendGroupImage(
+    groupId: string,
+    fileInfo: string,
+    msgId?: string,
+  ): Promise<Record<string, unknown>>;
 }
 
 export interface HttpResponse {
@@ -155,12 +183,31 @@ export interface HttpResponse {
   headers?: Record<string, string>;
 }
 
+/** 原始二进制请求体（富媒体分片上传用，不能走 JSON 序列化）。 */
+export interface RawBody {
+  contentType: string;
+  body: Uint8Array;
+}
+
 export interface AsyncTransport {
   request(
     method: string,
     url: string,
     headers: Record<string, string>,
     json?: JsonValue,
+  ): Promise<HttpResponse>;
+  /**
+   * 直接发送二进制请求体（可选能力）。
+   *
+   * 官方富媒体分片上传要先把文件分片 `PUT` 到平台给的预签名 URL，
+   * 这个请求既不是 JSON、也不带机器人鉴权头，因此单独开一个入口。
+   * 未实现时调用方会得到明确错误并降级（例如统计图退化为文字统计卡）。
+   */
+  requestRaw?(
+    method: string,
+    url: string,
+    headers: Record<string, string>,
+    body: RawBody,
   ): Promise<HttpResponse>;
   aclose(): Promise<void>;
 }
@@ -179,6 +226,25 @@ export interface QQOfficialEndpoints {
   memberBlacklist: string;
   /** 互动事件回应：`PUT /interactions/{interactionId}`。 */
   interaction: string;
+  /**
+   * 群聊富媒体上传（官方文档「群聊富媒体上传」）。
+   *
+   * `POST /v2/groups/{group_openid}/files`，请求体
+   * `{ file_type, url?, srv_send_msg, file_name?, upload_id? }`；响应
+   * `{ file_uuid, file_info, ttl, id?, raw_url? }`。`file_info` 用于
+   * 「发送群聊消息」的 `media.file_info`（`msg_type=7`）。
+   */
+  groupFileUpload: string;
+  /**
+   * 群聊富媒体预上传（官方文档「群聊富媒体预上传」）。
+   *
+   * 用于拿到 `upload_id` 与各分片预签名 URL；随后逐片 `PUT`，每片成功后
+   * 调 `groupFileUploadPartFinish` 通知服务端，最后带 `upload_id` 调
+   * `groupFileUpload` 合并（官方推荐大文件走分片，小文件同样可用）。
+   */
+  groupFileUploadPrepare: string;
+  /** 群聊分片上传完成（官方文档「群聊分片上传完成」）。 */
+  groupFileUploadPartFinish: string;
 }
 
 export const DEFAULT_ENDPOINTS: QQOfficialEndpoints = {
@@ -195,6 +261,9 @@ export const DEFAULT_ENDPOINTS: QQOfficialEndpoints = {
   joinRequestList: "/v2/groups/{groupId}/join_request_list",
   memberBlacklist: "/v2/groups/{groupId}/member_blacklist",
   interaction: "/interactions/{interactionId}",
+  groupFileUpload: "/v2/groups/{groupId}/files",
+  groupFileUploadPrepare: "/v2/groups/{groupId}/upload_prepare",
+  groupFileUploadPartFinish: "/v2/groups/{groupId}/upload_part_finish",
 };
 
 export const DEFAULT_TOKEN_REFRESH_MARGIN_MS = 60_000;
@@ -204,6 +273,12 @@ export const DEFAULT_TOKEN_LIFETIME_SECONDS = 7_200;
 export const MAX_MUTE_DURATION_SECONDS = 30 * 24 * 60 * 60;
 /** 入群申请列表最多翻页次数，避免异常游标导致死循环。 */
 export const MAX_JOIN_REQUEST_PAGES = 5;
+/** 官方富媒体类型：1=图片（png/jpg）。 */
+export const GROUP_FILE_TYPE_IMAGE = 1;
+/** `upload_prepare` 未给出 `block_size` 时的兜底分片大小（4MB）。 */
+export const DEFAULT_UPLOAD_BLOCK_SIZE = 4 * 1024 * 1024;
+/** 分片上传允许的最大片数，避免异常响应导致死循环。 */
+export const MAX_UPLOAD_BLOCKS = 1_000;
 
 export interface QQOfficialClientOptions {
   token?: string;
@@ -600,8 +675,131 @@ export class QQOfficialClient implements QQOfficialAPI {
     return requests;
   }
 
-  private async resolveToken(): Promise<string> {
-    if (this.tokenValue && !this.needsRefresh()) {
+  /**
+   * 上传一张图片到群聊（官方文档「群聊富媒体上传」）。
+   *
+   * 官方只提供两种上传方式：`url` 直传（平台去下载）与分片上传合并。
+   * 本地渲染出来的 PNG 没有公网 URL，因此这里走分片：
+   *
+   * 1. `POST /v2/groups/{group_openid}/upload_prepare` 拿 `upload_id` + 分片预签名 URL；
+   * 2. 按 `block_size` 切片，逐片 `PUT` 到预签名 URL；
+   * 3. 每片成功后 `POST /v2/groups/{group_openid}/upload_part_finish` 通知服务端；
+   * 4. `POST /v2/groups/{group_openid}/files` 带 `upload_id` 合并，返回 `{ file_info }`。
+   *
+   * 任意一步失败都抛错（调用方按「拿不到富媒体能力」降级，不会让启动失败）。
+   */
+  public async uploadGroupImage(
+    groupId: string,
+    fileName: string,
+    data: Uint8Array,
+  ): Promise<Record<string, unknown>> {
+    if (data.byteLength === 0) {
+      throw new Error("uploadGroupImage requires non-empty data");
+    }
+    const prepared = await this.prepareGroupFileUpload(groupId, data.byteLength);
+    for (
+      let index = 0;
+      index < Math.ceil(data.byteLength / prepared.blockSize);
+      index += 1
+    ) {
+      const offset = index * prepared.blockSize;
+      const chunk = data.subarray(
+        offset,
+        Math.min(offset + prepared.blockSize, data.byteLength),
+      );
+      const url = prepared.urls[index];
+      if (!url) {
+        throw new Error(
+          `upload_prepare returned ${prepared.urls.length} urls, need ${Math.ceil(data.byteLength / prepared.blockSize)}`,
+        );
+      }
+      const response = await this.putRaw(url, chunk);
+      await this.request(
+        "POST",
+        fill(this.endpoints.groupFileUploadPartFinish, { groupId }),
+        {
+          upload_id: prepared.uploadId,
+          block_index: index,
+          block_size: chunk.byteLength,
+          ...(response.headers?.etag ? { md5: response.headers.etag } : {}),
+        },
+      );
+    }
+    const response = await this.request(
+      "POST",
+      fill(this.endpoints.groupFileUpload, { groupId }),
+      {
+        file_type: GROUP_FILE_TYPE_IMAGE,
+        srv_send_msg: false,
+        file_name: fileName,
+        upload_id: prepared.uploadId,
+      },
+    );
+    return extractFileInfo(response.jsonData);
+  }
+
+  /**
+   * 发送一张已上传的群图片（官方 `msg_type=7` 富媒体消息）。
+   *
+   * 请求体 `{ msg_type: 7, media: { file_info } }`；`file_info` 由 `uploadGroupImage`
+   * 返回，官方要求**原样透传**（内部是序列化二进制）。带 `msgId` 时按被动回复发送。
+   */
+  public async sendGroupImage(
+    groupId: string,
+    fileInfo: string,
+    msgId?: string,
+  ): Promise<Record<string, unknown>> {
+    if (!fileInfo) {
+      throw new Error("sendGroupImage requires file_info");
+    }
+    this.assertPassiveReplyAllowed(msgId);
+    const response = await this.throttled(`group:${groupId}`, () =>
+      this.request(
+        "POST",
+        fill(this.endpoints.sendGroupMessage, { groupId }),
+        buildGroupImagePayload(fileInfo, msgId),
+      ),
+    );
+    this.recordPassiveReply(msgId);
+    return isRecord(response.jsonData) ? response.jsonData : {};
+  }
+
+  /** 官方「群聊富媒体预上传」：拿 `upload_id`、分片大小与各片预签名 URL。 */
+  private async prepareGroupFileUpload(
+    groupId: string,
+    size: number,
+  ): Promise<PreparedUpload> {
+    const response = await this.request(
+      "POST",
+      fill(this.endpoints.groupFileUploadPrepare, { groupId }),
+      {
+        file_type: GROUP_FILE_TYPE_IMAGE,
+        file_size: size,
+        srv_send_msg: false,
+      },
+    );
+    return parsePreparedUpload(response.jsonData, size);
+  }
+
+  /**
+   * 把分片 `PUT` 到预签名 URL。
+   *
+   * 预签名 URL 自带签名，**不能**带机器人 `Authorization` 头；transport 未实现
+   * `requestRaw` 时直接抛错，由调用方降级（不做任何伪成功）。
+   */
+  private async putRaw(url: string, body: Uint8Array): Promise<HttpResponse> {
+    if (!this.transport?.requestRaw) {
+      throw new Error("transport does not support raw uploads");
+    }
+    const response = await this.transport.requestRaw("PUT", url, {}, {
+      contentType: "application/octet-stream",
+      body,
+    });
+    raiseForStatus(response);
+    return response;
+  }
+
+  private async resolveToken(): Promise<string> {    if (this.tokenValue && !this.needsRefresh()) {
       return this.tokenValue;
     }
     if (!this.transport) {
@@ -776,6 +974,170 @@ function parseExpiresIn(value: unknown): number {  const parsed =
 export interface JoinRequestPage {
   requests: Record<string, unknown>[];
   nextCursor: string | undefined;
+}
+
+/** `upload_prepare` 解析结果：上传任务 id、分片大小与各片预签名 URL。 */
+export interface PreparedUpload {
+  uploadId: string;
+  blockSize: number;
+  urls: string[];
+}
+
+/**
+ * 组装 `msg_type=7` 富媒体消息体。
+ *
+ * 官方要点：`media.file_info` 直接透传上传接口返回值，`msg_id` 存在时按被动回复发送。
+ */
+export function buildGroupImagePayload(
+  fileInfo: string,
+  msgId?: string,
+): Record<string, unknown> {
+  return {
+    msg_type: 7,
+    media: { file_info: fileInfo },
+    ...(msgId ? { msg_id: msgId } : {}),
+  };
+}
+
+/** 从上传响应里取 `file_info`；缺失时抛错（调用方降级，不假装成功）。 */
+export function extractFileInfo(payload: unknown): Record<string, unknown> {
+  const record = isRecord(payload) ? payload : {};
+  const fileInfo = record.file_info;
+  if (typeof fileInfo !== "string" || fileInfo.length === 0) {
+    throw new QQOfficialAPIError(200, "file_info missing in upload response", payload, {
+      errorCode: extractErrorCode(payload),
+    });
+  }
+  return record;
+}
+
+/**
+ * 解析 `upload_prepare` 响应。
+ *
+ * 兼容官方可能给出的几种字段命名（`upload_id` / `uploadId`、
+ * `block_size` / `blockSize`、`upload_urls` / `urls` / `parts[].url`）；
+ * 分片数为 1 时也接受单个 `upload_url`。缺失 `upload_id` 或 URL 时抛错。
+ */
+export function parsePreparedUpload(
+  payload: unknown,
+  totalSize: number,
+): PreparedUpload {
+  const record = isRecord(payload) ? payload : {};
+  const uploadId =
+    firstString(record, ["upload_id", "uploadId", "id"]) ??
+    firstString(isRecord(record.data) ? record.data : {}, [
+      "upload_id",
+      "uploadId",
+    ]);
+  if (!uploadId) {
+    throw new QQOfficialAPIError(
+      200,
+      "upload_id missing in upload_prepare response",
+      payload,
+      { errorCode: extractErrorCode(payload) },
+    );
+  }
+  const blockSize = normalizeBlockSize(
+    firstNumber(record, ["block_size", "blockSize"]) ??
+      firstNumber(isRecord(record.data) ? record.data : {}, [
+        "block_size",
+        "blockSize",
+      ]),
+    totalSize,
+  );
+  const urls = collectUploadUrls(record);
+  if (urls.length === 0) {
+    throw new QQOfficialAPIError(
+      200,
+      "upload urls missing in upload_prepare response",
+      payload,
+      { errorCode: extractErrorCode(payload) },
+    );
+  }
+  return { uploadId, blockSize, urls };
+}
+
+function collectUploadUrls(record: Record<string, unknown>): string[] {
+  const direct = [
+    record.upload_urls,
+    record.uploadUrls,
+    record.urls,
+    record.parts,
+  ];
+  for (const candidate of direct) {
+    const urls = urlsOf(candidate);
+    if (urls.length > 0) {
+      return urls;
+    }
+  }
+  const single = firstString(record, ["upload_url", "uploadUrl"]);
+  return single ? [single] : [];
+}
+
+function urlsOf(value: unknown): string[] {
+  if (typeof value === "string") {
+    return [value];
+  }
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const urls: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string") {
+      urls.push(item);
+      continue;
+    }
+    if (isRecord(item)) {
+      const url = firstString(item, ["url", "upload_url", "uploadUrl", "presigned_url"]);
+      if (url) {
+        urls.push(url);
+      }
+    }
+  }
+  return urls;
+}
+
+function normalizeBlockSize(value: number | undefined, totalSize: number): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return Math.max(totalSize, 1);
+  }
+  const blockSize = Math.floor(value);
+  const blocks = Math.ceil(totalSize / blockSize);
+  if (blocks > MAX_UPLOAD_BLOCKS) {
+    throw new Error(
+      `upload_prepare block_size ${blockSize} would need ${blocks} blocks (max ${MAX_UPLOAD_BLOCKS})`,
+    );
+  }
+  return blockSize;
+}
+
+function firstString(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function firstNumber(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): number | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string" && /^\d+$/u.test(value)) {
+      return Number.parseInt(value, 10);
+    }
+  }
+  return undefined;
 }
 
 /** 兼容 `{ list, next_cursor }`、`{ data }` 与裸数组三种返回形态。 */

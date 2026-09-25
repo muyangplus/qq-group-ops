@@ -42,6 +42,12 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
   public failGroupMessages = false;
   /** 置为 true 后 Markdown 群消息抛出错误（纯文本仍可发送）。 */
   public failGroupRichMessages = false;
+  /** 置为 true 后群图片上传与发送都抛出错误，便于测试统计图降级。 */
+  public failGroupImages = false;
+  /** 群图片上传记录：`[groupId, fileName, data]`。 */
+  public readonly uploadedGroupImages: Array<[string, string, Uint8Array]> = [];
+  /** 群图片发送记录：`[groupId, fileInfo, msgId]`。 */
+  public readonly sentGroupImages: Array<[string, string, string | undefined]> = [];
 
   public async getAccessToken(): Promise<string> {
     return "fake-token";
@@ -169,6 +175,42 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
     return [...this.joinRequests.values()].filter(
       (request) => request.group_id === groupId,
     );
+  }
+
+  /**
+   * 群图片上传（对应官方「群聊富媒体上传」）。
+   *
+   * 记录 `[groupId, fileName, data]` 并返回一个可直接给 `sendGroupImage` 的
+   * `file_info`；`failGroupImages` 打开时抛错，用于测试降级路径。
+   */
+  public async uploadGroupImage(
+    groupId: string,
+    fileName: string,
+    data: Uint8Array,
+  ): Promise<Record<string, unknown>> {
+    if (this.failGroupImages) {
+      throw new Error("fake group image upload failure");
+    }
+    this.uploadedGroupImages.push([groupId, fileName, data]);
+    const fileInfo = `fake-file-info-${this.uploadedGroupImages.length}`;
+    return {
+      file_uuid: `fake-file-uuid-${this.uploadedGroupImages.length}`,
+      file_info: fileInfo,
+      ttl: 300,
+    };
+  }
+
+  /** 群图片发送（官方 `msg_type=7`）；记录 `[groupId, fileInfo, msgId]`。 */
+  public async sendGroupImage(
+    groupId: string,
+    fileInfo: string,
+    msgId?: string,
+  ): Promise<Record<string, unknown>> {
+    if (this.failGroupImages) {
+      throw new Error("fake group image send failure");
+    }
+    this.sentGroupImages.push([groupId, fileInfo, msgId]);
+    return { id: randomUUID() };
   }
 
   public addJoinRequest(

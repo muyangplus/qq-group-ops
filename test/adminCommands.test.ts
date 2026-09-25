@@ -4,6 +4,13 @@ import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { JoinRequestStatus } from "../src/core/enums.js";
 import { AdminCommandService } from "../src/services/adminCommands.js";
 import { ActivityCardService } from "../src/services/activityCards.js";
+import { ActivityExportService } from "../src/services/activityExport.js";
+import {
+  ActivityStatsService,
+  SYSTEM_FONT_PATHS,
+  type CanvasModule,
+  type PixelContext,
+} from "../src/services/activityStats.js";
 import { ActivityNotificationService } from "../src/services/activityNotifications.js";
 import { ActivityService } from "../src/services/activity.js";
 import { AuditLogStore } from "../src/services/audit.js";
@@ -25,6 +32,32 @@ import { RichMessageSender } from "../src/services/richMessages.js";
 import { ShortCodeService } from "../src/services/shortCodes.js";
 import { UserProfileService } from "../src/services/userProfiles.js";
 import { FakeIdentityBindingRepository } from "./helpers/fakeIdentityBindingRepository.js";
+
+/**
+ * 最小 canvas 桩（`@napi-rs/canvas` 在沙箱里装不上）。
+ *
+ * 只满足 `ActivityStatsService.render` 用到的面：测量文本 + 画矩形 + 导出 PNG。
+ * 统计图的排版逻辑由 `test/activityStats.test.ts` 的假画布单独断言。
+ */
+function stubCanvasModule(): CanvasModule {
+  const context: PixelContext = {
+    fillStyle: "#000000",
+    font: "",
+    textBaseline: "top",
+    fillRect: () => {},
+    fillText: () => {},
+    measureText: (text) => ({ width: text.length }),
+  };
+  return {
+    createCanvas: (width, height) => ({
+      width,
+      height,
+      getContext: () => context,
+      toBuffer: () => Buffer.from([137, 80, 78, 71]),
+    }),
+    GlobalFonts: { registerFromPath: () => {} },
+  };
+}
 
 describe("AdminCommandService", async () => {
   let auditLog: AuditLogStore;
@@ -2434,6 +2467,144 @@ describe("activity card callbacks (§B2)", async () => {
       expect(denied.ok).toBe(false);
       expect(denied.text).toContain("权限不足");
     }
+  });
+
+  it("tells the operator to fall back when canvas is missing", async () => {
+    const { svc } = withActivity();
+    await svc.handle("g1", "admin", "/activity create 迎新晚会");
+    svc.setActivityExtras({
+      stats: new ActivityStatsService({
+        hasSystemFont: () => false,
+        readFontFile: () => undefined,
+        fontUrl: "",
+        canvasLoader: async () => {
+          throw new Error("optional dependency missing");
+        },
+      }),
+    });
+
+    const denied = await svc.activityCallbackCard("stats", ["#ACT001"], "member", "g1");
+    expect(denied.ok).toBe(false);
+    expect(denied.text).toContain("权限不足");
+
+    const stats = await svc.activityCallbackCard("stats", ["#ACT001"], "admin", "g1");
+    expect(stats.ok).toBe(true);
+    expect(stats.text).toContain("文字统计");
+    expect(api.uploadedGroupImages).toEqual([]);
+  });
+
+  it("sends the stats image when §B3 is wired", async () => {
+    const { svc } = withActivity();
+    await svc.handle("g1", "admin", "/activity create 迎新晚会");
+    svc.setActivityExtras({
+      stats: new ActivityStatsService({
+        api,
+        hasSystemFont: (path) => path === SYSTEM_FONT_PATHS[0],
+        canvasLoader: async () => stubCanvasModule(),
+      }),
+    });
+
+    const manage = await svc.activityCallbackCard("manage", ["#ACT001"], "admin", "g1");
+    const buttons = (
+      manage.rich.keyboard as {
+        content: { rows: Array<{ buttons: Array<{ id: string; action: { data: string } }> }> };
+      }
+    ).content.rows.flatMap((row) => row.buttons);
+    expect(buttons.find((button) => button.id === "stats")?.action.data).toBe(
+      "cb:activity:stats:#ACT001",
+    );
+
+    const stats = await svc.activityCallbackCard("stats", ["#ACT001"], "admin", "g1");
+    expect(stats.ok).toBe(true);
+    expect(stats.text).toContain("已发送统计图片");
+    expect(api.uploadedGroupImages).toHaveLength(1);
+    expect(api.uploadedGroupImages[0]?.[0]).toBe("g1");
+    expect(api.uploadedGroupImages[0]?.[1]).toBe("activity-ACT001.png");
+    expect(api.sentGroupImages).toHaveLength(1);
+  });
+
+  it("falls back to the text stats card when the image upload fails", async () => {
+    const { svc } = withActivity();
+    await svc.handle("g1", "admin", "/activity create 迎新晚会");
+    svc.setActivityExtras({
+      stats: new ActivityStatsService({
+        api,
+        hasSystemFont: (path) => path === SYSTEM_FONT_PATHS[0],
+        canvasLoader: async () => stubCanvasModule(),
+      }),
+    });
+    api.failGroupImages = true;
+
+    const stats = await svc.activityCallbackCard("stats", ["#ACT001"], "admin", "g1");
+    expect(stats.ok).toBe(true);
+    expect(stats.text).toContain("文字统计");
+    expect(api.sentGroupImages).toEqual([]);
+  });
+
+  it("DMs the CSV export to the operator with a waitlist flag", async () => {
+    const { svc, profiles } = withActivity();
+    await setupOpenActivity(svc, { capacity: 1 });
+    profiles.set("u3", "name", "同学甲");
+    profiles.set("u3", "studentId", "22123456789");
+    profiles.set("u3", "className", "材化2211");
+    await svc.activityCallbackCard("join", ["#ACT001"], "u3", "g1");
+    await svc.activityCallbackCard("join", ["#ACT001"], "member", "g1");
+
+    svc.setActivityExtras({
+      exportService: new ActivityExportService({
+        sender: new RichMessageSender(api),
+        profiles,
+      }),
+    });
+
+    const signups = await svc.activityCallbackCard("signups", ["#ACT001", "1"], "admin", "g1");
+    const buttons = (
+      signups.rich.keyboard as {
+        content: { rows: Array<{ buttons: Array<{ id: string; action: { data: string } }> }> };
+      }
+    ).content.rows.flatMap((row) => row.buttons);
+    expect(buttons.find((button) => button.id === "export")?.action.data).toBe(
+      "cb:activity:export:#ACT001",
+    );
+
+    const exported = await svc.activityCallbackCard("export", ["#ACT001"], "admin", "g1");
+    expect(exported.ok).toBe(true);
+    expect(exported.text).toContain("已私信导出");
+    const dm = api.sentPrivateMessages.at(-1);
+    expect(dm?.userOpenid).toBe("admin");
+    // 学号 / 班级只走私信，且 CSV 列符合规格；候补行带「候补」标记
+    const content = String(dm?.content ?? "");
+    expect(content).toContain("序号,姓名,学号,班级,学院,备注,候补");
+    expect(content).toContain("22123456789");
+    expect(content).toContain("材化2211");
+    expect(content).toContain(",候补");
+    // 拒绝：普通成员调用导出回调
+    const denied = await svc.activityCallbackCard("export", ["#ACT001"], "member", "g1");
+    expect(denied.ok).toBe(false);
+    expect(denied.text).toContain("权限不足");
+  });
+
+  it("asks the operator to use /export when the CSV exceeds one message", async () => {
+    const { svc, profiles } = withActivity();
+    await setupOpenActivity(svc, { capacity: 5 });
+    profiles.set("u3", "name", "同学甲");
+    profiles.set("u3", "studentId", "22123456789");
+    profiles.set("u3", "className", "材化2211");
+    await svc.activityCallbackCard("join", ["#ACT001"], "u3", "g1");
+
+    svc.setActivityExtras({
+      exportService: new ActivityExportService({
+        sender: new RichMessageSender(api),
+        profiles,
+        messageLimit: 10,
+      }),
+    });
+
+    const exported = await svc.activityCallbackCard("export", ["#ACT001"], "admin", "g1");
+    expect(exported.ok).toBe(true);
+    const content = String(api.sentPrivateMessages.at(-1)?.content ?? "");
+    expect(content).toContain("/export #ACT001");
+    expect(content).not.toContain("序号,姓名");
   });
 
   it("degrades the stats callback when §B3 is not wired", async () => {

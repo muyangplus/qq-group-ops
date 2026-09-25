@@ -1,6 +1,14 @@
 export const DEFAULT_SQLITE_PATH = "data/qq-group-ops.db";
 export const DEFAULT_BOT_CACHE_FILE = "data/qq-bot-cache.json";
 export const DEFAULT_CLASS_INDEX_FILE = "data/class-index.json";
+/**
+ * 统计图片字体下载地址（`ACTIVITY_STATS_FONT_URL`）。
+ *
+ * 指向 Noto Sans SC 官方发布地址；系统已有中文字体（Windows 雅黑 / Linux Noto）
+ * 时根本不会用到它。失败只影响统计图片（降级为文字统计卡）。
+ */
+export const DEFAULT_ACTIVITY_STATS_FONT_URL =
+  "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf";
 
 export type DatabaseTarget =
   | { driver: "sqlite"; path: string }
@@ -38,6 +46,14 @@ export interface Settings {
    * 的额度，封顶是为了避免活动集中变更时把额度打满、后续通知全部失败。
    */
   activityNotifyDailyLimit: number;
+  /**
+   * 活动统计图片的字体下载地址（`ACTIVITY_STATS_FONT_URL`）。
+   *
+   * 系统已有中文字体（Windows 雅黑 / Linux Noto CJK 等）时不会用到；
+   * 找不到系统字体才下载并缓存到 `data/fonts/`（gitignored，不随包提交）。
+   * 设为空字符串表示「只允许系统字体」，下载失败则统计图降级为文字统计卡。
+   */
+  activityStatsFontUrl: string;
 }
 
 export type MenuFirstPushMode = "memory" | "persistent";
@@ -91,8 +107,17 @@ function asNonNegativeInt(value: string | undefined, fallback: number): number {
   return parsed;
 }
 
-function splitCsv(value: string | undefined): string[] {
-  if (!value) {
+/**
+ * 文本配置。
+ *
+ * 未设置（`undefined`）用默认值；显式设成空字符串表示「按空值处理」
+ * （例如 `ACTIVITY_STATS_FONT_URL=` 表示只允许系统字体、不下载）。
+ */
+function asText(value: string | undefined, fallback: string): string {
+  return value === undefined ? fallback : value.trim();
+}
+
+function splitCsv(value: string | undefined): string[] {  if (!value) {
     return [];
   }
   return value
@@ -163,6 +188,10 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     activityNotifyDailyLimit: asNonNegativeInt(
       env.ACTIVITY_NOTIFY_DAILY_LIMIT,
       3,
+    ),
+    activityStatsFontUrl: asText(
+      env.ACTIVITY_STATS_FONT_URL,
+      DEFAULT_ACTIVITY_STATS_FONT_URL,
     ),
   };
 }

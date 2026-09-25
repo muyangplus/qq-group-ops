@@ -5,6 +5,7 @@ import type {
   HttpResponse,
   JsonValue,
   QQOfficialAPI,
+  RawBody,
   RemoveGroupMemberOptions,
   RichMessageOptions,
 } from "../adapters/qqOfficial.js";
@@ -22,7 +23,9 @@ type QQOfficialMethod =
   | "updateMemberBlacklist"
   | "respondInteraction"
   | "approveJoinRequest"
-  | "getJoinRequests";
+  | "getJoinRequests"
+  | "uploadGroupImage"
+  | "sendGroupImage";
 
 export function instrumentQQOfficialAPI(
   api: QQOfficialAPI,
@@ -148,6 +151,37 @@ export function instrumentQQOfficialAPI(
       log.debug("getJoinRequests ok", { groupId, count: requests.length });
       return requests;
     },
+    uploadGroupImage: async (
+      groupId: string,
+      fileName: string,
+      data: Uint8Array,
+    ) => {
+      log.debug("uploadGroupImage", {
+        groupId,
+        fileName,
+        bytes: data.byteLength,
+      });
+      const result = await api.uploadGroupImage(groupId, fileName, data);
+      log.debug("uploadGroupImage ok", {
+        groupId,
+        bytes: data.byteLength,
+        hasFileInfo: typeof result.file_info === "string",
+      });
+      return result;
+    },
+    sendGroupImage: async (groupId: string, fileInfo: string, msgId?: string) => {
+      log.debug("sendGroupImage", {
+        groupId,
+        msgId,
+        fileInfoLength: fileInfo.length,
+      });
+      const result = await api.sendGroupImage(groupId, fileInfo, msgId);
+      log.debug("sendGroupImage ok", {
+        groupId,
+        messageId: typeof result.id === "string" ? result.id : undefined,
+      });
+      return result;
+    },
   };
 
   return new Proxy(api, {
@@ -185,6 +219,41 @@ export function instrumentTransport(
         return response;
       } catch (error) {
         log.error("request failed", {
+          method,
+          url,
+          durationMs: Date.now() - startedAt,
+          error: formatError(error),
+        });
+        throw error;
+      }
+    },
+    async requestRaw(
+      method: string,
+      url: string,
+      headers: Record<string, string>,
+      body: RawBody,
+    ): Promise<HttpResponse> {
+      const startedAt = Date.now();
+      log.debug("request raw", {
+        method,
+        url,
+        bytes: body.body.byteLength,
+        contentType: body.contentType,
+      });
+      try {
+        if (!transport.requestRaw) {
+          throw new Error("transport does not support raw uploads");
+        }
+        const response = await transport.requestRaw(method, url, headers, body);
+        log.debug("request raw response", {
+          method,
+          url,
+          statusCode: response.statusCode,
+          durationMs: Date.now() - startedAt,
+        });
+        return response;
+      } catch (error) {
+        log.error("request raw failed", {
           method,
           url,
           durationMs: Date.now() - startedAt,
