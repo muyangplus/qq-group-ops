@@ -370,27 +370,61 @@ describe("ActivityService", () => {
       }),
     ).toMatchObject({ status: "waitlisted", position: 1 });
 
-    // 手动模式：取消后候补**不自动递补**，等管理员显式释放
+    // 手动模式：取消后名额被**冻结**，候补不自动递补，新人也占不到
     const registration = withWaitlist.findRegistration("a1", "u1")!;
     const result = withWaitlist.cancelRegistrationWithPromotion(
       registration.registrationId,
       "u1",
     );
     expect(result.promoted).toBeUndefined();
+    expect(result.heldSlots).toBe(1);
+    expect(withWaitlist.heldSlots("a1")).toBe(1);
     expect(withWaitlist.listWaitlist("a1").map((entry) => entry.userId)).toEqual([
       "u2",
     ]);
     expect(withWaitlist.listRegistrations("a1")).toEqual([]);
+    // 冻结期间新人只能进候补（不能直接占位）
+    expect(
+      withWaitlist.joinActivity({ activityId: "a1", userId: "u3" }),
+    ).toMatchObject({ status: "waitlisted", position: 2 });
 
-    // 管理员手动释放名额 → 递补第一位，并带上原本的备注
-    const released = withWaitlist.promoteNextWaitlist("a1")!;
-    expect(released.promoted.userId).toBe("u2");
-    expect(released.registration.displayName).toBe("小红");
-    expect(released.registration.note).toBe("候补一下");
-    expect(withWaitlist.listWaitlist("a1")).toEqual([]);
+    // 管理员释放名额 → 递补候补第一位，冻结数归零
+    const released = withWaitlist.releaseHeldSlot("a1")!;
+    expect(released.released).toBe("promoted");
+    expect(released.promoted?.userId).toBe("u2");
+    expect(released.registration?.displayName).toBe("小红");
+    expect(released.registration?.note).toBe("候补一下");
+    expect(released.heldSlots).toBe(0);
     expect(withWaitlist.listRegistrations("a1").map((item) => item.userId)).toEqual([
       "u2",
     ]);
+    expect(withWaitlist.listWaitlist("a1").map((entry) => entry.userId)).toEqual(["u3"]);
+
+    // 没有候补时释放 → 名额放回公开池，冻结数归零
+    const free = withWaitlist.cancelRegistrationWithPromotion(
+      withWaitlist.findRegistration("a1", "u2")!.registrationId,
+      "u2",
+    );
+    expect(free.heldSlots).toBe(1);
+    expect(withWaitlist.listWaitlist("a1").map((entry) => entry.userId)).toEqual(["u3"]);
+    const opened = withWaitlist.releaseHeldSlot("a1")!;
+    // 有候补时优先递补，所以这里先释放给候补 u3
+    expect(opened.released).toBe("promoted");
+    expect(opened.promoted?.userId).toBe("u3");
+    const again = withWaitlist.cancelRegistrationWithPromotion(
+      withWaitlist.findRegistration("a1", "u3")!.registrationId,
+      "u3",
+    );
+    expect(again.heldSlots).toBe(1);
+    const backToPool = withWaitlist.releaseHeldSlot("a1")!;
+    expect(backToPool.released).toBe("opened");
+    expect(backToPool.heldSlots).toBe(0);
+    // 放回公开池后新人可以正常报名
+    expect(
+      withWaitlist.joinActivity({ activityId: "a1", userId: "u4" }),
+    ).toMatchObject({ status: "registered" });
+    // 没有冻结名额时再点释放是空操作
+    expect(withWaitlist.releaseHeldSlot("a1")).toBeUndefined();
   });
 
   it("auto-promotes the first waitlisted user when the activity says so", () => {
@@ -466,10 +500,38 @@ describe("ActivityService", () => {
     });
     first.joinActivity({ activityId: "a1", userId: "u1" });
     first.joinActivity({ activityId: "a1", userId: "u2", displayName: "小红" });
+
+    // 再来一个手动释放名额的活动：取消后冻结 1 个名额，重启后要恢复
+    first.createActivity({
+      groupId: "g1",
+      title: "手动释放活动",
+      createdBy: "admin",
+      activityId: "a2",
+      capacity: 1,
+    });
+    first.openActivity("a2");
+    first.joinActivity({ activityId: "a2", userId: "u1" });
+    const manualCancel = first.cancelRegistrationWithPromotion(
+      first.findRegistration("a2", "u1")!.registrationId,
+      "u1",
+    );
+    expect(manualCancel.heldSlots).toBe(1);
     await first.flush();
 
-    expect(settings.rows.map((row) => row.key).sort()).toEqual([
+    const keysFor = (activityId: string): string[] =>
+      settings.rows
+        .filter((row) => row.activityId === activityId)
+        .map((row) => row.key)
+        .sort();
+    expect(keysFor("a1")).toEqual([
       "closeAt",
+      "mentionAll",
+      "notifyCreator",
+      "waitlistPromotion",
+    ]);
+    // 手动释放的活动没有截止时间，但记了冻结名额
+    expect(keysFor("a2")).toEqual([
+      "heldSlots",
       "mentionAll",
       "notifyCreator",
       "waitlistPromotion",
@@ -490,5 +552,10 @@ describe("ActivityService", () => {
       "2026-12-31T23:59:00.000Z",
     );
     expect(restarted.listWaitlist("a1").map((entry) => entry.userId)).toEqual(["u2"]);
+    // 冻结名额也随重启恢复
+    expect(restarted.getActivity("a2")).toMatchObject({
+      waitlistPromotion: "manual",
+      heldSlots: 1,
+    });
   });
 });

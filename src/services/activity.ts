@@ -59,6 +59,13 @@ export interface Activity {
   notifyCreator: boolean;
   /** 候补递补方式：自动递补 / 管理员手动释放名额（**默认手动**）。 */
   waitlistPromotion: WaitlistPromotionMode;
+  /**
+   * 手动模式下「已取消但还没释放」的名额数（冻结名额）。
+   *
+   * 报名占用 = 已报名人数 + 冻结名额；管理员点「释放名额」才会把它转成
+   * 「递补候补第一位」或「放回公开池」。自动递补模式恒为 0。
+   */
+  heldSlots: number;
   /** 报名截止时间；到期后**懒校验**拒绝报名（不再单独跑定时器）。 */
   closeAt?: Date;
   createdAt: Date;
@@ -285,6 +292,7 @@ export class ActivityService {
       mentionAll: input.mentionAll ?? false,
       notifyCreator: input.notifyCreator ?? false,
       waitlistPromotion: input.waitlistPromotion ?? "manual",
+      heldSlots: 0,
       ...(input.closeAt !== undefined ? { closeAt: input.closeAt } : {}),
       createdAt: utcNow(),
     };
@@ -585,8 +593,10 @@ export class ActivityService {
       );
     }
     const current = this.listRegistrations(activity.activityId);
+    // 冻结名额（手动模式下被取消、但还没被管理员释放的位置）同样算占用
+    const occupied = current.length + activity.heldSlots;
     const full =
-      activity.capacity !== undefined && current.length >= activity.capacity;
+      activity.capacity !== undefined && occupied >= activity.capacity;
     if (full) {
       const entry: ActivityWaitlistEntry = {
         activityId: activity.activityId,
@@ -615,8 +625,8 @@ export class ActivityService {
    * 取消报名；**递补方式由活动配置决定**：
    *
    * - `auto`（自动递补）：立刻把候补第一位转正；
-   * - `manual`（手动释放名额，默认）：空出来的名额留给管理员决定，
-   *   由管理端调用 `promoteNextWaitlist()` 手动释放/递补。
+   * - `manual`（手动释放名额，默认）：空位被**冻结**（`heldSlots + 1`），
+   *   新人不能直接占用，等管理员调用 `releaseHeldSlot()` 释放。
    */
   public cancelRegistrationWithPromotion(
     registrationId: string,
@@ -626,14 +636,58 @@ export class ActivityService {
     promoted?: ActivityWaitlistEntry;
     registration?: ActivityRegistration;
     position?: number;
+    heldSlots: number;
   } {
     const cancelled = this.cancelRegistration(registrationId, userId);
     const activity = this.getActivity(cancelled.activityId);
-    if (activity.waitlistPromotion !== "auto") {
-      return { cancelled };
+    if (activity.waitlistPromotion === "auto") {
+      const promoted = this.promoteNextWaitlist(cancelled.activityId);
+      return promoted
+        ? { cancelled, heldSlots: 0, ...promoted }
+        : { cancelled, heldSlots: 0 };
     }
-    const promoted = this.promoteNextWaitlist(cancelled.activityId);
-    return promoted ? { cancelled, ...promoted } : { cancelled };
+    const updated = this.setHeldSlots(cancelled.activityId, activity.heldSlots + 1);
+    return { cancelled, heldSlots: updated.heldSlots };
+  }
+
+  /** 当前冻结（待释放）的名额数。 */
+  public heldSlots(activityId: string): number {
+    return this.getActivity(activityId).heldSlots;
+  }
+
+  /**
+   * 管理员「释放名额」：解冻一个名额，并优先给候补第一位；没有候补就放回公开池。
+   *
+   * 返回 `promoted` 时表示候补者已转正（调用方应私信通知），否则名额已开放给先到先得。
+   */
+  public releaseHeldSlot(activityId: string):
+    | {
+        released: "promoted" | "opened";
+        promoted?: ActivityWaitlistEntry;
+        registration?: ActivityRegistration;
+        heldSlots: number;
+      }
+    | undefined {
+    const activity = this.getActivity(activityId);
+    if (activity.heldSlots <= 0) {
+      return undefined;
+    }
+    const updated = this.setHeldSlots(activityId, activity.heldSlots - 1);
+    const promoted = this.promoteNextWaitlist(activityId);
+    if (promoted) {
+      return { released: "promoted", ...promoted, heldSlots: updated.heldSlots };
+    }
+    return { released: "opened", heldSlots: updated.heldSlots };
+  }
+
+  /** 写入冻结名额数（同时持久化到 activity_settings）。 */
+  private setHeldSlots(activityId: string, value: number): Activity {
+    const activity = this.getActivity(activityId);
+    const heldSlots = Math.max(0, Math.trunc(value));
+    const updated: Activity = { ...activity, heldSlots };
+    this.activities.set(activityId, updated);
+    this.persistSettings(updated);
+    return cloneActivity(updated);
   }
 
   /**
@@ -747,6 +801,19 @@ export class ActivityService {
         repository.remove(activity.activityId, ACTIVITY_SETTING_KEYS.closeAt),
       );
     }
+    if (settings.heldSlots > 0) {
+      this.queue?.enqueue("activity.settings.heldSlots", () =>
+        repository.save({
+          activityId: activity.activityId,
+          key: ACTIVITY_SETTING_KEYS.heldSlots,
+          value: String(settings.heldSlots),
+        }),
+      );
+    } else {
+      this.queue?.enqueue("activity.settings.heldSlots.clear", () =>
+        repository.remove(activity.activityId, ACTIVITY_SETTING_KEYS.heldSlots),
+      );
+    }
   }
 }
 
@@ -810,6 +877,7 @@ export const ACTIVITY_SETTING_KEYS = {
   notifyCreator: "notifyCreator",
   closeAt: "closeAt",
   waitlistPromotion: "waitlistPromotion",
+  heldSlots: "heldSlots",
 } as const;
 
 /** 把 KV 设置应用到活动对象上（缺省值：不 @全体、不通知、无截止、**手动释放名额**）。 */
@@ -818,6 +886,7 @@ function applySettings(activity: Activity, bucket: ReadonlyMap<string, string>):
   const notifyCreator = bucket.get(ACTIVITY_SETTING_KEYS.notifyCreator);
   const closeAt = bucket.get(ACTIVITY_SETTING_KEYS.closeAt);
   const promotion = bucket.get(ACTIVITY_SETTING_KEYS.waitlistPromotion);
+  const heldSlots = Number.parseInt(bucket.get(ACTIVITY_SETTING_KEYS.heldSlots) ?? "", 10);
   const parsedCloseAt = closeAt ? new Date(closeAt) : undefined;
   return {
     ...activity,
@@ -828,6 +897,7 @@ function applySettings(activity: Activity, bucket: ReadonlyMap<string, string>):
       promotion === "auto" || promotion === "manual"
         ? promotion
         : activity.waitlistPromotion,
+    heldSlots: Number.isFinite(heldSlots) && heldSlots > 0 ? heldSlots : 0,
     ...(parsedCloseAt && !Number.isNaN(parsedCloseAt.getTime())
       ? { closeAt: parsedCloseAt }
       : activity.closeAt !== undefined
@@ -841,12 +911,14 @@ export function settingsOf(activity: Activity): {
   mentionAll: boolean;
   notifyCreator: boolean;
   waitlistPromotion: WaitlistPromotionMode;
+  heldSlots: number;
   closeAt?: string;
 } {
   return {
     mentionAll: activity.mentionAll,
     notifyCreator: activity.notifyCreator,
     waitlistPromotion: activity.waitlistPromotion,
+    heldSlots: activity.heldSlots,
     ...(activity.closeAt !== undefined
       ? { closeAt: activity.closeAt.toISOString() }
       : {}),

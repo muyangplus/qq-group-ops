@@ -108,6 +108,7 @@ export class SqlActivityRepository implements ActivityRepository {
       mentionAll: false,
       notifyCreator: false,
       waitlistPromotion: "manual",
+      heldSlots: 0,
       status: row.status as ActivityStatus,
       createdAt: toDate(row.created_at),
     }));
