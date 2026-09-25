@@ -1,5 +1,5 @@
 import type { CardResult, CommandResult } from "./commands/support.js";
-import { renderNotice } from "./commands/support.js";
+import { ensureCard, renderNotice } from "./commands/support.js";
 import { aliasCard } from "./commands/aliasCommands.js";
 import { whoisCard } from "./commands/whoisCommands.js";
 import { handleProfile } from "./commands/profileCommands.js";
@@ -186,26 +186,6 @@ import {
 const log = getLogger("admin-commands");
 
 /** 通用卡片标题（未单独定制卡片的指令用）。 */
-const COMMAND_CARD_TITLES: Record<string, string> = {
-  myperm: "我的权限",
-  whois: "映射查询",
-  bind: "绑定",
-  profile: "个人资料",
-  activity: "活动",
-  perm: "权限配置",
-  notify: "入群申请推送",
-  audit: "审计记录",
-  sync: "同步官方申请",
-  approve: "审批结果",
-  reject: "审批结果",
-  test: "自检结果",
-  rules: "群规则",
-  pending: "待审批入群申请",
-  status: "运行状态",
-  help: "指令帮助",
-  menu: "系统菜单",
-  testmenu: "测试菜单",
-};
 
 
 
@@ -397,28 +377,7 @@ export class AdminCommandService {
     groupId: string | undefined,
     userId: string,
   ): CommandResult {
-    if (result.rich) {
-      return result;
-    }
-    const title = COMMAND_CARD_TITLES[command] ?? "指令结果";
-    const nav: CardButton[] = [];
-    if (groupId) {
-      nav.push(viewButton("pending", "待审批", "pending", "page", groupId, 1));
-      nav.push(viewButton("rules", "群规则", "rules", "view", groupId));
-    }
-    nav.push(viewButton("help", "指令帮助", "help", "home"));
-    const card = cardFromText(title, result.text, {
-      rows: [nav],
-      ...(groupId ? { buttonHint: "常用入口：" } : {}),
-      footer: ["按钮不可用时可直接输入指令。"],
-    });
-    // §B4：`silent` 必须原样保留，否则「群里静默、结果只私信」会在兜底包卡片时失效。
-    return {
-      ok: result.ok,
-      text: card.text,
-      rich: card.rich,
-      ...(result.silent !== undefined ? { silent: result.silent } : {}),
-    };
+    return ensureCard(command, result, groupId);
   }
 
   /**

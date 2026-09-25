@@ -216,6 +216,62 @@ export function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** 通用卡片标题（未单独定制卡片的指令用）。 */
+export const COMMAND_CARD_TITLES: Record<string, string> = {
+  myperm: "我的权限",
+  whois: "映射查询",
+  bind: "绑定",
+  profile: "个人资料",
+  activity: "活动",
+  perm: "权限配置",
+  notify: "入群申请推送",
+  audit: "审计记录",
+  sync: "同步官方申请",
+  approve: "审批结果",
+  reject: "审批结果",
+  test: "自检结果",
+  rules: "群规则",
+  pending: "待审批入群申请",
+  status: "运行状态",
+  help: "指令帮助",
+  menu: "系统菜单",
+  testmenu: "测试菜单",
+};
+
+/**
+ * 全量卡片兜底（卡片标准的不变量）：任何还没做定制卡的指令结果都包成卡片，
+ * 并附上「待审批 / 群规则 / 帮助」这类常用入口。
+ *
+ * `silent` 必须原样保留，否则「群里静默、结果只私信」会在兜底包卡片时失效。
+ */
+export function ensureCard(
+  command: string,
+  result: CommandResult,
+  groupId: string | undefined,
+): CommandResult {
+  if (result.rich) {
+    return result;
+  }
+  const title = COMMAND_CARD_TITLES[command] ?? "指令结果";
+  const nav: CardButton[] = [];
+  if (groupId) {
+    nav.push(viewButton("pending", "待审批", "pending", "page", groupId, 1));
+    nav.push(viewButton("rules", "群规则", "rules", "view", groupId));
+  }
+  nav.push(viewButton("help", "指令帮助", "help", "home"));
+  const card = cardFromText(title, result.text, {
+    rows: [nav],
+    ...(groupId ? { buttonHint: "常用入口：" } : {}),
+    footer: ["按钮不可用时可直接输入指令。"],
+  });
+  return {
+    ok: result.ok,
+    text: card.text,
+    rich: card.rich,
+    ...(result.silent !== undefined ? { silent: result.silent } : {}),
+  };
+}
+
 /**
  * 把反馈文案渲染成卡片行：如果第一行是提及（`<@!...>`），保持它单独成行且不转义，
  * 其余内容作为「**结果**：…」展示。
