@@ -1,6 +1,25 @@
-# Configuration
+# 配置说明（Configuration）
 
 本文说明 QQ Group Ops 当前支持的环境变量。项目使用 `.env` 加载配置；仓库只提交 `.env.example`。
+
+> 部署/启动/排障见 [OPERATIONS.md](./OPERATIONS.md)，指令用法见 [COMMANDS.md](./COMMANDS.md)。
+
+## 目录
+
+- 快速开始
+- 官方机器人
+- 限流与重连
+- 机器人自检
+- 权限
+- 群规则与内容审核
+- 个人资料与活动
+- 数据库
+- 日志
+- 数据保留
+- 预留配置
+- 安全提醒
+
+---
 
 ## 快速开始
 

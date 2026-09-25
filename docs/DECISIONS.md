@@ -1,6 +1,56 @@
-# Decisions
+# 关键决策（Decisions / ADR）
 
 本文件记录关键技术决策。新增决策请使用 ADR 格式追加。
+
+> 架构总览见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+
+## 目录
+
+- ADR-0001：仅使用 QQ 官方开放平台 API
+- ADR-0002：Node.js + TypeScript + 自研轻量核心
+- ADR-0003：数据库选型
+- ADR-0004：事件接入与官方 REST 调用分层
+- ADR-0005：默认不保存消息原文
+- ADR-0006：项目名使用 `qq-group-ops`
+- ADR-0007：活动报名与信息导出作为独立运营能力
+- ADR-0008：使用 Apache-2.0 许可证
+- ADR-0009：从 Python 重置为 Node.js / TypeScript
+- ADR-0010：移除 Phase 0 CLI，改为 `/test` 指令
+- ADR-0011：结构化日志与接口调试包装
+- ADR-0012：权限自助查询与超管运行时配置
+- ADR-0014：权限配置使用官方 userId
+- ADR-0015：指令支持私信
+- ADR-0016：全量消息模式诊断
+- ADR-0017：维护 OpenID ↔ QQ号/群号映射
+- ADR-0018：强制绑定 QQ 号和群号后才能使用
+- ADR-0019：`/help` 只显示有权限执行的命令
+- ADR-0013：支持群聊非 @ 指令识别
+- ADR-0020：绑定关系持久化到 PostgreSQL
+- ADR-0021：全部状态写穿透持久化
+- ADR-0022：默认数据库使用 SQLite
+- ADR-0023：限流防护与 access token / 网关地址缓存
+- ADR-0024：打通审批闭环与群配置驱动的审核
+- ADR-0025：按官方文档核对禁言 / 踢人 / 入群审批请求体
+- ADR-0026：数据保留清理真正生效
+- ADR-0027：被动回复配额与事件处理容错
+- ADR-0028：全局规则使用 `__default__` 行复用群配置存储
+- ADR-0029：权限分为全局超管与本群超管，且不做 QQ 角色自动映射
+- ADR-0030：官方调用域名迁移到 api.bot.qq.com
+- ADR-0031：群扩展配置使用 `group_settings` 键值表，而不是给 `group_configs` 加列
+- ADR-0032：入群审核从「自动通过开关」升级为规则 + 决策模式
+- ADR-0033：不实现「入群后自动修改群昵称」（官方无该接口）
+- ADR-0034：入群申请推送用「Markdown + 指令按钮」，订阅粒度到群，接收人按审批权限过滤
+- ADR-0035：规则配置必须全部可持久化，并由测试守住这条不变量
+- ADR-0036：用随机 Base62 短码替代系统 id 展示，`/whois` 是唯一还原入口
+- ADR-0037：个人资料、活动模块与关键词豁免
+- ADR-0038：班级数据一次加工成 JSON + SQLite，别名表全局且仅超管可维护
+- ADR-0039：短码去小写、`/whois` 结果只走私信、年级统一两位、仓库不出现真实标识
+- ADR-0040：活动卡片改回调驱动 + 按群订阅推送（§B2）
+- ADR-0040 补充：统计图片 / 富媒体上传 / CSV 导出（§B3）
+- ADR-0040 补充：群内静默 + 多群绑定 + 满员广播（§B4）
+- ADR-0041：规则菜单重构 + 字段级继承 / 恢复（§C）
+
+---
 
 ## ADR-0001：仅使用 QQ 官方开放平台 API
 
@@ -719,4 +769,3 @@
   - `src/runtime.ts`：rules renderer 覆盖新 action 并透传分页 / 模式参数；
   - `src/services/menu.ts` / `helpTopics.ts`、README、CONFIGURATION、ACCEPTANCE（J49–J56）、
     CHANGELOG 同步更新。
-

@@ -64,7 +64,7 @@ pnpm build       # 编译到 dist/
 
 ## 安全
 
-安全问题请参考 [SECURITY.md](../SECURITY.md)。
+安全问题请参考 [SECURITY.md](SECURITY.md)。
 
 ## 许可证
 

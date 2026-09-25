@@ -1,4 +1,17 @@
-# Architecture
+# 架构设计（Architecture）
+
+> 分层、组件、目录与关键决策。指令层拆分见 [DEVELOPMENT.md](./DEVELOPMENT.md)，环境配置见 [CONFIGURATION.md](./CONFIGURATION.md)。
+## 目录
+
+- 设计原则
+- 组件
+- 目录说明
+- 项目结构
+- 架构概览
+- 关键决策
+- 待验证的架构风险
+
+---
 
 ## 设计原则
 
@@ -100,6 +113,54 @@ Web 管理 API + 管理后台（Phase 2）
 | `test/` | Vitest 单元测试与集成测试 |
 | `docs/` | 架构、路线图、验证和合规文档 |
 
+## 项目结构
+
+```text
+.
+├── .github/workflows/       # CI
+├── docs/                    # 架构、路线图、配置与合规文档
+├── src/
+│   ├── adapters/            # 官方 API 客户端、fetch transport、测试替身
+│   ├── core/                # 领域模型与枚举
+│   ├── db/                  # schema、迁移、SQLite/PostgreSQL 适配、写穿透队列与仓储
+│   ├── services/            # 规则、审核、权限、活动、导出、命令
+│   ├── config.ts            # 环境配置
+│   ├── persistence.ts       # 数据库目标解析、连接与仓储装配
+│   └── main.ts              # 入口
+├── test/                    # Vitest 测试
+├── scripts/
+│   └── build-class-index.mjs # pnpm class:index：data/class.json → class-index.json + .sqlite
+├── data/                    # 本地数据（gitignored）：class.json、class-index.json / .sqlite、SQLite 文件、
+│                            #   统计图字体缓存（data/fonts/，不随包提交）
+├── package.json
+├── tsconfig.json
+├── vitest.config.ts
+├── Dockerfile
+└── docker-compose.yml
+```
+
+## 架构概览
+
+```text
+QQ 官方开放平台
+      │ WebSocket / Webhook
+      ▼
+官方接入层（Phase 1 实现）
+      │
+      ▼
+QQ Group Ops 核心服务
+  ├── 入群审核 / 同步 / 规则引擎（班级库）
+  ├── 入群申请推送（Markdown 卡片 + 快捷按钮）
+  ├── 规则引擎 / 消息审核
+  ├── 管理员命令
+  ├── 活动报名
+  ├── 信息导出
+  └── 审计日志
+      │
+      ├── 持久化（默认 SQLite，可选 PostgreSQL）
+      └── Web 管理 API（Phase 2）
+```
+
 ## 关键决策
 
 ### 1. 为什么使用 TypeScript + 自研轻量核心？
@@ -150,51 +211,3 @@ Web 管理 API + 管理后台（Phase 2）
 - `join_request_list`：返回 `{ list, next_cursor }`。
 
 这些能力仍需在真实群验证一次端到端行为（权限、配额与实际生效范围）。
-
-## 项目结构
-
-```text
-.
-├── .github/workflows/       # CI
-├── docs/                    # 架构、路线图、配置与合规文档
-├── src/
-│   ├── adapters/            # 官方 API 客户端、fetch transport、测试替身
-│   ├── core/                # 领域模型与枚举
-│   ├── db/                  # schema、迁移、SQLite/PostgreSQL 适配、写穿透队列与仓储
-│   ├── services/            # 规则、审核、权限、活动、导出、命令
-│   ├── config.ts            # 环境配置
-│   ├── persistence.ts       # 数据库目标解析、连接与仓储装配
-│   └── main.ts              # 入口
-├── test/                    # Vitest 测试
-├── scripts/
-│   └── build-class-index.mjs # pnpm class:index：data/class.json → class-index.json + .sqlite
-├── data/                    # 本地数据（gitignored）：class.json、class-index.json / .sqlite、SQLite 文件、
-│                            #   统计图字体缓存（data/fonts/，不随包提交）
-├── package.json
-├── tsconfig.json
-├── vitest.config.ts
-├── Dockerfile
-└── docker-compose.yml
-```
-
-## 架构概览
-
-```text
-QQ 官方开放平台
-      │ WebSocket / Webhook
-      ▼
-官方接入层（Phase 1 实现）
-      │
-      ▼
-QQ Group Ops 核心服务
-  ├── 入群审核 / 同步 / 规则引擎（班级库）
-  ├── 入群申请推送（Markdown 卡片 + 快捷按钮）
-  ├── 规则引擎 / 消息审核
-  ├── 管理员命令
-  ├── 活动报名
-  ├── 信息导出
-  └── 审计日志
-      │
-      ├── 持久化（默认 SQLite，可选 PostgreSQL）
-      └── Web 管理 API（Phase 2）
-```
