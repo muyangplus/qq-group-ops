@@ -9,6 +9,13 @@
 
 （暂无未发布改动）
 
+## [0.9.1] - 2026-09-25
+
+### 备注
+
+- 本版本为**纯内部重构**：拆分过大的源码与测试文件、收敛重复的投递逻辑、重写文档结构。
+  不改变任何指令文案、按钮、回调数据、权限与行为；全量测试保持通过，因此没有用户可见的新增或修复条目。
+
 ## [0.9.0] - 2026-09-25
 
 ### 新增
@@ -191,7 +198,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.6.1...v0.7.0
