@@ -216,6 +216,57 @@ export function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * 定制卡包装：用指定标题、按钮与页脚包装已有指令结果。
+ *
+ * 正文沿用 `result.text`，因此**纯文本降级与旧输出等价**；已经自带卡片的直接返回。
+ */
+export function cardify(
+  title: string,
+  result: CommandResult,
+  rows: readonly (readonly CardButton[])[],
+  footer: readonly string[] = ["按钮不可用时可直接输入指令。"],
+  buttonHint = "相关入口：",
+): CardResult {
+  if (result.rich) {
+    return {
+      ok: result.ok,
+      text: result.text,
+      rich: result.rich,
+      ...(result.silent !== undefined ? { silent: result.silent } : {}),
+    };
+  }
+  const card = cardFromText(title, result.text, { rows, footer, buttonHint });
+  return {
+    ok: result.ok,
+    text: card.text,
+    rich: card.rich,
+    ...(result.silent !== undefined ? { silent: result.silent } : {}),
+  };
+}
+
+/** 定制卡包装（异步结果版：handler 是 async 时用）。 */
+export async function cardifyAsync(
+  title: string,
+  result: Promise<CommandResult>,
+  rows: readonly (readonly CardButton[])[],
+  footer?: readonly string[],
+  buttonHint?: string,
+): Promise<CommandResult> {
+  return cardify(title, await result, rows, footer, buttonHint);
+}
+
+/**
+ * 结果反馈里的操作人提及：**群内**用 QQ 提及单独一行（`<@!userId>`），私聊返回空串
+ * （私聊里操作人就是接收者本人）。提及必须原样输出，不能做 markdown 转义。
+ */
+export function mention(
+  replyGroupId: string | undefined,
+  userId: string,
+): string {
+  return replyGroupId ? `<@!${userId}>\n` : "";
+}
+
 /** 通用卡片标题（未单独定制卡片的指令用）。 */
 export const COMMAND_CARD_TITLES: Record<string, string> = {
   myperm: "我的权限",

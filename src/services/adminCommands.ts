@@ -1,5 +1,5 @@
 import type { CardResult, CommandResult } from "./commands/support.js";
-import { ensureCard, renderNotice } from "./commands/support.js";
+import { cardify, cardifyAsync, ensureCard, mention, renderNotice } from "./commands/support.js";
 import { aliasCard } from "./commands/aliasCommands.js";
 import { whoisCard } from "./commands/whoisCommands.js";
 import { handleProfile } from "./commands/profileCommands.js";
@@ -385,7 +385,7 @@ export class AdminCommandService {
    * （私聊里操作人就是接收者本人）。提及必须原样输出，不能做 markdown 转义。
    */
   private mention(replyGroupId: string | undefined, userId: string): string {
-    return replyGroupId ? `<@!${userId}>\n` : "";
+    return mention(replyGroupId, userId);
   }
 
   /**
@@ -406,24 +406,10 @@ export class AdminCommandService {
     title: string,
     result: CommandResult,
     rows: readonly (readonly CardButton[])[],
-    footer: readonly string[] = ["按钮不可用时可直接输入指令。"],
-    buttonHint = "相关入口：",
+    footer?: readonly string[],
+    buttonHint?: string,
   ): CardResult {
-    if (result.rich) {
-      return {
-        ok: result.ok,
-        text: result.text,
-        rich: result.rich,
-        ...(result.silent !== undefined ? { silent: result.silent } : {}),
-      };
-    }
-    const card = cardFromText(title, result.text, { rows, footer, buttonHint });
-    return {
-      ok: result.ok,
-      text: card.text,
-      rich: card.rich,
-      ...(result.silent !== undefined ? { silent: result.silent } : {}),
-    };
+    return cardify(title, result, rows, footer, buttonHint);
   }
 
   /** 定制卡包装（异步结果版：handler 是 async 时用）。 */
@@ -434,7 +420,7 @@ export class AdminCommandService {
     footer?: readonly string[],
     buttonHint?: string,
   ): Promise<CommandResult> {
-    return this.cardify(title, await result, rows, footer, buttonHint);
+    return cardifyAsync(title, result, rows, footer, buttonHint);
   }
 
   /** 领域子模块共享依赖（R1 拆分）：门面只负责组装，业务在 commands/* 里。 */
