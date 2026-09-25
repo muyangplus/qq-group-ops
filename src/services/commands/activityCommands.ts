@@ -33,6 +33,7 @@ import {
   activityUnavailableCard,
 } from "./activityCardCommands.js";
 import {
+  announceActivityFull,
   joinActivityCard,
   quitActivityCard,
   activityProfiles,
@@ -802,7 +803,7 @@ export async function handleActivitySetCallback(
   if (!field || value === undefined) {
     return activityDeniedCard(ctx, "回调参数不完整，请重新打开配置卡。");
   }
-  const applied = applyActivitySetting(ctx,
+  const applied = await applyActivitySetting(ctx,
     activity,
     field,
     value,
@@ -970,13 +971,13 @@ export function applyActivityRuleOption(
  * - `closeAt` 接受 `MM-DD HH:mm`（默认当年）或 `YYYY-MM-DD HH:mm`；
  * - `notify` 为真时，改到「当事人关心的字段」会给已报名 + 候补私信一次变更通知。
  */
-export function applyActivitySetting(
+export async function applyActivitySetting(
   ctx: AdminCommandContext,
   activity: Activity,
   field: string,
   value: string,
   notify: boolean,
-): { ok: boolean; text: string } {
+): Promise<{ ok: boolean; text: string }> {
   const activities = ctx.activity!;
   const cleared = CLEAR_WORDS.has(value.trim().toLowerCase());
   try {
@@ -1000,6 +1001,9 @@ export function applyActivitySetting(
         activities.updateActivity(activity.activityId, {
           capacity: cleared ? undefined : parsePositiveInt(field, value),
         });
+        // 名额被调小到「已满」时也广播一次「活动已满」卡；
+        // announceActivityFull 自己会判断是否真的满员，且 `(活动, 群, full)` 去重表保证每个群只发一次。
+        await announceActivityFull(ctx, activity.activityId);
         break;
       case "group":
       case "群号":
@@ -1231,12 +1235,12 @@ export function handleActivityCreate(
   }
 }
 
-export function handleActivitySet(
+export async function handleActivitySet(
   ctx: AdminCommandContext,
   userId: string,
   parts: readonly string[],
   replyGroupId?: string,
-): CommandResult {
+): Promise<CommandResult> {
   const found = requireActivity(ctx, parts[2]);
   if (!found.ok) {
     return activityNotFoundCard(ctx, parts[2] ?? "");
@@ -1250,7 +1254,7 @@ export function handleActivitySet(
   if (!field || value.length === 0) {
     return { ok: false, text: ACTIVITY_SET_USAGE };
   }
-  const applied = applyActivitySetting(ctx,
+  const applied = await applyActivitySetting(ctx,
     activity,
     field,
     value,

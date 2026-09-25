@@ -851,4 +851,50 @@ describe("activity card callbacks (§B2)", async () => {
       "group:g2",
     ]);
   });
+
+  /** C5：名额事后调小到「等于已报名数」也要广播一次「已满」，且不重复发。 */
+  it("broadcasts when capacity is lowered to the signup count", async () => {
+    const { svc, profiles } = withActivity();
+    identityMap.bindGroup("g2", "777777");
+    await svc.handle("g1", "admin", "/activity create 迎新晚会");
+    await svc.handle("g1", "admin", "/activity bind #ACT001 777777");
+    await svc.handle("g1", "admin", "/activity set #ACT001 capacity 5");
+    await svc.handle("g1", "admin", "/activity open #ACT001");
+
+    profiles.set("u3", "name", "同学甲");
+    profiles.set("u3", "studentId", "22123456789");
+    profiles.set("u3", "className", "材化2211");
+    profiles.set("u4", "name", "同学乙");
+    profiles.set("u4", "studentId", "22123456780");
+    profiles.set("u4", "className", "材化2211");
+    await svc.activityCallbackCard("join", ["#ACT001"], "u3", "g1");
+    await svc.activityCallbackCard("join", ["#ACT001"], "u4", "g1");
+
+    // 名额 5 → 2：此时已报名 2 人，等价于满员
+    const before = api.sentMessages.length;
+    await svc.handle("g1", "admin", "/activity set #ACT001 capacity 2");
+    const fullCards = api.sentMessages
+      .slice(before)
+      .filter((message) => String(message.markdown ?? "").includes("活动已满"));
+    expect(fullCards.map((message) => message.groupId)).toEqual(["g1", "g2"]);
+
+    // 再改一次同样的名额：去重表已记过，不重复广播
+    const afterFirst = api.sentMessages.length;
+    await svc.handle("g1", "admin", "/activity set #ACT001 capacity 2");
+    expect(
+      api.sentMessages
+        .slice(afterFirst)
+        .filter((message) => String(message.markdown ?? "").includes("活动已满")),
+    ).toEqual([]);
+
+    // 名额大于已报名数时不广播
+    const afterReset = api.sentMessages.length;
+    await svc.handle("g1", "admin", "/activity set #ACT001 capacity 9");
+    await svc.handle("g1", "admin", "/activity set #ACT001 capacity 4");
+    expect(
+      api.sentMessages
+        .slice(afterReset)
+        .filter((message) => String(message.markdown ?? "").includes("活动已满")),
+    ).toEqual([]);
+  });
 });
