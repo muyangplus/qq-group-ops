@@ -3,6 +3,7 @@ import { aliasCard } from "./commands/aliasCommands.js";
 import { whoisCard } from "./commands/whoisCommands.js";
 import { handleProfile } from "./commands/profileCommands.js";
 import { handleTestAt, handleTestMenu } from "./commands/testCommands.js";
+import { statusCard } from "./commands/statusCommands.js";
 import {
   handleNotify,
   notifyCard,
@@ -1011,59 +1012,9 @@ export class AdminCommandService {
     userId: string,
     parts: readonly string[],
   ): CardResult {
-    const targetGroupId = this.resolveTargetGroupId(groupId, parts[1]);
-    if (!targetGroupId) {
-      const card = renderCard({
-        title: "运行状态",
-        lines: [
-          "该指令需要在群内使用，或在私信中提供群号 / #群短码。",
-          "用法：/status <群号|#群短码>",
-        ],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    if (!this.permissions.canReviewContent(userId, targetGroupId)) {
-      const card = renderCard({
-        title: "权限不足",
-        lines: ["需要审核员或以上权限。"],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    const config = this.configStore.get(targetGroupId);
-    const text = [
-      `群 ${this.displayGroup(targetGroupId)} 状态：`,
-      `机器人启用：${config.enabled}`,
-      `消息过滤：${config.wordFilterEnabled}`,
-      `全量消息模式：${this.groupMessageMode?.get(targetGroupId) ?? "unknown"}`,
-      `入群审核：${config.joinAuditEnabled}`,
-      `导出功能：${config.exportEnabled}`,
-      `禁言时长：${config.muteDurationSeconds} 秒`,
-    ].join("\n");
-    return cardFromText("运行状态", text, {
-      rows: [
-        [
-          viewButton("refresh", "刷新", "status", "view", targetGroupId),
-          viewButton("pending", "待审批", "pending", "page", targetGroupId, 1),
-          viewButton("rules", "群规则", "rules", "view", targetGroupId),
-        ],
-        [
-          viewButton("help", "指令帮助", "help", "home"),
-          actionButton("test", "自检", "/test"),
-        ],
-      ],
-      buttonHint: "常用入口：",
-      footer: [`本群：${this.displayGroup(targetGroupId)}`],
-    });
+    return statusCard(this.context(), groupId, userId, parts);
   }
 
-  /**
-   * `/pending [群号|#群短码] [+页码]`：待审批列表卡。
-   *
-   * 每页 3 条（含审核意见会占多行），每条给「通过 / 拒绝」**指令按钮**（走正常审批权限
-   * 与二次确认），翻页用**回调按钮**；纯文本降级给出 `/pending +<页码>` 指令。
-   */
   public pendingCard(
     groupId: string | undefined,
     userId: string,
