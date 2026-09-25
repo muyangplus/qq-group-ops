@@ -1,0 +1,155 @@
+import { describe, expect, it } from "vitest";
+
+import { KeywordPunish } from "../../src/core/enums.js";
+import { newIncomingMessage } from "../../src/core/models.js";
+import { MessageGuardService } from "../../src/services/messageGuard.js";
+import { RuleEngine } from "../../src/services/moderation.js";
+import { RichMessageSender } from "../../src/services/richMessages.js";
+import {
+  api,
+  appeals,
+  blacklist,
+  configStore,
+  notifications,
+  punishments,
+  service,
+} from "../helpers/adminCommandsHarness.js";
+
+/**
+ * §A5 / §B7 / §B8 的指令与卡片路径（共享夹具）。
+ */
+function createPunishment(userId: string) {
+  return punishments.create({
+    groupId: "g1",
+    userId,
+    ruleReason: "广告",
+    messageId: "m1",
+    actions: {
+      recalled: true,
+      muted: true,
+      muteDurationSeconds: 600,
+      kicked: false,
+      blacklist: "",
+    },
+  });
+}
+
+describe("AdminCommandService · blacklist / punish / appeal", () => {
+  it("lets moderators manage the group blacklist but not the global one", async () => {
+    const denied = await service.handle("g1", "member", "/blacklist");
+    expect(denied.ok).toBe(false);
+    expect(denied.text).toContain("权限不足");
+
+    const added = await service.handle("g1", "mod", "/blacklist add u3 广告");
+    expect(added.ok).toBe(true);
+    expect(added.text).toContain("10005");
+    expect(blacklist.has("g1", "u3")).toBe(true);
+    expect(api.removedMembers).toContainEqual(["g1", "u3"]);
+
+    const globalDenied = await service.handle("g1", "mod", "/blacklist add 全局 u3");
+    expect(globalDenied.ok).toBe(false);
+    expect(globalDenied.text).toContain("仅超级管理员");
+
+    const globalAdded = await service.handle("g1", "root", "/blacklist add 全局 u3 跨群骚扰");
+    expect(globalAdded.ok).toBe(true);
+    expect(blacklist.hasGlobal("u3")).toBe(true);
+
+    const removed = await service.handle("g1", "mod", "/blacklist del u3");
+    expect(removed.ok).toBe(true);
+    // 本群条目已删除；全局条目仍在（全局命中优先）
+    expect(blacklist.hasGroup("g1", "u3")).toBe(false);
+    expect(blacklist.has("g1", "u3")).toBe(true);
+    const removedGlobal = await service.handle("g1", "root", "/blacklist del u3 全局");
+    expect(removedGlobal.ok).toBe(true);
+    expect(blacklist.has("g1", "u3")).toBe(false);
+  });
+
+  it("shows the punish record list and denies members", async () => {
+    const record = await createPunishment("member");
+
+    const denied = await service.handle("g1", "member", "/punish list");
+    expect(denied.ok).toBe(false);
+
+    const listed = await service.handle("g1", "mod", "/punish list");
+    expect(listed.ok).toBe(true);
+    expect(listed.text).toContain(`#${record.recordId}`);
+    expect(listed.text).toContain("10001");
+
+    const detail = await service.handle("g1", "mod", `/punish #${record.recordId}`);
+    expect(detail.ok).toBe(true);
+    expect(detail.text).toContain("广告");
+  });
+
+  it("submits an appeal, notifies subscribers and lets them release the punishment", async () => {
+    notifications.subscribe("mod", "__all__", "punish");
+    const record = await createPunishment("member");
+
+    const submitted = await service.handle("g1", "member", `/appeal #${record.recordId} 我没发广告`);
+    expect(submitted.ok).toBe(true);
+    // 群内静默：结果只私信
+    expect(submitted.silent).toBe(true);
+    const receipt = api.sentPrivateMessages.find((item) => item.userOpenid === "member");
+    expect(String(receipt?.markdown ?? receipt?.content)).toContain("申诉");
+    const reviewerCard = api.sentPrivateMessages.find((item) => item.userOpenid === "mod");
+    expect(String(reviewerCard?.markdown)).toContain("申诉通知");
+
+    const appeal = appeals.pendingByPunishment(record.recordId)[0]!;
+    const accepted = await service.appealCallbackCard("accept", [appeal.appealId], "mod");
+    expect(accepted?.text).toContain("申诉已通过");
+    expect(api.mutedMembers).toContainEqual(["g1", "member", 0]);
+    expect(punishments.get(record.recordId)?.status).toBe("released");
+    expect(appeals.get(appeal.appealId)?.status).toBe("accepted");
+  });
+
+  it("lets reviewers adjust the mute duration from the card callbacks", async () => {
+    const record = await createPunishment("member");
+
+    const options = await service.punishCallbackCard("mute", [record.recordId], "mod");
+    expect(options?.text).toContain("修改禁言时长");
+    expect(options?.text).toContain("当前：禁言 10 分钟");
+    expect(JSON.stringify(options?.rich.keyboard)).toContain("1小时");
+
+    const updated = await service.punishCallbackCard(
+      "setmute",
+      [record.recordId, "3600"],
+      "mod",
+    );
+    expect(updated?.text).toContain("已调整禁言时长");
+    expect(api.mutedMembers.at(-1)).toEqual(["g1", "member", 3600]);
+    expect(punishments.get(record.recordId)?.actions.muteDurationSeconds).toBe(3600);
+
+    const denied = await service.punishCallbackCard("release", [record.recordId], "member");
+    expect(denied?.text).toContain("权限不足");
+  });
+
+  it("adds an appeal button to the keyword warning card and records the punishment", async () => {
+    configStore.setOverride({
+      groupId: "g1",
+      keywords: ["广告"],
+      keywordPunish: KeywordPunish.Mute,
+      wordFilterEnabled: true,
+    });
+    const guard = new MessageGuardService(
+      api,
+      new RuleEngine(),
+      configStore,
+      undefined,
+      undefined,
+      new RichMessageSender(api),
+      punishments,
+    );
+
+    const result = await guard.handleMessage(
+      newIncomingMessage("g1", "member", "m1", "这是广告"),
+    );
+
+    // 规则本身是「警告」，群配置额外要求禁言，因此 action 仍是 warn
+    expect(result.action).toBe("warn");
+    const warning = api.sentMessages.at(-1);
+    expect(String(warning?.markdown)).toContain("关键词命中");
+    expect(JSON.stringify(warning?.keyboard)).toContain("appeal");
+    const record = punishments.listForUser("g1", "member")[0]!;
+    expect(record.actions.muted).toBe(true);
+    expect(record.actions.muteDurationSeconds).toBe(configStore.get("g1").muteDurationSeconds);
+  });
+});

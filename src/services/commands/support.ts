@@ -707,6 +707,7 @@ export const NOTIFY_USAGE = [
   "  /notify all on|off                   全部群（群内/私信均可）",
   "  /notify <群号|group_openid|#群短码> on|off    指定群",
   "  /notify test                         给自己发一张推送测试卡片",
+  "  /notify punish [on|off|all on|test]  处罚事件推送（与入群申请推送相互独立）",
 ].join("\n");
 export const NOTIFY_PERMISSION_DENIED =
   "权限不足：入群审批需要群管理员或以上权限（推送与快捷按钮只发给能审批的人）。";

@@ -7,6 +7,8 @@ import type { AuditLogStore } from "./audit.js";
 import type { JoinAuditService } from "./joinAudit.js";
 import type { ActivityNotificationService } from "./activityNotifications.js";
 import type { NotificationService } from "./notifications.js";
+import type { AppealService } from "./appeals.js";
+import type { PunishmentService } from "./punishments.js";
 
 const log = getLogger("retention");
 
@@ -35,6 +37,10 @@ export interface RetentionRunResult {
   notificationsRemoved: number;
   /** 本次被清理的活动通知去重行数（超过保留期的通知不再需要去重）。 */
   activityNotificationsRemoved: number;
+  /** 本次被清理的处罚记录数（§B7）。 */
+  punishmentsRemoved: number;
+  /** 本次被清理的已处理申诉数（§B8；待处理申诉永不自动清理）。 */
+  appealsRemoved: number;
   /** 本次被标记为过期的待审批申请数。 */
   joinRequestsExpired: number;
 }
@@ -63,6 +69,8 @@ export class RetentionService {
     private readonly options: RetentionOptions,
     private readonly notifications?: NotificationService,
     private readonly activityNotifications?: ActivityNotificationService,
+    private readonly punishments?: PunishmentService,
+    private readonly appeals?: AppealService,
   ) {
     this.intervalMs = options.intervalMs ?? DEFAULT_RETENTION_INTERVAL_MS;
     this.clock = options.clock ?? Date.now;
@@ -76,6 +84,8 @@ export class RetentionService {
       joinRequestsRemoved: 0,
       notificationsRemoved: 0,
       activityNotificationsRemoved: 0,
+      punishmentsRemoved: 0,
+      appealsRemoved: 0,
       joinRequestsExpired: 0,
     };
 
@@ -88,6 +98,10 @@ export class RetentionService {
         now - this.options.auditLogRetentionDays * DAY_MS,
       );
       result.auditRecordsRemoved = await this.auditLog.pruneOlderThan(cutoff);
+      // 处罚 / 申诉记录与审计同一保留期：处罚记录没有原文，只保留动作与规则说明。
+      result.punishmentsRemoved =
+        (await this.punishments?.pruneOlderThan(cutoff)) ?? 0;
+      result.appealsRemoved = (await this.appeals?.pruneOlderThan(cutoff)) ?? 0;
     }
     if (this.options.joinRequestRetentionDays > 0) {
       const cutoff = new Date(
@@ -106,6 +120,8 @@ export class RetentionService {
       result.joinRequestsRemoved > 0 ||
       result.notificationsRemoved > 0 ||
       result.activityNotificationsRemoved > 0 ||
+      result.punishmentsRemoved > 0 ||
+      result.appealsRemoved > 0 ||
       result.joinRequestsExpired > 0
     ) {
       log.info("retention cleanup finished", { ...result });

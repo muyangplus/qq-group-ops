@@ -54,9 +54,20 @@ import { handleStatus, statusCard } from "./commands/statusCommands.js";
 import {
   handleNotify,
   notifyCard,
+  notifyPunishCard,
+  notifyPunishTestCard,
+  notifyPunishToggleCard,
   notifyTestCard,
   notifyToggleCard,
 } from "./commands/notifyCommands.js";
+import {
+  blacklistCard,
+  blacklistDeleteCard,
+  blacklistScopeCard,
+  handleBlacklist,
+} from "./commands/blacklistCommands.js";
+import { handlePunish, punishCallbackCard } from "./commands/punishCommands.js";
+import { appealCallbackCard, handleAppeal } from "./commands/appealCommands.js";
 import type { AdminCommandContext, CommandHelpers } from "./commands/context.js";
 import type { CardButton } from "./cardTemplate.js";
 import { getLogger } from "../core/logger.js";
@@ -65,8 +76,12 @@ import { ActivityCardService } from "./activityCards.js";
 import type { ActivityExportLike, ActivityStatsLike } from "./activityCards.js";
 import type { Activity, ActivityService } from "./activity.js";
 import type { ActivityNotificationService } from "./activityNotifications.js";
+import type { AppealService } from "./appeals.js";
+import type { BlacklistService } from "./blacklist.js";
 import type { DisplayNameService } from "./displayNames.js";
 import type { MemberRoster } from "./memberRoster.js";
+import type { ModerationNotifier } from "./moderationNotifier.js";
+import type { PunishmentService } from "./punishments.js";
 import type { GroupConfigStore } from "./groupConfig.js";
 /** 关键词单条上限（与卡片标准一致：太长会挤爆按钮）。 */
 import { buildMenu, findMenuSection, type MenuContext } from "./menu.js";
@@ -128,6 +143,18 @@ export interface AdminCommandServiceOptions {
   /** 入群申请推送（`/notify`）。 */
   notifications?: NotificationService | undefined;
 
+  /** §A5 黑名单（本群 / 全局）。 */
+  blacklist?: BlacklistService | undefined;
+
+  /** §B7 处罚记录与卡片动作。 */
+  punishments?: PunishmentService | undefined;
+
+  /** §B8 申诉记录。 */
+  appeals?: AppealService | undefined;
+
+  /** 处罚 / 申诉的私信卡片渲染与推送。 */
+  moderationNotifier?: ModerationNotifier | undefined;
+
   /** 富消息发送器（`/testat` 与活动发布需要「纯文本 + 卡片」两条通道）。 */
   richMessages?: RichMessageSender | undefined;
 
@@ -173,6 +200,14 @@ export class AdminCommandService {
 
   private readonly notifications: NotificationService | undefined;
 
+  private readonly blacklist: BlacklistService | undefined;
+
+  private readonly punishments: PunishmentService | undefined;
+
+  private readonly appeals: AppealService | undefined;
+
+  private readonly moderationNotifier: ModerationNotifier | undefined;
+
   private readonly richMessages: RichMessageSender | undefined;
 
   private readonly explicitCardSender: RichMessageSender | undefined;
@@ -206,6 +241,10 @@ export class AdminCommandService {
     this.activityStatsService = options.activityStats;
     this.activityExportService = options.activityExport;
     this.notifications = options.notifications;
+    this.blacklist = options.blacklist;
+    this.punishments = options.punishments;
+    this.appeals = options.appeals;
+    this.moderationNotifier = options.moderationNotifier;
     this.richMessages = options.richMessages;
     this.explicitCardSender = options.cardSender;
   }
@@ -250,7 +289,17 @@ export class AdminCommandService {
     const command = parts[0]!.replace(/^\//u, "").toLowerCase();
     log.debug("command", { groupId, userId, command });
 
-    const bindingExempt = new Set(["help", "帮助", "bind", "绑定", "menu", "菜单"]);
+    // 申诉是隐私动作，且被处罚的人可能还没绑定 QQ 号，因此豁免绑定检查
+    const bindingExempt = new Set([
+      "help",
+      "帮助",
+      "bind",
+      "绑定",
+      "menu",
+      "菜单",
+      "appeal",
+      "申诉",
+    ]);
     // 个人资料与群绑定无关：只需要绑定自己的 QQ 号
     const groupBindingExempt = new Set([...bindingExempt, "profile", "资料"]);
     if (
@@ -375,6 +424,10 @@ export class AdminCommandService {
       activityCards: this.activityCards,
       activityNotifications: this.activityNotifications,
       notifications: this.notifications,
+      blacklist: this.blacklist,
+      punishments: this.punishments,
+      appeals: this.appeals,
+      moderationNotifier: this.moderationNotifier,
       richMessages: this.richMessages,
     };
   }
@@ -460,6 +513,16 @@ export class AdminCommandService {
       case "推送":
       case "订阅":
         return handleNotify(this.context(), groupId, userId, parts);
+      case "blacklist":
+      case "black":
+      case "黑名单":
+        return handleBlacklist(this.context(), groupId, userId, parts);
+      case "punish":
+      case "处罚":
+        return handlePunish(this.context(), groupId, userId, parts);
+      case "appeal":
+      case "申诉":
+        return handleAppeal(this.context(), groupId, userId, parts);
       case "profile":
       case "资料":
         return this.cardify(
@@ -900,6 +963,93 @@ export class AdminCommandService {
     replyGroupId?: string,
   ): Promise<CardResult | undefined> {
     return activityCallbackCard(this.context(), action, args, userId, replyGroupId);
+  }
+
+  /** `/notify punish`：处罚事件推送订阅卡（与入群申请推送相互独立）。 */
+  public notifyPunishCard(
+    groupId: string | undefined,
+    userId: string,
+    notice?: string,
+  ): CardResult {
+    return notifyPunishCard(this.context(), groupId, userId, notice);
+  }
+
+  /** 回调：`cb:notify:punishToggle:<scope>:<on|off>`。 */
+  public async notifyPunishToggleCard(
+    scope: string,
+    enabled: boolean,
+    userId: string,
+    replyGroupId?: string,
+  ): Promise<CardResult> {
+    return notifyPunishToggleCard(
+      this.context(),
+      scope,
+      enabled,
+      userId,
+      replyGroupId,
+    );
+  }
+
+  /** 回调：`cb:notify:punishTest`。 */
+  public async notifyPunishTestCard(
+    groupId: string | undefined,
+    userId: string,
+    replyGroupId?: string,
+  ): Promise<CardResult> {
+    return notifyPunishTestCard(this.context(), groupId, userId, replyGroupId);
+  }
+
+  /** 回调：`cb:blacklist:scope|del:*`（列表切换 / 解除，内部重新鉴权）。 */
+  public blacklistScopeCard(
+    scope: string,
+    groupId: string,
+    page: number,
+    userId: string,
+  ): CardResult {
+    return blacklistScopeCard(this.context(), {
+      scope,
+      groupId,
+      page,
+      viewerId: userId,
+    });
+  }
+
+  public async blacklistDeleteCard(
+    scope: string,
+    groupId: string,
+    targetUserId: string,
+    page: number,
+    userId: string,
+    replyGroupId?: string,
+  ): Promise<CardResult> {
+    return blacklistDeleteCard(this.context(), {
+      scope,
+      groupId,
+      targetUserId,
+      page,
+      viewerId: userId,
+      replyGroupId,
+    });
+  }
+
+  /** 回调：`cb:punish:*`（处罚卡片上的调整动作，内部重新鉴权）。 */
+  public async punishCallbackCard(
+    action: string,
+    args: readonly string[],
+    userId: string,
+    replyGroupId?: string,
+  ): Promise<CardResult | undefined> {
+    return punishCallbackCard(this.context(), action, args, userId, replyGroupId);
+  }
+
+  /** 回调：`cb:appeal:*`（我要申诉 / 通过 / 驳回，内部重新鉴权）。 */
+  public async appealCallbackCard(
+    action: string,
+    args: readonly string[],
+    userId: string,
+    replyGroupId?: string,
+  ): Promise<CardResult | undefined> {
+    return appealCallbackCard(this.context(), action, args, userId, replyGroupId);
   }
 
   private handleTest(groupId: string | undefined, userId: string): CommandResult {

@@ -37,5 +37,15 @@ describe("migrate", () => {
     expect(db.calls[0]?.text).toContain(
       "CREATE INDEX IF NOT EXISTS activity_groups_group_idx",
     );
+    // §A5 / §B7 / §B8：黑名单、处罚记录、申诉记录
+    expect(db.calls[0]?.text).toContain(
+      "CREATE TABLE IF NOT EXISTS blacklist_entries",
+    );
+    expect(db.calls[0]?.text).toContain(
+      "CREATE TABLE IF NOT EXISTS punishment_records",
+    );
+    expect(db.calls[0]?.text).toContain(
+      "CREATE TABLE IF NOT EXISTS appeal_records",
+    );
   });
 });

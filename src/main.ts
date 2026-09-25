@@ -49,6 +49,9 @@ async function main(): Promise<void> {
             activityGroups: persistence.activityGroups,
             notificationSubscriptions: persistence.notificationSubscriptions,
             notificationDeliveries: persistence.notificationDeliveries,
+            blacklist: persistence.blacklist,
+            punishments: persistence.punishments,
+            appeals: persistence.appeals,
             shortCodes: persistence.shortCodes,
             userProfiles: persistence.userProfiles,
             classAliases: persistence.classAliases,
@@ -71,6 +74,8 @@ async function main(): Promise<void> {
     },
     runtime.notifications,
     runtime.activityNotifications,
+    runtime.punishments,
+    runtime.appeals,
   );
 
   // C3 活动定时提醒：周期扫描 `activity_settings.remindAt`，到点在所有绑定群广播一次

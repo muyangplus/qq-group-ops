@@ -228,4 +228,65 @@ CREATE TABLE IF NOT EXISTS activity_groups (
 
 CREATE INDEX IF NOT EXISTS activity_groups_group_idx
   ON activity_groups (group_id, created_at ASC);
+
+-- §A5 黑名单：scope=group 只影响该群；scope=global 影响机器人**所有已绑定群**（group_id 存空串）。
+-- 入群审批会以**最高优先级**查询本表：命中即拒绝，先于 joinDecision / 名单筛选 / 班级姓名等规则。
+CREATE TABLE IF NOT EXISTS blacklist_entries (
+  scope TEXT NOT NULL CHECK (scope IN ('group', 'global')),
+  group_id TEXT NOT NULL DEFAULT '',
+  user_id TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  actor_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual',
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (scope, group_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS blacklist_entries_user_idx
+  ON blacklist_entries (user_id, created_at DESC);
+
+-- §B7 处罚记录：一次关键词处罚的完整档案（命中规则 / 实际动作 / 消息 id），
+-- 供「撤回后通知」私信卡片与申诉卡片在其上**直接调整处罚**（解除 / 改禁言时长 / 踢出 / 拉黑）。
+-- record_id 是 6 位随机短码（形如 #A1B2C3），不复用 short_codes 表，避免老库 kind CHECK 限制。
+-- 注意：与审计一致，**不保存消息原文**（隐私优先）。
+CREATE TABLE IF NOT EXISTS punishment_records (
+  record_id TEXT PRIMARY KEY,
+  group_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'keyword',
+  rule_reason TEXT NOT NULL DEFAULT '',
+  message_id TEXT NOT NULL DEFAULT '',
+  actions TEXT NOT NULL DEFAULT '{}',
+  detail TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS punishment_records_group_idx
+  ON punishment_records (group_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS punishment_records_user_idx
+  ON punishment_records (user_id, created_at DESC);
+
+-- §B8 申诉记录：当事人对某条处罚提出申诉，审核员在私信卡片上直接处理。
+CREATE TABLE IF NOT EXISTS appeal_records (
+  appeal_id TEXT PRIMARY KEY,
+  punishment_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  reviewer_id TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL,
+  reviewed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS appeal_records_punishment_idx
+  ON appeal_records (punishment_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS appeal_records_user_idx
+  ON appeal_records (user_id, created_at DESC);
 `.trim();

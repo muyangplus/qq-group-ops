@@ -1,11 +1,15 @@
 import type { QQOfficialAPI } from "../adapters/qqOfficial.js";
 import { JoinDecisionMode, JoinRequestStatus } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
+import type { BlacklistService } from "./blacklist.js";
 import type { GroupConfigStore } from "./groupConfig.js";
 import type { JoinRuleEvaluator } from "./joinRules.js";
 import type { JoinAuditService, JoinRequest } from "./joinAudit.js";
 
 const log = getLogger("join-approval");
+
+/** 黑名单自动拒绝的审核人标记（审计里可区分于规则引擎）。 */
+const BLACKLIST_ACTOR = "bot:blacklist";
 
 /**
  * 入群审批。
@@ -19,6 +23,8 @@ export class JoinApprovalService {
     private readonly joinAudit: JoinAuditService,
     private readonly configStore: GroupConfigStore,
     private readonly joinRules?: JoinRuleEvaluator,
+    /** 黑名单（§A5）：命中即**最高优先级**直接拒绝，先于一切入群规则。 */
+    private readonly blacklist?: BlacklistService,
   ) {}
 
   /**
@@ -41,6 +47,37 @@ export class JoinApprovalService {
     const request = this.joinAudit.get(requestId);
     const config = this.configStore.get(groupId);
     const notifyAuto = config.notifyAutoApproved;
+
+    // §A5 黑名单是**最高优先级**：命中即拒绝，先于开关判断、joinDecision、名单/班级规则。
+    // 官方接口失败时退回人工审核，避免「机器人以为拒绝了、官方那边还挂着」。
+    const blacklisted = this.blacklist?.hitFor(groupId, request.userId);
+    if (blacklisted) {
+      const reason =
+        blacklisted.scope === "global"
+          ? "申请人在全局黑名单中。"
+          : "申请人在本群黑名单中。";
+      try {
+        await this.api.approveJoinRequest(groupId, request.userId, false, {
+          joinRequestId: requestId,
+          reason,
+        });
+        this.joinAudit.reject(requestId, BLACKLIST_ACTOR, reason);
+        log.info("join request auto rejected by blacklist", {
+          groupId,
+          requestId,
+          scope: blacklisted.scope,
+        });
+        return { action: "reject", opinion: reason, notify: notifyAuto };
+      } catch (error) {
+        log.error("blacklist auto reject failed, keeping manual review", {
+          groupId,
+          requestId,
+          scope: blacklisted.scope,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return { action: "manual", opinion: reason, notify: true };
+      }
+    }
 
     // 群关闭机器人或关闭入群审核时不自动决策
     if (!config.enabled || !config.joinAuditEnabled) {

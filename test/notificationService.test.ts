@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { NotificationDeliveryStatus } from "../src/core/enums.js";
@@ -346,3 +346,55 @@ async function createHarnessWith(
     configStore,
   };
 }
+
+/**
+ * §B7：处罚通知是**独立频道**（存储时加 `punish:` 前缀），与入群申请推送互不影响。
+ */
+describe("NotificationService · punish channel", () => {
+  it("keeps punish and join subscriptions independent", async () => {
+    const { notifications } = await createHarness();
+    notifications.subscribe("mod", NOTIFY_SCOPE_ALL, "punish");
+
+    expect(notifications.listScopes("mod", "punish")).toEqual([NOTIFY_SCOPE_ALL]);
+    expect(notifications.listScopes("mod", "join")).toEqual([]);
+    expect(notifications.isSubscribed("mod", NOTIFY_SCOPE_ALL, "join")).toBe(false);
+    // punish 频道要求审核员及以上；join 频道要求群管理员及以上
+    expect(notifications.subscribersFor("g1", "punish")).toEqual(["mod"]);
+    expect(notifications.subscribersFor("g1", "join")).toEqual([]);
+  });
+
+  it("stores punish scopes with a prefix so existing join rows keep working", async () => {
+    const { notifications, subscriptions } = await createHarness();
+    notifications.subscribe("mod", "g1", "punish");
+    await notifications.flush();
+
+    expect([...subscriptions.rows.values()].map((row) => row.scope)).toEqual([
+      "punish:g1",
+    ]);
+  });
+
+  it("pushToSubscribers dedupes per channel key and records the delivery", async () => {
+    const { api, notifications, deliveries } = await createHarness();
+    notifications.subscribe("mod", "g1", "punish");
+    const card = { markdown: "## 处罚通知", text: "【处罚通知】" };
+
+    const first = await notifications.pushToSubscribers({
+      groupId: "g1",
+      channel: "punish",
+      dedupeId: "punish:ABC123",
+      cardFor: () => card,
+    });
+    const second = await notifications.pushToSubscribers({
+      groupId: "g1",
+      channel: "punish",
+      dedupeId: "punish:ABC123",
+      cardFor: () => card,
+    });
+
+    expect(first.sent).toBe(1);
+    expect(second.skipped).toBe(1);
+    expect(deliveries.rows.size).toBe(1);
+    expect([...deliveries.rows.values()][0]?.requestId).toBe("punish:ABC123");
+    expect(api.sentPrivateMessages.at(-1)?.userOpenid).toBe("mod");
+  });
+});

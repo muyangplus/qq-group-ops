@@ -179,6 +179,18 @@ export class PermissionService {
       .sort();
   }
 
+  /** 该用户有内容审核权限（审核员及以上）的群列表。 */
+  public listModeratedGroups(userId: string): string[] {
+    const groupIds = new Set([
+      ...this.groupSuperAdminIds.keys(),
+      ...this.groupAdminIds.keys(),
+      ...this.moderatorIds.keys(),
+    ]);
+    return [...groupIds]
+      .filter((groupId) => this.canReviewContent(userId, groupId))
+      .sort();
+  }
+
   /** 全局超级管理员：可管理平台级能力。 */
   public isSuperAdmin(userId: string): boolean {
     return this.superAdminIds.has(userId);

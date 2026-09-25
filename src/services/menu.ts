@@ -351,11 +351,17 @@ function reviewCard(context: MenuContext): CardSpec {
       "申请ID 从 /pending 或推送卡片获取，短码 `#XXXXXX` 也可以。",
       "通过：/approve <申请ID>",
       "拒绝：/reject <申请ID> <原因>",
+      "处罚记录：/punish list（卡片上可直接解除 / 改时长 / 踢出 / 拉黑）",
+      "黑名单：/blacklist（本群 / 全局）",
     ],
     rows: [
       [
         cmdButton("pending", "待审批", "/pending"),
         cmdButton("sync", "同步", "/sync"),
+      ],
+      [
+        cmdButton("punish", "处罚记录", "/punish list"),
+        cmdButton("blacklist", "黑名单", "/blacklist"),
       ],
       [menuButton("admin", "管理菜单", "admin"), backButton()],
     ],
@@ -397,6 +403,8 @@ function superCard(context: MenuContext): CardSpec {
       "授权：/perm grant super|gsuper|admin|mod ...",
       "全局规则：/rules set all <字段> <值>",
       "全局推送：/notify all on|off",
+      "处罚推送：/notify punish all on|off",
+      "全局黑名单：/blacklist list 全局（add 全局 <用户>）",
       "班级别名：/alias set <别名> <规范名>",
       "@ 自检：/testat（群内测 @ 是否生效，/testat all 测 @全体）",
     ],
@@ -408,7 +416,11 @@ function superCard(context: MenuContext): CardSpec {
       ],
       [
         cmdButton("notify", "通知订阅", "/notify"),
+        cmdButton("punishNotify", "处罚推送", "/notify punish"),
         cmdButton("testmenu", "翻页测试", "/testmenu"),
+      ],
+      [
+        cmdButton("blacklistGlobal", "全局黑名单", "/blacklist list 全局"),
         cmdButton("testat", "@测试", "/testat"),
       ],
       [cmdButton("pending", "待审批", "/pending"), backButton()],

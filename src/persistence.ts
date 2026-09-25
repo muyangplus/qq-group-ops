@@ -33,6 +33,18 @@ import {
   type AuditRepository,
 } from "./db/auditRepository.js";
 import {
+  SqlBlacklistRepository,
+  type BlacklistRepository,
+} from "./db/blacklistRepository.js";
+import {
+  SqlPunishmentRepository,
+  type PunishmentRepository,
+} from "./db/punishmentRepository.js";
+import {
+  SqlAppealRepository,
+  type AppealRepository,
+} from "./db/appealRepository.js";
+import {
   SqlGroupConfigRepository,
   type GroupConfigRepository,
 } from "./db/groupConfigRepository.js";
@@ -107,6 +119,12 @@ export interface Persistence {
   activityGroups: ActivityGroupRepository;
   notificationSubscriptions: NotificationSubscriptionRepository;
   notificationDeliveries: NotificationDeliveryRepository;
+  /** §A5 黑名单（本群 / 全局）。 */
+  blacklist: BlacklistRepository;
+  /** §B7 处罚记录。 */
+  punishments: PunishmentRepository;
+  /** §B8 申诉记录。 */
+  appeals: AppealRepository;
   shortCodes: ShortCodeRepository;
   userProfiles: UserProfileRepository;
   classAliases: ClassAliasRepository;
@@ -212,6 +230,12 @@ interface RepositorySet {
   activityGroups: ActivityGroupRepository;
   notificationSubscriptions: NotificationSubscriptionRepository;
   notificationDeliveries: NotificationDeliveryRepository;
+  /** §A5 黑名单（本群 / 全局）。 */
+  blacklist: BlacklistRepository;
+  /** §B7 处罚记录。 */
+  punishments: PunishmentRepository;
+  /** §B8 申诉记录。 */
+  appeals: AppealRepository;
   shortCodes: ShortCodeRepository;
   userProfiles: UserProfileRepository;
   classAliases: ClassAliasRepository;
@@ -237,6 +261,9 @@ function createRepositories(db: Queryable): RepositorySet {
     activityDetails: new SqlActivityDetailsRepository(db),
     notificationSubscriptions: new SqlNotificationSubscriptionRepository(db),
     notificationDeliveries: new SqlNotificationDeliveryRepository(db),
+    blacklist: new SqlBlacklistRepository(db),
+    punishments: new SqlPunishmentRepository(db),
+    appeals: new SqlAppealRepository(db),
     shortCodes: new SqlShortCodeRepository(db),
     userProfiles: new SqlUserProfileRepository(db),
     classAliases: new SqlClassAliasRepository(db),

@@ -13,6 +13,7 @@ import type {
   RuleMatch,
 } from "../core/models.js";
 import { utcNow } from "../core/models.js";
+import { encodeCallback } from "./callbackData.js";
 import { renderCard } from "./cardTemplate.js";
 import type { AuditLog } from "./audit.js";
 import { AuditLogStore } from "./audit.js";
@@ -20,6 +21,7 @@ import type { EffectiveGroupConfig } from "./groupConfig.js";
 import { GroupConfigStore } from "./groupConfig.js";
 import { RuleEngine } from "./moderation.js";
 import type { PermissionService } from "./permissions.js";
+import type { PunishmentService } from "./punishments.js";
 import type { RichMessageSender } from "./richMessages.js";
 
 const log = getLogger("message-guard");
@@ -54,6 +56,11 @@ export class MessageGuardService {
      * 未注入时退化为原来的纯文本警告（被动回复群消息）。
      */
     private readonly richMessages?: RichMessageSender,
+    /**
+     * 处罚记录服务（§B7）：注入后会记录每次实际处罚，并推送给「处罚通知」的订阅者，
+     * 卡片上可直接调整处罚；群内警告卡也会多一个「我要申诉」按钮（§B8）。
+     */
+    private readonly punishments?: PunishmentService,
   ) {
     this.auditLog = auditLog;
   }
@@ -104,7 +111,40 @@ export class MessageGuardService {
       action,
       rules: matches.map((match) => match.ruleId),
     });
-    const [executed, detail] = await this.execute(action, message, config, matches);
+    const plan = this.planFor(action, config);
+    // §B7：先建处罚记录（拿到短码），执行后再回填结果并推送审核员。
+    // 只有真的会处罚（撤回 / 禁言 / 踢出）才记录；纯警告没有可撤销的动作。
+    const punishment =
+      this.punishments && (plan.recall || plan.punish !== KeywordPunish.None)
+        ? await this.punishments.create({
+            groupId: message.groupId,
+            userId: message.userId,
+            actorId: "bot",
+            source: "keyword",
+            ruleReason: matches[0]?.reason ?? "",
+            messageId: message.messageId,
+            actions: {
+              recalled: plan.recall,
+              muted: plan.punish === KeywordPunish.Mute,
+              muteDurationSeconds:
+                plan.punish === KeywordPunish.Mute
+                  ? config.muteDurationSeconds
+                  : 0,
+              kicked:
+                plan.punish === KeywordPunish.Kick ||
+                plan.punish === KeywordPunish.KickBlacklist,
+              blacklist:
+                plan.punish === KeywordPunish.KickBlacklist ? "group" : "",
+            },
+          })
+        : undefined;
+    const [executed, detail] = await this.execute(
+      plan,
+      message,
+      config,
+      matches,
+      punishment?.recordId,
+    );
     const record: AuditRecord = {
       recordId: randomUUID(),
       groupId: message.groupId,
@@ -116,20 +156,23 @@ export class MessageGuardService {
       createdAt: utcNow(),
     };
     this.auditLog.append(record);
+    if (punishment) {
+      await this.punishments?.markExecuted(punishment.recordId, detail);
+    }
     return this.result(message, action, matches, executed, detail);
   }
 
-  private async execute(
+  /** 把规则动作 + 群配置折成一份执行计划（记录与执行共用，避免两处判断分叉）。 */
+  private planFor(
     action: ModerationAction,
-    message: IncomingMessage,
     config: EffectiveGroupConfig,
-    matches: readonly RuleMatch[],
-  ): Promise<[boolean, string]> {
-    if (action === ModerationAction.Review) {
-      return [false, "queued_for_review"];
-    }
-
-    // 群配置可以额外要求撤回，并指定处罚动作；规则自带的动作仍然生效
+  ): {
+    action: ModerationAction;
+    recall: boolean;
+    punish: KeywordPunish;
+    warn: boolean;
+    muteDurationSeconds: number;
+  } {
     const recall = config.keywordRecall || action === ModerationAction.Recall;
     const punish =
       config.keywordPunish !== KeywordPunish.None
@@ -143,9 +186,37 @@ export class MessageGuardService {
       action === ModerationAction.Warn ||
       recall ||
       punish !== KeywordPunish.None;
+    return {
+      action,
+      recall,
+      punish,
+      warn,
+      muteDurationSeconds: config.muteDurationSeconds,
+    };
+  }
+
+  private async execute(
+    plan: {
+      action: ModerationAction;
+      recall: boolean;
+      punish: KeywordPunish;
+      warn: boolean;
+      muteDurationSeconds: number;
+    },
+    message: IncomingMessage,
+    config: EffectiveGroupConfig,
+    matches: readonly RuleMatch[],
+    punishmentCode?: string,
+  ): Promise<[boolean, string]> {
+    if (plan.action === ModerationAction.Review) {
+      return [false, "queued_for_review"];
+    }
+
+    const { recall, punish, warn } = plan;
+    const muteDurationSeconds = plan.muteDurationSeconds;
 
     log.debug("execute action", {
-      action,
+      action: plan.action,
       groupId: message.groupId,
       recall,
       punish,
@@ -166,7 +237,7 @@ export class MessageGuardService {
           this.api.muteGroupMember(
             message.groupId,
             message.userId,
-            config.muteDurationSeconds,
+            muteDurationSeconds,
           ),
         ),
       );
@@ -193,8 +264,9 @@ export class MessageGuardService {
           this.sendWarning(message, config, {
             recall,
             punish,
-            muteDurationSeconds: config.muteDurationSeconds,
+            muteDurationSeconds,
             matches,
+            ...(punishmentCode !== undefined ? { punishmentCode } : {}),
           }),
         ),
       );
@@ -217,6 +289,8 @@ export class MessageGuardService {
       punish: KeywordPunish;
       muteDurationSeconds: number;
       matches: readonly RuleMatch[];
+      /** §B8：处罚记录短码；有值时卡片带「我要申诉」按钮（只有当事人能点）。 */
+      punishmentCode?: string | undefined;
     },
   ): Promise<void> {
     const hit = input.matches[0]?.reason?.trim();
@@ -236,6 +310,31 @@ export class MessageGuardService {
         `**处理**：${this.punishLabel(input)}`,
         `**群规则**：${config.warningMessage}`,
       ],
+      ...(input.punishmentCode
+        ? {
+            buttonHint: "对处罚有异议：",
+            rows: [
+              [
+                {
+                  id: "appeal",
+                  label: "我要申诉",
+                  style: 1 as const,
+                  callbackData: encodeCallback(
+                    "appeal",
+                    "new",
+                    input.punishmentCode,
+                  ),
+                  permission: {
+                    type: 0 as const,
+                    specifyUserIds: [message.userId],
+                  },
+                  unsupportTips:
+                    "当前 QQ 版本不支持按钮，可私聊机器人发送 /appeal 申诉",
+                },
+              ],
+            ],
+          }
+        : {}),
       footer: ["有异议请联系群管理员；/help 查看全部指令"],
     });
     await this.richMessages.replyToGroup(message.groupId, card, {

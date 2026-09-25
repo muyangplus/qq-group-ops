@@ -1,6 +1,10 @@
 import { FakeQQOfficialAPI } from "../../src/adapters/fakeQqOfficial.js";
 import { AdminCommandService } from "../../src/services/adminCommands.js";
+import { AppealService } from "../../src/services/appeals.js";
 import { AuditLogStore } from "../../src/services/audit.js";
+import { BlacklistService } from "../../src/services/blacklist.js";
+import { ModerationNotifier } from "../../src/services/moderationNotifier.js";
+import { PunishmentService } from "../../src/services/punishments.js";
 import { ClassAliasService } from "../../src/services/classAliases.js";
 import { DisplayNameService } from "../../src/services/displayNames.js";
 import { GroupConfigStore } from "../../src/services/groupConfig.js";
@@ -34,6 +38,14 @@ export let joinSync: JoinRequestSyncService;
 export let notifications: NotificationService;
 export let service: AdminCommandService;
 export let shortCodes: ShortCodeService;
+/** §A5 黑名单（本群 / 全局）。 */
+export let blacklist: BlacklistService;
+/** §B7 处罚记录与卡片动作。 */
+export let punishments: PunishmentService;
+/** §B8 申诉记录。 */
+export let appeals: AppealService;
+/** 处罚 / 申诉私信推送（用订阅表 `punish` 频道）。 */
+export let moderationNotifier: ModerationNotifier;
 
   /** 最近一条发给某人的私信正文（`/whois` 结果只走私信）。 */
 export function privateText(userId: string): string {
@@ -139,7 +151,6 @@ export function scopedShortCodeLabel(
       keywords: ["广告"],
     });
     api = new FakeQQOfficialAPI();
-    joinApproval = new JoinApprovalService(api, joinAudit, configStore);
     joinSync = new JoinRequestSyncService(api, joinAudit, { minIntervalMs: 0 });
     identityMap = new IdentityMapService();
     identityMap.bindUser("member", "10001");
@@ -153,6 +164,29 @@ export function scopedShortCodeLabel(
       identityMap,
       configStore,
     });
+    // §A5：本群黑名单在 g1 生效；全局黑名单踢出所有绑定群（测试里就是 g1）。
+    blacklist = new BlacklistService(api, {
+      auditLog,
+      listBoundGroups: () => ["g1"],
+    });
+    moderationNotifier = new ModerationNotifier({
+      notifications,
+      permissions,
+      groupLabel: (groupId) => identityMap.getGroupNumber(groupId) ?? groupId,
+      userLabel: (userId) => identityMap.getQq(userId) ?? userId,
+    });
+    punishments = new PunishmentService(api, blacklist, {
+      auditLog,
+      notifier: moderationNotifier,
+    });
+    appeals = new AppealService();
+    joinApproval = new JoinApprovalService(
+      api,
+      joinAudit,
+      configStore,
+      undefined,
+      blacklist,
+    );
     service = new AdminCommandService({
       permissions,
       joinAudit,
@@ -162,5 +196,9 @@ export function scopedShortCodeLabel(
       auditLog,
       identityMap,
       notifications,
+      blacklist,
+      punishments,
+      appeals,
+      moderationNotifier,
     });
   });

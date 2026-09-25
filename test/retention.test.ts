@@ -124,6 +124,8 @@ describe("RetentionService", () => {
       joinRequestsRemoved: 0,
       notificationsRemoved: 0,
       activityNotificationsRemoved: 0,
+      punishmentsRemoved: 0,
+      appealsRemoved: 0,
       joinRequestsExpired: 0,
     });
     expect(auditLog.all()).toHaveLength(1);

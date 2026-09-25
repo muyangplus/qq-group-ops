@@ -3,6 +3,8 @@ import type { AuditLog } from "../audit.js";
 import type { ActivityService } from "../activity.js";
 import type { ActivityCardService, ActivityExportLike, ActivityStatsLike } from "../activityCards.js";
 import type { ActivityNotificationService } from "../activityNotifications.js";
+import type { AppealService } from "../appeals.js";
+import type { BlacklistService } from "../blacklist.js";
 import type { ClassAliasService } from "../classAliases.js";
 import type { DisplayNameService } from "../displayNames.js";
 import type { GroupConfigStore } from "../groupConfig.js";
@@ -13,8 +15,10 @@ import type { JoinAuditService } from "../joinAudit.js";
 import type { JoinRequestSyncService } from "../joinAuditSync.js";
 import type { JoinRuleEvaluator } from "../joinRules.js";
 import type { MemberRoster } from "../memberRoster.js";
+import type { ModerationNotifier } from "../moderationNotifier.js";
 import type { NotificationService } from "../notifications.js";
 import type { PermissionService } from "../permissions.js";
+import type { PunishmentService } from "../punishments.js";
 import type { RichMessageSender } from "../richMessages.js";
 import type { UserProfileService } from "../userProfiles.js";
 import type { CardResult, CommandResult } from "./support.js";
@@ -90,5 +94,13 @@ export interface AdminCommandContext {
   readonly activityCards: ActivityCardService | undefined;
   readonly activityNotifications: ActivityNotificationService | undefined;
   readonly notifications: NotificationService | undefined;
+  /** §A5 黑名单（本群 / 全局）。 */
+  readonly blacklist: BlacklistService | undefined;
+  /** §B7 处罚记录与卡片动作。 */
+  readonly punishments: PunishmentService | undefined;
+  /** §B8 申诉记录。 */
+  readonly appeals: AppealService | undefined;
+  /** 处罚 / 申诉的私信卡片渲染与推送。 */
+  readonly moderationNotifier: ModerationNotifier | undefined;
   readonly richMessages: RichMessageSender | undefined;
 }

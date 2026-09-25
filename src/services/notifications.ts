@@ -25,12 +25,46 @@ import {
   type JoinRuleEvaluator,
 } from "./joinRules.js";
 import type { PermissionService } from "./permissions.js";
-import { PushService } from "./pushService.js";
+import {
+  emptySummary,
+  PushService,
+  tallySummary,
+  type PushSummary,
+} from "./pushService.js";
 
 const log = getLogger("notifications");
 
 /** 订阅范围：`__all__` 表示「我担任审核员的所有群」，否则是 group_openid。 */
 export const NOTIFY_SCOPE_ALL = "__all__";
+
+/**
+ * 推送频道：
+ * - `join`：入群申请待审批推送（原 `/notify`）；
+ * - `punish`：机器人处罚事件 + 申诉推送（§B7/B8，`/notify punish` 独立开关）。
+ *
+ * 两个频道共用 `notification_subscriptions` 表，存储时给 `punish` 加 `punish:` 前缀，
+ * 因此老数据天然属于 `join` 频道，无需迁移。
+ */
+export type NotifyChannel = "join" | "punish";
+
+const channelPrefix = (channel: NotifyChannel): string => `${channel}:`;
+
+/** 业务 scope → 存储 scope。 */
+function storageScope(channel: NotifyChannel, scope: string): string {
+  return channel === "join" ? scope : `${channelPrefix(channel)}${scope}`;
+}
+
+/** 存储 scope → 业务 scope；不属于该频道时返回 undefined。 */
+function businessScope(
+  channel: NotifyChannel,
+  stored: string,
+): string | undefined {
+  if (channel === "join") {
+    return stored.startsWith(channelPrefix("punish")) ? undefined : stored;
+  }
+  const prefix = channelPrefix(channel);
+  return stored.startsWith(prefix) ? stored.slice(prefix.length) : undefined;
+}
 
 export interface JoinRequestPush {
   groupId: string;
@@ -178,30 +212,52 @@ export class NotificationService {
     await this.queue?.flush();
   }
 
-  public isSubscribed(userId: string, scope: string): boolean {
-    return this.subscriptions.get(userId)?.has(scope) ?? false;
+  public isSubscribed(
+    userId: string,
+    scope: string,
+    channel: NotifyChannel = "join",
+  ): boolean {
+    return (
+      this.subscriptions.get(userId)?.has(storageScope(channel, scope)) ?? false
+    );
   }
 
-  public listScopes(userId: string): string[] {
-    return [...(this.subscriptions.get(userId) ?? [])].sort();
+  public listScopes(userId: string, channel: NotifyChannel = "join"): string[] {
+    const result: string[] = [];
+    for (const stored of this.subscriptions.get(userId) ?? []) {
+      const scope = businessScope(channel, stored);
+      if (scope !== undefined) {
+        result.push(scope);
+      }
+    }
+    return result.sort();
   }
 
-  public subscribe(userId: string, scope: string): void {
+  public subscribe(
+    userId: string,
+    scope: string,
+    channel: NotifyChannel = "join",
+  ): void {
     const scopes = this.scopesFor(userId, true);
-    if (scopes.has(scope)) {
+    const stored = storageScope(channel, scope);
+    if (scopes.has(stored)) {
       return;
     }
-    scopes.add(scope);
+    scopes.add(stored);
     this.subscriptionRepository &&
       this.queue?.enqueue("notification.subscription.save", () =>
-        this.subscriptionRepository!.save({ userId, scope }),
+        this.subscriptionRepository!.save({ userId, scope: stored }),
       );
-    log.info("notification subscribed", { userId, scope });
+    log.info("notification subscribed", { userId, scope: stored });
   }
 
-  public unsubscribe(userId: string, scope: string): boolean {
+  public unsubscribe(
+    userId: string,
+    scope: string,
+    channel: NotifyChannel = "join",
+  ): boolean {
     const scopes = this.subscriptions.get(userId);
-    if (!scopes?.delete(scope)) {
+    if (!scopes?.delete(storageScope(channel, scope))) {
       return false;
     }
     if (scopes.size === 0) {
@@ -209,25 +265,102 @@ export class NotificationService {
     }
     this.subscriptionRepository &&
       this.queue?.enqueue("notification.subscription.remove", () =>
-        this.subscriptionRepository!.remove(userId, scope),
+        this.subscriptionRepository!.remove(
+          userId,
+          storageScope(channel, scope),
+        ),
       );
-    log.info("notification unsubscribed", { userId, scope });
+    log.info("notification unsubscribed", {
+      userId,
+      scope: storageScope(channel, scope),
+    });
     return true;
   }
 
-  /** 订阅了该群（或全部群）且有审批权限的接收者。 */
-  public subscribersFor(groupId: string): string[] {
+  /**
+   * 订阅了该群（或全部群）且有对应权限的接收者。
+   *
+   * - `join` 频道要求入群审批权限（群管理员或以上）；
+   * - `punish` 频道要求内容审核权限（审核员或以上）。
+   */
+  public subscribersFor(
+    groupId: string,
+    channel: NotifyChannel = "join",
+  ): string[] {
     const recipients: string[] = [];
+    const wanted = storageScope(channel, groupId);
+    const all = storageScope(channel, NOTIFY_SCOPE_ALL);
     for (const [userId, scopes] of this.subscriptions) {
-      if (!scopes.has(NOTIFY_SCOPE_ALL) && !scopes.has(groupId)) {
+      if (!scopes.has(all) && !scopes.has(wanted)) {
         continue;
       }
-      if (!this.permissions.canApproveJoin(userId, groupId)) {
+      const allowed =
+        channel === "join"
+          ? this.permissions.canApproveJoin(userId, groupId)
+          : this.permissions.canReviewContent(userId, groupId);
+      if (!allowed) {
         continue;
       }
       recipients.push(userId);
     }
     return recipients.sort();
+  }
+
+  /**
+   * 给某个频道的订阅者逐个私信一张卡片（§B7/B8 复用）。
+   *
+   * - 每人每 key 只投一次（`dedupeId` 写进投递记录的 `request_id` 字段，重启后仍去重）；
+   * - 失败也记录，避免反复重试刷屏；
+   * - `cardFor(recipientId)` 让每张卡片能带**只允许该接收者点击**的按钮。
+   */
+  public async pushToSubscribers(input: {
+    groupId: string;
+    channel: NotifyChannel;
+    /** 去重 id，建议带频道前缀，例如 `punish:#ABC123`。 */
+    dedupeId: string;
+    cardFor: (recipientId: string) => RichMessage;
+  }): Promise<PushSummary> {
+    const recipients = this.subscribersFor(input.groupId, input.channel);
+    const summary = emptySummary(recipients.length);
+    if (recipients.length === 0) {
+      log.debug("no subscribers for push", {
+        groupId: input.groupId,
+        channel: input.channel,
+        dedupeId: input.dedupeId,
+      });
+      return summary;
+    }
+    for (const userId of recipients) {
+      const outcome = await this.push.deliver({
+        key: `${input.groupId}\u0000${input.dedupeId}\u0000${userId}`,
+        userId,
+        fields: {
+          groupId: input.groupId,
+          channel: input.channel,
+          dedupeId: input.dedupeId,
+        },
+        send: () => this.sendCard(userId, input.cardFor(userId)),
+        entry: (now, sent) => ({
+          groupId: input.groupId,
+          requestId: input.dedupeId,
+          userId,
+          status:
+            sent.status === "sent"
+              ? NotificationDeliveryStatus.Sent
+              : NotificationDeliveryStatus.Failed,
+          detail: sent.detail,
+          createdAt: now,
+        }),
+      });
+      tallySummary(summary, outcome);
+    }
+    log.info("subscriber push finished", {
+      groupId: input.groupId,
+      channel: input.channel,
+      dedupeId: input.dedupeId,
+      ...summary,
+    });
+    return summary;
   }
 
   /**
@@ -429,6 +562,15 @@ export class NotificationService {
     preset?: JoinRequestCard,
   ): Promise<{ ok: boolean; detail: string }> {
     const card = preset ?? buildJoinRequestCard(input);
+    const result = await this.sender.sendToUser(userId, card);
+    return { ok: result.ok, detail: result.detail };
+  }
+
+  /** 主动私信一张卡片（三级降级由 RichMessageSender 负责）。 */
+  private async sendCard(
+    userId: string,
+    card: RichMessage,
+  ): Promise<{ ok: boolean; detail: string }> {
     const result = await this.sender.sendToUser(userId, card);
     return { ok: result.ok, detail: result.detail };
   }

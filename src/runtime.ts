@@ -22,6 +22,9 @@ import type { ActivityGroupRepository } from "./db/activityGroupRepository.js";
 import type { ActivitySubscriptionRepository } from "./db/activitySubscriptionRepository.js";
 import type { ActivityNotificationRepository } from "./db/activityNotificationRepository.js";
 import type { AuditRepository } from "./db/auditRepository.js";
+import type { BlacklistRepository } from "./db/blacklistRepository.js";
+import type { PunishmentRepository } from "./db/punishmentRepository.js";
+import type { AppealRepository } from "./db/appealRepository.js";
 import type { GroupConfigRepository } from "./db/groupConfigRepository.js";
 import type { GroupSettingsRepository } from "./db/groupSettingsRepository.js";
 import type { GroupMessageModeRepository } from "./db/groupMessageModeRepository.js";
@@ -48,7 +51,9 @@ import { ActivityExportService } from "./services/activityExport.js";
 import { ActivityStatsService } from "./services/activityStats.js";
 import { ActivityNotificationService } from "./services/activityNotifications.js";
 import { AdminCommandService } from "./services/adminCommands.js";
+import { AppealService } from "./services/appeals.js";
 import { AuditLogStore } from "./services/audit.js";
+import { BlacklistService } from "./services/blacklist.js";
 import { DisplayNameService } from "./services/displayNames.js";
 import { EventRouter } from "./services/eventRouter.js";
 import { ExportService } from "./services/export.js";
@@ -66,9 +71,11 @@ import { JoinRequestSyncService } from "./services/joinAuditSync.js";
 import { JoinRuleEvaluator } from "./services/joinRules.js";
 import { MemberRoster } from "./services/memberRoster.js";
 import { MessageGuardService } from "./services/messageGuard.js";
+import { ModerationNotifier } from "./services/moderationNotifier.js";
 import { RuleEngine } from "./services/moderation.js";
 import { NotificationService } from "./services/notifications.js";
 import { PermissionService } from "./services/permissions.js";
+import { PunishmentService } from "./services/punishments.js";
 import { RichMessageSender } from "./services/richMessages.js";
 import { ShortCodeService } from "./services/shortCodes.js";
 import { TestMenuService } from "./services/testMenu.js";
@@ -92,6 +99,14 @@ export interface Runtime {
   classAliases: ClassAliasService;
   exportService: ExportService;
   notifications: NotificationService;
+  /** §A5 黑名单（本群 / 全局）。 */
+  blacklist: BlacklistService;
+  /** §B7 处罚记录与卡片动作。 */
+  punishments: PunishmentService;
+  /** §B8 申诉记录。 */
+  appeals: AppealService;
+  /** 处罚 / 申诉私信卡片的渲染与推送。 */
+  moderationNotifier: ModerationNotifier;
   shortCodes: ShortCodeService;
   display: DisplayNameService;
   writeQueue: WriteQueue;
@@ -128,6 +143,12 @@ export interface RuntimeRepositories {
   activityGroups?: ActivityGroupRepository;
   notificationSubscriptions?: NotificationSubscriptionRepository;
   notificationDeliveries?: NotificationDeliveryRepository;
+  /** §A5 黑名单（本群 / 全局）。 */
+  blacklist?: BlacklistRepository;
+  /** §B7 处罚记录。 */
+  punishments?: PunishmentRepository;
+  /** §B8 申诉记录。 */
+  appeals?: AppealRepository;
   shortCodes?: ShortCodeRepository;
   userProfiles?: UserProfileRepository;
   classAliases?: ClassAliasRepository;
@@ -196,20 +217,6 @@ export function createRuntime(
   );
   const exportService = new ExportService(permissions, auditLog);
   const joinRules = new JoinRuleEvaluator();
-  const messageGuard = new MessageGuardService(
-    api,
-    new RuleEngine(),
-    configStore,
-    auditLog,
-    permissions,
-    richMessages,
-  );
-  const joinApproval = new JoinApprovalService(
-    api,
-    joinAudit,
-    configStore,
-    joinRules,
-  );
   const joinSync = new JoinRequestSyncService(api, joinAudit);
   const notifications = new NotificationService(api, permissions, {
     subscriptions: repositories.notificationSubscriptions,
@@ -221,6 +228,47 @@ export function createRuntime(
     joinRules,
     sender: richMessages,
   });
+  // §A5 黑名单：本群踢人 + 官方群拉黑；全局黑名单踢出所有绑定群。
+  const blacklist = new BlacklistService(api, {
+    repository: repositories.blacklist,
+    queue: writeQueue,
+    auditLog,
+    listBoundGroups: () =>
+      identityMap.listGroups().map((group) => group.officialId),
+  });
+  // §B7/B8 处罚 / 申诉私信卡片：复用入群申请推送的发送通道与订阅表（频道 `punish`）。
+  const moderationNotifier = new ModerationNotifier({
+    notifications,
+    permissions,
+    groupLabel: (groupId) => display.group(groupId),
+    userLabel: (userId) => display.user(userId),
+  });
+  const punishments = new PunishmentService(api, blacklist, {
+    repository: repositories.punishments,
+    queue: writeQueue,
+    auditLog,
+    notifier: moderationNotifier,
+  });
+  const appeals = new AppealService({
+    repository: repositories.appeals,
+    queue: writeQueue,
+  });
+  const messageGuard = new MessageGuardService(
+    api,
+    new RuleEngine(),
+    configStore,
+    auditLog,
+    permissions,
+    richMessages,
+    punishments,
+  );
+  const joinApproval = new JoinApprovalService(
+    api,
+    joinAudit,
+    configStore,
+    joinRules,
+    blacklist,
+  );
   const activityNotifications = new ActivityNotificationService(
     notifications,
     repositories.activitySubscriptions,
@@ -273,6 +321,10 @@ export function createRuntime(
     activityCards,
     activityNotifications,
     notifications,
+    blacklist,
+    punishments,
+    appeals,
+    moderationNotifier,
     richMessages,
     cardSender: richMessages,
   });
@@ -561,7 +613,95 @@ export function createRuntime(
           );
           return card.rich;
         }
+        // §B7 处罚通知推送（独立频道）
+        if (parsed.action === "punishToggle") {
+          const [scope, value] = parsed.args;
+          if (!scope || (value !== "on" && value !== "off")) {
+            return undefined;
+          }
+          const card = await adminCommands.notifyPunishToggleCard(
+            scope,
+            value === "on",
+            userId,
+            event.groupId,
+          );
+          return card.rich;
+        }
+        if (parsed.action === "punishTest") {
+          const card = await adminCommands.notifyPunishTestCard(
+            event.groupId,
+            userId,
+            event.groupId,
+          );
+          return card.rich;
+        }
+        if (parsed.action === "punishView") {
+          return adminCommands.notifyPunishCard(event.groupId, userId).rich;
+        }
         return adminCommands.notifyCard(event.groupId, userId).rich;
+      },
+    ],
+    [
+      "blacklist",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        if (parsed.action === "del") {
+          const [scope, targetGroupId, targetUserId, page] = parsed.args;
+          if (!scope || !targetUserId) {
+            return undefined;
+          }
+          const card = await adminCommands.blacklistDeleteCard(
+            scope,
+            targetGroupId ?? "",
+            targetUserId,
+            Number.parseInt(page ?? "1", 10) || 1,
+            userId,
+            event.groupId,
+          );
+          return card.rich;
+        }
+        const [scope, targetGroupId, page] = parsed.args;
+        return adminCommands.blacklistScopeCard(
+          scope ?? "group",
+          targetGroupId ?? event.groupId ?? "",
+          Number.parseInt(page ?? "1", 10) || 1,
+          userId,
+        ).rich;
+      },
+    ],
+    [
+      "punish",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        const card = await adminCommands.punishCallbackCard(
+          parsed.action,
+          parsed.args,
+          userId,
+          event.groupId,
+        );
+        return card?.rich;
+      },
+    ],
+    [
+      "appeal",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        const card = await adminCommands.appealCallbackCard(
+          parsed.action,
+          parsed.args,
+          userId,
+          event.groupId,
+        );
+        return card?.rich;
       },
     ],
     [
@@ -619,6 +759,9 @@ export function createRuntime(
     await activity.load();
     await activityNotifications.load();
     await notifications.load();
+    await blacklist.load();
+    await punishments.load();
+    await appeals.load();
     await shortCodes.load();
     await userProfiles.load();
     await classAliases.load();
@@ -649,6 +792,10 @@ export function createRuntime(
     classAliases,
     exportService,
     notifications,
+    blacklist,
+    punishments,
+    appeals,
+    moderationNotifier,
     shortCodes,
     display,
     writeQueue,
