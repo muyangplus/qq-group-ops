@@ -1,4 +1,6 @@
 import type { CardResult, CommandResult } from "./commands/support.js";
+import { aliasCard } from "./commands/aliasCommands.js";
+import type { AdminCommandContext } from "./commands/context.js";
 import { ActivityStatus, PermissionLevel } from "../core/enums.js";
 import type { KeyboardModal } from "../adapters/qqOfficial.js";
 import { encodeCallback, extractPageToken, pageCallback } from "./callbackData.js";
@@ -461,6 +463,27 @@ export class AdminCommandService {
     return this.cardify(title, await result, rows, footer, buttonHint);
   }
 
+  /** 领域子模块共享依赖（R1 拆分）：门面只负责组装，业务在 commands/* 里。 */
+  private context(): AdminCommandContext {
+    return {
+      permissions: this.permissions,
+      joinAudit: this.joinAudit,
+      configStore: this.configStore,
+      joinApproval: this.joinApproval,
+      joinSync: this.joinSync,
+      auditLog: this.auditLog,
+      joinRules: this.joinRules,
+      groupMessageMode: this.groupMessageMode,
+      identityMap: this.identityMap,
+      display: this.display,
+      userProfiles: this.userProfiles,
+      classAliases: this.classAliases,
+      activity: this.activity,
+      activityCards: this.activityCards,
+      notifications: this.notifications,
+      richMessages: this.richMessages,
+    };
+  }
   /** 指令分发表（返回值统一交给 `ensureCard` 保证是卡片）。 */
   private async dispatchCommand(
     command: string,
@@ -506,7 +529,7 @@ export class AdminCommandService {
       case "别名":
         return this.cardify(
           "班级别名表",
-          this.aliasCard(userId, parts),
+          aliasCard(this.context(), userId, parts),
           [
             [
               viewButton("refresh", "刷新列表", "cmd", "run", "/alias"),
@@ -910,72 +933,6 @@ export class AdminCommandService {
       footer: ["详细用法：/help"],
     });
     return { ok: true, text: notice.text, rich: notice };
-  }
-
-  // -------------------------------------------------------------- /alias
-
-  /** `/alias list|set|del`：班级/学院/专业别名（仅全局超管）。 */
-  private aliasCard(userId: string, parts: readonly string[]): CommandResult {
-    const aliases = this.classAliases;
-    if (!aliases) {
-      return { ok: false, text: "别名表未启用。" };
-    }
-    if (!this.permissions.isSuperAdmin(userId)) {
-      return { ok: false, text: "权限不足：仅全局超级管理员可以维护别名表。" };
-    }
-    const action = normalize(parts[1]);
-    if (!action || action === "list" || action === "列表" || action === "查看") {
-      const entries = aliases.list();
-      if (entries.length === 0) {
-        return { ok: true, text: `别名表为空。\n\n${ALIAS_USAGE}` };
-      }
-      const lines = [`别名表（共 ${entries.length} 条）：`];
-      for (const entry of entries) {
-        lines.push(
-          `  ${entry.alias} → ${entry.target}（${CLASS_ALIAS_KIND_LABELS[entry.kind]}）`,
-        );
-      }
-      lines.push("", ALIAS_USAGE);
-      return { ok: true, text: lines.join("\n") };
-    }
-    if (
-      action === "set" ||
-      action === "设置" ||
-      action === "add" ||
-      action === "添加"
-    ) {
-      const alias = parts[2]?.trim();
-      const target = parts.slice(3).join(" ").trim();
-      if (!alias || !target) {
-        return { ok: false, text: ALIAS_USAGE };
-      }
-      try {
-        const entry = aliases.set(alias, target);
-        return {
-          ok: true,
-          text:
-            `已保存别名：${entry.alias} → ${entry.target}` +
-            `（${CLASS_ALIAS_KIND_LABELS[entry.kind]}）\n\n${ALIAS_USAGE}`,
-        };
-      } catch (error) {
-        return { ok: false, text: `保存失败：${formatError(error)}` };
-      }
-    }
-    if (
-      action === "del" ||
-      action === "delete" ||
-      action === "remove" ||
-      action === "删除"
-    ) {
-      const alias = parts.slice(2).join(" ").trim();
-      if (!alias) {
-        return { ok: false, text: ALIAS_USAGE };
-      }
-      return aliases.remove(alias)
-        ? { ok: true, text: `已删除别名：${alias}\n\n${ALIAS_USAGE}` }
-        : { ok: false, text: `别名「${alias}」不存在。\n\n${ALIAS_USAGE}` };
-    }
-    return { ok: false, text: ALIAS_USAGE };
   }
 
   /** 把 `@`（官方 at 段）/ QQ号 / userId / `#短码` 解析成 userId（仅用户类）。 */
