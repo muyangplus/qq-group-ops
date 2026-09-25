@@ -42,6 +42,8 @@ export interface CommandHelpers {
     footer?: readonly string[],
     buttonHint?: string,
   ): CardResult;
+  /** 把 handler 的 notice（可含首行 @）转成卡片正文行。 */
+  renderNotice(notice: string | undefined): string[];
   /** 群内回复的 @ 提及（首行单独一行）；私聊返回空串。 */
   mention(replyGroupId: string | undefined, userId: string): string;
   /** 展示名：已绑定显示 QQ号 / 群号，未绑定显示短码。 */

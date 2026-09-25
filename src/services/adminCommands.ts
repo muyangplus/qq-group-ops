@@ -1,6 +1,12 @@
 import type { CardResult, CommandResult } from "./commands/support.js";
 import { aliasCard } from "./commands/aliasCommands.js";
 import { whoisCard } from "./commands/whoisCommands.js";
+import {
+  handleNotify,
+  notifyCard,
+  notifyTestCard,
+  notifyToggleCard,
+} from "./commands/notifyCommands.js";
 import type { AdminCommandContext, CommandHelpers } from "./commands/context.js";
 import { ActivityStatus, PermissionLevel } from "../core/enums.js";
 import type { KeyboardModal } from "../adapters/qqOfficial.js";
@@ -480,6 +486,7 @@ export class AdminCommandService {
           footer ?? ["按钮不可用时可直接输入指令。"],
           buttonHint ?? "相关入口：",
         ),
+      renderNotice: (notice) => this.renderNotice(notice),
       mention: (replyGroupId, userId) => this.mention(replyGroupId, userId),
       displayUser: (officialId) => this.displayUser(officialId),
       displayGroup: (groupId) => this.displayGroup(groupId),
@@ -588,7 +595,7 @@ export class AdminCommandService {
       case "push":
       case "推送":
       case "订阅":
-        return this.handleNotify(groupId, userId, parts);
+        return handleNotify(this.context(), groupId, userId, parts);
       case "profile":
       case "资料":
         return this.cardify(
@@ -1482,131 +1489,26 @@ export class AdminCommandService {
     userId: string,
     notice?: string,
   ): CardResult {
-    if (!this.notifications) {
-      const card = renderCard({
-        title: "入群申请推送",
-        lines: ["推送服务未启用。"],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    const scopes = this.notifications.listScopes(userId);
-    const allOn = scopes.includes(NOTIFY_SCOPE_ALL);
-    const lines = [
-      ...this.renderNotice(notice),
-      `**全部群**：${allOn ? "已开启" : "未开启"}`,
-    ];
-    if (groupId) {
-      lines.push(
-        `**当前群**：${scopes.includes(groupId) ? "已开启" : "未开启"}（${this.groupLabel(groupId)}）`,
-      );
-    }
-    for (const scope of scopes.filter((item) => item !== NOTIFY_SCOPE_ALL)) {
-      lines.push(`**已订阅**：群 ${this.groupLabel(scope)}`);
-    }
-    const reviewable = this.permissions.listReviewableGroups(userId);
-    lines.push(
-      reviewable.length > 0
-        ? `**可审批的群**：${reviewable.map((id) => this.groupLabel(id)).join("、")}`
-        : "**可审批的群**：无（入群审批需要群管理员或以上权限）",
-    );
-    lines.push("", "订阅后：有新的待人工处理申请会私聊推送卡片，可直接点按钮审批。");
-
-    const rows: CardButton[][] = [];
-    const switchRow: CardButton[] = [];
-    if (groupId) {
-      switchRow.push(
-        viewButton(
-          "thisGroup",
-          `本群 ${scopes.includes(groupId) ? "关" : "开"}`,
-          "notify",
-          "toggle",
-          groupId,
-          scopes.includes(groupId) ? "off" : "on",
-        ),
-      );
-    }
-    switchRow.push(
-      viewButton(
-        "allGroups",
-        `全部群 ${allOn ? "关" : "开"}`,
-        "notify",
-        "toggle",
-        NOTIFY_SCOPE_ALL,
-        allOn ? "off" : "on",
-      ),
-    );
-    rows.push(switchRow);
-    rows.push([
-      viewButton("test", "测试推送", "notify", "test", groupId ?? ""),
-      viewButton("refresh", "刷新", "notify", "view"),
-    ]);
-
-    return cardFromText("入群申请推送", lines.join("\n"), {
-      rows,
-      buttonHint: "点击即生效：",
-
-    });
+    return notifyCard(this.context(), groupId, userId, notice);
   }
 
-  /** 回调：订阅开关（固定动作 → 自动生效并回刷新后的卡片）。 */
   public async notifyToggleCard(
     scope: string,
     enabled: boolean,
     userId: string,
     replyGroupId?: string,
   ): Promise<CardResult> {
-    if (!this.notifications) {
-      return this.notifyCard(undefined, userId);
-    }
-    const result = this.applyNotify(userId, scope, enabled);
-    const groupContext = scope === NOTIFY_SCOPE_ALL ? undefined : scope;
-    if (!result.ok) {
-      const card = renderCard({
-        title: "推送未修改",
-        lines: [result.text],
-        rows: [
-          [
-            viewButton(
-              "back",
-              "返回推送设置",
-              "notify",
-              "view",
-            ),
-          ],
-        ],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    log.info("notify scope updated via callback", { scope, enabled, userId });
-    return this.notifyCard(
-      groupContext,
-      userId,
-      `${this.mention(replyGroupId, userId)}${result.text.split("\n")[0]}`,
-    );
+    return notifyToggleCard(this.context(), scope, enabled, userId, replyGroupId);
   }
 
-  /** 回调：测试推送（固定动作 → 直接给自己发一张测试卡并回结果）。 */
   public async notifyTestCard(
     groupId: string | undefined,
     userId: string,
     replyGroupId?: string,
   ): Promise<CardResult> {
-    if (!this.notifications) {
-      return this.notifyCard(groupId, userId);
-    }
-    const result = await this.notifications.sendTestCard(userId, groupId);
-    const notice = `${this.mention(replyGroupId, userId)}${result.text.split("\n")[0]}`;
-    const card = this.notifyCard(groupId, userId, notice);
-    return { ...card, ok: result.ok };
+    return notifyTestCard(this.context(), groupId, userId, replyGroupId);
   }
 
-  /**
-   * `/audit [群号|#群短码] [每页数量] [+页码]`：审计记录卡。
-   *
-   * 正文沿用原格式（时间 / 动作 / 状态 / 操作人 / 对象），翻页为回调，
-   * 纯文本降级给出 `/audit +<页码>`。
-   */
   public auditCard(
     targetGroupId: string,
     userId: string,
@@ -3280,76 +3182,6 @@ export class AdminCommandService {
    * 订阅范围只有两种：`__all__`（我担任群管理员的全部群）与单个群；
    * 推送时还会再按「当前群是否有审批权限」过滤一次，越权订阅不会泄漏申请内容。
    */
-  private async handleNotify(
-    groupId: string | undefined,
-    userId: string,
-    parts: readonly string[],
-  ): Promise<CommandResult> {
-    if (!this.notifications) {
-      return { ok: false, text: "推送服务未启用。" };
-    }
-    const arg1 = normalize(parts[1]);
-    if (!arg1) {
-      return this.notifyCard(groupId, userId);
-    }
-    if (arg1 === "test" || arg1 === "测试") {
-      return this.notifyTestCard(groupId, userId, groupId);
-    }
-    if (isToggleValue(arg1)) {
-      // 群内：订阅本群；私信：订阅全部群
-      const scope = groupId ?? NOTIFY_SCOPE_ALL;
-      return this.notifyToggleCard(scope, isToggleOn(arg1), userId, groupId);
-    }
-    if (isAllScope(arg1)) {
-      const action = normalize(parts[2]);
-      if (!isToggleValue(action)) {
-        return this.notifyCard(groupId, userId, NOTIFY_USAGE);
-      }
-      return this.notifyToggleCard(NOTIFY_SCOPE_ALL, isToggleOn(action), userId, groupId);
-    }
-    const targetGroupId = this.resolveTargetGroupId(undefined, parts[1]);
-    const action = normalize(parts[2]);
-    if (!targetGroupId || !isToggleValue(action)) {
-      return this.notifyCard(groupId, userId, NOTIFY_USAGE);
-    }
-    return this.notifyToggleCard(targetGroupId, isToggleOn(action), userId, groupId);
-  }
-
-  private applyNotify(
-    userId: string,
-    scope: string,
-    enabled: boolean,
-  ): CommandResult {
-    const label =
-      scope === NOTIFY_SCOPE_ALL
-        ? "全部群（你担任群管理员的群）"
-        : `群 ${this.groupLabel(scope)}`;
-    if (!enabled) {
-      const removed = this.notifications?.unsubscribe(userId, scope) ?? false;
-      return {
-        ok: true,
-        text: removed
-          ? `已关闭：${label} 的入群申请推送。`
-          : `${label} 的推送本来就是关闭的。`,
-      };
-    }
-    const allowed =
-      scope === NOTIFY_SCOPE_ALL
-        ? this.permissions.isSuperAdmin(userId) ||
-          this.permissions.hasAnyGroupRole(userId, PermissionLevel.GroupAdmin)
-        : this.permissions.canApproveJoin(userId, scope);
-    if (!allowed) {
-      return { ok: false, text: NOTIFY_PERMISSION_DENIED };
-    }
-    this.notifications?.subscribe(userId, scope);
-    return {
-      ok: true,
-      text:
-        `已开启：${label} 的入群申请推送。\n` +
-        "有新的待审批申请时会私聊推送卡片，可直接点「同意 / 拒绝」按钮。",
-    };
-  }
-
   private renderNotifyStatus(
     userId: string,
     groupId: string | undefined,
