@@ -1,3 +1,4 @@
+import type { CardButton } from "../cardTemplate.js";
 import type { AuditLog } from "../audit.js";
 import type { ActivityService } from "../activity.js";
 import type { ActivityCardService } from "../activityCards.js";
@@ -15,6 +16,7 @@ import type { NotificationService } from "../notifications.js";
 import type { PermissionService } from "../permissions.js";
 import type { RichMessageSender } from "../richMessages.js";
 import type { UserProfileService } from "../userProfiles.js";
+import type { CardResult, CommandResult } from "./support.js";
 
 /**
  * 领域子模块共享依赖（R1 拆分用）。
@@ -25,7 +27,38 @@ import type { UserProfileService } from "../userProfiles.js";
  *
  * 注意：这里只放**服务依赖**；纯工具与常量在 `support.ts`。
  */
+
+/**
+ * 门面提供的共享小工具（把「展示名 / 目标解析 / 卡片包装」这类跨领域能力显式暴露给子模块）。
+ *
+ * 子模块不直接依赖 `AdminCommandService`，只依赖这里的函数签名，避免循环引用。
+ */
+export interface CommandHelpers {
+  /** 用统一标题/按钮包装已有指令结果（纯文本降级与旧输出等价）。 */
+  cardify(
+    title: string,
+    result: CommandResult,
+    rows: readonly (readonly CardButton[])[],
+    footer?: readonly string[],
+    buttonHint?: string,
+  ): CardResult;
+  /** 群内回复的 @ 提及（首行单独一行）；私聊返回空串。 */
+  mention(replyGroupId: string | undefined, userId: string): string;
+  /** 展示名：已绑定显示 QQ号 / 群号，未绑定显示短码。 */
+  displayUser(officialId: string): string;
+  displayGroup(groupId: string): string;
+  displayRequest(requestId: string): string;
+  /** 展示用群标签（与 displayGroup 同源，便于个别卡片使用）。 */
+  groupLabel(groupId: string): string;
+  /** 解析目标群：群号 / #群短码 / 内部 id。 */
+  resolveTargetGroupId(
+    groupId: string | undefined,
+    raw: string | undefined,
+  ): string | undefined;
+}
 export interface AdminCommandContext {
+  /** 共享小工具（展示名 / 目标解析 / 卡片包装）。 */
+  readonly helpers: CommandHelpers;
   readonly permissions: PermissionService;
   readonly joinAudit: JoinAuditService;
   readonly configStore: GroupConfigStore;
