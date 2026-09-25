@@ -8,6 +8,11 @@ import {
   menuMessage,
 } from "./commands/menuCommands.js";
 import {
+  resolveRequestId,
+  resolveTargetGroupId,
+  resolveUserId,
+} from "./commands/targetResolvers.js";
+import {
   handleTest,
   handleTestAt,
   handleTestMenu,
@@ -826,46 +831,19 @@ export class AdminCommandService {
   }
 
   private resolveUserId(input: string | undefined): string | undefined {
-    const trimmed = input?.trim();
-    if (!trimmed) {
-      return undefined;
-    }
-    // `#短码` 优先；否则按 QQ号/openid 解析
-    const fromCode = this.display?.resolveUser(trimmed);
-    if (fromCode) {
-      return fromCode;
-    }
-    return this.identityMap?.resolveUserId(trimmed) ?? trimmed;
+    return resolveUserId(this.context(), input);
   }
 
   private resolveTargetGroupId(
     groupId: string | undefined,
     input: string | undefined,
   ): string | undefined {
-    if (groupId) {
-      return groupId;
-    }
-    const trimmed = input?.trim();
-    if (!trimmed) {
-      return undefined;
-    }
-    const fromCode = this.display?.resolveGroup(trimmed);
-    if (fromCode) {
-      return fromCode;
-    }
-    if (!this.identityMap) {
-      return trimmed;
-    }
-    return this.identityMap.resolveGroupId(trimmed);
+    return resolveTargetGroupId(this.context(), groupId, input);
   }
 
   /** 申请参数：`#短码`（推荐）或完整 join_request_id。 */
   private resolveRequestId(input: string | undefined): string | undefined {
-    const trimmed = input?.trim();
-    if (!trimmed) {
-      return undefined;
-    }
-    return this.display?.resolveRequest(trimmed) ?? trimmed;
+    return resolveRequestId(this.context(), input);
   }
 
   /**
