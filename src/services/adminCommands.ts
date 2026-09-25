@@ -2,7 +2,7 @@ import type { CardResult, CommandResult } from "./commands/support.js";
 import { aliasCard } from "./commands/aliasCommands.js";
 import { whoisCard } from "./commands/whoisCommands.js";
 import { handleProfile } from "./commands/profileCommands.js";
-import { handleTestAt, handleTestMenu } from "./commands/testCommands.js";
+import { handleTestAt, handleTestMenu, testCard } from "./commands/testCommands.js";
 import { handleStatus, statusCard } from "./commands/statusCommands.js";
 import {
   handleNotify,
@@ -1536,42 +1536,7 @@ export class AdminCommandService {
 
   /** `/test`：自检结果卡 + 常用入口。 */
   public testCard(groupId: string | undefined, userId: string): CardResult {
-    if (!this.permissions.canReviewContent(userId, groupId ?? "")) {
-      log.warn("test permission denied", { groupId, userId });
-      const card = renderCard({
-        title: "权限不足",
-        lines: ["需要审核员或以上权限。"],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
-      });
-      return { ok: false, text: card.text, rich: card };
-    }
-    log.info("test command", { groupId, userId });
-    const rows: CardButton[][] = [];
-    if (groupId) {
-      rows.push([
-        viewButton("refresh", "刷新", "test", "view", groupId),
-        viewButton("pending", "待审批", "pending", "page", groupId, 1),
-        viewButton("rules", "群规则", "rules", "view", groupId),
-      ]);
-    } else {
-      rows.push([viewButton("help", "指令帮助", "help", "home")]);
-    }
-    const lines = [
-      "测试成功：机器人已响应。",
-      groupId ? `**群**：${this.displayGroup(groupId)}` : "**当前会话**：私聊",
-      `**用户**：${this.displayUser(userId)}`,
-    ];
-    if (groupId) {
-      lines.push(`**待审批申请**：${this.joinAudit.pending(groupId).length}`);
-      lines.push(
-        `**全量消息模式**：${this.groupMessageMode?.get(groupId) ?? "unknown"}`,
-      );
-    }
-    return cardFromText("自检结果", lines.join("\n"), {
-      rows,
-      buttonHint: "常用入口：",
-      footer: ["机器人状态异常时：查看日志 logs/qq-group-ops.log"],
-    });
+    return testCard(this.context(), groupId, userId);
   }
 
   /**

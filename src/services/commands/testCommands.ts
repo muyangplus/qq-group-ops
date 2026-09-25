@@ -1,12 +1,16 @@
 import { renderCard } from "../cardTemplate.js";
+import type { CardButton } from "../cardTemplate.js";
 import { getLogger } from "../../core/logger.js";
 import { TEST_MENU_PAGE_COUNT, buildTestMenuCard } from "../testMenu.js";
 import type { AdminCommandContext } from "./context.js";
 import {
   AT_ALL_PROBES,
   actionButton,
+  cardFromText,
   normalize,
   stripMarkdownForText,
+  viewButton,
+  type CardResult,
   type CommandResult,
 } from "./support.js";
 
@@ -166,4 +170,49 @@ export async function handleTestAt(
     });
     return { ok: true, text: card.text, rich: card };
   }
+
+/** `/test`：自检结果卡 + 常用入口。 */
+export function testCard(
+  ctx: AdminCommandContext,
+  groupId: string | undefined,
+  userId: string,
+): CardResult {
+  if (!ctx.permissions.canReviewContent(userId, groupId ?? "")) {
+    log.warn("test permission denied", { groupId, userId });
+    const card = renderCard({
+      title: "权限不足",
+      lines: ["需要审核员或以上权限。"],
+      rows: [[viewButton("help", "指令帮助", "help", "home")]],
+    });
+    return { ok: false, text: card.text, rich: card };
+  }
+  log.info("test command", { groupId, userId });
+  const rows: CardButton[][] = [];
+  if (groupId) {
+    rows.push([
+      viewButton("refresh", "刷新", "test", "view", groupId),
+      viewButton("pending", "待审批", "pending", "page", groupId, 1),
+      viewButton("rules", "群规则", "rules", "view", groupId),
+    ]);
+  } else {
+    rows.push([viewButton("help", "指令帮助", "help", "home")]);
+  }
+  const lines = [
+    "测试成功：机器人已响应。",
+    groupId ? `**群**：${ctx.helpers.displayGroup(groupId)}` : "**当前会话**：私聊",
+    `**用户**：${ctx.helpers.displayUser(userId)}`,
+  ];
+  if (groupId) {
+    lines.push(`**待审批申请**：${ctx.joinAudit.pending(groupId).length}`);
+    lines.push(
+      `**全量消息模式**：${ctx.groupMessageMode?.get(groupId) ?? "unknown"}`,
+    );
+  }
+  return cardFromText("自检结果", lines.join("\n"), {
+    rows,
+    buttonHint: "常用入口：",
+    footer: ["机器人状态异常时：查看日志 logs/qq-group-ops.log"],
+  });
+}
+
 
