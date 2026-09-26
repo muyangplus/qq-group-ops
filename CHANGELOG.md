@@ -9,6 +9,24 @@
 
 （暂无未发布改动）
 
+## [0.14.0] - 2026-09-26
+
+### 新增
+
+- **消息侧正则规则 + 用户白名单**（§B1）：`/rules set regexRules <正则、正则>`、`/rules add|del regex <正则|序号>`，
+  正则命中与关键词**同一条处罚管道**（按本群「命中处罚」执行，多个命中取最高动作）；
+  `/rules add|del whitelist <QQ号|#短码|userId>` 维护的用户白名单与「审核员及以上豁免」叠加，
+  命中白名单不警告、不撤回、不处罚、不写审计；违规处理子卡新增「正则白名单」子卡（列表 / 加 / 清空 / 恢复继承）。
+- **审核日志 CSV 导出**（§B6）：`/export audit [数量]`（默认 10、最多 50；私信可带群号），
+  CSV 只私信给操作者本人、群里静默；actor / target 统一脱敏（只保留首字符，不导出 openid 原文），
+  导出动作本身写审计（`export_audit_records`）。
+
+### 备注
+
+- 正则配置存 `group_settings` 键值表（老库无需迁移）；单条 ≤200 字、列表 ≤50 条，写入前校验合法性，非法正则不落库。
+- 多条正则用**顿号**分隔（避免拆坏 `a{1,3}` 这类含逗号的正则）；含顿号的正则请用 `/rules add regex` 逐条添加。
+- 导出脱敏保留首字符，仅用于人工排查，不用于对外分发。
+
 ## [0.13.0] - 2026-09-26
 
 ### 新增
@@ -305,7 +323,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.10.0...v0.11.0
