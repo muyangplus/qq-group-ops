@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import {
+  classifyKeyboardFailure,
   RichMessageSender,
   type RichMessage,
 } from "../src/services/richMessages.js";
@@ -74,6 +75,29 @@ describe("RichMessageSender", () => {
     // 真机回归：私信失败不能连累群卡片
     expect(sender.keyboardAvailableFor("group")).toBe(true);
     expect(api.sentPrivateMessages[0]?.keyboard).toBeUndefined();
+  });
+
+  it("keeps the keyboard when the rejection is a content-moderation error", async () => {
+    const api = new FakeQQOfficialAPI();
+    api.failPrivateKeyboardMessages = true;
+    // 真机现象：群规则卡片把违规词列在正文/按钮里 → 400「消息内容违规」
+    api.keyboardRejectionMessage = "QQ official API error 400: 消息内容违规";
+    const sender = new RichMessageSender(api);
+
+    const result = await sender.sendToUser("u1", menuMessage);
+
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe("markdown");
+    // 内容类错误只跳过这一条；不能据此断定「平台不支持按钮」（否则该目标后续卡片全丢按钮）
+    expect(sender.keyboardAvailableFor("user")).toBe(true);
+    expect(sender.keyboardAvailableFor("group")).toBe(true);
+  });
+
+  it("classifies keyboard rejections", () => {
+    expect(classifyKeyboardFailure("QQ official API error 400: 消息内容违规")).toBe("content");
+    expect(classifyKeyboardFailure("QQ official API error 400: 沙箱环境不能访问此资源")).toBe("sandbox");
+    expect(classifyKeyboardFailure("QQ official API error 403: 应用无接口访问权限")).toBe("permission");
+    expect(classifyKeyboardFailure("QQ official API error 400: 键盘不支持")).toBe("unsupported");
   });
 
   it("reports failure when every channel fails", async () => {

@@ -187,18 +187,24 @@ export class RichMessageSender {
           mode: attempt.mode,
         };
       } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
+        const failure = describeError(error);
+        lastError = failure.text;
         // 只有「主动发送也带不上按钮」才能断定平台不支持自定义按钮。
         // 被动回复失败往往只是 msg_id 无效/越权（实测：群聊里把 interaction id 当
         // msg_id 会返回 400），把它当成键盘被拒会让后续卡片全部丢按钮。
         if (attempt.mode === "markdown+keyboard" && !attempt.passive) {
-          this.disableKeyboard(target, lastError);
+          this.handleKeyboardFailure(target, failure, message);
         }
         log.debug("rich message attempt failed", {
           target,
           mode: attempt.mode,
           passive: attempt.passive,
           error: lastError,
+          ...(failure.errorCode !== undefined
+            ? { errorCode: failure.errorCode }
+            : {}),
+          ...(failure.traceId !== undefined ? { traceId: failure.traceId } : {}),
+          cardTitle: cardTitleOf(message),
         });
       }
     }
@@ -206,28 +212,50 @@ export class RichMessageSender {
       target,
       error: lastError,
       passiveFirst: Boolean(msgId),
+      cardTitle: cardTitleOf(message),
     });
     return { ok: false, detail: lastError, mode: "none" };
   }
 
-  /** 记住「平台不支持自定义按钮」；只记一次，避免每条消息都白试。 */
-  private disableKeyboard(target: "user" | "group", error: string): void {
+  /**
+   * 键盘被拒的分类处理。
+   *
+   * 只有**明确「平台不支持按钮」**时才永久关掉该目标的键盘；内容审核、沙箱、权限这类
+   * 属于「这次不行」的错误（真机踩过：群规则卡片里列出违规词 → 400 消息内容违规），
+   * 一旦当成「不支持」，这个群后续所有卡片都会永久丢按钮（与 C2C 那次同源的 bug）。
+   */
+  private handleKeyboardFailure(
+    target: "user" | "group",
+    failure: { text: string; errorCode?: number | undefined },
+    message: RichMessage,
+  ): void {
     if (this.keyboardDisabled[target]) {
       return;
     }
-    // 沙箱限制（400 沙箱环境不能访问此资源）与接口未开通（应用无接口访问权限）
-    // 都不是「平台不支持自定义按钮」，不能据此丢掉键盘。
-    if (/沙箱环境|应用无接口访问权限/u.test(error)) {
-      log.warn("keyboard kept: sandbox/permission error, not unsupported keyboard", {
+    const kind = classifyKeyboardFailure(failure.text);
+    if (kind !== "unsupported") {
+      log.warn("keyboard skipped for this message only", {
         target,
-        error,
+        kind,
+        error: failure.text,
+        ...(failure.errorCode !== undefined
+          ? { errorCode: failure.errorCode }
+          : {}),
+        cardTitle: cardTitleOf(message),
+        buttons: countButtons(message),
       });
       return;
     }
     this.keyboardDisabled[target] = true;
     log.warn(
       "custom keyboard rejected by platform, falling back to markdown/text",
-      { target, error },
+      {
+        target,
+        error: failure.text,
+        reason: kind,
+        cardTitle: cardTitleOf(message),
+        buttons: countButtons(message),
+      },
     );
   }
 
@@ -258,6 +286,64 @@ export class RichMessageSender {
   }
 }
 
+/**
+ * 键盘失败归类：
+ *
+ * - `sandbox`：沙箱环境限制（不是「不支持按钮」）；
+ * - `permission`：应用无接口访问权限（没开接口，也不是「不支持按钮」）；
+ * - `content`：内容审核/违规（跟这条消息的内容有关，换一张卡还能带按钮）；
+ * - `unsupported`：其余按「平台确实用不了自定义按钮」处理（唯一会永久禁用键盘的情况）。
+ */
+export function classifyKeyboardFailure(
+  error: string,
+): "sandbox" | "permission" | "content" | "unsupported" {
+  if (/沙箱环境/u.test(error)) {
+    return "sandbox";
+  }
+  if (/应用无接口访问权限|无权限/u.test(error)) {
+    return "permission";
+  }
+  if (/消息内容违规|内容违规|敏感|违规/u.test(error)) {
+    return "content";
+  }
+  return "unsupported";
+}
+
+/** 从卡片 Markdown 里取标题（`## 标题`）——只记标题，不把正文写进日志。 */
+export function cardTitleOf(message: RichMessage): string {
+  const match = /^#+\s*(.+)$/mu.exec(message.markdown);
+  return (match?.[1] ?? "").trim().slice(0, 40);
+}
+
+function countButtons(message: RichMessage): number {
+  return (
+    message.keyboard?.content.rows.reduce(
+      (total, row) => total + row.buttons.length,
+      0,
+    ) ?? 0
+  );
+}
+
+/** 官方错误里可用的定位信息：`errorCode` 与响应体里的 `trace_id`（日志用）。 */
+export function describeError(error: unknown): {
+  text: string;
+  errorCode?: number | undefined;
+  traceId?: string | undefined;
+} {
+  const text = error instanceof Error ? error.message : String(error);
+  const code = (error as { errorCode?: unknown } | null)?.errorCode;
+  const payload = (error as { payload?: unknown } | null)?.payload;
+  const trace =
+    typeof payload === "object" && payload !== null
+      ? ((payload as Record<string, unknown>).trace_id ??
+        (payload as Record<string, unknown>).traceId)
+      : undefined;
+  return {
+    text,
+    ...(typeof code === "number" ? { errorCode: code } : {}),
+    ...(typeof trace === "string" && trace.length > 0 ? { traceId: trace } : {}),
+  };
+}
 /**
  * 降级说明：
  * - 第一个尝试成功 → 空字符串（完整富消息）；

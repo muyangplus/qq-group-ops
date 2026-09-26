@@ -8,6 +8,7 @@ import { JoinAuditService } from "../../src/services/joinAudit.js";
 import { JoinRequestSyncService } from "../../src/services/joinAuditSync.js";
 import { MemberRoster } from "../../src/services/memberRoster.js";
 import { PermissionService } from "../../src/services/permissions.js";
+import { RichMessageSender } from "../../src/services/richMessages.js";
 import {
   describe,
   expect,
@@ -95,7 +96,25 @@ describe("rule menu refactor (§C)", async () => {
       auditLog,
       identityMap,
       activityRoster: roster,
+      richMessages: new RichMessageSender(api),
     });
+  });
+
+  it("never prints keyword words in cards; the list goes out as a private message", async () => {
+    // 真机踩过：群规则卡片把违规词列在正文/按钮里 → 400「消息内容违规」，整张卡发不出去
+    const panel = service.rulesPanelCard("keyword", "g1", "admin");
+    expect(panel.rich.markdown).toContain("共 1 条");
+    expect(panel.rich.markdown).not.toContain("广告");
+    const buttons = JSON.stringify(buttonsOf(panel));
+    expect(buttons).not.toContain("广告");
+    expect(buttons).toContain("删 #1");
+    expect(buttons).toContain("cb:rules:keywords:g1:1");
+
+    // 「看词表」→ 完整词表走私信；群内只回一张不带词的确认卡
+    const sent = await service.keywordListCard("g1", "admin", 1, "g1");
+    expect(sent.ok).toBe(true);
+    expect(sent.rich.markdown).not.toContain("广告");
+    expect(api.sentPrivateMessages.at(-1)?.markdown).toContain("1. 广告");
   });
 
   it("shows current state on switch labels and toggles back to the same panel", async () => {

@@ -43,6 +43,7 @@ import {
   clearRuleListCard,
   delKeywordCard,
   handleRules,
+  keywordListCard,
   resetAllRulesCard,
   resetRulePageCard,
   punishToggleCard,
@@ -786,6 +787,16 @@ export class AdminCommandService {
     groupId?: string,
   ): Promise<CardResult> {
     return notifyTestCard(this.context(), channel, userId, replyGroupId, groupId);
+  }
+
+  /** 回调：`cb:rules:keywords:<群>:<页码>` —— 关键词词表只走私信。 */
+  public async keywordListCard(
+    targetGroupId: string,
+    userId: string,
+    page = 1,
+    replyGroupId?: string,
+  ): Promise<CardResult> {
+    return keywordListCard(this.context(), targetGroupId, userId, page, replyGroupId);
   }
 
   public auditCard(

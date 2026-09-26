@@ -38,6 +38,13 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
   public failPrivateRichMessages = false;
   /** 置为 true 后带按钮的 Markdown 单聊消息抛出错误，便于测试「按钮未开通」降级。 */
   public failPrivateKeyboardMessages = false;
+  /**
+   * 带按钮消息被拒时的错误文案。
+   *
+   * 默认模拟「平台不支持自定义按钮」；真机踩过的另一类是**内容审核**
+   * （`400 消息内容违规`，例如群规则卡片里列出了违规词），测试里可覆盖这个文案。
+   */
+  public keyboardRejectionMessage = "fake keyboard message failure";
   /** 置为 true 后所有群消息抛出错误，便于测试群发送失败（如 `/testat`）。 */
   public failGroupMessages = false;
   /** 置为 true 后 Markdown 群消息抛出错误（纯文本仍可发送）。 */
@@ -87,7 +94,7 @@ export class FakeQQOfficialAPI implements QQOfficialAPI {
     options?: RichMessageOptions,
   ): Promise<Record<string, unknown>> {
     if (options?.markdown && options.keyboard && this.failPrivateKeyboardMessages) {
-      throw new Error("fake keyboard message failure");
+      throw new Error(this.keyboardRejectionMessage);
     }
     if (options?.markdown && this.failPrivateRichMessages) {
       throw new Error("fake rich message failure");

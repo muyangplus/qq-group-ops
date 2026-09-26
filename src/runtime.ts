@@ -450,6 +450,20 @@ export function createRuntime(
             event.groupId,
           ).rich;
         }
+        if (parsed.action === "keywords") {
+          // 词表走私信：群内明文列出违规词会被平台判「消息内容违规」
+          const [targetGroupId, page] = parsed.args;
+          if (!targetGroupId) {
+            return undefined;
+          }
+          const card = await adminCommands.keywordListCard(
+            targetGroupId,
+            userId,
+            Number.parseInt(page ?? "1", 10) || 1,
+            event.groupId,
+          );
+          return card.rich;
+        }
         if (parsed.action === "panel") {
           const [targetGroupId, panel, page, mode] = parsed.args;
           if (!targetGroupId || !panel) {

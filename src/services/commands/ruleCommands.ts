@@ -31,7 +31,6 @@ import {
   RULE_PANEL_FIELDS,
   RULE_REGEX_MAX_LENGTH,
   ruleChoiceButton,
-  ruleDeleteLabel,
   ruleFieldLabel,
   ruleFieldShortLabel,
   RULES_ADD_USAGE,
@@ -426,7 +425,9 @@ export function rulesKeywordPanel(
     rows.push([
       viewButton(
         `del-${serial}`,
-        ruleDeleteLabel(keyword),
+        // 卡片正文与按钮都**不带词**：群内明文列出违规词会被平台判「消息内容违规」
+        // （真机踩过），也不该把词表摊在群里给所有人看。
+        `删 #${serial + 1}`,
         "rules",
         "delKeyword",
         targetGroupId,
@@ -446,9 +447,10 @@ export function rulesKeywordPanel(
       viewButton("next", "下一页", "rules", "panelPage", targetGroupId, "keyword", current + 1),
     );
   }
-  // 第 4 行：加词 / 清空 / 翻页（每行总长 ≤12 字）
+  // 第 4 行：加词 / 看词表 / 翻页 / 清空（每行总长 ≤12 字）
   rows.push([
     actionButton("add-keyword", "加词", "/rules add keyword "),
+    viewButton("list-keywords", "看词表", "rules", "keywords", targetGroupId, current),
     ...paging,
     viewButtonWithOptions(
       "clear-keywords",
@@ -465,8 +467,12 @@ export function rulesKeywordPanel(
   const body: string[] = [
     ...ctx.helpers.renderNotice(notice),
     `**关键词**：${keywords.length > 0 ? `共 ${keywords.length} 条 · 第 ${current} / ${pageCount} 页` : "（未配置）"}`,
-    ...(slice.length > 0
-      ? slice.map((keyword, index) => `${(current - 1) * pageSize + index + 1}. ${keyword}`)
+    ...(keywords.length > 0
+      ? [
+          "词表**只走私信**：群内不列出词条（明文列出违规词会被平台判「消息内容违规」，也不该摊给全群看），",
+          "点下方「看词表」会把完整编号列表私信给你。",
+          `本页序号：#${(current - 1) * pageSize + 1} ~ #${(current - 1) * pageSize + slice.length}`,
+        ]
       : ["", "暂无关键词：点「加词」发送 `/rules add keyword <词>`，或手输 `/rules set keywords 广告,刷屏`。"]),
     "",
     ruleInheritanceLine(ctx, targetGroupId, "keywords"),
@@ -482,6 +488,77 @@ export function rulesKeywordPanel(
     rows,
     footer,
   });
+}
+
+/**
+ * 回调：`cb:rules:keywords:<群>:<页码>` —— 把整份关键词表**私信**发给操作人。
+ *
+ * 为什么不直接在卡片里列出来（真机踩过）：群内明文列出违规词（如「黄片 / 裸聊」）
+ * 会被平台判 `400 消息内容违规`，整条卡片发不出去；而且词表本来也不该摊给全群看。
+ */
+export async function keywordListCard(
+  ctx: AdminCommandContext,
+  targetGroupId: string,
+  userId: string,
+  page = 1,
+  replyGroupId?: string,
+): Promise<CardResult> {
+  if (
+    !ctx.permissions.canManageRules(userId, targetGroupId) &&
+    !ctx.permissions.isSuperAdmin(userId)
+  ) {
+    return ruleDeniedCard(ctx, targetGroupId, "查看词表需要群管理员或以上权限。");
+  }
+  const notice = ctx.helpers.mention(replyGroupId, userId);
+  const back = viewButton(
+    "back",
+    "返回关键词",
+    "rules",
+    "panelPage",
+    targetGroupId,
+    "keyword",
+    page,
+  );
+  const keywords = [...ctx.configStore.get(targetGroupId).keywords];
+  if (keywords.length === 0) {
+    return cardFromText(
+      "关键词词表",
+      ctx.helpers.renderNotice(`${notice}本群还没有关键词。`).join("\n"),
+      { rows: [[back]] },
+    );
+  }
+
+  log.info("keyword list sent privately", {
+    targetGroupId,
+    userId,
+    count: keywords.length,
+  });
+  const card = cardFromText(
+    "关键词词表（仅私信）",
+    [
+      `群：${ctx.helpers.displayGroup(targetGroupId)} · 共 ${keywords.length} 条`,
+      "",
+      ...keywords.map((keyword, index) => `${index + 1}. ${keyword}`),
+    ].join("\n"),
+    { footer: ["词表只在私信里展示；群内卡片只给序号，避免触发平台内容审核。"] },
+  );
+  const sent = ctx.richMessages
+    ? await ctx.richMessages.sendToUser(userId, card.rich)
+    : { ok: false, detail: "未装配私信发送通道" };
+  const result = cardFromText(
+    "关键词词表",
+    (sent.ok
+      ? ctx.helpers.renderNotice(
+          `${notice}已私信发送词表（共 ${keywords.length} 条），请查看私聊。`,
+        )
+      : [
+          ...ctx.helpers.renderNotice(`${notice}私信发送失败：${sent.detail}`),
+          "请先在私聊里给机器人发一条消息（打开会话窗口）后再点一次。",
+        ]
+    ).join("\n"),
+    { rows: [[back]] },
+  );
+  return { ...result, ok: sent.ok };
 }
 
 /** 子卡：正则规则 + 用户白名单（§B1）。 */
