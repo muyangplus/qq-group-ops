@@ -24,6 +24,7 @@
 - 处罚记录与卡片改处罚（`/punish`）
 - 申诉（`/appeal`）
 - 黑名单（`/blacklist`）
+- 审核日志导出（`/export audit`）
 - 新的入群申请
 - 申请队列的自动收敛
 - 配置群规则（完整示例）
@@ -550,6 +551,17 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
   「驳回申诉」，或直接调整处罚（改时长 / 踢出 / 拉黑），调整会记为「已调整处罚」；
 - 同一处罚的同一人只保留**一条待处理申诉**，重复提交只更新理由，不会刷屏；
 - `/appeal` 不要求绑定 QQ 号，被处罚的成员可以直接申诉。
+
+## 审核日志导出（`/export audit`）
+
+```text
+/export audit [数量]                 导出本群审核日志（默认 10 条，最多 50 条）
+/export audit <群号|#群短码> [数量]   私信里为指定群导出
+```
+
+- 权限：该群**群管理员及以上**（复用 `canExportData` 校验）；
+- **脱敏**：`actor` / `target` 只保留首字符，不导出 openid 原文；
+- **落点**：CSV 只私信给操作者本人，群内完全静默；导出动作本身写审计（`export_audit_records`）。
 
 ## 黑名单（`/blacklist`）
 
