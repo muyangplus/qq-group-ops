@@ -10,7 +10,7 @@ import type {
 } from "../db/appealRepository.js";
 import type { PunishmentRecord } from "../db/punishmentRepository.js";
 import { WriteQueue } from "../db/writeQueue.js";
-import { randomCode, SHORT_CODE_LENGTH } from "./shortCodes.js";
+import { randomCode, reserveGlobalCode, seedGlobalCode, SHORT_CODE_LENGTH } from "./shortCodes.js";
 
 const log = getLogger("appeals");
 
@@ -48,6 +48,8 @@ export class AppealService {
   private readonly queue: WriteQueue | undefined;
   private readonly now: () => Date;
   private readonly random: (max: number) => number;
+  /** 是否注入了自定义随机源（测试夹具）：这类实例不参与全局码池。 */
+  private readonly customRandom: boolean;
 
   public constructor(options: AppealOptions = {}) {
     this.repository = options.repository;
@@ -57,6 +59,7 @@ export class AppealService {
         : undefined;
     this.now = options.now ?? (() => utcNow());
     this.random = options.randomInt ?? ((max) => randomInt(max));
+    this.customRandom = options.randomInt !== undefined;
   }
 
   public get persistent(): boolean {
@@ -68,6 +71,8 @@ export class AppealService {
     this.appeals.clear();
     for (const record of records ?? []) {
       this.appeals.set(record.appealId, record);
+      // 重启后把已有短码灌回全局码池，避免新码与历史码跨类型重码
+      seedGlobalCode(record.appealId);
     }
   }
 
@@ -229,7 +234,11 @@ export class AppealService {
 
   private generateCode(): string {
     for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt += 1) {
-      const candidate = randomCode(SHORT_CODE_LENGTH, this.random);
+      // 走全局码池（与申请/处罚/活动码不重码）；注入随机源的测试夹具不参与码池
+      const candidate = reserveGlobalCode(
+        SHORT_CODE_LENGTH,
+        this.customRandom ? this.random : undefined,
+      );
       if (!this.appeals.has(candidate)) {
         return candidate;
       }

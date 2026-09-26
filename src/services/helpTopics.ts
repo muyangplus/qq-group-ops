@@ -330,7 +330,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "  /activity list [群号|#群短码]                  查看活动列表（本群可省略）",
       "  /activity bind <#活动短码> <群号|#群短码>      绑定发布 / 广播目标群（可多个）",
       "  /activity unbind <#活动短码> <群号|#群短码>    解绑目标群",
-      "  · 新活动通知的订阅已统一到 /notify 菜单（活动通知 本群 / 全部）",
+      "  · 新活动通知的订阅统一在 /notify 菜单（活动通知 本群 / 全部）；/activity subscribe 等价于「本群」开关",
       "",
       "可配置字段（/activity set）：",
       "  title 标题 · desc 简介 · capacity 名额 · group 活动群号",
@@ -569,7 +569,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     allows: isGroupAdmin,
     body: () => [
       "用法：",
-      "  /approve <#申请短码>                             群内审批本群",
+      "  /approve <#申请短码>                       群内 / 私信都可以（短码已定位所属群）",
       "  /approve <#群短码|群号|group_openid> <#申请短码>          私信中审批指定群",
       "",
       "示例：",
@@ -588,8 +588,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     allows: isGroupAdmin,
     body: () => [
       "用法：",
-      "  /reject <#申请短码> [原因]                        群内审批本群",
-      "  /reject <#群短码|群号|group_openid> <#申请短码> [原因]     私信中审批指定群",
+      "  /reject <#申请短码> [原因]                      群内 / 私信都可以（短码已定位所属群）",
       "",
       "示例：",
       "  /reject AURi8Rr6MfGdUNedupWf2uV5XiayURHaetzw... 资料不完整",

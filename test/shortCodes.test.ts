@@ -4,7 +4,12 @@ import type {
   ShortCodeEntry,
   ShortCodeRepository,
 } from "../src/db/shortCodeRepository.js";
-import { ShortCodeService } from "../src/services/shortCodes.js";
+import {
+  hasGlobalCode,
+  reserveGlobalCode,
+  seedGlobalCode,
+  ShortCodeService,
+} from "../src/services/shortCodes.js";
 
 class FakeShortCodeRepository implements ShortCodeRepository {
   public readonly rows: ShortCodeEntry[] = [];
@@ -174,5 +179,29 @@ describe("ShortCodeService", () => {
     for (const code of codes) {
       expect(code).toMatch(/^[0-9A-Z]{6}$/u);
     }
+  });
+
+  it("pools every generator into one global namespace", () => {
+    // 用户 / 群 / 申请码由本服务生成 → 登记进全局码池
+    const service = new ShortCodeService();
+    const userCode = service.codeFor("user", "u1");
+    expect(hasGlobalCode(userCode)).toBe(true);
+
+    // 池里的码不会再被发放（`reserveGlobalCode` 是处罚 / 申诉 / 活动码的取号口）
+    seedGlobalCode("ZZZZZZ");
+    expect(hasGlobalCode("zzzzzz")).toBe(true);
+
+    const issued = new Set<string>();
+    for (let index = 0; index < 100; index += 1) {
+      const code = reserveGlobalCode(6);
+      expect(code).not.toBe("ZZZZZZ");
+      expect(issued.has(code)).toBe(false);
+      issued.add(code);
+      expect(hasGlobalCode(code)).toBe(true);
+    }
+
+    // 注入自定义随机源（测试夹具）时不参与池：固定短码仍可断言
+    expect(reserveGlobalCode(6, () => 0)).toBe("000000");
+    expect(hasGlobalCode("000000")).toBe(false);
   });
 });

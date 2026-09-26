@@ -31,7 +31,7 @@ import {
   normalizeList,
   matchesCollege,
 } from "./activityCore.js";
-import { randomCode } from "./shortCodes.js";
+import { reserveGlobalCode, seedGlobalCode } from "./shortCodes.js";
 import type { UserProfile } from "./userProfiles.js";
 import { randomUUID } from "node:crypto";
 
@@ -87,7 +87,8 @@ export class ActivityService {
         : undefined;
     this.generateCode =
       options.generateCode ??
-      (() => randomCode(ACTIVITY_CODE_LENGTH));
+      // 走全局码池（与申请/处罚/申诉码不重码）
+      (() => reserveGlobalCode(ACTIVITY_CODE_LENGTH));
   }
 
   public get persistent(): boolean {
@@ -119,6 +120,8 @@ export class ActivityService {
     }
     for (const activity of activities) {
       this.activities.set(activity.activityId, activity);
+      // 重启后把已有活动短码灌回全局码池，避免新码与历史码跨类型重码
+      seedGlobalCode(activity.activityId);
     }
     for (const detail of details) {
       const activity = this.activities.get(detail.activityId);

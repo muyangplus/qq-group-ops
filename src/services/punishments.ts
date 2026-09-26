@@ -16,7 +16,7 @@ import { WriteQueue } from "../db/writeQueue.js";
 import type { AuditLog } from "./audit.js";
 import type { BlacklistService } from "./blacklist.js";
 import type { ModerationNotifier } from "./moderationNotifier.js";
-import { randomCode, SHORT_CODE_LENGTH } from "./shortCodes.js";
+import { randomCode, reserveGlobalCode, seedGlobalCode, SHORT_CODE_LENGTH } from "./shortCodes.js";
 
 const log = getLogger("punishments");
 
@@ -70,6 +70,8 @@ export class PunishmentService {
   private readonly notifier: ModerationNotifier | undefined;
   private readonly now: () => Date;
   private readonly random: (max: number) => number;
+  /** 是否注入了自定义随机源（测试夹具）：这类实例不参与全局码池。 */
+  private readonly customRandom: boolean;
 
   public constructor(
     private readonly api: QQOfficialAPI,
@@ -85,6 +87,7 @@ export class PunishmentService {
     this.notifier = options.notifier;
     this.now = options.now ?? (() => utcNow());
     this.random = options.randomInt ?? ((max) => randomInt(max));
+    this.customRandom = options.randomInt !== undefined;
   }
 
   public get persistent(): boolean {
@@ -96,6 +99,8 @@ export class PunishmentService {
     this.records.clear();
     for (const record of records ?? []) {
       this.records.set(record.recordId, record);
+      // 重启后把已有短码灌回全局码池，避免新码与历史码跨类型重码
+      seedGlobalCode(record.recordId);
     }
   }
 
@@ -477,7 +482,11 @@ export class PunishmentService {
 
   private generateCode(): string {
     for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt += 1) {
-      const candidate = randomCode(SHORT_CODE_LENGTH, this.random);
+      // 走全局码池（与申请/申诉/活动码不重码）；注入随机源的测试夹具不参与码池
+      const candidate = reserveGlobalCode(
+        SHORT_CODE_LENGTH,
+        this.customRandom ? this.random : undefined,
+      );
       if (!this.records.has(candidate)) {
         return candidate;
       }

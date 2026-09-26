@@ -230,8 +230,8 @@ function buildHelp(
     lines.push("/test - 测试机器人是否正常响应");
   }
   if (canAdmin) {
-    lines.push("/approve [#群短码|群号] <申请ID> - 通过入群申请");
-    lines.push("/reject [#群短码|群号] <申请ID> [原因] - 拒绝入群申请");
+    lines.push("/approve <申请ID> - 通过入群申请（短码已定位所属群，私信里也不用带群）");
+    lines.push("/reject <申请ID> [原因] - 拒绝入群申请");
     lines.push("/notify - 配置入群申请推送（卡片 + 快捷同意/拒绝按钮）");
     lines.push("/rules set <字段> <值> - 修改群规则（关键词、警告文案等）");
   }

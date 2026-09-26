@@ -33,6 +33,52 @@ function randomIntCrypto(max: number): number {
   return randomInt(max);
 }
 
+/**
+ * 进程级**全局码池**：`user / group / join_request` 与处罚、申诉、活动短码共用一份命名空间，
+ * 因此 `#A1B2C3` 不会既是处罚码又是申请码（用户确认的口径：所有短码全局唯一）。
+ *
+ * - 服务 `load()` 时用 `seedGlobalCode()` 把已入库的码灌回来，重启后也不会撞码；
+ * - 注入自定义随机源 / `generateCode`（测试夹具要固定短码）时不走码池，保持可断言性。
+ */
+const globalCodePool = new Set<string>();
+
+/** 把一个已存在的短码灌进全局码池（服务 `load()` 时调用）。 */
+export function seedGlobalCode(code: string): void {
+  const normalized = code.trim().toLowerCase();
+  if (normalized.length > 0) {
+    globalCodePool.add(normalized);
+  }
+}
+
+/** 某个短码是否已被全局码池占用（测试与排查用）。 */
+export function hasGlobalCode(code: string): boolean {
+  return globalCodePool.has(code.trim().toLowerCase());
+}
+
+/**
+ * 取一个**全局唯一**的新短码。
+ *
+ * `randomInt` 传入时表示调用方自带随机源（测试夹具）→ 直接返回、不登记进码池，
+ * 这样固定序列的夹具不会被「撞码即抛错」破坏。
+ */
+export function reserveGlobalCode(
+  length: number,
+  randomInt?: (max: number) => number,
+): string {
+  if (randomInt) {
+    return randomCode(length, randomInt);
+  }
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    const candidate = randomCode(length);
+    const key = candidate.toLowerCase();
+    if (!globalCodePool.has(key)) {
+      globalCodePool.add(key);
+      return candidate;
+    }
+  }
+  throw new Error("短码生成失败：连续碰撞，请检查随机源");
+}
+
 export interface ShortCodeOptions {
   length?: number;
   /** 注入随机源便于测试（默认 `crypto.randomInt`）。 */
@@ -58,6 +104,8 @@ export class ShortCodeService {
   private readonly length: number;
   private readonly random: (max: number) => number;
   private readonly now: () => Date;
+  /** 是否注入了自定义随机源（测试夹具）：这类实例不参与全局码池。 */
+  private readonly customRandom: boolean;
   private readonly repository: ShortCodeRepository | undefined;
   private readonly queue: WriteQueue | undefined;
 
@@ -70,6 +118,7 @@ export class ShortCodeService {
     this.queue = repository ? (queue ?? new WriteQueue()) : undefined;
     this.length = options.length ?? SHORT_CODE_LENGTH;
     this.random = options.randomInt ?? ((max) => randomInt(max));
+    this.customRandom = options.randomInt !== undefined;
     this.now = options.now ?? (() => utcNow());
   }
 
@@ -170,18 +219,23 @@ export class ShortCodeService {
   }
 
   private generate(): string {
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-      const candidate = randomCode(this.length, this.random);
-      if (!this.byCode.has(candidate.toLowerCase())) {
-        return candidate;
+    if (this.customRandom) {
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+        const candidate = randomCode(this.length, this.random);
+        if (!this.byCode.has(candidate.toLowerCase())) {
+          return candidate;
+        }
       }
+      throw new Error("短码生成失败：连续碰撞，请检查随机源");
     }
-    throw new Error("短码生成失败：连续碰撞，请检查随机源");
+    return reserveGlobalCode(this.length);
   }
 
   private register(entry: ShortCodeEntry): void {
     this.byCode.set(entry.code.toLowerCase(), entry);
     this.codeByTarget.set(targetKeyOfKindString(entry.kind, entry.targetId), entry.code);
+    // 登记即入全局码池：load() 恢复的历史码也会被灌回来
+    seedGlobalCode(entry.code);
   }
 }
 

@@ -46,14 +46,8 @@ export function resolveReviewTarget(
       reasonParts: parts.slice(2),
     };
   }
-  const groupFromFirst = ctx.helpers.resolveTargetGroupId(undefined, parts[1]);
-  if (groupFromFirst) {
-    return {
-      targetGroupId: groupFromFirst,
-      requestId: resolveRequestId(ctx, parts[2]),
-      reasonParts: parts.slice(3),
-    };
-  }
+  // 统一简化：短码全局唯一，`#申请短码` 自己就能定位到申请所属群，
+  // 私信里**不需要**再写一遍 `<群号|#群短码>`（老写法已删除）。
   const requestId = resolveRequestId(ctx, parts[1]);
   let targetGroupId: string | undefined;
   if (requestId) {
@@ -454,9 +448,7 @@ export async function handleApprove(
       ok: false,
       text:
         "用法：\n" +
-        "  /approve <#申请短码>                         群内审批本群\n" +
-        "  /approve <群号|#群短码> <#申请短码>            私信中审批指定群\n" +
-        "  /approve <#申请短码>                         私信中也可以（自动定位该申请所属群）",
+        "  /approve <#申请短码>   群内 / 私信都可以（短码已定位该申请所属群）",
     };
   }
   if (!ctx.permissions.canApproveJoin(userId, targetGroupId)) {
@@ -497,9 +489,7 @@ export async function handleReject(
       ok: false,
       text:
         "用法：\n" +
-        "  /reject <#申请短码> [原因]                    群内审批本群\n" +
-        "  /reject <群号|#群短码> <#申请短码> [原因]      私信中审批指定群\n" +
-        "  /reject <#申请短码> [原因]                    私信中也可以（自动定位该申请所属群）",
+        "  /reject <#申请短码> [原因]   群内 / 私信都可以（短码已定位该申请所属群）",
     };
   }
   if (!ctx.permissions.canApproveJoin(userId, targetGroupId)) {
