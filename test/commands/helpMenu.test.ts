@@ -90,28 +90,44 @@ describe("AdminCommandService · helpMenu", () => {
     expect(result.text).toContain("未知指令");
   });
 
-  it("opens the main menu for everyone", async () => {
+  it("opens the common menu for everyone without management entries", async () => {
     const result = await service.handle("g1", "member", "/menu");
 
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("系统菜单");
+    expect(result.text).toContain("常用菜单");
     expect(result.rich?.keyboard?.content.rows.length).toBeGreaterThan(0);
-    // 菜单导航是回调按钮（点击即出下一张卡）
-    const buttons = (result.rich?.keyboard?.content.rows ?? []).flatMap(
+    const ids = ((result.rich?.keyboard?.content.rows ?? []).flatMap(
       (row) => row.buttons,
+    )).map((button) => button.id);
+    expect(ids).toEqual(
+      expect.arrayContaining(["help", "profile", "myperm", "activity", "appeal"]),
     );
-    expect(buttons.find((button) => button.id === "sys")?.action).toMatchObject({
-      type: 1,
-      data: "cb:menu:open:sys",
-    });
+    // §F2：群里不出现管理 / 超管入口
+    expect(ids).not.toContain("admin");
+    expect(ids).not.toContain("super");
     // 菜单卡不再罗列手动指令（指令列表统一在 /help）
     expect(result.text).not.toContain("手动指令");
+  });
+
+  it("exposes management entries only in private chat", async () => {
+    // 群里连超管也只提示去私信，不展示平台级入口
+    const inGroup = await service.handle("g1", "root", "/menu 超管");
+    expect(inGroup.ok).toBe(false);
+    expect(inGroup.text).toContain("请在私信");
+
+    const dm = await service.handle(undefined, "root", "/menu");
+    expect(dm.ok).toBe(true);
+    const ids = ((dm.rich?.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    )).map((button) => button.id);
+    expect(ids).toContain("admin");
+    expect(ids).toContain("super");
   });
 
   it("opens the main menu for empty and aliased input", async () => {
     const empty = await service.handle("g1", "member", "   ");
     expect(empty.ok).toBe(true);
-    expect(empty.text).toContain("系统菜单");
+    expect(empty.text).toContain("常用菜单");
 
     const alias = await service.handle("g1", "admin", "/菜单 管理菜单");
     expect(alias.ok).toBe(true);
@@ -138,7 +154,7 @@ describe("AdminCommandService · helpMenu", () => {
 
     expect(result.ok).toBe(false);
     expect(result.text).toContain("未找到「nope」菜单");
-    expect(result.text).toContain("系统菜单");
+    expect(result.text).toContain("常用菜单");
   });
 
   it("denies the admin menu to plain members", async () => {

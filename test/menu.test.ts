@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   MENU_SECTIONS,
@@ -38,20 +38,44 @@ function buttonIds(view: MenuView): string[] {
 }
 
 describe("menu", () => {
-  it("shows section entries according to permission", () => {
+  it("shows member entries in group context without management entries", () => {
     const member = buttonIds(buildMenu("main", context("member")));
-    expect(member).toContain("sys");
-    expect(member).toContain("myperm");
+    expect(member).toEqual(
+      expect.arrayContaining(["help", "profile", "myperm", "activity", "appeal"]),
+    );
     expect(member).not.toContain("admin");
     expect(member).not.toContain("super");
+    // 旧「系统菜单」入口不再出现在默认卡上
+    expect(member).not.toContain("sys");
+  });
 
-    const moderator = buttonIds(buildMenu("main", context("mod")));
-    expect(moderator).toContain("admin");
-    expect(moderator).not.toContain("super");
+  it("never exposes management entries inside a group, even to admins", () => {
+    expect(buttonIds(buildMenu("main", context("mod")))).not.toContain("admin");
+    expect(buttonIds(buildMenu("main", context("root")))).not.toContain("admin");
+    expect(buttonIds(buildMenu("main", context("root")))).not.toContain("super");
+  });
 
-    const root = buttonIds(buildMenu("main", context("root")));
+  it("shows management entries only in private chat", () => {
+    const mod = buttonIds(buildMenu("main", context("mod", { groupId: undefined })));
+    expect(mod).toContain("admin");
+    expect(mod).not.toContain("super");
+
+    const root = buttonIds(buildMenu("main", context("root", { groupId: undefined })));
     expect(root).toContain("admin");
     expect(root).toContain("super");
+
+    const member = buttonIds(
+      buildMenu("main", context("member", { groupId: undefined })),
+    );
+    expect(member).not.toContain("admin");
+    expect(member).not.toContain("super");
+  });
+
+  it("keeps the system section equivalent to the common menu", () => {
+    const main = buildMenu("main", context("member"));
+    const sys = buildMenu("sys", context("member"));
+    expect(sys.ok).toBe(true);
+    expect(sys.message.markdown).toBe(main.message.markdown);
   });
 
   it("hides personal commands for unbound users", () => {
@@ -76,12 +100,17 @@ describe("menu", () => {
     expect(buildMenu("ops", context("admin")).ok).toBe(true);
   });
 
-  it("limits the super menu to global super admins", () => {
+  it("limits the super menu to private chat and global super admins", () => {
     const groupSuper = buildMenu("super", context("gsup"));
     expect(groupSuper.ok).toBe(false);
     expect(groupSuper.message.text).toContain("本群超级管理员");
 
-    const root = buildMenu("super", context("root"));
+    // §F2：全局超管在群里明确请求也只提示去私信，不在群里展示平台级入口
+    const rootInGroup = buildMenu("super", context("root"));
+    expect(rootInGroup.ok).toBe(false);
+    expect(rootInGroup.message.text).toContain("请在私信");
+
+    const root = buildMenu("super", context("root", { groupId: undefined }));
     expect(root.ok).toBe(true);
     expect(buttonIds(root)).toContain("perm");
   });
@@ -94,7 +123,8 @@ describe("menu", () => {
 
   it("keeps every section inside the official keyboard limits", () => {
     for (const section of MENU_SECTIONS) {
-      const view = buildMenu(section, context("root"));
+      // 私信上下文才能渲染全部层级（含管理 / 超管菜单）
+      const view = buildMenu(section, context("root", { groupId: undefined }));
       const rows = view.message.keyboard?.content.rows ?? [];
       expect(rows.length).toBeLessThanOrEqual(5);
       for (const row of rows) {

@@ -41,6 +41,9 @@ const SECTION_ALIASES: Record<string, MenuSection> = {
   menu: "main",
   主菜单: "main",
   首页: "main",
+  home: "main",
+  常用: "main",
+  常用菜单: "main",
   sys: "sys",
   system: "sys",
   系统: "sys",
@@ -202,12 +205,16 @@ function buildSpec(
     case "super":
       // 超管菜单是平台级入口：/perm、/rules all、/whois、/bind user|groupid、/notify all
       // 都只有全局超级管理员能做；本群超管请用管理菜单。
+      // §F2：即使在群里明确请求，也只对全局超管说明「去私信」，不在群卡片上暴露平台级入口。
       if (!access.isSuperAdmin) {
         return denial(
           access.isGroupSuperAdmin
             ? "本群超级管理员请使用管理菜单（/menu admin）。"
             : "需要全局超级管理员权限。",
         );
+      }
+      if (context.groupId !== undefined) {
+        return denial("超管菜单是平台级入口，请在私信中发送 /menu 超管 查看。");
       }
       return { ok: true, card: superCard(context) };
   }
@@ -224,6 +231,13 @@ function denial(reason: string): SpecResult {
   };
 }
 
+/**
+ * 常用菜单（§F2）：默认触发（`/menu` 无参数、群里空 @机器人、私信首次交互、未知指令回复）
+ * 一律是这张卡。
+ *
+ * 入口只保留普通成员真正会用到的能力；**管理 / 超管入口只在私信出现**，
+ * 群里绝不通过卡片主动暴露管理类功能（管理员在群里要手动发 `/menu 管理`）。
+ */
 function mainCard(context: MenuContext, access: MenuAccess): CardSpec {
   const lines: string[] = [];
   if (context.userLabel) {
@@ -240,55 +254,54 @@ function mainCard(context: MenuContext, access: MenuAccess): CardSpec {
   } else {
     lines.push("私信中操作群功能时，请在指令里带上群号。");
   }
+  lines.push("", "常用功能：资料、权限、活动与申诉。");
 
-  const sections: CardButton[] = [menuButton("sys", "系统菜单", "sys")];
-  if (access.canModerate) {
-    sections.push(menuButton("admin", "管理菜单", "admin"));
-  }
-  if (access.isSuperAdmin) {
-    sections.push(menuButton("super", "超管菜单", "super"));
-  }
-
-  const personal: CardButton[] = [cmdButton("help", "帮助", "/help")];
+  const rows: CardButton[][] = [];
   if (context.bound) {
-    personal.push(cmdButton("myperm", "我的权限", "/myperm"));
-    personal.push(cmdButton("profile", "我的资料", "/profile"));
-  } else {
-    personal.push(button("bind", "绑定账号", "/bind qq 你的QQ号"));
-  }
-
-  return {
-    title: "系统菜单",
-    lines,
-    rows: [sections, personal.slice(0, 3), ...(personal.length > 3 ? [personal.slice(3)] : [])],
-    buttonHint: "请选择入口：",
-  };
-}
-
-function systemCard(context: MenuContext, access: MenuAccess): CardSpec {
-  const rows: CardButton[][] = [
-    [cmdButton("help", "帮助", "/help"), backButton()],
-  ];
-  if (context.bound) {
-    rows[0]!.unshift(cmdButton("myperm", "我的权限", "/myperm"));
     rows.push([
+      cmdButton("help", "帮助", "/help"),
       cmdButton("profile", "我的资料", "/profile"),
+      cmdButton("myperm", "我的权限", "/myperm"),
+    ]);
+    rows.push([
       menuButton("activity", "活动", "activity"),
+      cmdButton("appeal", "申诉", "/appeal list"),
     ]);
   } else {
-    rows[0]!.unshift(button("bind", "绑定账号", "/bind qq 你的QQ号"));
+    rows.push([
+      cmdButton("help", "帮助", "/help"),
+      button("bind", "绑定账号", "/bind qq 你的QQ号"),
+    ]);
   }
-  if (access.canModerate) {
-    rows[rows.length - 1]!.push(
-      menuButton("admin", "管理菜单", "admin"),
-    );
+
+  // 管理 / 超管入口只在私信生成：群里看不到任何管理类入口按钮。
+  if (context.groupId === undefined) {
+    const management: CardButton[] = [];
+    if (access.canModerate) {
+      management.push(menuButton("admin", "管理菜单", "admin"));
+    }
+    if (access.isSuperAdmin) {
+      management.push(menuButton("super", "超管菜单", "super"));
+    }
+    if (management.length > 0) {
+      rows.push(management);
+    }
   }
+
   return {
-    title: "系统菜单",
-    lines: ["面向所有成员的能力：帮助、绑定、个人资料与活动。"],
+    title: "常用菜单",
+    lines,
     rows,
     buttonHint: "请选择功能：",
   };
+}
+
+/**
+ * 「系统菜单」层级与常用菜单等价（§F2 合并）：
+ * 保留 `sys` 只是为了兼容已发出的旧卡片按钮（`cb:menu:open:sys`），避免出现两张重复的普通卡。
+ */
+function systemCard(context: MenuContext, access: MenuAccess): CardSpec {
+  return mainCard(context, access);
 }
 
 function activityCard(context: MenuContext): CardSpec {

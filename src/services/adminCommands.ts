@@ -850,7 +850,7 @@ export class AdminCommandService {
    * 点击后由 `TestMenuService` 走互动事件链路被动回复新的一页；
    * 同时保留 `/testmenu <页码>` 指令入口与「指令翻页」按钮作为双通道兜底。
    */
-  /** `/menu [系统|管理|超管|活动|审核|运营]`：渲染对应层级的交互菜单。 */
+  /** `/menu [常用|管理|超管|活动|审核|运营]`：渲染对应层级的交互菜单。 */
   private handleMenu(
     groupId: string | undefined,
     userId: string,
@@ -864,7 +864,7 @@ export class AdminCommandService {
         ok: false,
         text:
           `未找到「${query}」菜单。\n` +
-          "用法：/menu [系统|管理|超管|活动|审核|运营]\n\n" +
+          "用法：/menu [常用|管理|超管|活动|审核|运营]\n\n" +
           main.text,
         rich: main,
       };

@@ -104,7 +104,7 @@ describe("FakeEventGateway", () => {
 
     const menu = api.sentPrivateMessages[1];
     expect(menu?.msgId).toBeUndefined();
-    expect(String(menu?.markdown ?? menu?.content)).toContain("系统菜单");
+    expect(String(menu?.markdown ?? menu?.content)).toContain("常用菜单");
   });
 
   it("pushes the main menu only on the first private interaction", async () => {
@@ -125,7 +125,7 @@ describe("FakeEventGateway", () => {
     // 2 条指令回复 + 只有一次的首次菜单
     expect(api.sentPrivateMessages).toHaveLength(3);
     const menus = api.sentPrivateMessages.filter((message) =>
-      String(message.markdown ?? "").includes("系统菜单"),
+      String(message.markdown ?? "").includes("常用菜单"),
     );
     expect(menus).toHaveLength(1);
     expect(menus[0]?.msgId).toBeUndefined();
@@ -149,7 +149,7 @@ describe("FakeEventGateway", () => {
 
     // 空 @机器人 → 主菜单卡片，走被动回复
     expect(api.sentMessages).toHaveLength(1);
-    expect(String(api.sentMessages[0]?.markdown ?? "")).toContain("系统菜单");
+    expect(String(api.sentMessages[0]?.markdown ?? "")).toContain("常用菜单");
     expect(api.sentMessages[0]?.msgId).toBe("m1");
   });
 
