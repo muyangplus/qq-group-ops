@@ -123,10 +123,77 @@ describe("rule menu refactor (§C)", async () => {
     );
     expect(toggled.ok).toBe(true);
     expect(configStore.get("g1").wordFilterEnabled).toBe(false);
-    expect(toggled.rich.markdown).toContain("已更新：关键词过滤 = off");
+    expect(toggled.rich.markdown).toContain("已更新：关键词过滤 → 关");
     expect(buttonsOf(toggled).find((button) => button.id === "wordFilterEnabled")?.label).toBe(
       "过滤 关",
     );
+  });
+
+  it("toggles rules for a group that is not bound to any 群号", async () => {
+    // 真机踩过：回调里本来就带着群 id，代码却又按「私信指令」口径去反查 `#短码/绑定群号`——
+    // 群没绑定过时反查失败，于是点了开关却回「私信中设置规则需要提供已绑定的群号」，
+    // 且卡片已经写死「已更新」，看起来自相矛盾。
+    const result = await service.toggleRulesCard(
+      "g2",
+      "wordFilterEnabled",
+      "off",
+      "root",
+      "toggle",
+      "g2",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(configStore.get("g2").wordFilterEnabled).toBe(false);
+    expect(result.rich.markdown).toContain("已更新：关键词过滤 → 关");
+    expect(result.rich.markdown).not.toContain("私信中设置规则");
+  });
+
+  it("keeps the same menu and never claims「已更新」when the change fails", async () => {
+    const failed = await service.toggleRulesCard(
+      "g1",
+      "joinDecision",
+      "乱填的值",
+      "admin",
+      "decision",
+      "g1",
+    );
+
+    expect(failed.ok).toBe(false);
+    expect(failed.rich.markdown).toContain("未修改：");
+    expect(failed.rich.markdown).not.toContain("已更新");
+    // 失败也回同一张子卡：当前状态与可点的选项都还在
+    expect(
+      buttonsOf(failed).some((button) => button.id === "decision-match"),
+    ).toBe(true);
+  });
+
+  it("keeps the global rules panel behind the super admin check", async () => {
+    const defaultOn = configStore.get("g2").wordFilterEnabled;
+    expect(defaultOn).toBe(true);
+
+    const denied = await service.toggleRulesCard(
+      "__default__",
+      "wordFilterEnabled",
+      "off",
+      "admin",
+      "toggle",
+      "g1",
+    );
+    expect(denied.ok).toBe(false);
+    expect(denied.rich.markdown).not.toContain("已更新");
+    expect(configStore.get("g2").wordFilterEnabled).toBe(true);
+
+    const updated = await service.toggleRulesCard(
+      "__default__",
+      "wordFilterEnabled",
+      "off",
+      "root",
+      "toggle",
+      "g1",
+    );
+    expect(updated.ok).toBe(true);
+    // 全局默认关掉后，没有单群覆盖的群跟着生效
+    expect(configStore.get("g2").wordFilterEnabled).toBe(false);
   });
 
   it("toggles the multi-select punish actions from the card", () => {

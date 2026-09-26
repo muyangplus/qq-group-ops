@@ -228,7 +228,7 @@ describe("AdminCommandService · rules", () => {
   it("toggles rules via callback with operator feedback", async () => {
     const result = await service.toggleRulesCard(
       "g1",
-      "wordFilter",
+      "wordFilterEnabled",
       "off",
       "admin",
       undefined,
@@ -236,7 +236,8 @@ describe("AdminCommandService · rules", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.rich.markdown).toContain("已更新：wordFilter = off");
+    // 中文名 + 中文值：面板按钮上怎么写，提示就怎么写（不再回 `wordFilterEnabled = off`）
+    expect(result.rich.markdown).toContain("已更新：关键词过滤 → 关");
     expect(result.rich.markdown.split("\n")[1]).toBe("<@!admin>");
     expect(result.rich.markdown).not.toContain("操作人：");
     expect(configStore.get("g1").wordFilterEnabled).toBe(false);

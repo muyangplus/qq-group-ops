@@ -39,6 +39,7 @@ import {
   RULES_SET_USAGE,
   ruleToggleButton,
   RuleToggleSpec,
+  ruleValueLabel,
   requireValidRegex,
   viewButton,
   viewButtonWithOptions,
@@ -845,33 +846,35 @@ export async function toggleRulesCard(
   page = 1,
   mode: "allow" | "deny" = "allow",
 ): Promise<CardResult> {
-  const result = await handleRulesSet(ctx, undefined, userId, [
-    "rules",
-    "set",
-    targetGroupId,
-    field,
-    value,
-  ]);
-  const notice = `${ctx.helpers.mention(replyGroupId, userId)}已更新：${ruleFieldLabel(field)} = ${value}`;
+  // 回调里本来就带着群 id，**不要**再按「私信指令」口径去反查 `#短码/绑定群号`：
+  // 群没绑定过时反查会失败，于是点了开关却回一句「私信中设置规则需要提供已绑定的群号」
+  // （真机现象），而卡片又已经写死「已更新」，看起来就是自相矛盾的报错。
+  const isGlobal =
+    targetGroupId === DEFAULT_GROUP_ID || isGlobalTarget(targetGroupId);
+  const result = isGlobal
+    ? await handleGlobalRulesSet(ctx, userId, [field, value])
+    : await handleRulesSet(ctx, targetGroupId, userId, ["rules", "set", field, value]);
   const targetPanel = normalizeRulePanel(panel);
+  const label = `${ruleFieldLabel(field)} → ${ruleValueLabel(field, value)}`;
+  const renderMenu = (body: string): CardResult => {
+    const notice = `${ctx.helpers.mention(replyGroupId, userId)}${body}`;
+    return panel
+      ? rulesPanelCard(ctx, targetPanel, targetGroupId, userId, notice, page, mode)
+      : rulesCard(ctx, undefined, userId, ["rules", targetGroupId], notice);
+  };
+
   if (!result.ok) {
-    const card = renderCard({
-      title: "规则未修改",
-      lines: [notice, "", ...result.text.split("\n")],
-      rows: [
-        [
-          viewButton(
-            "back",
-            "返回规则",
-            "rules",
-            "panel",
-            targetGroupId,
-            targetPanel,
-          ),
-        ],
-      ],
+    log.warn("rule update via callback failed", {
+      targetGroupId,
+      field,
+      value,
+      userId,
+      reason: result.text,
     });
-    return { ok: false, text: card.text, rich: card };
+    // 失败也回**同一张菜单**：原因写在菜单顶部，当前状态一眼可见（不再谎报「已更新」）；
+    // `ok: false` 保留下来，调用方仍能识别这次没有改动
+    const reason = result.text.split("\n")[0] ?? result.text;
+    return { ...renderMenu(`未修改：${reason}`), ok: false };
   }
   log.info("rule updated via callback", {
     targetGroupId,
@@ -879,17 +882,7 @@ export async function toggleRulesCard(
     value,
     userId,
   });
-  if (!panel) {
-    return rulesCard(ctx, undefined, userId, ["rules", targetGroupId], notice);
-  }
-  return rulesPanelCard(ctx,
-    targetPanel,
-    targetGroupId,
-    userId,
-    notice,
-    page,
-    mode,
-  );
+  return renderMenu(`已更新：${label}`);
 }
 
 /**

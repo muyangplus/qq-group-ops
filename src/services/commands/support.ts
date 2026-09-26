@@ -579,6 +579,42 @@ export function ruleFieldLabel(field: string): string {
   return RULE_FIELD_LABELS[field as keyof GroupConfigOverride] ?? field;
 }
 
+/**
+ * 规则值的中文名（回调提示用）：**面板按钮上怎么写，这里就怎么写**。
+ *
+ * 真机上出现过 `已更新：入群决策 = approve_on_match` 这种「给程序员看」的提示，
+ * 点按钮的人得自己去猜 `approve_on_match` 是哪个选项；这里统一翻成面板上的词。
+ */
+const RULE_VALUE_LABELS: Record<string, string> = {
+  on: "开",
+  off: "关",
+  manual: "人工",
+  approve_on_match: "命中通过",
+  reject_on_match: "命中拒绝",
+  auto_approve: "全自动",
+  reject_on_mismatch: "未命中拒绝",
+};
+
+export function ruleValueLabel(field: string, value: string): string {
+  const known = RULE_VALUE_LABELS[value];
+  if (known) {
+    return known;
+  }
+  if (field === "muteDurationSeconds") {
+    const seconds = Number.parseInt(value, 10);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      if (seconds % 3600 === 0) {
+        return `${seconds / 3600} 小时`;
+      }
+      if (seconds % 60 === 0) {
+        return `${seconds / 60} 分钟`;
+      }
+      return `${seconds} 秒`;
+    }
+  }
+  return value;
+}
+
 export function ruleFieldShortLabel(field: keyof GroupConfigOverride): string {
   return RULE_FIELD_SHORT_LABELS[field] ?? ruleFieldLabel(field);
 }
