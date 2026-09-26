@@ -102,6 +102,16 @@ function mapGroupMessage(data: unknown): QQEvent | null {
       log.debug("mention probe: mention-like content", shape);
     }
   }
+  // §B3：整条消息就是「@全体」广播（剥离提及后没有正文）→ 直接丢弃。
+  //
+  // 真机确认（R1，2026-09-26）：`@全体成员` 在事件里是 `<@all> `，`@everyone` 是 `@everyone`。
+  // 它们会被 `stripBotMention` 当作机器人提及剥掉、剩下空内容，进而被当成「空 @机器人」
+  // 回一张常用菜单——群里有人 @全体 时机器人就抢答。这里短路掉：
+  // 不回复、不送关键词审核、不写审计、不处罚（没有正文可审）。
+  if (content.length === 0 && isAtAllBroadcast(rawContent)) {
+    log.info("mention probe: skipped at-all mention", describeContentShape(rawContent, content));
+    return null;
+  }
   return {
     type: "group_message",
     groupId,
@@ -128,6 +138,16 @@ export function classifyMentionProbe(raw: string): "at-all" | "mention" | "none"
   return looksMentionLike(raw) ? "mention" : "none";
 }
 
+/**
+ * §B3：这条原文是不是以「@全体」开头的广播。
+ *
+ * 判定只看**开头**：`大家好 @全体成员` 这种半路提及不算（它是正常发言，照常审核）；
+ * 真正的群广播一定是 @全体 打头。
+ */
+export function isAtAllBroadcast(raw: string): boolean {
+  return AT_ALL_PREFIX.test(raw);
+}
+
 /** 零宽 / 双向控制 / BOM 等不可见字符：QQ 客户端会在 @ 提及前后插入。 */
 const INVISIBLE_CHARS = "\\u200B-\\u200F\\u2060-\\u2064\\u2066-\\u2069\\uFEFF";
 const LEADING_NOISE = new RegExp(`^[\\s${INVISIBLE_CHARS}]+`, "u");
@@ -139,6 +159,15 @@ const ANGLE_MENTION = new RegExp(
 );
 /** 客户端可能把提及渲染成 `@昵称`（而不是 `<@id>`）。 */
 const AT_MENTION = new RegExp(`^@[^\\s/]+[\\s${INVISIBLE_CHARS}]*`, "u");
+/**
+ * §B3：开头就是「@全体」写法（允许前置空白 / 不可见字符）。
+ *
+ * 只锚定开头：`大家好 @全体成员` 这类半路提及不是广播，照常走审核。
+ */
+const AT_ALL_PREFIX = new RegExp(
+  `^[\\s${INVISIBLE_CHARS}]*(?:<@!?(?:all|everyone)>|@(?:all|everyone)\\b|@(?:全体成员|全体|全體|全员|所有人))`,
+  "iu",
+);
 
 /**
  * 去掉群聊 @机器人 留下的提及前缀。
@@ -151,6 +180,8 @@ const AT_MENTION = new RegExp(`^@[^\\s/]+[\\s${INVISIBLE_CHARS}]*`, "u");
  * 只剥离**开头连续**的提及与不可见字符，正文里的其它内容一律不动。
  * `@昵称` 这种写法只在后面紧跟 `/指令`（或没有内容）时才剥离：普通聊天
  * 「@张三 你好」不受影响，而「@机器人 /menu」能正常识别。
+ * 开头的 `@全体成员` / `<@all>` / `@everyone` 一律剥掉：它是广播标记不是「@某人」
+ * （§B3；整条只有 @全体 时由 `isAtAllBroadcast` 判为广播直接丢弃）。
  */
 export function stripBotMention(content: string): string {
   let rest = content.replace(LEADING_NOISE, "");
@@ -158,6 +189,12 @@ export function stripBotMention(content: string): string {
     const angle = rest.match(ANGLE_MENTION);
     if (angle) {
       rest = rest.slice(angle[0].length).replace(LEADING_NOISE, "");
+      continue;
+    }
+    // §B3：开头的 @全体 是广播标记，不是「@某人」，无条件剥掉（不留进正文）
+    const atAll = rest.match(AT_ALL_PREFIX);
+    if (atAll) {
+      rest = rest.slice(atAll[0].length).replace(LEADING_NOISE, "");
       continue;
     }
     const at = rest.match(AT_MENTION);
@@ -172,7 +209,6 @@ export function stripBotMention(content: string): string {
   }
   return rest;
 }
-
 /** 内容里是否出现提及/不可见字符特征（用来决定要不要打诊断日志）。 */
 function looksMentionLike(content: string): boolean {
   return content.includes("@") || INVISIBLE_PATTERN.test(content);

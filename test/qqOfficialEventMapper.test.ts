@@ -3,12 +3,65 @@ import { describe, expect, it } from "vitest";
 import {
   classifyMentionProbe,
   describeContentShape,
+  isAtAllBroadcast,
   QQOfficialEventMapper,
   stripBotMention,
 } from "../src/adapters/qqOfficialEventMapper.js";
 
 describe("QQOfficialEventMapper", () => {
   const mapper = new QQOfficialEventMapper();
+
+  it("drops bare @全体 broadcasts instead of answering with the menu (B3)", () => {
+    // 真机确认（R1）：`@全体成员` → `<@all> `；`@everyone` → `@everyone`
+    for (const content of [
+      "<@all> ",
+      "<@all>",
+      "@everyone",
+      "<@!everyone>",
+      "@全体成员",
+      "@所有人",
+      "\u200B@全体成员",
+    ]) {
+      expect(
+        mapper.map("GROUP_MESSAGE_CREATE", {
+          id: "m1",
+          group_openid: "g1",
+          content,
+          author: { id: "u1" },
+        }),
+      ).toBeNull();
+    }
+
+    // 带上正文就不是广播了：剥离 @全体 前缀后照常进入后续流程
+    expect(
+      mapper.map("GROUP_MESSAGE_CREATE", {
+        id: "m2",
+        group_openid: "g1",
+        content: "<@all> /menu",
+        author: { id: "u1" },
+      }),
+    ).toMatchObject({ content: "/menu" });
+    expect(
+      mapper.map("GROUP_MESSAGE_CREATE", {
+        id: "m3",
+        group_openid: "g1",
+        content: "@全体成员 大家好",
+        author: { id: "u1" },
+      }),
+    ).toMatchObject({ content: "大家好" });
+    // 半路出现的 @全体 不算广播（正常发言，照常审核）
+    expect(isAtAllBroadcast("大家好 @全体成员")).toBe(false);
+
+    // 「空 @机器人」仍然回主菜单，不能被 B3 误伤
+    expect(
+      mapper.map("GROUP_AT_MESSAGE_CREATE", {
+        id: "m4",
+        group_openid: "g1",
+        content: "<@!1234567890>",
+        author: { member_openid: "u1" },
+      }),
+    ).toMatchObject({ content: "" });
+  });
 
   it("maps group at-messages", () => {
     expect(
@@ -91,6 +144,11 @@ describe("QQOfficialEventMapper", () => {
   it("leaves normal chat that addresses other people alone", () => {
     expect(stripBotMention("@张三 你好")).toBe("@张三 你好");
     expect(stripBotMention("大家好 @张三")).toBe("大家好 @张三");
+    // @全体 是广播标记：开头的剥掉，半路的不动
+    expect(stripBotMention("@全体成员 大家好")).toBe("大家好");
+    expect(stripBotMention("<@all> /menu")).toBe("/menu");
+    expect(stripBotMention("@everyone /status")).toBe("/status");
+    expect(stripBotMention("大家好 @全体成员")).toBe("大家好 @全体成员");
   });
 
   it("classifies @全体 probes for the R1 diagnostic log", () => {
