@@ -14,6 +14,11 @@ on:
         description: 要部署的 tag / commit（留空 = 当前分支）
         required: false
         default: ""
+      dry_run:
+        description: 只试连与比对差异、不上传（验证 FTP 被动端口是否放行）
+        type: boolean
+        required: false
+        default: false
 
 # 最小权限：部署只用 FTP 凭据（secrets），不需要 GITHUB_TOKEN 的写权限。
 permissions:
@@ -149,7 +154,12 @@ jobs:
           port: ${{ vars.FTP_PORT || 21 }}
           local-dir: ./dist-deploy/
           server-dir: ${{ vars.FTP_SERVER_DIR }}
-          log-level: standard
+          # 只试连：dry-run 会走完 PASV 数据连接与差异比对，但不写服务器文件
+          dry-run: ${{ inputs.dry_run }}
+          # 被动模式数据连接建立慢时多等一会儿（默认 30s 偏紧）
+          timeout: 120000
+          # 首次联调用 verbose 看清 PASV/EPSV 交互；稳定后可改回 standard
+          log-level: verbose
           # 第二层保险：即使组包时漏了，也不上传这些（含 sourcemap）
           exclude: |
             **/.git*
