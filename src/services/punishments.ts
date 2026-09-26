@@ -5,6 +5,7 @@ import { AuditStatus } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import type { AuditRecord } from "../core/models.js";
 import { utcNow } from "../core/models.js";
+import { newestFirst } from "../core/ordering.js";
 import type { BlacklistScope } from "../db/blacklistRepository.js";
 import type {
   PunishmentActions,
@@ -109,10 +110,13 @@ export class PunishmentService {
   }
 
   public listByGroup(groupId: string, limit = 10): PunishmentRecord[] {
-    return [...this.records.values()]
-      .filter((record) => record.groupId === groupId)
-      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
-      .slice(0, limit);
+    const matched = [...this.records.values()].filter(
+      (record) => record.groupId === groupId,
+    );
+    return newestFirst(matched, (record) => record.createdAt.getTime()).slice(
+      0,
+      limit,
+    );
   }
 
   public listForUser(

@@ -174,17 +174,24 @@ describe("AdminCommandService · blacklist / punish / appeal", () => {
     await buildGuard().handleMessage(
       newIncomingMessage("g1", "member", "m1", "这是广告 快来买"),
     );
-    expect(punishments.listForUser("g1", "member")[0]?.messageExcerpt).toBe("");
+    const withoutRetention = punishments
+      .listForUser("g1", "member")
+      .find((item) => item.messageId === "m1");
+    expect(withoutRetention?.messageExcerpt).toBe("");
 
     // 开启 7 天后：落库原文（压成单行 + 截断）
     configStore.setOverride({ groupId: "g1", rawMessageRetentionDays: 7 });
     await buildGuard().handleMessage(
       newIncomingMessage("g1", "member", "m2", `这是广告\n${"长".repeat(300)}`),
     );
-    const record = punishments.listForUser("g1", "member")[0]!;
-    expect(record.messageExcerpt.startsWith("这是广告 ")).toBe(true);
-    expect(record.messageExcerpt).not.toContain("\n");
-    expect(record.messageExcerpt).toHaveLength(RAW_MESSAGE_EXCERPT_MAX);
+    // 按 messageId 取记录：这条用例只关心「原文有没有落库」，不依赖列表排序
+    const record = punishments
+      .listForUser("g1", "member")
+      .find((item) => item.messageId === "m2");
+    expect(record).toBeDefined();
+    expect(record?.messageExcerpt.startsWith("这是广告 ")).toBe(true);
+    expect(record?.messageExcerpt).not.toContain("\n");
+    expect(record?.messageExcerpt).toHaveLength(RAW_MESSAGE_EXCERPT_MAX);
   });
 
   it("submits a reason-less appeal from the private card callback (muted-safe)", async () => {

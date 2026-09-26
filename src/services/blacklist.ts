@@ -5,6 +5,7 @@ import { AuditStatus } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import type { AuditRecord } from "../core/models.js";
 import { utcNow } from "../core/models.js";
+import { newestFirst } from "../core/ordering.js";
 import type {
   BlacklistEntry,
   BlacklistRepository,
@@ -109,8 +110,8 @@ export class BlacklistService {
   }
 
   public all(): BlacklistEntry[] {
-    return [...this.entries.values()].sort(
-      (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
+    return newestFirst(this.entries.values(), (entry) =>
+      entry.createdAt.getTime(),
     );
   }
 

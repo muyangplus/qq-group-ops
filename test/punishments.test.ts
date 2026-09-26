@@ -100,6 +100,29 @@ describe("PunishmentService", () => {
     expect(punishments.get("#000000")?.detail).toBe("recall+mute+warn");
   });
 
+  it("同毫秒创建的记录也按「最新在前」返回", async () => {
+    const api = new FakeQQOfficialAPI();
+    const blacklist = new BlacklistService(api);
+    const frozen = new Date("2026-09-26T00:00:00.000Z");
+    const svc = new PunishmentService(api, blacklist, { now: () => frozen });
+    const actions = {
+      recalled: false,
+      muted: false,
+      muteDurationSeconds: 0,
+      kicked: false,
+      blacklist: "",
+    };
+    await svc.create({ groupId: "g1", userId: "u1", messageId: "m1", actions });
+    await svc.create({ groupId: "g1", userId: "u1", messageId: "m2", actions });
+
+    // 两条记录时间戳完全相同：只有「后创建的在前」才能保证列表顺序不随机器快慢抖动
+    expect(svc.listForUser("g1", "u1").map((record) => record.messageId)).toEqual([
+      "m2",
+      "m1",
+    ]);
+    expect(svc.listByGroup("g1")[0]?.messageId).toBe("m2");
+  });
+
   it("carries the original message on every private card of the appeal flow", async () => {
     const { api, appeals, notifier, punishments } = setup();
     const kept = await punishments.create({

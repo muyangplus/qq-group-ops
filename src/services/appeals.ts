@@ -2,6 +2,7 @@ import { randomInt } from "node:crypto";
 
 import { getLogger } from "../core/logger.js";
 import { utcNow } from "../core/models.js";
+import { newestFirst } from "../core/ordering.js";
 import type {
   AppealRecord,
   AppealRepository,
@@ -215,8 +216,8 @@ export class AppealService {
   }
 
   private all(): AppealRecord[] {
-    return [...this.appeals.values()].sort(
-      (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
+    return newestFirst(this.appeals.values(), (appeal) =>
+      appeal.createdAt.getTime(),
     );
   }
 
