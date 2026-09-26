@@ -7,6 +7,31 @@ export interface OfficialEventMapper {
   map(eventType: string, data: unknown): QQEvent | null;
 }
 
+export interface OfficialEventMapperOptions {
+  /**
+   * 未处理事件类型的回调：**每种类型只回调一次**（进程内去重），由装配方负责
+   * 「私信超管」。日志侧不受影响——每次收到未知类型都会记一条 warn。
+   */
+  onUnhandledEvent?:
+    | ((info: { eventType: string; payload: unknown }) => void)
+    | undefined;
+}
+
+/** 未处理事件 payload 的日志/通知摘要：JSON 截断，避免几 KB 的 payload 撑爆卡片与日志。 */
+const PAYLOAD_SUMMARY_MAX = 800;
+
+function summarizePayload(data: unknown): string {
+  let json: string;
+  try {
+    json = JSON.stringify(data) ?? String(data);
+  } catch {
+    json = String(data);
+  }
+  return json.length > PAYLOAD_SUMMARY_MAX
+    ? `${json.slice(0, PAYLOAD_SUMMARY_MAX)}…`
+    : json;
+}
+
 /** 本项目已经处理的事件类型（其余类型只会被记一条日志，便于真机确认官方还会推什么）。 */
 const HANDLED_EVENT_TYPES = new Set([
   "GROUP_AT_MESSAGE_CREATE",
@@ -31,8 +56,15 @@ export function isHandledEventType(eventType: string): boolean {
  * - 平台新增能力：先把类型和字段形状暴露出来，再决定要不要实现。
  */
 export class QQOfficialEventMapper implements OfficialEventMapper {
-  /** 已经记过日志的未知事件类型（同类型只记一次，避免刷日志）。 */
+  /** 已经**通知过**的未知事件类型（同类型只通知一次，避免刷私信）。 */
   private readonly reportedUnhandled = new Set<string>();
+  private readonly onUnhandledEvent:
+    | ((info: { eventType: string; payload: unknown }) => void)
+    | undefined;
+
+  public constructor(options: OfficialEventMapperOptions = {}) {
+    this.onUnhandledEvent = options.onUnhandledEvent;
+  }
 
   public map(eventType: string, data: unknown): QQEvent | null {
     if (eventType === "GROUP_AT_MESSAGE_CREATE" || eventType === "GROUP_MESSAGE_CREATE") {
@@ -51,17 +83,25 @@ export class QQOfficialEventMapper implements OfficialEventMapper {
     return null;
   }
 
-  /** 未处理事件只记一次：类型 + payload 顶层字段名。 */
+  /**
+   * 未处理事件：**每次都记 warn**（带类型、顶层字段名与截断后的 payload），
+   * **每种类型只通知一次超管**（`onUnhandledEvent` 由装配方接线）。
+   */
   private reportUnhandled(eventType: string, data: unknown): void {
     const type = eventType.trim();
-    if (type.length === 0 || this.reportedUnhandled.has(type)) {
+    if (type.length === 0) {
+      return;
+    }
+    log.warn("unhandled official event (ignored)", {
+      eventType: type,
+      dataKeys: isRecord(data) ? Object.keys(data).slice(0, 40) : [],
+      payload: summarizePayload(data),
+    });
+    if (this.reportedUnhandled.has(type)) {
       return;
     }
     this.reportedUnhandled.add(type);
-    log.info("unhandled official event (ignored)", {
-      eventType: type,
-      dataKeys: isRecord(data) ? Object.keys(data).slice(0, 40) : [],
-    });
+    this.onUnhandledEvent?.({ eventType: type, payload: data });
   }
 }
 

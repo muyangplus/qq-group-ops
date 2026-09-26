@@ -7,17 +7,21 @@ import { isRateLimitedError } from "./adapters/qqOfficial.js";
 import { hasQqCredentials, loadSettings, type Settings } from "./config.js";
 import { instrumentEventGateway } from "./core/instrumentation.js";
 import { closeLogging, configureLogging, getLogger } from "./core/logger.js";
+import { formatDisplayTime } from "./core/timeFormat.js";
 import { retryWithBackoff } from "./core/retry.js";
 import { loadEnvFile } from "./env.js";
 import { attachGateway } from "./gatewayRunner.js";
 import { connectPersistence } from "./persistence.js";
-import { createRuntime } from "./runtime.js";
+import { createRuntime, type Runtime } from "./runtime.js";
+import { renderCard } from "./services/cardTemplate.js";
 import { ActivityReminderService } from "./services/activityReminder.js";
 import { AppealWatcher } from "./services/appealWatcher.js";
 import { RetentionService } from "./services/retention.js";
 
 /** 启动阶段命中限流时的固定冷却时间。 */
 const RATE_LIMIT_STARTUP_COOLDOWN_MS = 60_000;
+
+const log = getLogger("main");
 
 async function main(): Promise<void> {
   loadEnvFile();
@@ -129,7 +133,11 @@ async function main(): Promise<void> {
       : new QQOfficialGateway({
           api: runtime.api,
           createSocket: (url) => new NativeWebSocketFactory(url).create(),
-          mapper: new QQOfficialEventMapper(),
+          mapper: new QQOfficialEventMapper({
+            onUnhandledEvent: (info) => {
+              void alertUnknownEvent(runtime, info);
+            },
+          }),
           onHello: (heartbeatIntervalMs) => {
             log.debug("gateway hello", { heartbeatIntervalMs });
           },
@@ -239,8 +247,66 @@ function buildWebhookGateway(
     port: settings.webhookPort,
     host: settings.webhookHost,
     path: settings.webhookPath,
-    mapper: new QQOfficialEventMapper(),
+    mapper: new QQOfficialEventMapper({
+      onUnhandledEvent: (info) => {
+        void alertUnknownEvent(runtime, info);
+      },
+    }),
     keyDerivation: settings.webhookKeyDerivation,
     signContent: settings.webhookSignContent,
+  });
+}
+
+/**
+ * 未知事件类型：私信全部**全局超管**（每种类型只通知一次，由 mapper 去重）。
+ *
+ * 内容含类型、顶层字段名与**截断后的 payload**（用户确认要原文，便于直接判断怎么映射）——
+ * 注意 payload 里可能含用户 openid / 发言内容，只发给超管。
+ */
+async function alertUnknownEvent(
+  runtime: Runtime,
+  info: { eventType: string; payload: unknown },
+): Promise<void> {
+  const admins = runtime.permissions.listSuperAdmins();
+  if (admins.length === 0) {
+    log.warn("unhandled official event but no super admin to notify", {
+      eventType: info.eventType,
+    });
+    return;
+  }
+  const payload =
+    typeof info.payload === "string"
+      ? info.payload
+      : (() => {
+          try {
+            return JSON.stringify(info.payload) ?? String(info.payload);
+          } catch {
+            return String(info.payload);
+          }
+        })();
+  const card = renderCard({
+    title: "未知事件类型",
+    lines: [
+      `**事件类型**：${info.eventType}`,
+      `**顶层字段**：${
+        info.payload && typeof info.payload === "object"
+          ? Object.keys(info.payload as Record<string, unknown>)
+              .slice(0, 20)
+              .join("、")
+          : "（非对象）"
+      }`,
+      `**时间**：${formatDisplayTime(new Date())}`,
+      "",
+      "**原始 payload（截断 800 字）**：",
+      payload.length > 800 ? `${payload.slice(0, 800)}…` : payload,
+    ],
+    footer: ["该事件类型目前没有被机器人处理；如需支持请告知开发者。"],
+  });
+  for (const userId of admins) {
+    await runtime.notifications.sendPrivateCard(userId, card);
+  }
+  log.info("unhandled official event alerted", {
+    eventType: info.eventType,
+    admins: admins.length,
   });
 }
