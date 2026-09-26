@@ -12,7 +12,8 @@
 - **CD：打 tag 发 Release 自动发布到 FTP**（`.github/workflows/cd-ftp.yml` + [`docs/CD.md`](docs/CD.md)）：
   触发方式为 **Release published**（或手动 dispatch，可填 ref 用于回滚）；
   部署前跑 `typecheck + test + build` 门禁；部署任务挂在 `production-ftp` Environment（可配 required reviewers）；
-  白名单组包 + 排除兜底，`.env` / `data/` / `logs/` / `test/` / `node_modules/` **不会**上传；
+  上传的是**运行产物**（`dist` + `scripts` + `package.json` + `pnpm-lock.yaml` + `.env.example`），
+  **不含** `src` / `docs` / `tsconfig` / `Dockerfile` / `test` / `.env` / `data` / `logs` / `*.map`；
   默认 `ftps`（显式 TLS），凭据只来自 `secrets.*`；`dangerous-clean-slate` 关闭（不删服务器上多余文件）。
 - **依赖与 Action 安全更新**：`.github/dependabot.yml` 每周给 npm 依赖与 GitHub Actions 开分组 PR（对应 TODO D6）。
 - **工作流安全审计测试**：`test/workflows.test.ts` 用 YAML 解析器守住不变量 ——

@@ -49,16 +49,24 @@ Settings → **Environments** → 新建 `production-ftp` 后可以：
 
 ## 3. 上传了什么 / 没上传什么
 
-工作流在部署前显式**白名单组包**（`dist-deploy/`）：
+部署的是**运行产物**，不是仓库快照。工作流在部署前显式白名单组包（`dist-deploy/`）：
 
 ```
-dist/  src/  scripts/  docs/
-package.json  pnpm-lock.yaml  tsconfig.json  .env.example
-README.md  CHANGELOG.md  Dockerfile  docker-compose.yml
+dist/                 # 编译产物；`node dist/main.js` 自包含（不引 ../src）
+scripts/              # build-class-index.mjs / classIndex.mjs（`pnpm class:index`，纯 node 内置模块）
+package.json          # 运行脚本入口（start / class:index）
+pnpm-lock.yaml        # 锁定依赖版本，服务器上 pnpm install --prod
+.env.example          # 配置对照模板（不含真实值）
 ```
 
-**绝不带上服务器**（组包不拷贝 + Action `exclude` 双层兜底）：
-`.env` / `.env.*`、`data/`、`logs/`、`test/`、`.git*`、`.github/`、`node_modules/`、`coverage/`、`*.log`。
+**不上服务器**：
+
+- `src/`、`tsconfig.json`：生产运行不需要（`dist` 自包含）；服务器上要改代码请改仓库再走一次发布；
+- `docs/`、`README.md`、`CHANGELOG.md`、`Dockerfile`、`docker-compose.yml`：仓库侧资料，运行不需要；
+- `*.map`：没有 `src` 时 sourcemap 无法对照，组包时直接删除（体积少一半）；若你希望在服务器上看可读堆栈，
+  把 `src/` 加进白名单并去掉删 `.map` 那行即可；
+- 敏感与噪音：`.env` / `.env.*`、`data/`、`logs/`、`test/`、`.git*`、`.github/`、`node_modules/`、`coverage/`、`*.log`
+  —— 组包不拷贝 + Action `exclude` 双层兜底。
 
 `dangerous-clean-slate` 保持默认关闭：**不会删除服务器上多余的文件**（不会误删服务器自己的 `.env`、`data/`）。
 
@@ -67,10 +75,14 @@ README.md  CHANGELOG.md  Dockerfile  docker-compose.yml
 ```bash
 # 目标目录（FTP_SERVER_DIR）里首次准备
 cd /apps/qq-group-ops
-pnpm install --prod      # 只装运行依赖（本项目运行时依赖 pg；fastify 也在这里）
+pnpm install --prod      # 只装运行依赖（本项目：pg、fastify）
 # 自己放一份 .env（从 .env.example 抄），并确保 data/ 与 logs/ 目录存在且可写
 mkdir -p data logs
+pnpm start               # = node dist/main.js；需要班级索引时先 pnpm class:index
 ```
+
+> 每次发布只同步变化文件（Action 会在服务器上留一份 `.ftp-deploy-sync-state.json`），
+> 所以"只发运行产物"的另一个好处是：同步快、不易把仓库侧的临时文件带上生产。
 
 ## 4. 安全审计清单
 
@@ -83,7 +95,8 @@ mkdir -p data logs
 - **人工放行**：部署任务挂在 `production-ftp` Environment 上，可配 required reviewers；
 - **部署前门禁**：`pnpm typecheck` + `pnpm test` + `pnpm build` 全过才碰服务器；
 - **并发保护**：同一 ref 的部署排队执行，避免并发写坏目录；
-- **白名单组包 + 排除兜底**：敏感文件（`.env` / `data/` / `logs/`）不会被上传；
+- **白名单组包 + 排除兜底**：只上传运行产物（`dist` / `scripts` / 依赖清单 / `.env.example`），
+  敏感文件（`.env` / `data/` / `logs/`）、测试与 sourcemap 都不会上传；
 - **审计线索**：每次运行在 Summary 里写清 `ref` / `commit` / 触发方式 / 执行者 / 目标目录；
 - **Action 钉版本**：所有 `uses:` 都钉在版本标签上（`@v4`、`@v4.3.5`），禁止 `@main`；
 - **禁用 `pull_request_target`**：避免典型的提权 + secrets 泄露入口；
@@ -104,8 +117,9 @@ mkdir -p data logs
 ## 5. 回滚
 
 1. Actions → `CD · FTP 发布` → **Run workflow**，`ref` 填要回滚到的 tag（例如 `v0.16.0`）；
-2. 走完门禁 + 审批后，旧版本文件会被重新上传（注意：**不会自动删除**新版带来的文件，必要时手动清理）；
-3. 服务器上 `pnpm install --prod` → 重启进程；
+2. 走完门禁 + 审批后，旧版本的运行产物会被重新上传
+   （注意：**不会自动删除**新版多出来的文件；改动文件清单时请手动清理服务器上的遗留文件）；
+3. 服务器上 `pnpm install --prod` → 重启进程（`pnpm start`）；
 4. 如果改动涉及数据库结构（例如 0.16.0 的 `punishActions` 是键值表，无迁移风险），优先用备份恢复。
 
 ## 6. 排障
@@ -116,5 +130,7 @@ mkdir -p data logs
 | `缺少配置：FTP_SERVER_DIR(variable)` | 忘了配 Variable（不是 Secret），见 §2.2 |
 | 连接失败 / TLS 报错 | `FTP_PROTOCOL` 与服务端是否匹配（显式 FTPS 通常是 21 端口 + `AUTH TLS`）；服务器证书是否有效 |
 | 上传成功但服务器跑不起来 | `dist/` 是否上传（门禁里 `pnpm build` 成功才有）、服务器是否 `pnpm install --prod`、`.env` 是否自己放好 |
+| 堆栈全是 `dist/xxx.js` 看不出源码行 | 只发运行产物时 `.map` 已删除；需要可读堆栈就把 `src/` 加进白名单并去掉删 `.map` 那步，运行时加 `NODE_OPTIONS=--enable-source-maps` |
+| 服务器上残留旧文件 | 部署不会删除多余文件（`dangerous-clean-slate` 关闭）；改过文件清单后手动清理一次 |
 | 部署到一半失败 | 组包是白名单、`dangerous-clean-slate` 关闭，所以不会删服务器文件；修好配置重跑即可 |
 | 想只部署某个分支 | 手动 dispatch 时 `ref` 填分支名（Environment 的 branch 限制要放行） |

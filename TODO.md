@@ -193,7 +193,7 @@ Phase 2 → E1、E2、B4、B5、B6；Phase 3 → E3–E5；Phase 4 → D6–D9�
   决策见 [ADR-0049](./docs/DECISIONS.md)，部署见 [OPERATIONS.md](./docs/OPERATIONS.md)。
 - [x] **D10 CD：打 tag 发 Release 自动发布到 FTP**（P2 · 批次4 · **已完成**）`.github/workflows/cd-ftp.yml`：
   Release published / 手动 dispatch 触发 → `typecheck + test + build` 门禁 → `production-ftp` Environment（可配人工放行）
-  → 白名单组包（不含 `.env` / `data` / `logs` / `test` / `node_modules`）→ FTPS 上传；
+  → 组包**运行产物**（`dist` + `scripts` + `package.json` + `pnpm-lock.yaml` + `.env.example`，删 `*.map`）→ FTPS 上传；
   配置清单与安全审计见 [docs/CD.md](./docs/CD.md)，不变量由 `test/workflows.test.ts` 守住。
   配套：`.github/dependabot.yml`（npm + Actions 每周分组升级，对应 D6）。
 - [ ] **D6 安全审计与依赖更新策略**（P2 · 批次5 · Phase 4）`pnpm audit` 周期化 + 依赖升级与回归流程；
