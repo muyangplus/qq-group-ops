@@ -236,14 +236,11 @@ export function buildAppealReceiptCard(input: {
       ? {
           rows: [
             [
+              // 同上：1:1 私信不需要 specifyUserIds（鉴权在服务端）
               {
                 id: "appeal-again",
                 label: "补充理由",
                 command: `/appeal ${record} `,
-                permission: {
-                  type: 0 as const,
-                  specifyUserIds: [input.recipientId],
-                },
                 unsupportTips: `请直接发送 /appeal ${record} <理由>`,
               },
             ],
@@ -289,21 +286,19 @@ export function buildAppealGuideCard(input: {
       ? {
           rows: [
             [
-              callbackButton(
-                "appeal-submit",
-                "直接提交",
-                encodeCallback("appeal", "submit", input.recordId),
-                input.recipientId,
-                { style: STYLE_PRIMARY },
-              ),
+              // §B8：当事人卡片是 1:1 私信，**不带 permission.specifyUserIds**
+              // （真机出现「无权限操作」）；鉴权全部在服务端做
+              // （appealCallbackCard 会校验 record.userId === userId）。
+              {
+                id: "appeal-submit",
+                label: "直接提交",
+                style: STYLE_PRIMARY,
+                callbackData: encodeCallback("appeal", "submit", input.recordId),
+              },
               {
                 id: "appeal",
                 label: "写理由提交",
                 command: `/appeal ${record} `,
-                permission: {
-                  type: 0 as const,
-                  specifyUserIds: [input.recipientId],
-                },
                 unsupportTips: `请直接发送 /appeal ${record} <理由>`,
               },
             ],
@@ -323,13 +318,16 @@ export function buildAppealGuideCard(input: {
  * > 违规内容全文
  * ```
  * 未保留原文时只给一行「（未保留原文）」。
+ *
+ * 注意：引用块**后面必须补一个空行**，否则后面的 `**群**：` / `**处罚记录**：` 会被
+ * Markdown 当成引用块的**懒惰延续**，整段都画进灰色引用里（真机踩过）。
  */
 export function excerptLines(excerpt: string): string[] {
   const text = excerpt.trim();
   if (text.length === 0) {
-    return ["**原文**：（未保留原文）"];
+    return ["**原文**：（未保留原文）", ""];
   }
-  return ["**原文**：", `> ${escapeCardText(text)}`];
+  return ["**原文**：", `> ${escapeCardText(text)}`, ""];
 }
 
 /** 通用处理回执卡（动作结果 + 返回入口）。 */

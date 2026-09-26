@@ -227,5 +227,8 @@ describe("AdminCommandService · blacklist / punish / appeal", () => {
     const record = punishments.listForUser("g1", "member")[0]!;
     expect(record.actions.muted).toBe(true);
     expect(record.actions.muteDurationSeconds).toBe(configStore.get("g1").muteDurationSeconds);
+    // §B8：被禁言时群里按钮点不动，所以群里那张卡必须给出私聊申诉的等价指令
+    expect(String(warning?.markdown)).toContain(`/appeal #${record.recordId}`);
+    expect(String(warning?.markdown)).toContain("被禁言时群内按钮点不动");
   });
 });
