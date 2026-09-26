@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+（暂无未发布改动）
+
+
+## [0.18.1] - 2026-09-26
+
 ### 修复
 
 - **卡片与日志时间显示成 UTC（少 8 小时）**：展示用的两个格式化函数都直接 `toISOString()`，
@@ -45,6 +50,16 @@
 
 （暂无未发布改动）
 
+
+- **处罚卡「未保留原文」的说明改清楚了**：从 `**原文**：（未保留原文）` 改成
+  `**原文**：（未保留 · 本群未开启消息保留）`，并说明老记录补不回来（写库时没存）。
+
+### 新增
+
+- **未定义事件类型的告警**：机器人接收全部事件推送，遇到本项目没有处理的事件类型时 ——
+  **每次收到都记一条 `warn`**（事件类型 + payload 顶层字段名 + 截断 800 字的原始 payload），
+  并且**每种类型只私信一次全部全局超管**（卡片含类型、顶层字段、时间与截断后的 payload；
+  一个超管都没配时记 warn，不静默丢弃）。
 
 ## [0.18.0] - 2026-09-26
 
@@ -700,7 +715,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.4...v0.18.0
 [0.17.4]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.3...v0.17.4
 [0.17.3]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.2...v0.17.3
