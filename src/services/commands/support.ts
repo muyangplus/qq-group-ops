@@ -22,6 +22,7 @@ import {
   type JoinDecisionMode as JoinDecisionModeType,
 } from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
+import { formatDisplayTime } from "../../core/timeFormat.js";
 import type { AuditLog } from "../audit.js";
 import { ActivityCardService } from "../activityCards.js";
 import type {
@@ -1423,5 +1424,6 @@ export function clampLimit(value: string | undefined): number {
 }
 
 export function formatTime(date: Date): string {
-  return date.toISOString().replace("T", " ").slice(0, 19);
+  // 展示时区默认 UTC+8（env 可配），库里仍存 UTC
+  return formatDisplayTime(date);
 }

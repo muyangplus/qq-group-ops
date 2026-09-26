@@ -1,4 +1,5 @@
 import type { KeyboardModal } from "../adapters/qqOfficial.js";
+import { formatDisplayTime } from "../core/timeFormat.js";
 import { encodeCallback } from "./callbackData.js";
 import {
   escapeCardText,
@@ -456,7 +457,8 @@ export function formatDuration(seconds: number): string {
 }
 
 function formatTimestamp(date: Date): string {
-  return date.toISOString().replace("T", " ").slice(0, 19);
+  // 展示时区默认 UTC+8（env 可配），库里仍存 UTC
+  return formatDisplayTime(date);
 }
 
 /** 处罚动作按钮行（处罚通知卡与申诉卡共用）。 */

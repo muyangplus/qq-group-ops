@@ -1,5 +1,6 @@
 import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import { dirname } from "node:path";
+import { formatLogTime } from "./timeFormat.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export type LogColorMode = "auto" | "always" | "never";
@@ -127,7 +128,7 @@ export class StructuredLogger implements Logger {
       return;
     }
     const entry: LogEntry = {
-      time: new Date().toISOString(),
+      time: formatLogTime(new Date()),
       level,
       module: this.module,
       message,

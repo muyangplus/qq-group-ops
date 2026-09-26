@@ -52,6 +52,7 @@ import { ActivityStatsService } from "./services/activityStats.js";
 import { ActivityNotificationService } from "./services/activityNotifications.js";
 import { AdminCommandService } from "./services/adminCommands.js";
 import { isNotifyChannel } from "./services/commands/notifyCommands.js";
+import { setDisplayTimeZone } from "./core/timeFormat.js";
 import { AppealService } from "./services/appeals.js";
 import { AuditLogStore } from "./services/audit.js";
 import { BlacklistService } from "./services/blacklist.js";
@@ -165,6 +166,13 @@ export function createRuntime(
   dependencies: RuntimeDependencies = {},
 ): Runtime {
   const repositories = dependencies.repositories ?? {};
+  // 展示时区（卡片时间 + 日志时间）：默认 UTC+8，`TZ` / `TIMEZONE` 可覆盖
+  if (!setDisplayTimeZone(settings.displayTimezone)) {
+    getLogger("runtime").warn(
+      "invalid display timezone, falling back to UTC+8",
+      { displayTimezone: settings.displayTimezone },
+    );
+  }
   const writeQueue = new WriteQueue();
   const api = instrumentQQOfficialAPI(createApi(settings), getLogger("runtime"));
   const richMessages = new RichMessageSender(api);

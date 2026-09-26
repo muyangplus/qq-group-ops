@@ -4,6 +4,7 @@ import {
   type WebhookKeyDerivation,
   type WebhookSignContent,
 } from "./adapters/qqWebhookSignature.js";
+import { DEFAULT_DISPLAY_TIME_ZONE } from "./core/timeFormat.js";
 
 export const DEFAULT_SQLITE_PATH = "data/qq-group-ops.db";
 export const DEFAULT_BOT_CACHE_FILE = "data/qq-bot-cache.json";
@@ -56,6 +57,8 @@ export interface Settings {
   logColor: string;
   rawMessageRetentionDays: number;
   auditLogRetentionDays: number;
+  /** 展示时区（卡片时间 + 日志时间）；`TZ` / `TIMEZONE`，默认 `Asia/Shanghai`（UTC+8）。 */
+  displayTimezone: string;
   /** 私信首次交互主菜单的记录方式（dev 默认内存，正式默认入库）。 */
   menuFirstPush: MenuFirstPushMode;
   /** 待审批入群申请的有效期（天）；0 表示不自动过期（默认 7）。 */
@@ -312,6 +315,8 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     logConsole: asBool(env.LOG_CONSOLE, true),
     logColor: env.LOG_COLOR ?? "auto",
     rawMessageRetentionDays: asInt(env.RAW_MESSAGE_RETENTION_DAYS, 0),
+    // 展示时区：默认 UTC+8，`TZ` / `TIMEZONE` 可覆盖（非法值由 setDisplayTimeZone 回落）
+    displayTimezone: asText(env.TZ ?? env.TIMEZONE, DEFAULT_DISPLAY_TIME_ZONE),
     auditLogRetentionDays: asInt(env.AUDIT_LOG_RETENTION_DAYS, 180),
     menuFirstPush: resolveMenuFirstPushMode(env.MENU_FIRST_PUSH),
     joinRequestTtlDays: asInt(env.JOIN_REQUEST_TTL_DAYS, 7),
