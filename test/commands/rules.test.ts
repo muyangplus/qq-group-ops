@@ -19,27 +19,41 @@ describe("AdminCommandService · rules", () => {
     expect(result.text).toContain("广告");
   });
 
-  it("configures keyword recall and punishment", async () => {
-    await service.handle("g1", "admin", "/rules set keywordRecall on");
-    await service.handle("g1", "admin", "/rules set keywordPunish kick_blacklist");
+  it("configures the multi-select punish actions", async () => {
+    // §B2 多选：可以一次设置多个动作
+    await service.handle("g1", "admin", "/rules set punish 警告,撤回,禁言");
 
-    expect(configStore.get("g1").keywordRecall).toBe(true);
-    expect(configStore.get("g1").keywordPunish).toBe("kick_blacklist");
+    expect(configStore.get("g1").punishActions).toEqual({
+      warn: true,
+      recall: true,
+      mute: true,
+      kick: false,
+      blacklist: false,
+    });
 
-    // 中文别名
-    await service.handle("g1", "admin", "/rules set 处罚 禁言");
-    expect(configStore.get("g1").keywordPunish).toBe("mute");
+    // 英文别名 + 覆盖式写入（整组替换）
+    await service.handle("g1", "admin", "/rules set 处罚 kick blacklist");
+    expect(configStore.get("g1").punishActions).toEqual({
+      warn: false,
+      recall: false,
+      mute: false,
+      kick: true,
+      blacklist: true,
+    });
 
-    await service.handle("g1", "admin", "/rules set 撤回 off");
-    expect(configStore.get("g1").keywordRecall).toBe(false);
+    // 清空 = 五个动作全关
+    await service.handle("g1", "admin", "/rules set punish none");
+    expect(configStore.get("g1").punishActions).toEqual({
+      warn: false,
+      recall: false,
+      mute: false,
+      kick: false,
+      blacklist: false,
+    });
 
-    const invalid = await service.handle(
-      "g1",
-      "admin",
-      "/rules set keywordPunish nope",
-    );
+    const invalid = await service.handle("g1", "admin", "/rules set punish 不存在的动作");
     expect(invalid.ok).toBe(false);
-    expect(invalid.text).toContain("none / mute / kick / kick_blacklist");
+    expect(invalid.text).toContain("未知的违规处理动作");
   });
 
   it("updates group keywords with /rules set", async () => {

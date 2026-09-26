@@ -1,5 +1,6 @@
 import { PermissionLevel } from "../core/enums.js";
 import type { EffectiveGroupConfig, GroupConfigStore } from "./groupConfig.js";
+import { describePunishActions } from "./groupConfigCore.js";
 import type { IdentityMapService } from "./identityMap.js";
 import type { PermissionService } from "./permissions.js";
 
@@ -58,10 +59,6 @@ function isGroupAdmin(context: HelpContext): boolean {
 function configSummary(config: EffectiveGroupConfig): string[] {
   const keywords =
     config.keywords.length > 0 ? config.keywords.join("、") : "（未配置）";
-  const keywordActions = [
-    config.keywordRecall ? "撤回" : undefined,
-    config.keywordPunish !== "none" ? config.keywordPunish : undefined,
-  ].filter((item): item is string => item !== undefined);
   const roster = [
     config.allowColleges.length > 0 ? `允许学院 ${config.allowColleges.join("、")}` : undefined,
     config.denyColleges.length > 0 ? `禁止学院 ${config.denyColleges.join("、")}` : undefined,
@@ -74,7 +71,7 @@ function configSummary(config: EffectiveGroupConfig): string[] {
     `  关键词：${keywords}`,
     `  警告文案：${config.warningMessage}`,
     `  禁言时长：${config.muteDurationSeconds} 秒`,
-    `  命中动作：${keywordActions.length > 0 ? `警告 + ${keywordActions.join(" + ")}` : "仅警告"}`,
+    `  违规处理：${describePunishActions(config.punishActions)}（可多选）`,
     `  入群决策：${config.joinDecision} · 要求班级 ${config.joinRequireClass} · 要求姓名 ${config.joinRequireName} · 审核意见 ${config.joinReviewOpinion} · 自动处理也通知 ${config.notifyAutoApproved}`,
     `  名单筛选：${roster.length > 0 ? roster.join(" · ") : "学院 / 年级均不限"}`,
   ];
@@ -406,10 +403,11 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
         "  /rules set export on|off            导出开关（当前仅存储展示）",
         "  /rules set enabled on|off           本群机器人总开关",
         "",
-        "关键词处罚（命中后除了警告之外的额外动作）：",
-        "  /rules set keywordRecall on|off     是否撤回命中消息",
-        "  /rules set keywordPunish none|mute|kick|kick_blacklist",
-        "      none=只警告  mute=禁言(muteDuration)  kick=移出  kick_blacklist=移出并拉黑",
+        "违规处理（**多选**：警告 / 撤回 / 禁言 / 踢出 / 拉黑，逗号分隔，可任意组合）：",
+        "  /rules set punish 警告,撤回,禁言      例如「警告 + 撤回 + 禁言」",
+        "  /rules set punish none               五个动作全关（什么都不做）",
+        "      警告=发群规则文案  撤回=撤回命中消息  禁言=禁言 muteDuration 秒",
+        "      踢出=移出群  拉黑=落本群黑名单并尝试官方拉黑（**不自动踢人**）",
         "",
         "入群审核规则（班级库由 pnpm class:index 生成）：",
         "  /rules set joinDecision manual|auto_approve|approve_on_match|reject_on_match|reject_on_mismatch",
@@ -446,7 +444,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
         "  · 按钮不可用时可用上面的手动指令；完整字段用法见本页。",
         "",
         "注意事项：",
-        "  · 关键词命中后先发送该群警告文案并写入审计（用 /audit 查看），再用 keywordRecall / keywordPunish 追加撤回与处罚",
+        "  · 关键词命中后按「违规处理」多选动作依次执行（警告 / 撤回 / 禁言 / 踢出 / 拉黑），并写入审计（用 /audit 查看）",
         "  · 撤回/禁言/移出等动作尽力而为：单个失败不影响其他动作，失败详情见日志（带 _failed 后缀），全部失败时 /audit 状态为 pending",
         "  · `/rules set` 只更新指定字段，不会重置其他字段；`恢复本页继承` 只清本页字段，`恢复全部继承` 清空本群全部覆盖",
         "  · 关键词会去重、去空白并按字典序保存；名单字段的「不限」= 空列表",

@@ -85,8 +85,7 @@ describe("rule configuration persistence", () => {
       ["autoApprove", "on"],
       ["export", "on"],
       ["enabled", "off"],
-      ["keywordRecall", "on"],
-      ["keywordPunish", "kick_blacklist"],
+      ["punish", "警告,撤回,踢出,拉黑"],
       ["joinDecision", "reject_on_mismatch"],
       ["joinRequireClass", "on"],
       ["joinRequireName", "on"],
@@ -114,8 +113,13 @@ describe("rule configuration persistence", () => {
     expect(config.autoApproveJoin).toBe(true);
     expect(config.exportEnabled).toBe(true);
     expect(config.enabled).toBe(false);
-    expect(config.keywordRecall).toBe(true);
-    expect(config.keywordPunish).toBe(KeywordPunish.KickBlacklist);
+    expect(config.punishActions).toEqual({
+      warn: true,
+      recall: true,
+      mute: false,
+      kick: true,
+      blacklist: true,
+    });
     expect(config.joinDecision).toBe(JoinDecisionMode.RejectOnMismatch);
     expect(config.joinRequireClass).toBe(true);
     expect(config.joinRequireName).toBe(true);
@@ -127,7 +131,7 @@ describe("rule configuration persistence", () => {
   it("persists global rules and keeps per-field inheritance after reload", async () => {
     const globals: Array<[string, string]> = [
       ["keywords", "全局词"],
-      ["keywordPunish", "mute"],
+      ["punish", "警告,禁言"],
       ["joinDecision", "approve_on_match"],
       ["joinRequireClass", "on"],
     ];
@@ -142,16 +146,17 @@ describe("rule configuration persistence", () => {
 
     const reloaded = await reload();
     expect(reloaded.default.keywords).toEqual(["全局词"]);
-    expect(reloaded.default.keywordPunish).toBe(KeywordPunish.Mute);
+    expect(reloaded.default.punishActions.mute).toBe(true);
+    expect(reloaded.default.punishActions.warn).toBe(true);
     expect(reloaded.default.joinDecision).toBe(JoinDecisionMode.ApproveOnMatch);
     expect(reloaded.default.joinRequireClass).toBe(true);
     // 未单独配置的群继承全局
-    expect(reloaded.get("brand-new").keywordPunish).toBe(KeywordPunish.Mute);
+    expect(reloaded.get("brand-new").punishActions.mute).toBe(true);
     expect(reloaded.get("brand-new").joinRequireClass).toBe(true);
   });
 
   it("restores a group whose only configuration is extended settings", async () => {
-    const result = await service.handle("g1", "admin", "/rules set keywordRecall on");
+    const result = await service.handle("g1", "admin", "/rules set punish 警告,撤回");
     expect(result.ok).toBe(true);
 
     // 只改扩展字段时不会写 group_configs 行
@@ -160,21 +165,21 @@ describe("rule configuration persistence", () => {
 
     const reloaded = await reload();
     expect(reloaded.listOverrides().map((item) => item.groupId)).toEqual(["g1"]);
-    expect(reloaded.get("g1").keywordRecall).toBe(true);
+    expect(reloaded.get("g1").punishActions.recall).toBe(true);
     // 其他字段仍继承默认值
     expect(reloaded.get("g1").wordFilterEnabled).toBe(true);
   });
 
   it("clears both tables when a group override is removed", async () => {
     await service.handle("g1", "admin", "/rules set keywords 广告");
-    await service.handle("g1", "admin", "/rules set keywordRecall on");
+    await service.handle("g1", "admin", "/rules set punish 警告,撤回");
     await configStore.flush();
 
     configStore.removeOverride("g1");
     const reloaded = await reload();
 
     expect(reloaded.listOverrides()).toEqual([]);
-    expect(reloaded.get("g1").keywordRecall).toBe(false);
+    expect(reloaded.get("g1").punishActions.recall).toBe(false);
     expect(reloaded.get("g1").keywords).toEqual([]);
     expect(configRepo.overrides.has("g1")).toBe(false);
     expect(settingsRepo.rows.size).toBe(0);
@@ -194,18 +199,18 @@ describe("rule configuration persistence", () => {
 
   it("clears a single column and a KV row, then falls back after reload", async () => {
     await service.handle("g1", "admin", "/rules set autoApprove on");
-    await service.handle("g1", "admin", "/rules set keywordRecall on");
+    await service.handle("g1", "admin", "/rules set punish 警告,撤回");
     await service.handle("g1", "admin", "/rules set wordFilter off");
     await configStore.flush();
 
     // 清一个 SQL 列 + 一个 KV 行，另一个 SQL 列保持覆盖
-    configStore.clearFields("g1", ["autoApproveJoin", "keywordRecall"]);
+    configStore.clearFields("g1", ["autoApproveJoin", "punishActions"]);
     const reloaded = await reload();
 
     const config = reloaded.get("g1");
     // 被清的字段回落继承（默认 false / false）
     expect(config.autoApproveJoin).toBe(false);
-    expect(config.keywordRecall).toBe(false);
+    expect(config.punishActions.recall).toBe(false);
     // 没被清的覆盖保持
     expect(config.wordFilterEnabled).toBe(false);
     expect([...reloaded.overriddenFields("g1")]).toEqual(["wordFilterEnabled"]);

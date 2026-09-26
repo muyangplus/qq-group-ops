@@ -136,11 +136,15 @@ describe("GroupConfigStore", () => {
 
   it("clears extended (KV) fields back to inherited value", () => {
     const store = createStore();
-    store.setOverride({ groupId: "g1", keywordRecall: true, denyColleges: ["某学院"] });
+    store.setOverride({
+      groupId: "g1",
+      punishActions: { warn: true, recall: true, mute: false, kick: false, blacklist: false },
+      denyColleges: ["某学院"],
+    });
 
-    store.clearFields("g1", ["keywordRecall", "denyColleges"]);
+    store.clearFields("g1", ["punishActions", "denyColleges"]);
 
-    expect(store.get("g1").keywordRecall).toBe(false);
+    expect(store.get("g1").punishActions.recall).toBe(false);
     expect(store.get("g1").denyColleges).toEqual([]);
     expect(store.overriddenFields("g1").size).toBe(0);
   });

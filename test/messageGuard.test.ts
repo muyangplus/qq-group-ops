@@ -4,6 +4,7 @@ import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { AuditStatus, KeywordPunish, ModerationAction } from "../src/core/enums.js";
 import { newIncomingMessage } from "../src/core/models.js";
 import { AuditLogStore } from "../src/services/audit.js";
+import { BlacklistService } from "../src/services/blacklist.js";
 import { GroupConfigStore } from "../src/services/groupConfig.js";
 import { MessageGuardService } from "../src/services/messageGuard.js";
 import { RuleEngine } from "../src/services/moderation.js";
@@ -202,8 +203,8 @@ describe("MessageGuardService keyword rules", () => {
     configStore.setOverride({
       groupId: "g1",
       keywords: ["广告"],
-      keywordRecall: true,
-      keywordPunish: KeywordPunish.Mute,
+      // §B2 多选：撤回 + 禁言 + 警告
+      punishActions: { warn: true, recall: true, mute: true, kick: false, blacklist: false },
       muteDurationSeconds: 120,
     });
 
@@ -220,21 +221,36 @@ describe("MessageGuardService keyword rules", () => {
     expect(result.detail).toContain("warn");
   });
 
-  it("supports kick and kick plus blacklist", async () => {
+  it("supports kick and kick plus blacklist as independent multi-select actions", async () => {
+    const blacklist = new BlacklistService(api, {
+      auditLog,
+      listBoundGroups: () => ["g1"],
+    });
+    const scoped = new MessageGuardService(
+      api,
+      new RuleEngine(),
+      configStore,
+      auditLog,
+      undefined,
+      undefined,
+      undefined,
+      blacklist,
+    );
     configStore.setOverride({
       groupId: "g1",
       keywords: ["广告"],
-      keywordPunish: KeywordPunish.Kick,
+      punishActions: { warn: true, recall: false, mute: false, kick: true, blacklist: false },
     });
-    await service.handleMessage(newIncomingMessage("g1", "u1", "m1", "广告"));
+    await scoped.handleMessage(newIncomingMessage("g1", "u1", "m1", "广告"));
     expect(api.removedMembers).toEqual([["g1", "u1"]]);
     expect(api.blacklistOperations).toEqual([]);
 
+    // 勾上「拉黑」后：先踢出，再落黑名单并尝试官方拉黑
     configStore.setOverride({
       groupId: "g1",
-      keywordPunish: KeywordPunish.KickBlacklist,
+      punishActions: { warn: true, recall: false, mute: false, kick: true, blacklist: true },
     });
-    await service.handleMessage(newIncomingMessage("g1", "u2", "m2", "广告"));
+    await scoped.handleMessage(newIncomingMessage("g1", "u2", "m2", "广告"));
     expect(api.removedMembers).toEqual([
       ["g1", "u1"],
       ["g1", "u2"],
@@ -242,12 +258,39 @@ describe("MessageGuardService keyword rules", () => {
     expect(api.blacklistOperations).toEqual([["g1", "u2", "add"]]);
   });
 
+  it("blacklists without kicking when only the blacklist action is on", async () => {
+    const blacklist = new BlacklistService(api, {
+      auditLog,
+      listBoundGroups: () => ["g1"],
+    });
+    const scoped = new MessageGuardService(
+      api,
+      new RuleEngine(),
+      configStore,
+      auditLog,
+      undefined,
+      undefined,
+      undefined,
+      blacklist,
+    );
+    configStore.setOverride({
+      groupId: "g1",
+      keywords: ["广告"],
+      punishActions: { warn: true, recall: false, mute: false, kick: false, blacklist: true },
+    });
+    await scoped.handleMessage(newIncomingMessage("g1", "u1", "m1", "广告"));
+
+    // §B2：拉黑**不自动踢人**，只落本地黑名单 + 尝试官方拉黑
+    expect(api.removedMembers).toEqual([]);
+    expect(api.blacklistOperations).toEqual([["g1", "u1", "add"]]);
+    expect(blacklist.hasGroup("g1", "u1")).toBe(true);
+  });
+
   it("keeps applying other actions when one of them fails", async () => {
     configStore.setOverride({
       groupId: "g1",
       keywords: ["广告"],
-      keywordRecall: true,
-      keywordPunish: KeywordPunish.Mute,
+      punishActions: { warn: true, recall: true, mute: true, kick: false, blacklist: false },
     });
     vi.spyOn(api, "recallGroupMessage").mockRejectedValue(
       new Error("recall not allowed"),
@@ -268,7 +311,7 @@ describe("MessageGuardService keyword rules", () => {
     configStore.setOverride({
       groupId: "g1",
       keywords: ["广告"],
-      keywordPunish: KeywordPunish.Kick,
+      punishActions: { warn: true, recall: false, mute: false, kick: true, blacklist: false },
     });
     vi.spyOn(api, "removeGroupMember").mockRejectedValue(
       new Error("11253 应用无接口访问权限"),

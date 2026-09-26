@@ -129,6 +129,45 @@ describe("rule menu refactor (§C)", async () => {
     );
   });
 
+  it("toggles the multi-select punish actions from the card", () => {
+    const panel = service.rulesPanelCard("punish", "g1", "admin");
+    const buttons = buttonsOf(panel);
+    const labels = buttons.map((button) => button.label);
+    expect(labels).toContain("警告 开");
+    expect(labels).toContain("撤回 关");
+    expect(labels).toContain("禁言 关");
+    expect(labels).toContain("踢出 关");
+    expect(labels).toContain("拉黑 关");
+    expect(buttons.find((button) => button.id === "punish-mute")?.action).toMatchObject({
+      type: 1,
+      data: "cb:rules:punishToggle:g1:mute",
+    });
+    expectWithinCardLimits(panel);
+
+    // 点「禁言」→ 开；再点「撤回」→ 开（多选互不影响）
+    const muted = service.punishToggleCard("g1", "mute", "admin");
+    expect(configStore.get("g1").punishActions.mute).toBe(true);
+    expect(muted.rich.markdown).toContain("禁言");
+    service.punishToggleCard("g1", "recall", "admin");
+    expect(configStore.get("g1").punishActions).toEqual({
+      warn: true,
+      recall: true,
+      mute: true,
+      kick: false,
+      blacklist: false,
+    });
+
+    // 再点一次「禁言」→ 关，其他动作不受影响
+    const unmuted = service.punishToggleCard("g1", "mute", "admin");
+    expect(configStore.get("g1").punishActions.mute).toBe(false);
+    expect(unmuted.rich.markdown).toContain("撤回");
+
+    // 普通成员点不动
+    const denied = service.punishToggleCard("g1", "kick", "member");
+    expect(denied.ok).toBe(false);
+    expect(configStore.get("g1").punishActions.kick).toBe(false);
+  });
+
   it("shows the override state in the overview and resets one page", async () => {
     configStore.setOverride({ groupId: "g1", wordFilterEnabled: false, keywords: ["刷屏"] });
 
@@ -140,14 +179,14 @@ describe("rule menu refactor (§C)", async () => {
     const restore = buttonsOf(panel).find((button) => button.id === "reset-toggle");
     expect(restore?.action).toMatchObject({
       type: 1,
-      data: "cb:rules:resetPage:g1:toggle:wordFilterEnabled,keywordRecall,joinAuditEnabled,exportEnabled:1:allow",
+      data: "cb:rules:resetPage:g1:toggle:wordFilterEnabled,joinAuditEnabled,exportEnabled:1:allow",
     });
     expect(restore?.action.type).toBe(1);
 
     const reset = service.resetRulePageCard(
       "g1",
       "toggle",
-      "wordFilterEnabled,keywordRecall,joinAuditEnabled,exportEnabled",
+      "wordFilterEnabled,joinAuditEnabled,exportEnabled",
       "admin",
     );
     expect(reset.ok).toBe(true);

@@ -22,6 +22,7 @@ import { GroupConfigStore } from "./groupConfig.js";
 import { RuleEngine } from "./moderation.js";
 import type { PermissionService } from "./permissions.js";
 import type { PunishmentService } from "./punishments.js";
+import type { BlacklistService } from "./blacklist.js";
 import type { RichMessageSender } from "./richMessages.js";
 
 const log = getLogger("message-guard");
@@ -74,6 +75,11 @@ export class MessageGuardService {
      * 卡片上可直接调整处罚；群内警告卡也会多一个「我要申诉」按钮（§B8）。
      */
     private readonly punishments?: PunishmentService,
+    /**
+     * 黑名单服务（§A5 / §B2）：勾选「拉黑」时落本地黑名单（入群审批最高优先级拒绝）
+     * 并尝试官方群拉黑；`kick: false` 表示**不自动踢人**，官方接口失败只记日志。
+     */
+    private readonly blacklist?: BlacklistService,
   ) {
     this.auditLog = auditLog;
   }
@@ -141,9 +147,10 @@ export class MessageGuardService {
     });
     const plan = this.planFor(action, config);
     // §B7：先建处罚记录（拿到短码），执行后再回填结果并推送审核员。
-    // 只有真的会处罚（撤回 / 禁言 / 踢出）才记录；纯警告没有可撤销的动作。
+    // 只有真的有处置动作（撤回 / 禁言 / 踢出 / 拉黑）才记录；纯警告没有可撤销的动作。
     const punishment =
-      this.punishments && (plan.recall || plan.punish !== KeywordPunish.None)
+      this.punishments &&
+      (plan.recall || plan.mute || plan.kick || plan.blacklist)
         ? await this.punishments.create({
             groupId: message.groupId,
             userId: message.userId,
@@ -157,16 +164,10 @@ export class MessageGuardService {
               : {}),
             actions: {
               recalled: plan.recall,
-              muted: plan.punish === KeywordPunish.Mute,
-              muteDurationSeconds:
-                plan.punish === KeywordPunish.Mute
-                  ? config.muteDurationSeconds
-                  : 0,
-              kicked:
-                plan.punish === KeywordPunish.Kick ||
-                plan.punish === KeywordPunish.KickBlacklist,
-              blacklist:
-                plan.punish === KeywordPunish.KickBlacklist ? "group" : "",
+              muted: plan.mute,
+              muteDurationSeconds: plan.mute ? config.muteDurationSeconds : 0,
+              kicked: plan.kick,
+              blacklist: plan.blacklist ? "group" : "",
             },
           })
         : undefined;
@@ -200,28 +201,28 @@ export class MessageGuardService {
     config: EffectiveGroupConfig,
   ): {
     action: ModerationAction;
+    /** 五个动作互相独立（§B2 多选重构）：撤回 → 禁言 → 踢出 → 拉黑 → 警告。 */
     recall: boolean;
-    punish: KeywordPunish;
+    mute: boolean;
+    kick: boolean;
+    blacklist: boolean;
     warn: boolean;
     muteDurationSeconds: number;
   } {
-    const recall = config.keywordRecall || action === ModerationAction.Recall;
-    const punish =
-      config.keywordPunish !== KeywordPunish.None
-        ? config.keywordPunish
-        : action === ModerationAction.Mute
-          ? KeywordPunish.Mute
-          : action === ModerationAction.Kick
-            ? KeywordPunish.Kick
-            : KeywordPunish.None;
-    const warn =
-      action === ModerationAction.Warn ||
-      recall ||
-      punish !== KeywordPunish.None;
+    const configured = config.punishActions;
+    // 规则本身带来的动作（静态规则可以自带 Mute / Kick / Recall）与群配置取并集
+    const recall = configured.recall || action === ModerationAction.Recall;
+    const mute = configured.mute || action === ModerationAction.Mute;
+    const kick = configured.kick || action === ModerationAction.Kick;
+    const blacklist = configured.blacklist;
+    // 有任何一个处置动作就发警告卡；只勾「警告」时也发
+    const warn = configured.warn || recall || mute || kick || blacklist;
     return {
       action,
       recall,
-      punish,
+      mute,
+      kick,
+      blacklist,
       warn,
       muteDurationSeconds: config.muteDurationSeconds,
     };
@@ -231,7 +232,9 @@ export class MessageGuardService {
     plan: {
       action: ModerationAction;
       recall: boolean;
-      punish: KeywordPunish;
+      mute: boolean;
+      kick: boolean;
+      blacklist: boolean;
       warn: boolean;
       muteDurationSeconds: number;
     },
@@ -244,14 +247,16 @@ export class MessageGuardService {
       return [false, "queued_for_review"];
     }
 
-    const { recall, punish, warn } = plan;
+    const { recall, mute, kick, blacklist, warn } = plan;
     const muteDurationSeconds = plan.muteDurationSeconds;
 
     log.debug("execute action", {
       action: plan.action,
       groupId: message.groupId,
       recall,
-      punish,
+      mute,
+      kick,
+      blacklist,
       warn,
     });
 
@@ -263,7 +268,7 @@ export class MessageGuardService {
         ),
       );
     }
-    if (punish === KeywordPunish.Mute) {
+    if (mute) {
       details.push(
         await this.attempt("mute", () =>
           this.api.muteGroupMember(
@@ -274,19 +279,29 @@ export class MessageGuardService {
         ),
       );
     }
-    if (punish === KeywordPunish.Kick) {
+    if (kick) {
       details.push(
         await this.attempt("remove", () =>
           this.api.removeGroupMember(message.groupId, message.userId),
         ),
       );
     }
-    if (punish === KeywordPunish.KickBlacklist) {
+    if (blacklist) {
+      // §A5/§B2：拉黑**不自动踢人** —— 本地黑名单立即生效（入群审批最高优先级拒绝），
+      // 再尝试官方群拉黑（官方要求目标不在群中，人在群里时会失败，只记日志）。
       details.push(
-        await this.attempt("remove+blacklist", () =>
-          this.api.removeGroupMember(message.groupId, message.userId, {
-            addToMemberBlacklist: true,
-          }),
+        await this.attempt("blacklist", () =>
+          this.blacklist
+            ? this.blacklist.add({
+                scope: "group",
+                groupId: message.groupId,
+                userId: message.userId,
+                actorId: "bot:auto",
+                source: "keyword",
+                reason: "命中群规则",
+                kick: false,
+              })
+            : Promise.reject(new Error("blacklist service unavailable")),
         ),
       );
     }
@@ -295,7 +310,9 @@ export class MessageGuardService {
         await this.attempt("warn", () =>
           this.sendWarning(message, config, {
             recall,
-            punish,
+            mute,
+            kick,
+            blacklist,
             muteDurationSeconds,
             matches,
             ...(punishmentCode !== undefined ? { punishmentCode } : {}),
@@ -325,7 +342,9 @@ export class MessageGuardService {
     config: EffectiveGroupConfig,
     input: {
       recall: boolean;
-      punish: KeywordPunish;
+      mute: boolean;
+      kick: boolean;
+      blacklist: boolean;
       muteDurationSeconds: number;
       matches: readonly RuleMatch[];
       /** §B8：处罚记录短码；有值时卡片带「我要申诉」按钮（只有当事人能点）。 */
@@ -384,19 +403,23 @@ export class MessageGuardService {
   /** 把实际执行的动作写成一行中文（与 `execute` 的分支保持一致）。 */
   private punishLabel(input: {
     recall: boolean;
-    punish: KeywordPunish;
+    mute: boolean;
+    kick: boolean;
+    blacklist: boolean;
     muteDurationSeconds: number;
   }): string {
     const parts: string[] = [];
     if (input.recall) {
       parts.push("撤回消息");
     }
-    if (input.punish === KeywordPunish.Mute) {
+    if (input.mute) {
       parts.push(`禁言 ${input.muteDurationSeconds} 秒`);
-    } else if (input.punish === KeywordPunish.Kick) {
+    }
+    if (input.kick) {
       parts.push("移出群");
-    } else if (input.punish === KeywordPunish.KickBlacklist) {
-      parts.push("移出并拉黑");
+    }
+    if (input.blacklist) {
+      parts.push("拉黑（本群）");
     }
     if (parts.length === 0) {
       parts.push("仅警告");

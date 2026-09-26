@@ -156,7 +156,7 @@ describe("AdminCommandService · blacklist / punish / appeal", () => {
     configStore.setOverride({
       groupId: "g1",
       keywords: ["广告"],
-      keywordPunish: KeywordPunish.Mute,
+      punishActions: { warn: true, recall: false, mute: true, kick: false, blacklist: false },
       wordFilterEnabled: true,
     });
     const buildGuard = (): MessageGuardService =>
@@ -246,7 +246,7 @@ describe("AdminCommandService · blacklist / punish / appeal", () => {
     configStore.setOverride({
       groupId: "g1",
       keywords: ["广告"],
-      keywordPunish: KeywordPunish.Mute,
+      punishActions: { warn: true, recall: false, mute: true, kick: false, blacklist: false },
       wordFilterEnabled: true,
     });
     const guard = new MessageGuardService(

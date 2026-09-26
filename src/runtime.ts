@@ -263,6 +263,7 @@ export function createRuntime(
     permissions,
     richMessages,
     punishments,
+    blacklist,
   );
   const joinApproval = new JoinApprovalService(
     api,
@@ -436,6 +437,18 @@ export function createRuntime(
             mode === "deny" ? "deny" : "allow",
           );
           return card.rich;
+        }
+        if (parsed.action === "punishToggle") {
+          const [targetGroupId, key] = parsed.args;
+          if (!targetGroupId || !key) {
+            return undefined;
+          }
+          return adminCommands.punishToggleCard(
+            targetGroupId,
+            key,
+            userId,
+            event.groupId,
+          ).rich;
         }
         if (parsed.action === "panel") {
           const [targetGroupId, panel, page, mode] = parsed.args;

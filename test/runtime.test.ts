@@ -143,7 +143,7 @@ describe("createRuntime", () => {
       groupId: "g1",
       userId: "admin",
       buttonData:
-        "cb:rules:resetPage:g1:toggle:wordFilterEnabled,keywordRecall,joinAuditEnabled,exportEnabled:1:allow",
+        "cb:rules:resetPage:g1:toggle:wordFilterEnabled,joinAuditEnabled,exportEnabled:1:allow",
     });
     expect(reset.ok).toBe(true);
     expect(runtime.configStore.get("g1").wordFilterEnabled).toBe(true);

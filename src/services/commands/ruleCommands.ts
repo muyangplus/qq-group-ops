@@ -1,4 +1,11 @@
 import { getLogger } from "../../core/logger.js";
+import {
+  describePunishActions,
+  PUNISH_ACTION_KEYS,
+  PUNISH_ACTION_LABELS,
+  type PunishActionKey,
+  type PunishActions,
+} from "../groupConfigCore.js";
 import { encodeCallback, extractPageToken } from "../callbackData.js";
 import { renderCard, type CardButton } from "../cardTemplate.js";
 import type { AdminCommandContext } from "./context.js";
@@ -218,7 +225,6 @@ export function rulesTogglePanel(
   const overridden = ctx.configStore.overriddenFields(targetGroupId);
   const fields: Array<RuleToggleSpec> = [
     { field: "wordFilterEnabled", label: "过滤", panel: "toggle", value: config.wordFilterEnabled },
-    { field: "keywordRecall", label: "撤回", panel: "toggle", value: config.keywordRecall },
     { field: "joinAuditEnabled", label: "入群审核", panel: "toggle", value: config.joinAuditEnabled },
     { field: "exportEnabled", label: "导出", panel: "toggle", value: config.exportEnabled },
   ];
@@ -327,7 +333,7 @@ export function rulesDecisionPanel(
   );
 }
 
-/** 子卡：违规处理（命中处罚 + 禁言时长快捷按钮）。 */
+/** 子卡：违规处理（**多选** 警告 / 撤回 / 禁言 / 踢出 / 拉黑 + 禁言时长）。 */
 export function rulesPunishPanel(
   ctx: AdminCommandContext,
   targetGroupId: string,
@@ -335,15 +341,26 @@ export function rulesPunishPanel(
   notice?: string,
 ): CardResult {
   const config = ctx.configStore.get(targetGroupId);
+  const actions = config.punishActions;
   const rows: CardButton[][] = [];
-  rows.push([
-    ruleChoiceButton("punish-none", "仅警告", targetGroupId, "keywordPunish", "none", config.keywordPunish === "none", "punish"),
-    ruleChoiceButton("punish-mute", "禁言", targetGroupId, "keywordPunish", "mute", config.keywordPunish === "mute", "punish"),
-  ]);
-  rows.push([
-    ruleChoiceButton("punish-kick", "移出", targetGroupId, "keywordPunish", "kick", config.keywordPunish === "kick", "punish"),
-    ruleChoiceButton("punish-blacklist", "拉黑", targetGroupId, "keywordPunish", "kick_blacklist", config.keywordPunish === "kick_blacklist", "punish"),
-  ]);
+  rows.push(
+    (["warn", "recall", "mute"] as const).map((key) =>
+      punishToggleButton(
+        key,
+        targetGroupId,
+        actions[key],
+      ),
+    ),
+  );
+  rows.push(
+    (["kick", "blacklist"] as const).map((key) =>
+      punishToggleButton(
+        key,
+        targetGroupId,
+        actions[key],
+      ),
+    ),
+  );
   rows.push([
     ruleChoiceButton("mute-60", "60秒", targetGroupId, "muteDurationSeconds", "60", config.muteDurationSeconds === 60, "punish"),
     ruleChoiceButton("mute-600", "600秒", targetGroupId, "muteDurationSeconds", "600", config.muteDurationSeconds === 600, "punish"),
@@ -353,7 +370,7 @@ export function rulesPunishPanel(
     viewButton("regex-panel", "正则白名单", "rules", "panel", targetGroupId, "regex"),
   ]);
   rows.push([
-    ruleRestoreButton(ctx, "punish", targetGroupId, ["keywordPunish", "muteDurationSeconds"]),
+    ruleRestoreButton(ctx, "punish", targetGroupId, ["punishActions", "muteDurationSeconds"]),
     ruleBackButton(ctx, targetGroupId),
   ]);
   return rulePanelCard(ctx,
@@ -363,9 +380,27 @@ export function rulesPunishPanel(
     notice,
     rows,
     [
-      ruleInheritanceLine(ctx, targetGroupId, "keywordPunish"),
+      ruleInheritanceLine(ctx, targetGroupId, "punishActions"),
+      `**当前动作**：${describePunishActions(actions)}（点按钮切换，可多选）`,
       `**禁言时长**：${config.muteDurationSeconds} 秒`,
+      "**拉黑**：只落本群黑名单并尝试官方拉黑，**不会自动踢人**（官方要求目标不在群中）。",
     ],
+  );
+}
+
+/** 违规处理动作开关按钮：标签显示当前状态，点击即切换（回调 `cb:rules:punishToggle`）。 */
+function punishToggleButton(
+  key: PunishActionKey,
+  targetGroupId: string,
+  enabled: boolean,
+): CardButton {
+  return viewButton(
+    `punish-${key}`,
+    `${PUNISH_ACTION_LABELS[key]} ${enabled ? "开" : "关"}`,
+    "rules",
+    "punishToggle",
+    targetGroupId,
+    key,
   );
 }
 
@@ -993,6 +1028,47 @@ export function resetAllRulesCard(
   ctx.configStore.removeOverride(targetGroupId);
   log.info("rule overrides reset", { targetGroupId, userId });
   return rulesCard(ctx, undefined, userId, ["rules", targetGroupId], `${ctx.helpers.mention(replyGroupId, userId)}已恢复全部继承。`);
+}
+
+/**
+ * 回调：违规处理动作开关（`cb:rules:punishToggle:<群>:<动作>`）。
+ *
+ * §B2 多选：警告 / 撤回 / 禁言 / 踢出 / 拉黑 互相独立，点一下切换该动作并回到同一张子卡。
+ */
+export function punishToggleCard(
+  ctx: AdminCommandContext,
+  targetGroupId: string,
+  keyRaw: string,
+  userId: string,
+  replyGroupId?: string,
+): CardResult {
+  const canManage =
+    ctx.permissions.canManageRules(userId, targetGroupId) ||
+    ctx.permissions.isSuperAdmin(userId);
+  if (!canManage) {
+    return ruleDeniedCard(ctx, targetGroupId, "修改规则需要群管理员或以上权限。");
+  }
+  const key = PUNISH_ACTION_KEYS.find((item) => item === keyRaw);
+  if (!key) {
+    return ruleDeniedCard(ctx, targetGroupId, "未知的违规处理动作。");
+  }
+  const config = ctx.configStore.get(targetGroupId);
+  const next: PunishActions = {
+    ...config.punishActions,
+    [key]: !config.punishActions[key],
+  };
+  ctx.configStore.setOverride({ groupId: targetGroupId, punishActions: next });
+  log.info("punish action toggled via callback", {
+    targetGroupId,
+    key,
+    enabled: next[key],
+    userId,
+  });
+  const notice =
+    `${ctx.helpers.mention(replyGroupId, userId)}` +
+    `已把「${PUNISH_ACTION_LABELS[key]}」设为${next[key] ? "开" : "关"}；` +
+    `当前动作：${describePunishActions(next)}`;
+  return rulesPunishPanel(ctx, targetGroupId, userId, notice);
 }
 
 /**

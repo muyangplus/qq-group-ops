@@ -21,6 +21,8 @@ import {
   hasAnyField,
   parseSettingValue,
   applySettingField,
+  normalizePunishActions,
+  punishActionsFromLegacy,
 } from "./groupConfigCore.js";
 
 export { DEFAULT_GROUP_ID, PERSISTED_CONFIG_FIELDS, SETTING_FIELDS } from "./groupConfigCore.js";
@@ -170,8 +172,12 @@ export class GroupConfigStore {
       muteDurationSeconds:
         override.muteDurationSeconds ?? this.defaultConfig.muteDurationSeconds,
       warningMessage: override.warningMessage ?? this.defaultConfig.warningMessage,
-      keywordRecall: override.keywordRecall ?? this.defaultConfig.keywordRecall,
-      keywordPunish: override.keywordPunish ?? this.defaultConfig.keywordPunish,
+      // §B2 多选重构：新字段优先；老库里的 keywordRecall / keywordPunish 自动换算。
+      punishActions:
+        normalizePunishActions(override.punishActions) ??
+        (override.keywordPunish !== undefined || override.keywordRecall !== undefined
+          ? punishActionsFromLegacy(override.keywordPunish, override.keywordRecall)
+          : this.defaultConfig.punishActions),
       joinDecision: override.joinDecision ?? this.defaultConfig.joinDecision,
       joinRequireClass:
         override.joinRequireClass ?? this.defaultConfig.joinRequireClass,

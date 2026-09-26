@@ -22,7 +22,6 @@ import {
 } from "../cardTemplate.js";
 import {
   JoinDecisionMode,
-  KeywordPunish,
   type JoinDecisionMode as JoinDecisionModeType,
 } from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
@@ -125,7 +124,7 @@ import {
   parseCloseAt,
   parseDuration,
   parseJoinDecision,
-  parseKeywordPunish,
+  parsePunishActions,
   parseLink,
   parseLinks,
   parseList,

@@ -45,7 +45,7 @@ describe("§B1 MessageGuard 正则与白名单", () => {
       groupId: "g1",
       keywords: [],
       regexRules: ["\\d{8,}"],
-      keywordPunish: KeywordPunish.Mute,
+      punishActions: { warn: true, recall: false, mute: true, kick: false, blacklist: false },
       muteDurationSeconds: 60,
       wordFilterEnabled: true,
     });
@@ -75,7 +75,7 @@ describe("§B1 MessageGuard 正则与白名单", () => {
       keywords: ["广告"],
       regexRules: ["\\d{8,}"],
       userWhitelist: ["member"],
-      keywordPunish: KeywordPunish.Mute,
+      punishActions: { warn: true, recall: false, mute: true, kick: false, blacklist: false },
       muteDurationSeconds: 60,
     });
     const guard = new MessageGuardService(api, new RuleEngine(), configStore);

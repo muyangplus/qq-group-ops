@@ -47,6 +47,13 @@ import {
   type GroupConfigOverride,
   type GroupConfigStore,
 } from "../groupConfig.js";
+import {
+  describePunishActions,
+  PUNISH_ACTION_KEYS,
+  PUNISH_ACTION_LABELS,
+  type PunishActionKey,
+  type PunishActions,
+} from "../groupConfigCore.js";
 import { findHelpTopic, type HelpTopic } from "../helpTopics.js";
 /** 关键词单条上限（与卡片标准一致：太长会挤爆按钮）。 */
 const RULE_KEYWORD_MAX_LENGTH = 50;
@@ -486,9 +493,9 @@ export function normalizeRulePanel(panel: string | undefined): RulePanelId {
 
 /** 每张子卡的字段白名单：`resetPage` 只允许清这些字段，防止伪造按钮清掉别的。 */
 export const RULE_PANEL_FIELDS: Record<RulePanelId, readonly (keyof GroupConfigOverride)[]> = {
-  toggle: ["wordFilterEnabled", "joinAuditEnabled", "keywordRecall", "exportEnabled"],
+  toggle: ["wordFilterEnabled", "joinAuditEnabled", "exportEnabled"],
   decision: ["joinDecision"],
-  punish: ["keywordPunish", "muteDurationSeconds"],
+  punish: ["punishActions", "muteDurationSeconds"],
   keyword: ["keywords"],
   regex: ["regexRules", "userWhitelist"],
   roster: ["allowColleges", "denyColleges", "allowYears", "denyYears"],
@@ -522,8 +529,11 @@ export const RULE_FIELD_LABELS: Record<keyof GroupConfigOverride, string> = {
   rawMessageRetentionDays: "消息保留天数",
   muteDurationSeconds: "禁言时长",
   warningMessage: "警告文案",
-  keywordRecall: "命中撤回",
-  keywordPunish: "命中处罚",
+  punishActions: "违规处理动作",
+  /** @deprecated 老字段：只用于显示旧数据，不再可设置（见 `punishActions`）。 */
+  keywordRecall: "命中撤回（旧）",
+  /** @deprecated 老字段，见 `punishActions`。 */
+  keywordPunish: "命中处罚（旧）",
   joinDecision: "入群决策",
   joinRequireClass: "要求班级",
   joinRequireName: "要求姓名",
@@ -548,8 +558,11 @@ export const RULE_FIELD_SHORT_LABELS: Partial<Record<keyof GroupConfigOverride, 
   exportEnabled: "导出",
   muteDurationSeconds: "禁言",
   warningMessage: "警告",
-  keywordRecall: "撤回",
-  keywordPunish: "处罚",
+  punishActions: "处罚动作",
+  /** @deprecated 老字段，见 `punishActions`。 */
+  keywordRecall: "撤回（旧）",
+  /** @deprecated 老字段，见 `punishActions`。 */
+  keywordPunish: "处罚（旧）",
   joinDecision: "决策",
   joinRequireClass: "班级",
   joinRequireName: "姓名",
@@ -666,8 +679,7 @@ export const RULE_FIELDS_HELP = [
   "  autoApprove on|off",
   "  export on|off",
   "  enabled on|off",
-  "  keywordRecall on|off                  命中关键词是否撤回消息",
-  "  keywordPunish none|mute|kick|kick_blacklist   命中关键词的处罚动作",
+  "  punish 警告,撤回,禁言                  违规处理（**多选**；none = 全关；不自动踢人）",
   "  joinDecision manual|auto_approve|approve_on_match|reject_on_match|reject_on_mismatch",
   "  joinRequireClass on|off               入群答案必须包含班级库中的班级",
   "  joinRequireName on|off                入群答案必须包含姓名",
@@ -1033,8 +1045,7 @@ export function formatEffectiveConfig(
     `启用：${config.enabled}`,
     `关键词过滤：${config.wordFilterEnabled}`,
     `关键词：${keywords}`,
-    `关键词撤回：${config.keywordRecall}`,
-    `命中处罚：${config.keywordPunish}`,
+    `违规处理：${describePunishActions(config.punishActions)}`,
     `入群审核：${config.joinAuditEnabled}`,
     `入群决策：${config.joinDecision}`,
     `入群要求：班级 ${config.joinRequireClass} · 姓名 ${config.joinRequireName}${
@@ -1109,14 +1120,12 @@ export function parseRuleSetting(
     case "enabled":
     case "启用":
       return { groupId, enabled: parseToggle(field, value) };
-    case "keywordrecall":
-    case "recall":
-    case "撤回":
-      return { groupId, keywordRecall: parseToggle(field, value) };
-    case "keywordpunish":
+    // §B2 多选重构：`/rules set punish 警告,撤回,禁言`（中英文动作名都认，`none`/`清空` = 不处理）
+    case "punishactions":
     case "punish":
     case "处罚":
-      return { groupId, keywordPunish: parseKeywordPunish(value) };
+    case "违规处理":
+      return { groupId, punishActions: parsePunishActions(value) };
     case "joindecision":
     case "入群决策":
       return { groupId, joinDecision: parseJoinDecision(value) };
@@ -1226,28 +1235,63 @@ export function parseRegexRules(value: string): string[] {
   return patterns;
 }
 
-export function parseKeywordPunish(value: string): KeywordPunish {
-  const normalized = value.trim().toLowerCase();
-  const aliases: Record<string, KeywordPunish> = {
-    none: KeywordPunish.None,
-    off: KeywordPunish.None,
-    "无": KeywordPunish.None,
-    "不处罚": KeywordPunish.None,
-    mute: KeywordPunish.Mute,
-    "禁言": KeywordPunish.Mute,
-    kick: KeywordPunish.Kick,
-    "踢出": KeywordPunish.Kick,
-    "移出": KeywordPunish.Kick,
-    kick_blacklist: KeywordPunish.KickBlacklist,
-    blacklist: KeywordPunish.KickBlacklist,
-    "踢出并拉黑": KeywordPunish.KickBlacklist,
-    "拉黑": KeywordPunish.KickBlacklist,
+/**
+ * 解析违规处理动作（§B2 多选）：`警告,撤回,禁言` / `warn recall mute` / `警告、撤回` 都认。
+ *
+ * - 空 / `none` / `off` / `无` / `不处理` → 五个动作全关（什么都不做）；
+ * - 未知动作直接报错，不静默丢弃（避免"设置成功但没生效"）。
+ */
+export function parsePunishActions(value: string): PunishActions {
+  const raw = value.trim();
+  const actions: PunishActions = {
+    warn: false,
+    recall: false,
+    mute: false,
+    kick: false,
+    blacklist: false,
   };
-  const parsed = aliases[normalized];
-  if (!parsed) {
-    throw new Error("处罚动作需要 none / mute / kick / kick_blacklist");
+  if (raw.length === 0) {
+    throw new Error(`违规处理动作不能为空；可选：${punishActionHelp()}`);
   }
-  return parsed;
+  if (["none", "off", "无", "不处理", "清空"].includes(raw.toLowerCase())) {
+    return actions;
+  }
+  const tokens = raw
+    .split(/[\s,，、|/]+/u)
+    .map((token) => token.trim().toLowerCase())
+    .filter((token) => token.length > 0);
+  const aliases: Record<string, PunishActionKey> = {
+    warn: "warn",
+    warning: "warn",
+    警告: "warn",
+    提醒: "warn",
+    recall: "recall",
+    撤回: "recall",
+    mute: "mute",
+    禁言: "mute",
+    kick: "kick",
+    remove: "kick",
+    踢出: "kick",
+    移出: "kick",
+    blacklist: "blacklist",
+    black: "blacklist",
+    拉黑: "blacklist",
+    黑名单: "blacklist",
+  };
+  for (const token of tokens) {
+    const key = aliases[token];
+    if (!key) {
+      throw new Error(
+        `未知的违规处理动作「${token}」；可选：${punishActionHelp()}`,
+      );
+    }
+    actions[key] = true;
+  }
+  return actions;
+}
+
+function punishActionHelp(): string {
+  return PUNISH_ACTION_KEYS.map((key) => PUNISH_ACTION_LABELS[key]).join("/");
 }
 
 export function parseJoinDecision(value: string): JoinDecisionModeType {

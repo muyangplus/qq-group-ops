@@ -45,6 +45,7 @@ import {
   handleRules,
   resetAllRulesCard,
   resetRulePageCard,
+  punishToggleCard,
   rosterToggleCard,
   ruleOverridesCard,
   rulesCard,
@@ -897,6 +898,18 @@ export class AdminCommandService {
     replyGroupId?: string,
   ): CardResult {
     return resetAllRulesCard(this.context(), targetGroupId, userId, replyGroupId);
+  }
+
+  /**
+   * 回调：违规处理动作开关（`cb:rules:punishToggle:<群>:<动作>`，§B2 多选）。
+   */
+  public punishToggleCard(
+    targetGroupId: string,
+    key: string,
+    userId: string,
+    replyGroupId?: string,
+  ): CardResult {
+    return punishToggleCard(this.context(), targetGroupId, key, userId, replyGroupId);
   }
 
   /**

@@ -10,6 +10,113 @@ import {
  */
 
 
+/** 违规处理动作（§B2 多选重构 2026-09-26）：五个动作互相独立、可任意组合。 */
+export interface PunishActions {
+  /** 发送群规则警告文案（处罚通知卡）。 */
+  warn: boolean;
+  /** 撤回命中消息。 */
+  recall: boolean;
+  /** 禁言（时长取 `muteDurationSeconds`）。 */
+  mute: boolean;
+  /** 移出群。 */
+  kick: boolean;
+  /** 拉黑（本群）：落本地黑名单 + 尝试官方拉黑；官方要求目标不在群中，失败只记日志。 */
+  blacklist: boolean;
+}
+
+export const PUNISH_ACTION_KEYS = [
+  "warn",
+  "recall",
+  "mute",
+  "kick",
+  "blacklist",
+] as const;
+export type PunishActionKey = (typeof PUNISH_ACTION_KEYS)[number];
+
+export const PUNISH_ACTION_LABELS: Record<PunishActionKey, string> = {
+  warn: "警告",
+  recall: "撤回",
+  mute: "禁言",
+  kick: "踢出",
+  blacklist: "拉黑",
+};
+
+/** 默认只警告（与重构前的默认行为一致：`keywordPunish=none` + 不撤回）。 */
+export const DEFAULT_PUNISH_ACTIONS: PunishActions = {
+  warn: true,
+  recall: false,
+  mute: false,
+  kick: false,
+  blacklist: false,
+};
+
+/** 容错解析五动作集合；没有任何有效布尔值时返回 `undefined`（视为未设置）。 */
+export function normalizePunishActions(value: unknown): PunishActions | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  const source = value as Record<string, unknown>;
+  const result: PunishActions = { ...DEFAULT_PUNISH_ACTIONS };
+  let seen = false;
+  for (const key of PUNISH_ACTION_KEYS) {
+    if (typeof source[key] === "boolean") {
+      result[key] = source[key];
+      seen = true;
+    }
+  }
+  return seen ? result : undefined;
+}
+
+/**
+ * 老配置自动换算：`keywordPunish` 枚举 + `keywordRecall` 布尔 → 五动作集合。
+ *
+ * - `none` → 只警告（默认开）
+ * - `mute` → 禁言（+警告）
+ * - `kick` → 踢出（+警告）
+ * - `kick_blacklist` → 踢出 + 拉黑（+警告）
+ * - `keywordRecall` → 撤回
+ */
+export function punishActionsFromLegacy(
+  punish: unknown,
+  recall: unknown,
+): PunishActions {
+  const actions: PunishActions = { ...DEFAULT_PUNISH_ACTIONS };
+  if (recall === true) {
+    actions.recall = true;
+  }
+  switch (punish) {
+    case KeywordPunish.Mute:
+      actions.mute = true;
+      break;
+    case KeywordPunish.Kick:
+      actions.kick = true;
+      break;
+    case KeywordPunish.KickBlacklist:
+      actions.kick = true;
+      actions.blacklist = true;
+      break;
+    default:
+      break;
+  }
+  return actions;
+}
+
+/** 五动作的中文描述（卡片与审计复用）：`警告 + 撤回 + 禁言` / `仅警告` / `不处理`。 */
+export function describePunishActions(actions: PunishActions): string {
+  const labels = PUNISH_ACTION_KEYS.filter((key) => actions[key]).map(
+    (key) => PUNISH_ACTION_LABELS[key],
+  );
+  if (labels.length === 0) {
+    return "不处理";
+  }
+  return labels.join(" + ");
+}
+
+/** 动作集合是否为空（什么都不做）。 */
+export function isEmptyPunishActions(actions: PunishActions): boolean {
+  return PUNISH_ACTION_KEYS.every((key) => !actions[key]);
+}
+
 export interface GroupConfig {
   groupId: string;
   enabled?: boolean;
@@ -25,9 +132,15 @@ export interface GroupConfig {
   rawMessageRetentionDays?: number;
   muteDurationSeconds?: number;
   warningMessage?: string;
-  /** 命中关键词是否撤回消息。 */
+  /**
+   * 违规处理动作（多选）：警告 / 撤回 / 禁言 / 踢出 / 拉黑（§B2 2026-09-26 重构）。
+   *
+   * 覆盖时是**整组替换**（不是逐位合并），避免"只改一个开关"把别的动作带偏。
+   */
+  punishActions?: PunishActions;
+  /** @deprecated 老字段（`keywordRecall` + `keywordPunish`），只在读取旧库时换算成 `punishActions`。 */
   keywordRecall?: boolean;
-  /** 命中关键词后的处罚动作。 */
+  /** @deprecated 老字段，见 `punishActionsFromLegacy`。 */
   keywordPunish?: KeywordPunishType;
   /** 入群申请的决策模式。 */
   joinDecision?: JoinDecisionModeType;
@@ -64,8 +177,7 @@ export interface EffectiveGroupConfig {
   rawMessageRetentionDays: number;
   muteDurationSeconds: number;
   warningMessage: string;
-  keywordRecall: boolean;
-  keywordPunish: KeywordPunishType;
+  punishActions: PunishActions;
   joinDecision: JoinDecisionModeType;
   joinRequireClass: boolean;
   joinRequireName: boolean;
@@ -98,8 +210,7 @@ export const SQL_FIELDS = [
 
 /** 存在 `group_settings` 键值表里的扩展字段（可以随时新增，不需要迁移）。 */
 export const SETTING_FIELDS = [
-  "keywordRecall",
-  "keywordPunish",
+  "punishActions",
   "regexRules",
   "userWhitelist",
   "joinDecision",
@@ -142,8 +253,7 @@ export const DEFAULT_CONFIG: EffectiveGroupConfig = {
   rawMessageRetentionDays: 0,
   muteDurationSeconds: 600,
   warningMessage: "请遵守群规，不要发送违规内容。",
-  keywordRecall: false,
-  keywordPunish: KeywordPunish.None,
+  punishActions: { ...DEFAULT_PUNISH_ACTIONS },
   joinDecision: JoinDecisionMode.Manual,
   joinRequireClass: false,
   joinRequireName: false,
@@ -168,8 +278,10 @@ export function normalizeKeywords(keywords: readonly string[]): string[] {
 }
 
 export function normalizeOverride(override: GroupConfigOverride): GroupConfigOverride {
+  const actions = normalizePunishActions(override.punishActions);
   return {
     ...override,
+    ...(actions !== undefined ? { punishActions: actions } : {}),
     ...(override.keywords !== undefined
       ? { keywords: normalizeKeywords(override.keywords) }
       : {}),
@@ -222,7 +334,12 @@ export function fieldsFromConfig(
 ): GroupConfigOverride {
   const result: GroupConfigOverride = { groupId: DEFAULT_GROUP_ID };
   for (const field of fields) {
-    (result as unknown as Record<string, unknown>)[field] = config[field];
+    // 老字段（keywordRecall / keywordPunish）不在生效配置里，跳过即可
+    if (field in config) {
+      (result as unknown as Record<string, unknown>)[field] = (
+        config as unknown as Record<string, unknown>
+      )[field];
+    }
   }
   return result;
 }
@@ -234,6 +351,7 @@ export const PERSISTED_FIELD_ORDER: readonly (keyof GroupConfigOverride)[] =
 export function cloneConfig(config: EffectiveGroupConfig): EffectiveGroupConfig {
   return {
     ...config,
+    punishActions: { ...config.punishActions },
     keywords: [...config.keywords],
     regexRules: [...config.regexRules],
     userWhitelist: [...config.userWhitelist],
@@ -253,6 +371,8 @@ export function mergeIntoDefault(
     ...base,
     ...slimOverride(override),
     groupId: DEFAULT_GROUP_ID,
+    punishActions:
+      normalizePunishActions(override.punishActions) ?? base.punishActions,
     keywords:
       override.keywords !== undefined
         ? normalizeKeywords(override.keywords)
@@ -292,7 +412,14 @@ export function applySettingField(
   value: unknown,
 ): boolean {
   switch (key) {
-    case "keywordRecall":
+    case "punishActions": {
+      const actions = normalizePunishActions(value);
+      if (actions === undefined) {
+        return false;
+      }
+      target.punishActions = actions;
+      return true;
+    }
     case "joinRequireClass":
     case "joinRequireName":
     case "joinReviewOpinion":
@@ -301,6 +428,16 @@ export function applySettingField(
         return false;
       }
       target[key] = value;
+      return true;
+    }
+    // 老配置自动换算：老库里的 `keywordRecall` / `keywordPunish` 仍按**原字段**读进来，
+    // 由 `GroupConfigStore.get()` 在合并完成后一次性折算成 `punishActions`
+    // （逐行折算会丢信息：两条老记录是分开的两行，先后覆盖会互相清掉）。
+    case "keywordRecall": {
+      if (typeof value !== "boolean") {
+        return false;
+      }
+      target.keywordRecall = value;
       return true;
     }
     case "keywordPunish": {

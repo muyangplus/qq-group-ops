@@ -36,6 +36,13 @@ export interface BlacklistAddInput {
   reason?: string | undefined;
   /** 来源：`manual` / `keyword` / `card`。 */
   source?: string | undefined;
+  /**
+   * 是否同时把人移出群（默认 `true`，与 `/blacklist add` 的既有行为一致）。
+   *
+   * §B2 关键词「拉黑」动作传 `false`：**不自动踢人**，只落本地黑名单 + 尝试官方拉黑
+   * （官方要求目标不在群中，人在群里会失败，只记日志）。
+   */
+  kick?: boolean | undefined;
 }
 
 export interface BlacklistAddResult {
@@ -163,9 +170,11 @@ export class BlacklistService {
           : []
         : [...new Set(this.listBoundGroups())].sort();
     const kicked: string[] = [];
-    for (const target of targets) {
-      if (await this.removeMember(target, entry.userId)) {
-        kicked.push(target);
+    if (input.kick !== false) {
+      for (const target of targets) {
+        if (await this.removeMember(target, entry.userId)) {
+          kicked.push(target);
+        }
       }
     }
 
