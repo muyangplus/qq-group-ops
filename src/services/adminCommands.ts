@@ -52,6 +52,7 @@ import {
   toggleRulesCard,
 } from "./commands/ruleCommands.js";
 import { handleStatus, statusCard } from "./commands/statusCommands.js";
+import { handleExport } from "./commands/exportCommands.js";
 import {
   handleNotify,
   notifyCard,
@@ -80,6 +81,7 @@ import type { ActivityNotificationService } from "./activityNotifications.js";
 import type { AppealService } from "./appeals.js";
 import type { BlacklistService } from "./blacklist.js";
 import type { DisplayNameService } from "./displayNames.js";
+import type { ExportService } from "./export.js";
 import type { MemberRoster } from "./memberRoster.js";
 import type { ModerationNotifier } from "./moderationNotifier.js";
 import type { PunishmentService } from "./punishments.js";
@@ -147,6 +149,9 @@ export interface AdminCommandServiceOptions {
   /** §A5 黑名单（本群 / 全局）。 */
   blacklist?: BlacklistService | undefined;
 
+  /** §B6 审核日志 CSV 导出。 */
+  exportService?: ExportService | undefined;
+
   /** §B7 处罚记录与卡片动作。 */
   punishments?: PunishmentService | undefined;
 
@@ -176,6 +181,8 @@ export class AdminCommandService {
   private readonly joinSync: JoinRequestSyncService;
 
   private readonly auditLog: AuditLog;
+
+  private readonly exportService: ExportService | undefined;
 
   private readonly joinRules: JoinRuleEvaluator | undefined;
 
@@ -229,6 +236,7 @@ export class AdminCommandService {
     this.joinApproval = options.joinApproval;
     this.joinSync = options.joinSync;
     this.auditLog = options.auditLog;
+    this.exportService = options.exportService;
     this.joinRules = options.joinRules;
     this.groupMessageMode = options.groupMessageMode;
     this.identityMap = options.identityMap;
@@ -415,6 +423,7 @@ export class AdminCommandService {
       joinApproval: this.joinApproval,
       joinSync: this.joinSync,
       auditLog: this.auditLog,
+      exportService: this.exportService,
       joinRules: this.joinRules,
       groupMessageMode: this.groupMessageMode,
       identityMap: this.identityMap,
@@ -521,6 +530,9 @@ export class AdminCommandService {
       case "punish":
       case "处罚":
         return handlePunish(this.context(), groupId, userId, parts);
+      case "export":
+      case "导出":
+        return handleExport(this.context(), groupId, userId, parts);
       case "appeal":
       case "申诉":
         return handleAppeal(this.context(), groupId, userId, parts);

@@ -7,6 +7,7 @@ import type { AppealService } from "../appeals.js";
 import type { BlacklistService } from "../blacklist.js";
 import type { ClassAliasService } from "../classAliases.js";
 import type { DisplayNameService } from "../displayNames.js";
+import type { ExportService } from "../export.js";
 import type { GroupConfigStore } from "../groupConfig.js";
 import type { GroupMessageModeRegistry } from "../groupMessageMode.js";
 import type { IdentityMapService } from "../identityMap.js";
@@ -84,6 +85,8 @@ export interface AdminCommandContext {
   readonly joinApproval: JoinApprovalService;
   readonly joinSync: JoinRequestSyncService;
   readonly auditLog: AuditLog;
+  /** §B6 审核日志 CSV 导出（脱敏 + 权限校验在 ExportService 内）。 */
+  readonly exportService: ExportService | undefined;
   readonly joinRules: JoinRuleEvaluator | undefined;
   readonly groupMessageMode: GroupMessageModeRegistry | undefined;
   readonly identityMap: IdentityMapService | undefined;

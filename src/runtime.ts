@@ -321,6 +321,7 @@ export function createRuntime(
     activityCards,
     activityNotifications,
     notifications,
+    exportService,
     blacklist,
     punishments,
     appeals,
