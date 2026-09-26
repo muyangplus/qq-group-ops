@@ -24,6 +24,9 @@ cp .env.example .env
 
 默认数据库是 SQLite 文件 `data/qq-group-ops.db`，启动时自动建表，不需要 Docker 或额外的数据库服务。
 
+> **必须在仓库根目录启动**：`.env`、`data/`、`logs/` 都是相对当前工作目录解析的——从别处运行
+> 会在那个目录另建一份 `.env`/`data`/`logs`，看起来像「数据丢了」。
+
 如果默认 npm 源不可用，可使用镜像：
 
 ```bash
@@ -34,18 +37,27 @@ pnpm install --registry=https://registry.npmmirror.com
 
 `pnpm dev` 会默认使用 `debug` 日志级别，控制台按 `LOG_COLOR=auto` 自动判断是否彩色，并把日志写入 `logs/qq-group-ops.log`。
 
-`pnpm dev` 或 `node dist/main.js` 启动后会连接官方 WebSocket 网关。
+`pnpm dev`（或先 `pnpm build` 再 `pnpm start` / `node dist/main.js`）启动后：
+**填好 QQ 凭据**（`QQ_BOT_APP_ID` / `QQ_BOT_CLIENT_SECRET`）才会连接官方 WebSocket 网关；
+**缺凭据时进入 fake 模式**——只加载状态、不连网，打印一条 `fake mode: official WebSocket gateway not started` 后直接退出。
+因此「启动是否正常」可以在**不含 `.env` 的临时目录**里冒烟验证（数据与日志会写在该临时目录，不会碰到项目数据）：
+
+```bash
+# 冒烟验证：不读仓库 .env、不连官方网关，退出码 0 即启动链路正常
+mkdir -p /tmp/qqops-smoke && cd /tmp/qqops-smoke
+ADMIN_USER_IDS=10001 node /path/to/qq-group-ops/dist/main.js
+```
 
 常用命令：
 
 ```bash
-pnpm dev         # 本地开发入口
+pnpm dev         # 本地开发入口（tsx 直接跑源码）
 pnpm class:index # 可选：把 data/class.json 转成班级索引（入群审核规则用）
 pnpm db:up       # 可选：用 Docker Compose 启动 PostgreSQL
 pnpm test        # 运行 Vitest
 pnpm typecheck   # TypeScript 类型检查
-pnpm build       # 编译到 dist/
-pnpm start       # 运行编译后的入口
+pnpm build       # 编译到 dist/（tsc -p tsconfig.json）
+pnpm start       # 运行编译后的入口（需先 pnpm build）
 ```
 
 默认使用 SQLite，启动会自动建表并载入全部持久化状态。想切到 PostgreSQL 时，在 `.env` 里设置 `DATABASE_URL=postgres://...` 并执行 `pnpm db:up`；`DATABASE_URL=memory` 则是纯内存模式（重启即丢）。

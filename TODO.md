@@ -15,7 +15,7 @@
 | 批次 | 主题 | 包含条目 | 完成后版本 |
 |---|---|---|---|
 | 批次 1（**已发布 0.10.0**） | 小功能 + 内部整洁 | A1 ✅、A3 ✅、C1 ✅、C2 ✅ | 0.10.0 ✅ |
-| 批次 2（待你安排真机） | 验收与交付验证 | B3、D1–D4、A/B/C 节真机确认 | 不发版 |
+| 批次 2（进行中） | 验收与交付验证 | D1 ✅、D3 ✅、D2 ⚠️待 Docker、D4、B3、A/B/C 节真机确认 | 不发版 |
 | 批次 3（**已发布 0.11.0**） | 中功能 | A4 ✅、B2 ✅、C3 ✅、C5 ✅、C6 ✅ | 0.11.0 ✅ |
 | 批次 3b（**已发布 0.12.0**） | 审核事件订阅 + 申诉 + 黑名单 | A5 ✅、B7 ✅、B8 ✅ | 0.12.0 ✅ |
 | **F 专项** | 交互规范统一 | F1 ✅、F2 ✅ | **0.13.0（MINOR，独立版本）** |
@@ -125,9 +125,19 @@ Phase 2 → E1、E2、B4、B5、B6、C4；Phase 3 → E3–E5；Phase 4 → D6�
 
 ## D. 交付、安全与工程
 
-- [ ] **D1 `pnpm build` 通过**（P0 · 批次2）等价命令 `tsc -p tsconfig.json`（输出 `dist/`）；本仓尚未验证过。
-- [ ] **D2 Docker Compose 能启动 bot 与数据库**（P1 · 批次2）
-- [ ] **D3 README / OPERATIONS 快速开始可复现**（P1 · 批次2）对照 [OPERATIONS.md](./docs/OPERATIONS.md) 从零走一遍。
+- [x] **D1 `pnpm build` 通过**（P0 · 批次2 · 已完成（本机验证，待发版））
+  本机沙箱里 `pnpm` 不可用，用等价命令 `node node_modules/typescript/bin/tsc -p tsconfig.json` 验证：退出码 0，
+  `dist/` 产出 390 个文件（`.js` / `.d.ts` / `.js.map`，含 `dist/main.js`），`dist/` 已 gitignore。
+- [ ] **D2 Docker Compose 能启动 bot 与数据库**（P1 · 批次2 · ⚠️ 待 Docker Desktop 运行）
+  已验证：`docker compose -p <临时项目> config --quiet` 通过，`--profile postgres config --services` 正确列出 `bot` + `db`；
+  新增 `.dockerignore`（把 `.env` / `data/` / `logs/` / `dist/` / `node_modules/` / `.git/` / `docs/` / `test/` 排除出构建上下文，
+  实测少传约 106 MB）；**镜像 build 与 postgres 启停待补测**：本机 Docker CLI 28.3.3 / Compose v2.39.2 已装，
+  但 Docker 引擎未运行（`dockerDesktopLinuxEngine` 管道不存在）。补测时用独立 `-p qqops-smoke` 项目名 + `down -v`，避免污染真实数据卷。
+- [x] **D3 README / OPERATIONS 快速开始可复现**（P1 · 批次2 · 已完成（本机验证，待发版））
+  在**不含 `.env` 的临时目录**里跑 `node <repo>/dist/main.js`（fake 模式）：退出码 0，自动建 `data/qq-group-ops.db` 与 `logs/`，
+  日志为 `runtimeMode=fake` + `fake mode: official WebSocket gateway not started`，无未处理异常；
+  据此修正 `docs/OPERATIONS.md`：补「必须在仓库根目录启动（`.env`/`data`/`logs` 都是相对路径）」、
+  「缺 QQ 凭据时进入 fake 模式并直接退出，可作冒烟验证」与「`pnpm start` 需先 `pnpm build`」。
 - [ ] **D4 真机验收 `ACCEPTANCE.md` J32–J56 + M 组**（P0 · 批次2）外加 B/C 节里的具体确认项。
 - [ ] **D5 Webhook 模式**（P2 · 批次4 · Phase 1 范围）当前代码没有任何 webhook 实现；如需支持，要新增
   HTTP 接入 + 签名校验，并与 WebSocket 网关二选一装配。
