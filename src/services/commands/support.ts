@@ -802,12 +802,11 @@ export const NOTIFY_ALL_WORDS = new Set([
 ]);
 export const NOTIFY_USAGE = [
   "用法：",
-  "  /notify                              查看当前推送订阅",
-  "  /notify on|off                       群内=本群；私信=你担任群管理员的全部群",
-  "  /notify all on|off                   全部群（群内/私信均可）",
-  "  /notify <群号|group_openid|#群短码> on|off    指定群",
-  "  /notify test                         给自己发一张推送测试卡片",
-  "  /notify punish [on|off|all on|test]  处罚事件推送（与入群申请推送相互独立）",
+  "  /notify                打开统一通知订阅菜单（入群申请 / 处罚与申诉 / 活动通知）",
+  "  /notify test [频道]    给自己发一张该频道的测试卡片",
+  "",
+  "订阅都在这张菜单的按钮上完成（`入群 本群` / `处罚 全部` …），",
+  "老的 `/notify on|off|all|<群>` 与 `/notify punish …` 已删除。",
 ].join("\n");
 export const NOTIFY_PERMISSION_DENIED =
   "权限不足：入群审批需要群管理员或以上权限（推送与快捷按钮只发给能审批的人）。";

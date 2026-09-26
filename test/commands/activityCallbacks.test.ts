@@ -115,7 +115,6 @@ describe("activity card callbacks (§B2)", async () => {
     const sender = new RichMessageSender(api);
     activityNotifications = new ActivityNotificationService(
       notifier,
-      undefined,
       notificationRepo,
       {
         dailyLimit: 0,

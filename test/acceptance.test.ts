@@ -22,13 +22,14 @@ describe("acceptance dry run (sqlite)", () => {
       await runtime.identityMap.bindUser("root", "10001");
       await runtime.identityMap.bindGroup("g1", "654321");
 
-      // 审核员开启推送
-      const subscribed = await runtime.router.handle({
-        type: "admin_command",
-        groupId: "g1",
-        userId: "root",
-        text: "/notify on",
-      });
+      // 管理员开启推送（统一订阅菜单的回调入口）
+      const subscribed = await runtime.adminCommands.notifyToggleCard(
+        "join",
+        "g1",
+        true,
+        "root",
+        "g1",
+      );
       expect(subscribed.ok).toBe(true);
 
       // 新申请 → 私聊推送卡片（含快捷按钮）

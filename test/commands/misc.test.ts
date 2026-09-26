@@ -147,17 +147,18 @@ describe("AdminCommandService · misc", () => {
     expect(result.text).toContain("同步失败");
   });
 
-  it("supports subscribing to a specific group in private", async () => {
-    const result = await service.handle(undefined, "admin", "/notify 654321 on");
+  it("subscribes a specific group through the menu callback", async () => {
+    // 统一菜单后不再有 `/notify <群> on`；回调带上群 id，直接订该群
+    const result = await service.notifyToggleCard("join", "g1", true, "admin", "g1");
     expect(result.ok).toBe(true);
-    expect(notifications.isSubscribed("admin", "g1")).toBe(true);
+    expect(notifications.isSubscribed("admin", "g1", "join")).toBe(true);
   });
 
   it("refuses subscribing to a group where the user has no role", async () => {
     identityMap.bindGroup("g2", "777777");
-    const result = await service.handle(undefined, "admin", "/notify 777777 on");
+    const result = await service.notifyToggleCard("join", "g2", true, "admin", "g1");
     expect(result.ok).toBe(false);
-    expect(result.text).toContain("权限不足");
+    expect(result.rich.markdown).toContain("权限不足");
   });
 
   it("persists the auto-decision notification switch", async () => {

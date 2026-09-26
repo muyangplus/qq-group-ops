@@ -51,6 +51,7 @@ import { ActivityExportService } from "./services/activityExport.js";
 import { ActivityStatsService } from "./services/activityStats.js";
 import { ActivityNotificationService } from "./services/activityNotifications.js";
 import { AdminCommandService } from "./services/adminCommands.js";
+import { isNotifyChannel } from "./services/commands/notifyCommands.js";
 import { AppealService } from "./services/appeals.js";
 import { AuditLogStore } from "./services/audit.js";
 import { BlacklistService } from "./services/blacklist.js";
@@ -274,7 +275,6 @@ export function createRuntime(
   );
   const activityNotifications = new ActivityNotificationService(
     notifications,
-    repositories.activitySubscriptions,
     repositories.activityNotifications,
     // 满员广播是**群消息**：直接复用富消息发送器发到绑定群（不占用户私信额度）。
     {
@@ -620,12 +620,14 @@ export function createRuntime(
         if (!userId) {
           return undefined;
         }
-        if (parsed.action === "toggle") {
-          const [scope, value] = parsed.args;
-          if (!scope || (value !== "on" && value !== "off")) {
+        // 统一订阅菜单：`cb:notify:set:<频道>:<范围>:<on|off>` / `test:<频道>` / `view`
+        if (parsed.action === "set") {
+          const [channel, scope, value] = parsed.args;
+          if (!channel || !scope || (value !== "on" && value !== "off")) {
             return undefined;
           }
           const card = await adminCommands.notifyToggleCard(
+            channel,
             scope,
             value === "on",
             userId,
@@ -634,37 +636,17 @@ export function createRuntime(
           return card.rich;
         }
         if (parsed.action === "test") {
-          const card = await adminCommands.notifyTestCard(
-            parsed.args[0] ?? event.groupId,
-            userId,
-            event.groupId,
-          );
-          return card.rich;
-        }
-        // §B7 处罚通知推送（独立频道）
-        if (parsed.action === "punishToggle") {
-          const [scope, value] = parsed.args;
-          if (!scope || (value !== "on" && value !== "off")) {
+          const channel = parsed.args[0];
+          if (!channel || !isNotifyChannel(channel)) {
             return undefined;
           }
-          const card = await adminCommands.notifyPunishToggleCard(
-            scope,
-            value === "on",
+          const card = await adminCommands.notifyTestCard(
+            channel,
             userId,
+            event.groupId,
             event.groupId,
           );
           return card.rich;
-        }
-        if (parsed.action === "punishTest") {
-          const card = await adminCommands.notifyPunishTestCard(
-            event.groupId,
-            userId,
-            event.groupId,
-          );
-          return card.rich;
-        }
-        if (parsed.action === "punishView") {
-          return adminCommands.notifyPunishCard(event.groupId, userId).rich;
         }
         return adminCommands.notifyCard(event.groupId, userId).rich;
       },

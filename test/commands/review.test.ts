@@ -2,6 +2,7 @@ import { JoinRequestStatus } from "../../src/core/enums.js";
 import { AdminCommandService } from "../../src/services/adminCommands.js";
 import { JoinRuleEvaluator } from "../../src/services/joinRules.js";
 import { MemberRoster } from "../../src/services/memberRoster.js";
+import { NOTIFY_SCOPE_ALL } from "../../src/services/notifications.js";
 import {
   describe,
   expect,
@@ -170,13 +171,18 @@ describe("AdminCommandService · review", () => {
   });
 
   it("refuses push subscriptions from users who cannot approve", async () => {
-    const moderator = await service.handle("g1", "mod", "/notify on");
+    const moderator = await service.notifyToggleCard("join", "g1", true, "mod", "g1");
     expect(moderator.ok).toBe(false);
-    expect(moderator.text).toContain("权限不足");
+    expect(moderator.rich.markdown).toContain("权限不足");
 
-    const stranger = await service.handle(undefined, "member", "/notify all on");
-    expect(stranger.ok).toBe(false);
-    expect(stranger.text).toContain("权限不足");
+    const member = await service.notifyToggleCard(
+      "join",
+      NOTIFY_SCOPE_ALL,
+      true,
+      "member",
+    );
+    expect(member.ok).toBe(false);
+    expect(member.rich.markdown).toContain("权限不足");
     expect(notifications.listScopes("mod")).toEqual([]);
   });
 

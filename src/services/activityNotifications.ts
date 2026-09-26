@@ -5,13 +5,9 @@ import type {
   ActivityNotificationKind,
   ActivityNotificationRepository,
 } from "../db/activityNotificationRepository.js";
-import type {
-  ActivitySubscription,
-  ActivitySubscriptionRepository,
-} from "../db/activitySubscriptionRepository.js";
 import { WriteQueue } from "../db/writeQueue.js";
 import { renderCard } from "./cardTemplate.js";
-import type { NotificationService } from "./notifications.js";
+import { NOTIFY_SCOPE_ALL, type NotificationService } from "./notifications.js";
 import { PushService } from "./pushService.js";
 import type { RichMessage, RichMessageSender } from "./richMessages.js";
 
@@ -79,9 +75,7 @@ export interface ActivityNotifyOptions {
  * 4. **失败只记日志**：私信失败（没私聊过机器人 / 关闭了主动消息 / 被限流）不影响活动本身。
  */
 export class ActivityNotificationService {
-  private readonly subscriptions = new Map<string, Map<string, ActivitySubscription>>();
   private readonly sent = new Map<string, ActivityNotification>();
-  private readonly subscriptionRepository: ActivitySubscriptionRepository | undefined;
   private readonly notificationRepository: ActivityNotificationRepository | undefined;
   private readonly queue: WriteQueue | undefined;
   private readonly dailyLimit: number;
@@ -92,13 +86,11 @@ export class ActivityNotificationService {
 
   public constructor(
     private readonly sender: NotificationService,
-    subscriptions?: ActivitySubscriptionRepository,
     notifications?: ActivityNotificationRepository,
     options: ActivityNotifyOptions = {},
   ) {
-    this.subscriptionRepository = subscriptions;
     this.notificationRepository = notifications;
-    this.queue = subscriptions || notifications ? new WriteQueue() : undefined;
+    this.queue = notifications ? new WriteQueue() : undefined;
     this.dailyLimit = normalizeDailyLimit(options.dailyLimit);
     this.now = options.now ?? (() => utcNow());
     this.groupSender = options.groupSender;
@@ -116,10 +108,7 @@ export class ActivityNotificationService {
   }
 
   public get persistent(): boolean {
-    return (
-      this.subscriptionRepository !== undefined ||
-      this.notificationRepository !== undefined
-    );
+    return this.notificationRepository !== undefined;
   }
 
   public get dailyNotifyLimit(): number {
@@ -127,16 +116,9 @@ export class ActivityNotificationService {
   }
 
   public async load(): Promise<void> {
-    const [subscriptions, notifications] = await Promise.all([
-      this.subscriptionRepository?.findAll() ?? Promise.resolve([]),
-      this.notificationRepository?.findAll() ?? Promise.resolve([]),
-    ]);
-    this.subscriptions.clear();
-    for (const entry of subscriptions) {
-      this.addSubscription(entry);
-    }
+    const notifications = await this.notificationRepository?.findAll();
     this.sent.clear();
-    for (const entry of notifications) {
+    for (const entry of notifications ?? []) {
       this.sent.set(notificationKey(entry), entry);
     }
   }
@@ -146,61 +128,28 @@ export class ActivityNotificationService {
   }
 
   public isSubscribed(groupId: string, userId: string): boolean {
-    return this.subscriptions.get(groupId)?.has(userId) ?? false;
+    return this.sender.isSubscribed(userId, groupId, "activity");
   }
 
   public subscribe(groupId: string, userId: string): void {
-    if (this.isSubscribed(groupId, userId)) {
-      return;
-    }
-    const entry: ActivitySubscription = {
-      groupId,
-      userId,
-      createdAt: this.now(),
-    };
-    this.addSubscription(entry);
-    const repository = this.subscriptionRepository;
-    if (repository) {
-      this.queue?.enqueue("activity.subscription.save", () =>
-        repository.save(entry),
-      );
-    }
-    log.info("activity notification subscribed", { groupId, userId });
+    this.sender.subscribe(userId, groupId, "activity");
   }
 
   /** 返回是否真的取消了（本来就未订阅时返回 false）。 */
   public unsubscribe(groupId: string, userId: string): boolean {
-    const bucket = this.subscriptions.get(groupId);
-    if (!bucket?.delete(userId)) {
-      return false;
-    }
-    if (bucket.size === 0) {
-      this.subscriptions.delete(groupId);
-    }
-    const repository = this.subscriptionRepository;
-    if (repository) {
-      this.queue?.enqueue("activity.subscription.remove", () =>
-        repository.remove(groupId, userId),
-      );
-    }
-    log.info("activity notification unsubscribed", { groupId, userId });
-    return true;
+    return this.sender.unsubscribe(userId, groupId, "activity");
   }
 
   /** 某用户订阅的全部群（排序，便于展示与测试）。 */
   public listSubscribedGroups(userId: string): string[] {
-    const groups: string[] = [];
-    for (const [groupId, bucket] of this.subscriptions) {
-      if (bucket.has(userId)) {
-        groups.push(groupId);
-      }
-    }
-    return groups.sort();
+    return this.sender
+      .listScopes(userId, "activity")
+      .filter((scope) => scope !== NOTIFY_SCOPE_ALL);
   }
 
-  /** 订阅了该群的成员（排序，保证推送顺序稳定）。 */
+  /** 订阅了该群（或全部群）的成员（排序，保证推送顺序稳定）。 */
   public subscribersOf(groupId: string): string[] {
-    return [...(this.subscriptions.get(groupId)?.keys() ?? [])].sort();
+    return this.sender.subscribersFor(groupId, "activity");
   }
 
   /** 发布新活动：给该群**所有订阅者**私信活动卡。 */
@@ -404,14 +353,6 @@ export class ActivityNotificationService {
         repository.save(entry),
       );
     }
-  }
-
-  private addSubscription(entry: ActivitySubscription): void {
-    const bucket =
-      this.subscriptions.get(entry.groupId) ??
-      new Map<string, ActivitySubscription>();
-    bucket.set(entry.userId, entry);
-    this.subscriptions.set(entry.groupId, bucket);
   }
 }
 

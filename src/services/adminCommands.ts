@@ -57,9 +57,6 @@ import { handleExport } from "./commands/exportCommands.js";
 import {
   handleNotify,
   notifyCard,
-  notifyPunishCard,
-  notifyPunishTestCard,
-  notifyPunishToggleCard,
   notifyTestCard,
   notifyToggleCard,
 } from "./commands/notifyCommands.js";
@@ -97,7 +94,7 @@ import type { JoinApprovalService } from "./joinApproval.js";
 import type { JoinAuditService } from "./joinAudit.js";
 import type { JoinRequestSyncService } from "./joinAuditSync.js";
 import type { ClassAliasService } from "./classAliases.js";
-import type { NotificationService } from "./notifications.js";
+import type { NotificationService, NotifyChannel } from "./notifications.js";
 import type { PermissionService } from "./permissions.js";
 import type { UserProfileService } from "./userProfiles.js";
 
@@ -749,34 +746,46 @@ export class AdminCommandService {
   }
 
   /**
-   * `/notify`：入群申请推送订阅卡。
+   * `/notify`：统一通知订阅菜单（入群申请 / 处罚与申诉 / 活动通知）。
    *
    * 订阅开关是**回调**（固定动作，点击即订阅/退订并回一张带操作人的卡），
-   * 「测试推送」也是回调（固定动作，触发一次自检卡片）。
+   * 「测试」也是回调（按频道触发一次自检卡片）。
    */
   public notifyCard(
     groupId: string | undefined,
     userId: string,
     notice?: string,
+    channel?: NotifyChannel,
   ): CardResult {
-    return notifyCard(this.context(), groupId, userId, notice);
+    return notifyCard(this.context(), groupId, userId, notice, channel);
   }
 
+  /** 回调：`cb:notify:set:<频道>:<范围>:<on|off>`。 */
   public async notifyToggleCard(
+    channel: string,
     scope: string,
     enabled: boolean,
     userId: string,
     replyGroupId?: string,
   ): Promise<CardResult> {
-    return notifyToggleCard(this.context(), scope, enabled, userId, replyGroupId);
+    return notifyToggleCard(
+      this.context(),
+      channel,
+      scope,
+      enabled,
+      userId,
+      replyGroupId,
+    );
   }
 
+  /** 回调 / `/notify test [频道]`：按频道发一张测试卡片。 */
   public async notifyTestCard(
-    groupId: string | undefined,
+    channel: NotifyChannel,
     userId: string,
     replyGroupId?: string,
+    groupId?: string,
   ): Promise<CardResult> {
-    return notifyTestCard(this.context(), groupId, userId, replyGroupId);
+    return notifyTestCard(this.context(), channel, userId, replyGroupId, groupId);
   }
 
   public auditCard(
@@ -1058,40 +1067,6 @@ export class AdminCommandService {
     replyGroupId?: string,
   ): Promise<CardResult | undefined> {
     return activityCallbackCard(this.context(), action, args, userId, replyGroupId);
-  }
-
-  /** `/notify punish`：处罚事件推送订阅卡（与入群申请推送相互独立）。 */
-  public notifyPunishCard(
-    groupId: string | undefined,
-    userId: string,
-    notice?: string,
-  ): CardResult {
-    return notifyPunishCard(this.context(), groupId, userId, notice);
-  }
-
-  /** 回调：`cb:notify:punishToggle:<scope>:<on|off>`。 */
-  public async notifyPunishToggleCard(
-    scope: string,
-    enabled: boolean,
-    userId: string,
-    replyGroupId?: string,
-  ): Promise<CardResult> {
-    return notifyPunishToggleCard(
-      this.context(),
-      scope,
-      enabled,
-      userId,
-      replyGroupId,
-    );
-  }
-
-  /** 回调：`cb:notify:punishTest`。 */
-  public async notifyPunishTestCard(
-    groupId: string | undefined,
-    userId: string,
-    replyGroupId?: string,
-  ): Promise<CardResult> {
-    return notifyPunishTestCard(this.context(), groupId, userId, replyGroupId);
   }
 
   /** 回调：`cb:blacklist:scope|del:*`（列表切换 / 解除，内部重新鉴权）。 */

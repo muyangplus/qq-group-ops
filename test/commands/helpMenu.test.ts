@@ -206,8 +206,12 @@ describe("AdminCommandService · helpMenu", () => {
 
     const topic = await service.handle("g1", "admin", "/help notify");
     expect(topic.ok).toBe(true);
-    expect(topic.text).toContain("入群申请推送");
-    expect(topic.text).toContain("/notify all on|off");
+    // 统一菜单：三个频道 + 已删除的老入口说明
+    expect(topic.text).toContain("通知订阅（统一菜单）");
+    expect(topic.text).toContain("入群申请");
+    expect(topic.text).toContain("处罚与申诉");
+    expect(topic.text).toContain("活动通知");
+    expect(topic.text).toContain("统一菜单");
   });
 
   it("hides /notify help from users who cannot approve", async () => {

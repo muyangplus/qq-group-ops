@@ -38,20 +38,28 @@ const log = getLogger("notifications");
 export const NOTIFY_SCOPE_ALL = "__all__";
 
 /**
- * 推送频道：
- * - `join`：入群申请待审批推送（原 `/notify`）；
- * - `punish`：机器人处罚事件 + 申诉推送（§B7/B8，`/notify punish` 独立开关）。
+ * 推送频道（统一订阅模型的三个频道）：
+ * - `join`：入群申请待审批 / 自动处理结果；
+ * - `punish`：机器人处罚事件 + 申诉派发与结果；
+ * - `activity`：新活动发布（原 `/activity subscribe`，已并入统一菜单）。
  *
- * 两个频道共用 `notification_subscriptions` 表，存储时给 `punish` 加 `punish:` 前缀，
- * 因此老数据天然属于 `join` 频道，无需迁移。
+ * 三个频道共用 `notification_subscriptions` 一张表，存储键统一为 `频道:范围`
+ * （`join:__all__` / `activity:<group_openid>` …），由 `migrate()` 一次性归一化老数据，
+ * 业务代码里不再有「无前缀就是 join」这种隐式约定。
  */
-export type NotifyChannel = "join" | "punish";
+export type NotifyChannel = "join" | "punish" | "activity";
+
+export const NOTIFY_CHANNELS: readonly NotifyChannel[] = [
+  "join",
+  "punish",
+  "activity",
+];
 
 const channelPrefix = (channel: NotifyChannel): string => `${channel}:`;
 
-/** 业务 scope → 存储 scope。 */
+/** 业务 scope → 存储 scope（所有频道都带前缀）。 */
 function storageScope(channel: NotifyChannel, scope: string): string {
-  return channel === "join" ? scope : `${channelPrefix(channel)}${scope}`;
+  return `${channelPrefix(channel)}${scope}`;
 }
 
 /** 存储 scope → 业务 scope；不属于该频道时返回 undefined。 */
@@ -59,9 +67,6 @@ function businessScope(
   channel: NotifyChannel,
   stored: string,
 ): string | undefined {
-  if (channel === "join") {
-    return stored.startsWith(channelPrefix("punish")) ? undefined : stored;
-  }
   const prefix = channelPrefix(channel);
   return stored.startsWith(prefix) ? stored.slice(prefix.length) : undefined;
 }
@@ -283,10 +288,9 @@ export class NotificationService {
   }
 
   /**
-   * 订阅了该群（或全部群）且有对应权限的接收者。
+   * 订阅了该群（或「全部群」）且**有收件资格**的人（见 `canReceive`）。
    *
-   * - `join` 频道要求入群审批权限（群管理员或以上）；
-   * - `punish` 频道要求内容审核权限（审核员或以上）。
+   * 三个频道共用这张订阅表，资格判定集中在 `canReceive` 一处，避免各频道各写一套。
    */
   public subscribersFor(
     groupId: string,
@@ -296,19 +300,49 @@ export class NotificationService {
     const wanted = storageScope(channel, groupId);
     const all = storageScope(channel, NOTIFY_SCOPE_ALL);
     for (const [userId, scopes] of this.subscriptions) {
-      if (!scopes.has(all) && !scopes.has(wanted)) {
+      const viaGroup = scopes.has(wanted);
+      const viaAll = scopes.has(all);
+      if (!viaGroup && !viaAll) {
         continue;
       }
-      const allowed =
-        channel === "join"
-          ? this.permissions.canApproveJoin(userId, groupId)
-          : this.permissions.canReviewContent(userId, groupId);
-      if (!allowed) {
+      if (!this.canReceive(userId, groupId, channel, viaAll)) {
         continue;
       }
       recipients.push(userId);
     }
     return recipients.sort();
+  }
+
+  /**
+   * 收件人资格（订阅之外的第二道门）：
+   *
+   * - `join`：入群审批权限（群管理员或以上）；
+   * - `punish`：内容审核权限（审核员或以上）；
+   * - `activity`：**不限权限**；订阅「全部群」时要求已绑定 QQ 号
+   *   （绑定是全局的：在一个群里绑过，所有机器人所在的群都算，用户确认的口径）。
+   */
+  private canReceive(
+    userId: string,
+    groupId: string,
+    channel: NotifyChannel,
+    viaAll: boolean,
+  ): boolean {
+    switch (channel) {
+      case "join":
+        return this.permissions.canApproveJoin(userId, groupId);
+      case "punish":
+        return this.permissions.canReviewContent(userId, groupId);
+      case "activity":
+        return viaAll ? this.isBound(userId) : true;
+    }
+  }
+
+  /** 是否已绑定 QQ 号（没有身份库时按「已绑定」处理，保持测试与单机用法可用）。 */
+  private isBound(userId: string): boolean {
+    if (!this.identityMap) {
+      return true;
+    }
+    return this.identityMap.getQq(userId) !== undefined;
   }
 
   /**

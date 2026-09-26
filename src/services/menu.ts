@@ -370,7 +370,7 @@ function superCard(context: MenuContext): CardSpec {
       ],
       [
         cmdButton("notify", "通知订阅", "/notify"),
-        cmdButton("punishNotify", "处罚推送", "/notify punish"),
+        cmdButton("notifyTest", "推送自检", "/notify test"),
         cmdButton("testmenu", "翻页测试", "/testmenu"),
       ],
       [

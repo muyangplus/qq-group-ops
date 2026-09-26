@@ -20,25 +20,32 @@ const CARD = renderCard({ title: "新活动", lines: ["测试"] });
 function createSpySender() {
   const sent: Array<{ userId: string; markdown: string }> = [];
   const failures = new Set<string>();
-  return {
-    sent,
-    failures,
-    service: {
-      sendPrivateCard: async (userId: string, message: { markdown: string }) => {
-        if (failures.has(userId)) {
-          return { ok: false, detail: "blocked" };
-        }
-        sent.push({ userId, markdown: message.markdown });
-        return { ok: true, detail: "" };
-      },
-    } as unknown as NotificationService,
-  };
+  // 订阅现在由统一的 NotificationService 负责，所以夹具要装配**真**服务，
+  // 只在最外层（RichMessageSender）用替身记录投递、注入失败。
+  const sender = {
+    keyboardAvailable: false,
+    keyboardAvailableFor: () => false,
+    sendToUser: async (userId: string, message: { markdown: string }) => {
+      if (failures.has(userId)) {
+        return { ok: false, detail: "blocked" };
+      }
+      sent.push({ userId, markdown: message.markdown });
+      return { ok: true, detail: "" };
+    },
+    sendToGroup: async () => ({ ok: false, detail: "no group sender" }),
+  } as unknown as RichMessageSender;
+  const notifications = new NotificationService(
+    new FakeQQOfficialAPI(),
+    new PermissionService({ superAdminIds: new Set<string>() }),
+    { sender },
+  );
+  return { sent, failures, sender, notifications };
 }
 
 describe("ActivityNotificationService", () => {
   it("subscribes / unsubscribes and lists the subscribed groups", () => {
     const spy = createSpySender();
-    const service = new ActivityNotificationService(spy.service);
+    const service = new ActivityNotificationService(spy.notifications);
     expect(service.isSubscribed("g1", "u1")).toBe(false);
     service.subscribe("g1", "u1");
     service.subscribe("g2", "u1");
@@ -53,7 +60,7 @@ describe("ActivityNotificationService", () => {
 
   it("pushes a new activity to every subscriber of the group only", async () => {
     const spy = createSpySender();
-    const service = new ActivityNotificationService(spy.service);
+    const service = new ActivityNotificationService(spy.notifications);
     service.subscribe("g1", "u1");
     service.subscribe("g1", "u2");
     service.subscribe("g2", "u3");
@@ -69,7 +76,7 @@ describe("ActivityNotificationService", () => {
 
   it("deduplicates the same (activity, user, kind) delivery", async () => {
     const spy = createSpySender();
-    const service = new ActivityNotificationService(spy.service);
+    const service = new ActivityNotificationService(spy.notifications);
     service.subscribe("g1", "u1");
     await service.publishNewActivity({ activityId: "a1", groupId: "g1", card: CARD });
     const second = await service.publishNewActivity({
@@ -93,7 +100,7 @@ describe("ActivityNotificationService", () => {
 
   it("caps deliveries per user per day and reports rate limited", async () => {
     const spy = createSpySender();
-    const service = new ActivityNotificationService(spy.service, undefined, undefined, {
+    const service = new ActivityNotificationService(spy.notifications, undefined, {
       dailyLimit: 2,
       now: () => new Date("2026-01-10T10:00:00"),
     });
@@ -126,7 +133,7 @@ describe("ActivityNotificationService", () => {
   it("treats dailyLimit = 0 as unlimited and resets the next day", async () => {
     const spy = createSpySender();
     let now = new Date("2026-01-10T23:00:00");
-    const service = new ActivityNotificationService(spy.service, undefined, undefined, {
+    const service = new ActivityNotificationService(spy.notifications, undefined, {
       dailyLimit: 0,
       now: () => now,
     });
@@ -142,7 +149,7 @@ describe("ActivityNotificationService", () => {
 
     // 跨天后计数重置（用同一用户、不同活动）
     now = new Date("2026-01-11T01:00:00");
-    const capped = new ActivityNotificationService(spy.service, undefined, undefined, {
+    const capped = new ActivityNotificationService(spy.notifications, undefined, undefined, {
       dailyLimit: 0,
       now: () => now,
     });
@@ -158,7 +165,7 @@ describe("ActivityNotificationService", () => {
   it("keeps going when a private message fails and logs it", async () => {
     const spy = createSpySender();
     spy.failures.add("u1");
-    const service = new ActivityNotificationService(spy.service);
+    const service = new ActivityNotificationService(spy.notifications);
     service.subscribe("g1", "u1");
     service.subscribe("g1", "u2");
     const result = await service.publishNewActivity({
@@ -180,7 +187,7 @@ describe("ActivityNotificationService", () => {
 
   it("notifies participants with a generated card by default", async () => {
     const spy = createSpySender();
-    const service = new ActivityNotificationService(spy.service);
+    const service = new ActivityNotificationService(spy.notifications);
     await service.notifyParticipants({
       activityId: "a1",
       userIds: ["u1", "u1", "u2"],
@@ -194,24 +201,31 @@ describe("ActivityNotificationService", () => {
 
   it("survives a round trip through the repositories", async () => {
     const api = new FakeQQOfficialAPI();
-    const notifications = new NotificationService(
-      api,
-      new PermissionService({ superAdminIds: new Set(["root"]) }),
-    );
+    // 订阅现在由统一的 NotificationService 持久化：用订阅表替身模拟「重启」
+    const subscriptionRows: Array<{ userId: string; scope: string }> = [];
     const subscriptions = {
-      rows: [] as Array<{ groupId: string; userId: string; createdAt: Date }>,
       async findAll() {
-        return [...this.rows];
+        return [...subscriptionRows];
       },
-      async save(entry: { groupId: string; userId: string; createdAt: Date }) {
-        this.rows.push(entry);
+      async save(entry: { userId: string; scope: string }) {
+        subscriptionRows.push(entry);
       },
-      async remove(groupId: string, userId: string) {
-        this.rows = this.rows.filter(
-          (row) => row.groupId !== groupId || row.userId !== userId,
+      async remove(userId: string, scope: string) {
+        const index = subscriptionRows.findIndex(
+          (row) => row.userId === userId && row.scope === scope,
         );
+        if (index >= 0) {
+          subscriptionRows.splice(index, 1);
+        }
       },
     };
+    const buildNotifications = (): NotificationService =>
+      new NotificationService(
+        api,
+        new PermissionService({ superAdminIds: new Set(["root"]) }),
+        { subscriptions },
+      );
+    const notifications = buildNotifications();
     const delivered: Array<{ activityId: string; userId: string; kind: string }> = [];
     const rows = {
       stored: [] as Array<{
@@ -243,20 +257,15 @@ describe("ActivityNotificationService", () => {
         this.stored = [];
       },
     };
-    const service = new ActivityNotificationService(
-      notifications,
-      subscriptions,
-      rows,
-    );
+    const service = new ActivityNotificationService(notifications, rows);
     service.subscribe("g1", "u1");
-    await service.flush();
+    await notifications.flush();
 
-    const restored = new ActivityNotificationService(
-      notifications,
-      subscriptions,
-      rows,
-      { dailyLimit: 3 },
-    );
+    // 重启：订阅从统一订阅表恢复、去重行从 activity_notifications 恢复
+    const restoredNotifications = buildNotifications();
+    await restoredNotifications.load();
+    expect(restoredNotifications.isSubscribed("u1", "g1", "activity")).toBe(true);
+    const restored = new ActivityNotificationService(restoredNotifications, rows);
     await restored.load();
     expect(restored.isSubscribed("g1", "u1")).toBe(true);
 
@@ -288,8 +297,7 @@ describe("ActivityNotificationService", () => {
       createdAt: Date;
     }> = [];
     const service = new ActivityNotificationService(
-      spy.service,
-      undefined,
+      spy.notifications,
       createMemoryNotificationRepository(stored),
       {
         groupSender: createGroupSender({
@@ -332,7 +340,7 @@ describe("ActivityNotificationService", () => {
 
   it("reports unavailable when no group sender is wired, and never throws", async () => {
     const spy = createSpySender();
-    const service = new ActivityNotificationService(spy.service);
+    const service = new ActivityNotificationService(spy.notifications);
     const result = await service.notifyGroupsCard({
       activityId: "a1",
       groupIds: ["g1"],
@@ -350,8 +358,7 @@ describe("ActivityNotificationService", () => {
       createdAt: Date;
     }> = [];
     const service = new ActivityNotificationService(
-      spy.service,
-      undefined,
+      spy.notifications,
       createMemoryNotificationRepository(stored),
       {
         groupSender: createGroupSender({
