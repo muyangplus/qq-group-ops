@@ -30,6 +30,11 @@ export interface ModerationNotifierOptions {
   /** 用户展示名（QQ号 / #用户短码 / 内部 id）。 */
   userLabel?: ((userId: string) => string) | undefined;
   /**
+   * 「只给短码」的用户标签（申诉人拿到的结果卡里显示处理人时用）。
+   * 缺省回落到 `userLabel`。
+   */
+  userShortLabel?: ((userId: string) => string) | undefined;
+  /**
    * 申诉「值班」单人持有时间（毫秒）。
    *
    * 申诉只推给**一个**审核员（按订阅顺序轮转），超过这个时间仍未处理则转给下一位；
@@ -64,6 +69,8 @@ export class ModerationNotifier {
   private readonly permissions: PermissionService;
   private readonly groupLabel: (groupId: string) => string;
   private readonly userLabel: (userId: string) => string;
+  /** 只给短码的标签（申诉人卡片上的处理人）。 */
+  private readonly userShortLabel: (userId: string) => string;
   private readonly appealHoldMs: number;
   private readonly now: () => number;
   /** 申诉 → 当前值班人（内存态；重启后由值班轮转服务重新从第一人开始派发）。 */
@@ -76,6 +83,7 @@ export class ModerationNotifier {
     this.permissions = options.permissions;
     this.groupLabel = options.groupLabel ?? ((groupId) => groupId);
     this.userLabel = options.userLabel ?? ((userId) => userId);
+    this.userShortLabel = options.userShortLabel ?? this.userLabel;
     this.appealHoldMs = options.appealHoldMs ?? 0;
     this.now = options.now ?? Date.now;
   }
@@ -200,8 +208,11 @@ export class ModerationNotifier {
   }
 
   /**
-   * 处理结果同步：推给**其他**订阅者（处理人自己已经收到回执），
-   * 让他们知道不必再处理、结果是什么。
+   * 处理结果同步：发给**与派发时同一批人** —— 管理员全部 + 当初值班的审核员，
+   * 并把**处理人自己**也算进去（他也需要一份结果存档）。
+   *
+   * 真机反馈：原来只发给「订阅者减去处理人」，于是「只有处理人订阅」时一个收件人都没有，
+   * 却静默返回、连日志都没有，看起来就是「审核员没收到任何信息」。
    */
   public async notifyAppealHandled(
     appeal: AppealRecord,
@@ -209,11 +220,21 @@ export class ModerationNotifier {
     approved: boolean,
     reviewerId: string,
   ): Promise<PushSummary> {
+    const audience = this.appealAudience(appeal.groupId);
+    const holder = this.assignments.get(appeal.appealId)?.holderId;
     this.releaseAppeal(appeal.appealId);
-    const recipients = this.notifications
-      .subscribersFor(appeal.groupId, "punish")
-      .filter((userId) => userId !== reviewerId);
+    const recipients = [
+      ...new Set(
+        [...audience.admins, ...(holder ? [holder] : []), reviewerId].filter(
+          (userId) => userId.length > 0,
+        ),
+      ),
+    ];
     if (recipients.length === 0) {
+      log.warn("no recipients for appeal handled notice", {
+        appealId: appeal.appealId,
+        groupId: appeal.groupId,
+      });
       return emptyPushSummary();
     }
     return this.notifications.pushToSubscribers({
@@ -233,7 +254,12 @@ export class ModerationNotifier {
     });
   }
 
-  /** 给申诉人本人发处理结果（通过 / 驳回）。 */
+  /**
+   * 给申诉人本人发处理结果（通过 / 驳回）。
+   *
+   * ⚠️ 申诉人只看到**处理人的短码**（`#U3F7K2`），不给 QQ 号/昵称 ——
+   * 处理人属于内部信息，真机反馈过「把详细处理人发给申诉人」的问题。
+   */
   public async notifyAppealDecision(
     appeal: AppealRecord,
     punishment: PunishmentRecord,
@@ -248,7 +274,7 @@ export class ModerationNotifier {
         recordId: punishment.recordId,
         groupLabel: this.groupLabel(appeal.groupId),
         approved,
-        reviewerLabel: this.userLabel(reviewerId),
+        reviewerLabel: this.userShortLabel(reviewerId),
         note,
         createdAt: new Date(this.now()),
       }),

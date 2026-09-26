@@ -251,7 +251,7 @@ describe("PunishmentService", () => {
     expect(await notifier.forwardAppealIfStale(first.appeal, record)).toBe(false);
   });
 
-  it("syncs the decision to other reviewers and skips the handler", async () => {
+  it("syncs the decision to the dispatch audience, including the handler", async () => {
     const { api, appeals, notifier, punishments } = setup({
       admins: ["root"],
       moderators: ["mod"],
@@ -276,15 +276,15 @@ describe("PunishmentService", () => {
     api.sentPrivateMessages.length = 0;
 
     await notifier.notifyAppealHandled(submitted.appeal, record, true, "mod");
-    const notice = api.sentPrivateMessages.find(
-      (message) => String(message.markdown ?? "").includes("申诉已处理"),
+    const notices = api.sentPrivateMessages.filter((message) =>
+      String(message.markdown ?? "").includes("申诉已处理"),
     );
-    expect(notice?.userOpenid).toBe("root");
-    expect(String(notice?.markdown)).toContain("已通过");
-    // 处理人自己不再收同步卡
-    expect(
-      api.sentPrivateMessages.some((message) => message.userOpenid === "mod"),
-    ).toBe(false);
+    // 与派发对象一致：管理员全部 + 处理人自己（原来把处理人过滤掉，只有一个人订阅时谁都收不到）
+    expect(notices.map((message) => message.userOpenid).sort()).toEqual([
+      "mod",
+      "root",
+    ]);
+    expect(String(notices[0]?.markdown)).toContain("已通过");
     // 值班记录释放，不会内存泄漏
     expect(notifier.appealHolder(submitted.appeal.appealId)).toBeUndefined();
   });

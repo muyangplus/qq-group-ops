@@ -244,6 +244,8 @@ export function createRuntime(
     permissions,
     groupLabel: (groupId) => display.group(groupId),
     userLabel: (userId) => display.user(userId),
+    // 申诉人那张结果卡只给处理人的**短码**（不给 QQ 号/昵称）
+    userShortLabel: (userId) => shortCodes.label("user", userId),
     appealHoldMs: settings.appealHoldMinutes * 60_000,
   });
   const punishments = new PunishmentService(api, blacklist, {
