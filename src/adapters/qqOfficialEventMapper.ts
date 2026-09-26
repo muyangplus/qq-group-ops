@@ -90,12 +90,17 @@ function mapGroupMessage(data: unknown): QQEvent | null {
     return null;
   }
   const content = stripBotMention(rawContent);
-  // 诊断：@ 了机器人但剥离后既不是指令也不是空内容 —— 说明提及格式没识别出来。
-  // 只记录前缀形状（转义后的前 16 个码点），用于现场定位格式，不落库、不写审计。
-  if (looksMentionLike(rawContent) && content.length > 0 && !content.startsWith("/")) {
-    log.debug("group message with unparsed mention", {
-      ...describeContentShape(rawContent, content),
-    });
+  // §R1 探测：把 @ 相关原文的**形状**打进日志（不落库、不写审计、不打印完整正文）。
+  // - 命中「@全体」类关键词 → info 级，开箱即见，用来确认官方事件里 @全体 的真实表示（B3 依赖）；
+  // - 其它带 @ / 不可见字符的内容 → debug 级（需 LOG_LEVEL=debug），用来定位没识别出的提及格式。
+  const probe = classifyMentionProbe(rawContent);
+  if (probe !== "none") {
+    const shape = describeContentShape(rawContent, content);
+    if (probe === "at-all") {
+      log.info("mention probe: at-all candidate", shape);
+    } else {
+      log.debug("mention probe: mention-like content", shape);
+    }
   }
   return {
     type: "group_message",
@@ -104,6 +109,23 @@ function mapGroupMessage(data: unknown): QQEvent | null {
     messageId,
     content,
   };
+}
+
+/** 客户端可能把 @全体 写成这些样子（大小写不敏感）。 */
+const AT_ALL_HINT =
+  /(@\s*(全体|全體|全员|所有人)|<@!?(all|everyone)>|@(all|everyone)\b)/iu;
+
+/**
+ * §R1 探测判定（纯函数，便于单测）：
+ * - `at-all`：原文像「@全体」→ info 级日志；
+ * - `mention`：原文有 @ 或不可见字符 → debug 级日志；
+ * - `none`：普通聊天，不记。
+ */
+export function classifyMentionProbe(raw: string): "at-all" | "mention" | "none" {
+  if (AT_ALL_HINT.test(raw)) {
+    return "at-all";
+  }
+  return looksMentionLike(raw) ? "mention" : "none";
 }
 
 /** 零宽 / 双向控制 / BOM 等不可见字符：QQ 客户端会在 @ 提及前后插入。 */
@@ -157,7 +179,7 @@ function looksMentionLike(content: string): boolean {
 }
 
 /** 转义后的短前缀 + 长度信息，用于定位未识别的提及格式（不打印完整正文）。 */
-function describeContentShape(
+export function describeContentShape(
   raw: string,
   cleaned: string,
 ): Record<string, unknown> {
@@ -176,6 +198,9 @@ function describeContentShape(
     hasAngleMention: /<@/u.test(raw),
     hasAtMention: /@/u.test(raw),
     invisibleCodePoints,
+    // 提及是否真的被剥离了：false + 正文不是指令 = 出现没识别出的提及格式
+    stripped: raw !== cleaned,
+    isCommand: cleaned.startsWith("/"),
     leading: escapePreview(raw),
   };
 }

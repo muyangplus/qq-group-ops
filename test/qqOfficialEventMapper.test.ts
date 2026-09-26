@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  classifyMentionProbe,
+  describeContentShape,
   QQOfficialEventMapper,
   stripBotMention,
 } from "../src/adapters/qqOfficialEventMapper.js";
@@ -89,6 +91,41 @@ describe("QQOfficialEventMapper", () => {
   it("leaves normal chat that addresses other people alone", () => {
     expect(stripBotMention("@张三 你好")).toBe("@张三 你好");
     expect(stripBotMention("大家好 @张三")).toBe("大家好 @张三");
+  });
+
+  it("classifies @全体 probes for the R1 diagnostic log", () => {
+    // §R1：这些写法都值得按 info 级记一条「@全体 候选」，用来确认官方表示
+    for (const candidate of [
+      "@全体成员 大家好",
+      "@全体 测试",
+      "@所有人 测试",
+      "@全员 测试",
+      "<@all> 测试",
+      "<@!everyone> 测试",
+      "@ALL 测试",
+    ]) {
+      expect(classifyMentionProbe(candidate)).toBe("at-all");
+    }
+    // 其它提及 / 不可见字符走 debug 级
+    expect(classifyMentionProbe("<@!1234567890> /menu")).toBe("mention");
+    expect(classifyMentionProbe("@机器人 /menu")).toBe("mention");
+    expect(classifyMentionProbe("hi\u200Bthere")).toBe("mention");
+    // 普通聊天不记
+    expect(classifyMentionProbe("大家好")).toBe("none");
+    expect(classifyMentionProbe("")).toBe("none");
+  });
+
+  it("keeps the raw shape fields the R1 probe logs", () => {
+    const shape = describeContentShape("<@!123>\u200B/menu", "/menu");
+    expect(shape.stripped).toBe(true);
+    expect(shape.isCommand).toBe(true);
+    expect(shape.hasAngleMention).toBe(true);
+    expect(shape.invisibleCodePoints).toEqual(["U+200B"]);
+    expect(shape.rawLength).toBeGreaterThan(shape.cleanedLength);
+
+    const unparsed = describeContentShape("@张三 /menu", "@张三 /menu");
+    expect(unparsed.stripped).toBe(false);
+    expect(unparsed.isCommand).toBe(false);
   });
 
   it("maps button interaction events", () => {
