@@ -369,6 +369,10 @@ export function parseMentionTarget(text: string): string | undefined {
  * 真机已确认：Markdown 卡片里的 `<@!openid>` 能 @ 到人，纯文本 `content` 里的却不行；
  * 而 `@everyone` 在纯文本里无效。于是这里把所有「可能让全群收到提醒」的候选写法各发一条，
  * 由真机结果来判定到底有没有可用的一条（官方群聊能力文档没有明确支持 @所有人）。
+ *
+ * 2026-09-26 补：入站真实形态经 R1 确认为 **`<@all> `**（`@全体成员`）与 **`@everyone`**——
+ * 客户端发的就是这两种。之前穷举的是 `<@!all>` / `<@!everyone>`（带 `!`），**没有覆盖不带 `!` 的
+ * 官方原文形态**，所以补进候选再测一轮（卡片与纯文本两种通道都试）。
  */
 export const AT_ALL_PROBES: readonly {
   label: string;
@@ -399,6 +403,22 @@ export const AT_ALL_PROBES: readonly {
     label: "纯文本 `content` 含 `<@!all>`",
     kind: "text",
     content: "【@测试】@全体候选（纯文本）：<@!all>",
+  },
+  // ↓ 2026-09-26 新增：官方入站原文形态（不带 `!`）
+  {
+    label: "Markdown 卡片正文含 `<@all>`（官方原文形态）",
+    kind: "card",
+    content: "【@测试】@全体候选：<@all> 这一条是 markdown 卡片。",
+  },
+  {
+    label: "纯文本 `content` 含 `<@all>`（官方原文形态）",
+    kind: "text",
+    content: "【@测试】@全体候选（纯文本）：<@all>",
+  },
+  {
+    label: "纯文本 `content` 含 `@everyone`",
+    kind: "text",
+    content: "【@测试】@全体候选（纯文本）：@everyone",
   },
 ];
 

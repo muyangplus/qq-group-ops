@@ -335,16 +335,23 @@ describe("AdminCommandService · misc", () => {
 
     const all = await svc.handle("g1", "root", "/testat all");
     expect(all.ok).toBe(true);
-    // 3 条基础测试 + 5 条 @全体候选
-    expect(all.text).toContain("已在群里发送 8 条测试消息");
-    expect(api.sentMessages).toHaveLength(8);
+    // 3 条基础测试 + 8 条 @全体候选
+    expect(all.text).toContain("已在群里发送 11 条测试消息");
+    expect(api.sentMessages).toHaveLength(11);
     const probeTexts = api.sentMessages
       .slice(3)
       .map((message) => String(message.markdown ?? message.content ?? ""));
-    expect(probeTexts.join("\n")).toContain("@everyone");
-    expect(probeTexts.join("\n")).toContain("<@!all>");
-    expect(probeTexts.join("\n")).toContain("<@!everyone>");
-    expect(probeTexts.join("\n")).toContain("@全体成员");
+    const joined = probeTexts.join("\n");
+    expect(joined).toContain("@everyone");
+    expect(joined).toContain("<@!all>");
+    expect(joined).toContain("<@!everyone>");
+    expect(joined).toContain("@全体成员");
+    // R1 抓到的官方入站原文形态（不带 `!`）必须在候选里
+    expect(joined).toContain("<@all>");
+    // 卡片与纯文本两种通道都要试到（纯文本条目不带 markdown）
+    expect(
+      api.sentMessages.filter((message) => message.markdown === undefined),
+    ).toHaveLength(4);
 
     // 群发送整体失败：汇总卡如实报告，不抛错
     api.failGroupMessages = true;
