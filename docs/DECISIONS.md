@@ -55,6 +55,7 @@
 - ADR-0045：`@全体` 能力边界与群内 @全体 的短路处理（§B3）
 - ADR-0046：群内处罚卡去规则/去原文，原文改为可选短期落库（§B7 / §B8）
 - ADR-0047：申诉派发「管理员全通知 + 审核员轮单」，并补齐处理闭环（§B8）
+- ADR-0048：违规处理改为五选多选（`punishActions`），拉黑不连坐踢出（§B2）
 
 ---
 
@@ -935,3 +936,33 @@
   `notifyAppealHandled` / `notifyAppealDecision`）、新增 `appealWatcher.ts` 与 `config.ts` 两个环境变量、
   `notifications.pushToSubscribers({ recipients })`、`cardTemplate.fillOnly`、`appealCommands.ts`
   （重复提交拦截与结果通知）、`moderationCards.ts`（结果卡与同步卡）。验收：**J68**。
+
+## ADR-0048：违规处理改为五选多选，拉黑不连坐踢出（§B2）
+
+- 状态：已采纳（0.16.0，2026-09-26）
+- 背景：重构前「违规处理」是**单选枚举** `keywordPunish`（`none` / `mute` / `kick` / `kick_blacklist`）
+  外加一个独立的 `keywordRecall` 布尔 —— 想「先撤回再禁言」得改两个字段，想「踢出 + 拉黑」只能选
+  绑定死的 `kick_blacklist`（还顺带踢人）；用户要求改成**多选**。
+- 决策（用户逐条确认）：
+  1. **五动作多选**：`警告 / 撤回 / 禁言 / 踢出 / 拉黑` 互相独立，新字段
+     `punishActions: { warn, recall, mute, kick, blacklist }`，存 `group_settings` 键值表（**老库免迁移**）；
+     覆盖时**整组替换**（不逐位合并），避免「只改一个开关」把别的动作带偏；
+  2. **执行顺序固定**：撤回 → 禁言 → 踢出 → 拉黑 → 警告；每个动作**尽力而为**，
+     单个失败不影响其它动作，`detail` 里带 `_failed` 后缀，全部失败时审计状态为 `pending`；
+     规则自带的动作（静态规则的 `Mute` / `Kick` / `Recall`）与群配置取**并集**；
+  3. **拉黑不自动踢**：只落本地黑名单（入群审批最高优先级拒绝）+ 调官方群拉黑；
+     官方接口要求目标不在群中，人在群里时该调用会失败 —— 只记日志，本地拦截照旧生效
+     （`BlacklistService.add({ kick: false })`）；
+  4. **旧字段与旧指令删除**：`/rules set keywordRecall`、`/rules set keywordPunish` 不再支持；
+     但**老库自动换算**（`punishActionsFromLegacy`）：`kick_blacklist` → 踢出 + 拉黑、`mute` → 禁言、
+     `kick` → 踢出、`recall` → 撤回，警告默认开；
+  5. **卡片交互**：违规处理子卡 = 5 个开关（`警告 开` / `撤回 关` …）+ 禁言时长快捷值 + 恢复继承 + 返回，
+     点开关走回调 `cb:rules:punishToggle` 并回同一张子卡；指令入口 `/rules set punish 警告,撤回,禁言`。
+- 理由：动作本来就是正交的（要不要撤回、要不要禁言…），枚举把组合关系写死既难用又难扩展；
+  多选 + 固定顺序让语义可预测；拉黑连坐踢出属于"用户没要求却发生的副作用"，而本地黑名单已经能拦住
+  该用户再次入群，官方拉黑的失败不该影响拦截效果。
+- 影响：`groupConfigCore.ts`（`PunishActions` / 默认值 / 归一化 / 旧字段换算 / 字段清单）、
+  `groupConfig.ts`（生效配置合并）、`messageGuard.ts`（五动作独立执行 + 黑名单依赖）、
+  `blacklist.ts`（`add({ kick:false })`）、`ruleCommands.ts`（多选面板 + `punishToggle` 回调）、
+  `support.ts`（`parsePunishActions` / 字段标签 / 帮助文本）、`runtime.ts`（装配黑名单 + 回调路由）。
+  验收：**J69**；文档：COMMANDS / CONFIGURATION / ACCEPTANCE / REAL-MACHINE-RUN。

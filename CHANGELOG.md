@@ -10,6 +10,29 @@
 （暂无未发布改动）
 
 
+## [0.16.0] - 2026-09-26
+
+### 变更
+
+- **「违规处理」改成五选多选**（§B2）：`警告 / 撤回 / 禁言 / 踢出 / 拉黑` 互相独立、可任意组合，
+  按「撤回 → 禁言 → 踢出 → 拉黑 → 警告」顺序执行；`/rules` → 「违规处理」子卡是 **5 个开关按钮**
+  （标签显示当前状态，点一下切换并回到同一张子卡），正文显示「当前动作」；
+  新指令 `/rules set punish 警告,撤回,禁言`（中英文动作名、逗号/空格分隔都认，`none` = 五个全关）。
+- **拉黑不再连坐踢出**：只落**本群黑名单**（入群审批最高优先级拒绝）+ 尝试官方群拉黑；
+  官方接口要求目标不在群中，人在群里时该调用会失败 —— **只记日志**，本地拦截照旧生效。
+- **旧字段与旧指令移除**：`/rules set keywordRecall`、`/rules set keywordPunish` 删除；
+  新字段 `punishActions` 走 `group_settings` 键值表（**老库免迁移**），
+  旧库里的 `keywordRecall` + `keywordPunish` 在启动时**自动换算**
+  （`kick_blacklist` → 踢出 + 拉黑、`mute` → 禁言、`recall` → 撤回，警告默认开）。
+- 「开关设置」子卡去掉「撤回」开关（挪进违规处理子卡），「恢复本页继承」的字段清单同步；
+  `/rules` 帮助、`/status`、`/help rules` 与文档全部改成多选口径。
+
+### 备注
+
+- 验收项 **J69**（多选面板 + 组合动作 + 只勾拉黑不踢人 + 旧配置换算）已补进 `docs/ACCEPTANCE.md`；
+  决策见 `docs/DECISIONS.md` **ADR-0048**。
+
+
 ## [0.15.2] - 2026-09-26
 
 ### 修复
@@ -502,6 +525,7 @@
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
 [Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.2...HEAD
+[0.16.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.2...v0.15.0

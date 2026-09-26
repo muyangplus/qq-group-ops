@@ -109,7 +109,7 @@ grep -E "gateway ready|identify|ERROR|WARN" logs/qq-group-ops.log | tail -40   #
 | 步骤 | 操作 |
 |---|---|
 | R8-1 | 群管理员或审核员私信 `/notify punish on` |
-| R8-2 | `/rules set keywordPunish mute`（或本群已有规则），小号在群里发一条命中关键词的消息 |
+| R8-2 | `/rules set punish 警告,撤回,禁言`（或在「违规处理」子卡上点开关），小号在群里发一条命中关键词的消息 |
 | R8-3 | 审核员私信应收到处罚卡；点「禁言时长 → 1 小时」「解除处罚」 |
 | R8-4 | 小号私信 `/appeal <#处罚短码> 误判`；审核员卡上点「通过申诉」/「驳回申诉」 |
 

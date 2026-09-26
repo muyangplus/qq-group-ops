@@ -201,18 +201,28 @@ QQ 端的图形化入口：**Markdown 卡片 + 按钮**。**默认入口一律�
 
 ## 关键词处罚与入群审核规则
 
-### 关键词命中后做什么（撤回 / 禁言 / 移出 / 拉黑）
+### 关键词命中后做什么（多选：警告 / 撤回 / 禁言 / 踢出 / 拉黑）
 
-命中关键词默认只发警告，可以叠加撤回与处罚：
+**违规处理是五选多选**（0.16.0 起）：动作互相独立、可任意组合，按「撤回 → 禁言 → 踢出 → 拉黑 → 警告」顺序执行；
+也可以直接在 `/rules` → 「违规处理」子卡上点开关（标签显示当前状态）。
 
 ```text
-/rules set keywordRecall on              # 命中后撤回消息
-/rules set keywordPunish mute            # 禁言，时长取 muteDuration
-/rules set keywordPunish kick            # 移出群
-/rules set keywordPunish kick_blacklist  # 移出并加入黑名单（一次调用）
-/rules set keywordPunish none            # 只警告（默认）
-/rules set muteDuration 600              # 禁言时长（秒）
+/rules set punish 警告,撤回,禁言          # 一次设置多个动作
+/rules set punish warn recall mute       # 英文动作名同样可用
+/rules set punish none                   # 五个动作全关（什么都不做）
+/rules set muteDuration 600              # 禁言时长（秒，禁言动作使用）
 ```
+
+| 动作 | 说明 |
+|---|---|
+| 警告 | 发群规则警告卡（`warningMessage`），被动回复命中消息 |
+| 撤回 | 撤回命中的消息 |
+| 禁言 | 禁言 `muteDuration` 秒 |
+| 踢出 | 移出群（官方接口需白名单，失败记日志） |
+| 拉黑 | 落**本群黑名单**（入群审批最高优先级拒绝）+ 尝试官方群拉黑；**不自动踢人**（官方要求目标不在群中，人在群里时官方调用会失败，只记日志） |
+
+> 旧指令 `/rules set keywordRecall` 与 `/rules set keywordPunish` **已移除**；
+> 老库里的这两个字段在启动时会**自动换算**成新的多选（`kick_blacklist` → 踢出 + 拉黑、`mute` → 禁言、`recall` → 撤回，警告默认开）。
 
 命中后的群内反馈是一张**「处罚通知」卡片**（被动回复原消息），正文包含：
 
@@ -765,7 +775,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
   `/rules del keyword <词>` 逐条删除（不存在会明确报错），权限与 `/rules set` 相同；
 - 「关键词」子卡每页 3 条、每条一个「删」按钮（点一下即删并回到本页），
   另有「加词」（指令按钮预填 `/rules add keyword `）与「清空」（二次确认）；
-- 命中任一关键词即触发一次审核动作：默认发送下面的「警告文案」，若配置了 `keywordRecall` / `keywordPunish` 还会撤回、禁言、移出或拉黑（见「关键词处罚与入群审核规则」），并写一条审计记录（`/audit` 可查）；
+- 命中任一关键词即触发一次审核动作：默认发送下面的「警告文案」，若把「违规处理」勾成多选还会按顺序撤回、禁言、踢出或拉黑（见「关键词处罚与入群审核规则」），并写一条审计记录（`/audit` 可查）；
 - `clear`（也接受 `清空`、`默认`、`reset`）表示清空关键词；
 - 修改立即生效。
 
@@ -831,7 +841,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 
 单位是秒，取值必须是非负整数，上限 30 天（`2592000` 秒，超出会被截断）。
 
-> 这个时长只在 `keywordPunish` 为 `mute`（或 `kick` 失败后需要改判禁言）时使用；默认动作是「只警告」，不会用到时长。
+> 这个时长只在「违规处理」勾了「**禁言**」（或踢出失败后需要改判禁言）时使用；没勾禁言就不会用到时长。
 
 ### 6. 全局规则（`all`）
 
@@ -846,8 +856,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 /rules set all autoApprove off
 /rules set all muteDuration 600
 /rules set all enabled on
-/rules set all keywordRecall on          # 全局：命中后撤回
-/rules set all keywordPunish mute        # 全局：命中后禁言
+/rules set all punish 警告,撤回,禁言       # 全局：命中后撤回 + 禁言（多选）
 /rules set all joinDecision approve_on_match
 /rules set all joinRequireClass on
 /rules set all joinRequireName on
@@ -920,7 +929,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 
 ### 8. 验证是否生效
 
-1. 在群里发一条包含关键词的消息，机器人应回复你配置的警告文案（若开了 `keywordRecall`，消息应先被撤回）；
+1. 在群里发一条包含关键词的消息，机器人应回复你配置的警告文案（若勾了「撤回」，消息应先被撤回）；
 2. `/audit` 查看最近记录，应出现 `moderation:warn`（或 `moderation:recall` / `moderation:mute` / `moderation:kick`），reason 为 `命中关键词：<关键词>`；具体每个动作成功与否看日志（带 `_failed` 后缀），全部失败时审计状态为 `pending`；
 3. `/status` 查看该群运行状态（启用、过滤、全量消息模式等）。
 
@@ -930,8 +939,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 |---|---|---|---|
 | `keywords` | `keyword`、`关键词` | 关键词列表；`clear` 清空 | 命中即触发下方的动作 |
 | `warning` | `warningMessage`、`警告` | 任意文案；`clear` 恢复默认 | 命中后发送的文案 |
-| `keywordRecall` | `recall`、`撤回` | on / off | 命中后是否撤回消息 |
-| `keywordPunish` | `punish`、`处罚` | `none` / `mute` / `kick` / `kick_blacklist` | 命中后的处罚动作 |
+| `punish` | `punishActions`、`处罚`、`违规处理` | `警告,撤回,禁言,踢出,拉黑`（中英文均可，逗号/空格分隔）；`none` 全关 | **多选**违规处理动作（见上文「关键词命中后做什么」） |
 | `muteDuration` | `mute`、`禁言时长` | 非负整数秒，≤ `2592000` | 禁言动作使用的时长 |
 | `wordFilter` | `关键词过滤` | on / off | 关键词过滤总开关 |
 | `joinAudit` | `入群审核` | on / off | 入群审核总开关 |
@@ -971,7 +979,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 | `设置失败：xxx 需要 on 或 off` | 开关只能填 on/off 及其同义写法 |
 | `设置失败：禁言时长需要非负整数（秒）` | `muteDuration` 只能填数字 |
 | `私信中设置规则需要提供已绑定的 group_openid 或群号。` | 私信里必须写群号或 `group_openid`（全局规则写 `all`） |
-| `设置失败：keywordPunish 只能是 none/mute/kick/kick_blacklist` | 处罚动作取值写错 |
+| `设置失败：未知的违规处理动作「x」；可选：警告/撤回/禁言/踢出/拉黑` | 处罚动作取值写错（多选列表里出现未知项） |
 | `设置失败：joinDecision 只能是 manual/auto_approve/approve_on_match/reject_on_match/reject_on_mismatch` | 入群决策取值写错 |
 | `设置失败：joinAnswerPattern 不是合法的正则（…）` | 正则写错了，会拒绝保存（写错的正则不会生效） |
 | 配了关键词但没反应 | 检查 `/rules`（或 `/rules all`）里 `启用` 与 `关键词过滤` 是否为 `true`；非 @ 的普通消息还需要群管理员在机器人资料页开启「接收所有消息」 |

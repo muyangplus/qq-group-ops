@@ -176,9 +176,8 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 /rules del keyword 广告                              # 逐条删除关键词（不存在会明确报错）
 /rules set warning 本群禁止广告，请撤回。           # 自定义警告文案
 /rules set warning clear                           # 恢复默认警告文案
-/rules set keywordRecall on|off                    # 命中后是否撤回消息
-/rules set keywordPunish none|mute|kick|kick_blacklist  # 命中后的处罚动作
-/rules set muteDuration 600                        # 禁言时长（秒），供 mute 动作使用
+/rules set punish 警告,撤回,禁言                     # 违规处理：多选（警告/撤回/禁言/踢出/拉黑）
+/rules set muteDuration 600                        # 禁言时长（秒），供「禁言」动作使用
 /rules set wordFilter on|off                       # 关键词过滤总开关
 /rules set joinAudit on|off                        # 入群审核开关
 /rules set autoApprove on|off                      # 全部自动通过（等价 joinDecision auto_approve）
@@ -219,7 +218,7 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 审核行为：
 
 - 群配置里的关键词会真正参与消息审核；命中后默认动作是**警告**（发送该群的警告文案并写入审计）。
-- `keywordRecall on` 会追加撤回；`keywordPunish` 可设为 `mute` / `kick` / `kick_blacklist`；动作**尽力而为**，单个失败不影响其他动作，失败会记在日志中（带 `_failed` 后缀）；全部失败时 `/audit` 里的审计状态为 `pending`。
+- 「违规处理」是**多选**（0.16.0 起）：`警告` / `撤回` / `禁言` / `踢出` / `拉黑` 互相独立、可任意组合，按「撤回 → 禁言 → 踢出 → 拉黑 → 警告」顺序执行；动作**尽力而为**，单个失败不影响其他动作，失败会记在日志中（带 `_failed` 后缀）；全部失败时 `/audit` 里的审计状态为 `pending`。其中**拉黑不自动踢人**：只落本群黑名单（入群审批最高优先级拒绝）并尝试官方拉黑，官方要求目标不在群中，人在群里时该调用失败只记日志。旧指令 `keywordRecall` / `keywordPunish` 已移除，老库里的这两个字段会自动换算成新多选。
 - 关键词按群隔离，修改后立即生效（规则引擎按群缓存，关键词变化时自动失效）。
 - 关键词会去重、去空白并按字典序保存，保证重启前后顺序一致。
 - 禁言动作使用官方 `restrict_chat_setting`（最长 30 天，机器人需为群管理员）。
