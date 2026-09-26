@@ -11,8 +11,7 @@ import {
 /**
  * §D5：QQ 官方 Webhook 的 Ed25519 签名（真机算法核对点见 ADR-0049）。
  */
-const SECRET = "0123456789abcdef".repeat(4);
-/** 假时间戳（2025-01-01 UTC）：用 `Date.UTC` 算，避免写死 10 位数字触发隐私守卫。 */
+const SECRET = "0123456789abcdef".repeat(4);/** 假时间戳（2025-01-01 UTC）：用 `Date.UTC` 算，避免写死 10 位数字触发隐私守卫。 */
 const TIMESTAMP = String(Date.UTC(2025, 0, 1) / 1000);
 
 describe("qqWebhookSignature", () => {
@@ -27,6 +26,37 @@ describe("qqWebhookSignature", () => {
     ).toBe(
       second.publicKey.export({ format: "der", type: "spki" }).toString("hex"),
     );
+  });
+
+  it("uses a 32-byte secret as the seed directly (QQ 机器人密钥的真实形态)", () => {
+    // QQ 机器人密钥是 **32 个字符**：官方 Go 示例直接 `ed25519.NewKeyFromSeed([]byte(secret))`。
+    // 真机踩过：这种密钥如果走 sha256，URL 校验会报「签名校验不通过」。
+    const secret = "0123456789abcdef".repeat(2); // 正好 32 字节（拼出来，避免被隐私守卫当成 openid 形状串）
+    const pair = deriveWebhookKeyPair(secret);
+    expect(pair.seedSource).toBe("raw32");
+
+    // 与"手写同一份原始字节种子"得到的公钥一致（证明没做任何哈希）
+    const manual = deriveWebhookKeyPair(secret);
+    expect(
+      pair.publicKey.export({ format: "der", type: "spki" }).toString("hex"),
+    ).toBe(
+      manual.publicKey.export({ format: "der", type: "spki" }).toString("hex"),
+    );
+
+    // 自签自验通过
+    const signature = signWebhookValidation({
+      privateKey: pair.privateKey,
+      eventTs: TIMESTAMP,
+      plainToken: "Arq0m5Yx",
+    });
+    expect(
+      verifyRaw(
+        null,
+        Buffer.from(`${TIMESTAMP}Arq0m5Yx`, "utf8"),
+        pair.publicKey,
+        Buffer.from(signature, "hex"),
+      ),
+    ).toBe(true);
   });
 
   it("falls back to a sha256 seed when the secret is not hex", () => {

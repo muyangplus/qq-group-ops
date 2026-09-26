@@ -33,31 +33,42 @@ const PKCS8_ED25519_PREFIX = Buffer.from(
 export interface WebhookKeyPair {
   publicKey: KeyObject;
   privateKey: KeyObject;
-  /** 种子来源：`hex`（AppSecret 是十六进制）/ `sha256`（回退）。 */
-  seedSource: "hex" | "sha256";
+  /** 种子来源：`raw32`（32 字节原始密钥）/ `hex`（32 字节十六进制）/ `sha256`（兜底，需核对密钥）。 */
+  seedSource: "raw32" | "hex" | "sha256";
 }
 
 /**
  * 从机器人密钥派生 Ed25519 密钥对。
  *
- * 十六进制且 ≥ 64 个字符 → 前 32 字节；否则 `sha256(secret)`。
+ * 派生顺序（2026-09-26 真机修正）：
+ * 1. **长度正好 32 字节**（QQ 机器人密钥是 32 位字符串）→ 直接取 UTF-8 原始字节作种子：
+ *    官方 Go 示例就是 `ed25519.NewKeyFromSeed([]byte(secret))`；
+ * 2. **≥64 位十六进制**（32 字节十六进制）→ 十六进制解码取前 32 字节（QQ 频道风格密钥）；
+ * 3. 其它 → `sha256(secret)` 兜底，并**打 warn**（大概率密钥填错，或者平台换了格式）。
+ *
+ * ⚠️ 真机踩过：32 位密钥如果走 sha256，URL 校验会报「签名校验不通过」——
+ * 所以第 1 条必须优先于第 3 条，判断依据是**字节长度**而不是"是不是十六进制"。
  */
 export function deriveWebhookKeyPair(secret: string): WebhookKeyPair {
   const trimmed = secret.trim();
   if (trimmed.length === 0) {
     throw new Error("webhook secret 不能为空");
   }
+  const raw = Buffer.from(trimmed, "utf8");
   const hex = /^[0-9a-fA-F]+$/u.test(trimmed) ? trimmed : undefined;
   let seed: Buffer;
-  let seedSource: "hex" | "sha256";
-  if (hex !== undefined && hex.length >= 64) {
+  let seedSource: "raw32" | "hex" | "sha256";
+  if (raw.length === 32) {
+    seed = raw;
+    seedSource = "raw32";
+  } else if (hex !== undefined && hex.length >= 64) {
     seed = Buffer.from(hex.slice(0, 64), "hex");
     seedSource = "hex";
   } else {
     seed = createHash("sha256").update(trimmed, "utf8").digest();
     seedSource = "sha256";
-    log.warn("webhook secret is not 32-byte hex, falling back to sha256 seed", {
-      secretLength: trimmed.length,
+    log.warn("webhook secret is neither 32 bytes nor 32-byte hex, using sha256 seed", {
+      secretBytes: raw.length,
     });
   }
   const privateKey = createPrivateKey({
