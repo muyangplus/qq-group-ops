@@ -14,7 +14,7 @@ import type {
 } from "../core/models.js";
 import { utcNow } from "../core/models.js";
 import { encodeCallback } from "./callbackData.js";
-import { renderCard } from "./cardTemplate.js";
+import { renderCard, singleLine } from "./cardTemplate.js";
 import type { AuditLog } from "./audit.js";
 import { AuditLogStore } from "./audit.js";
 import type { EffectiveGroupConfig } from "./groupConfig.js";
@@ -25,6 +25,18 @@ import type { PunishmentService } from "./punishments.js";
 import type { RichMessageSender } from "./richMessages.js";
 
 const log = getLogger("message-guard");
+
+/** 处罚原文的最大长度（§B7：只留够审核员判断的片段，少存一点隐私）。 */
+export const RAW_MESSAGE_EXCERPT_MAX = 200;
+
+/**
+ * 处罚记录里保存的消息原文：压成单行 + 截断。
+ *
+ * 只有本群 `rawMessageRetentionDays > 0` 时才调用（默认不保存原文，见 ADR-0005）。
+ */
+export function rawMessageExcerpt(content: string): string {
+  return singleLine(content).slice(0, RAW_MESSAGE_EXCERPT_MAX);
+}
 
 export interface MessageGuardResult {
   groupId: string;
@@ -52,7 +64,8 @@ export class MessageGuardService {
     /** 注入后：审核员及以上（canReviewContent）的消息豁免关键词判断。 */
     private readonly permissions?: PermissionService,
     /**
-     * 富消息发送器：注入后命中关键词会回一张**完整卡片**（@ 当事人 + 命中规则 + 处理动作）。
+     * 富消息发送器：注入后命中关键词会回一张**「处罚通知」卡片**（@ 当事人 + 处理动作 + 群规则文案；
+     * 不写命中的具体规则，也不带消息原文 —— 见 `sendWarning`）。
      * 未注入时退化为原来的纯文本警告（被动回复群消息）。
      */
     private readonly richMessages?: RichMessageSender,
@@ -138,6 +151,10 @@ export class MessageGuardService {
             source: "keyword",
             ruleReason: matches[0]?.reason ?? "",
             messageId: message.messageId,
+            // §B7：只有本群开启了消息保留才落库原文（默认不保存，隐私优先）。
+            ...(config.rawMessageRetentionDays > 0
+              ? { messageExcerpt: rawMessageExcerpt(message.content) }
+              : {}),
             actions: {
               recalled: plan.recall,
               muted: plan.punish === KeywordPunish.Mute,
@@ -293,8 +310,15 @@ export class MessageGuardService {
 
   /**
    * 命中反馈：注入富消息发送器时回一张**完整卡片**——
-   * 首行 @ 当事人（卡片内 `<@!openid>` 已真机验证能 @ 到人），正文含命中规则、处理动作与群规则文案；
-   * 没有发送器时退化为原来的纯文本警告。
+   * 首行 @ 当事人（卡片内 `<@!openid>` 已真机验证能 @ 到人），正文是处理动作与群规则文案。
+   *
+   * §隐私口径（2026-09-26 用户确认）：
+   * - **不写命中的具体规则**（关键词 / 正则都算隐私，写了等于把规则内容贴到群里）；
+   * - **不带消息原文**（群里任何人可见）；
+   * - 卡片标题就叫「处罚通知」。
+   * 具体规则与原文只出现在**私信**卡片里（审核员与当事人本人）。
+   *
+   * 没有发送器时退化为原来的纯文本警告（只发群规则文案）。
    */
   private async sendWarning(
     message: IncomingMessage,
@@ -308,7 +332,6 @@ export class MessageGuardService {
       punishmentCode?: string | undefined;
     },
   ): Promise<void> {
-    const hit = input.matches[0]?.reason?.trim();
     if (!this.richMessages) {
       await this.api.sendGroupMessage(
         message.groupId,
@@ -318,10 +341,9 @@ export class MessageGuardService {
       return;
     }
     const card = renderCard({
-      title: "关键词命中",
+      title: "处罚通知",
       lines: [
         `<@!${message.userId}>`,
-        `**命中规则**：${hit && hit.length > 0 ? hit : "（关键词）"}`,
         `**处理**：${this.punishLabel(input)}`,
         `**群规则**：${config.warningMessage}`,
       ],
@@ -342,14 +364,12 @@ export class MessageGuardService {
                     type: 0 as const,
                     specifyUserIds: [message.userId],
                   },
-                  unsupportTips:
-                    "当前 QQ 版本不支持按钮，可私聊机器人发送 /appeal 申诉",
+                  unsupportTips: "当前 QQ 版本不支持按钮，请私聊机器人再试",
                 },
               ],
             ],
           }
         : {}),
-      footer: ["有异议请联系群管理员；/help 查看全部指令"],
     });
     await this.richMessages.replyToGroup(message.groupId, card, {
       msgId: message.messageId,

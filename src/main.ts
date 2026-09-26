@@ -70,6 +70,7 @@ async function main(): Promise<void> {
     {
       auditLogRetentionDays: settings.auditLogRetentionDays,
       joinRequestRetentionDays: settings.auditLogRetentionDays,
+      rawMessageRetentionDays: settings.rawMessageRetentionDays,
       joinRequestTtlDays: settings.joinRequestTtlDays,
     },
     runtime.notifications,

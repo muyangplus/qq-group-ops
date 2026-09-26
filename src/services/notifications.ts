@@ -165,6 +165,11 @@ export class NotificationService {
     return this.sender.keyboardAvailable;
   }
 
+  /** 指定目标是否还能用自定义按钮（私信卡片判据：群键盘被拒不该连累私信）。 */
+  public keyboardAvailableFor(target: "user" | "group"): boolean {
+    return this.sender.keyboardAvailableFor(target);
+  }
+
   /**
    * 暴露富消息发送器（Markdown + 按钮 + 三级降级）。
    *

@@ -283,7 +283,10 @@ describe("MessageGuardService keyword rules", () => {
     expect(auditLog.all()[0]?.status).toBe(AuditStatus.Pending);
   });
 
-  /** B2：注入富消息发送器时，命中反馈是一张「@ 当事人 + 命中规则 + 处理动作」的完整卡片。 */
+  /**
+   * B2 + §隐私口径：群内命中反馈是「处罚通知」卡片（@ 当事人 + 处理动作 + 群规则文案），
+   * **不写命中的具体规则、不带消息原文**（那两样只出现在私信卡片里）。
+   */
   it("sends a complete card that mentions the offender", async () => {
     const rules = new RuleEngine([
       { ruleId: "warn", pattern: "广告", action: ModerationAction.Warn, reason: "发现广告" },
@@ -299,7 +302,7 @@ describe("MessageGuardService keyword rules", () => {
       new RichMessageSender(api),
     );
 
-    // 仅警告：卡片含 @、命中规则与处理动作，且仍是被动回复原消息
+    // 仅警告：卡片含 @、处理动作与群规则文案，且仍是被动回复原消息
     const warned = await scoped.handleMessage(
       newIncomingMessage("g1", "u1", "m1", "这是广告"),
     );
@@ -307,10 +310,13 @@ describe("MessageGuardService keyword rules", () => {
     const warnCard = api.sentMessages.at(-1);
     expect(warnCard?.msgId).toBe("m1");
     const warnText = String(warnCard?.markdown ?? "");
+    expect(warnText.startsWith("## 处罚通知")).toBe(true);
     expect(warnText).toContain("<@!u1>");
-    expect(warnText).toContain("命中规则");
-    expect(warnText).toContain("发现广告");
     expect(warnText).toContain("仅警告");
+    // §隐私：群里不出现命中的规则名 / 匹配内容
+    expect(warnText).not.toContain("命中规则");
+    expect(warnText).not.toContain("发现广告");
+    expect(warnText).not.toContain("这是广告");
 
     // 禁言：处理动作写明时长
     const muted = await scoped.handleMessage(

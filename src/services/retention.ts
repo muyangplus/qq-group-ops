@@ -21,6 +21,12 @@ export interface RetentionOptions {
   /** 已审批入群申请的保留天数；<= 0 表示不清理。 */
   joinRequestRetentionDays: number;
   /**
+   * 处罚记录里**消息原文**的保留天数（§B7）；`<= 0` 表示根本不落库。
+   *
+   * 与审计保留期独立：到期只清原文，处罚记录本身仍按 `auditLogRetentionDays` 保留。
+   */
+  rawMessageRetentionDays?: number;
+  /**
    * 待审批入群申请的有效期（天）；超过即标记为 `expired`（不删除，仍可 /whois 追溯）。
    * `<= 0` 表示不自动过期。
    */
@@ -39,6 +45,8 @@ export interface RetentionRunResult {
   activityNotificationsRemoved: number;
   /** 本次被清理的处罚记录数（§B7）。 */
   punishmentsRemoved: number;
+  /** 本次被清空的处罚消息原文数（§B7，只清原文、保留记录）。 */
+  messageExcerptsCleared: number;
   /** 本次被清理的已处理申诉数（§B8；待处理申诉永不自动清理）。 */
   appealsRemoved: number;
   /** 本次被标记为过期的待审批申请数。 */
@@ -54,7 +62,8 @@ export interface RetentionRunResult {
  * - 入群申请推送的投递记录早于 `AUDIT_LOG_RETENTION_DAYS`（只用于去重与排查）；
  * - 活动通知的去重行早于同一保留期（超过保留期后已无去重意义，避免无限增长）。
  *
- * 注意：项目默认不保存消息原文，因此 `RAW_MESSAGE_RETENTION_DAYS` 目前没有可清理的数据。
+ * 注意：处罚**消息原文**默认不落库；只有本群 `rawMessageRetentionDays > 0` 时才写入，
+ * 并按 `RAW_MESSAGE_RETENTION_DAYS` 单独清空（只清原文，处罚记录本身照旧保留）。
  */
 export class RetentionService {
   private readonly intervalMs: number;
@@ -85,6 +94,7 @@ export class RetentionService {
       notificationsRemoved: 0,
       activityNotificationsRemoved: 0,
       punishmentsRemoved: 0,
+      messageExcerptsCleared: 0,
       appealsRemoved: 0,
       joinRequestsExpired: 0,
     };
@@ -98,10 +108,19 @@ export class RetentionService {
         now - this.options.auditLogRetentionDays * DAY_MS,
       );
       result.auditRecordsRemoved = await this.auditLog.pruneOlderThan(cutoff);
-      // 处罚 / 申诉记录与审计同一保留期：处罚记录没有原文，只保留动作与规则说明。
+      // 处罚 / 申诉记录与审计同一保留期：处罚记录本身只保留动作与规则说明。
       result.punishmentsRemoved =
         (await this.punishments?.pruneOlderThan(cutoff)) ?? 0;
       result.appealsRemoved = (await this.appeals?.pruneOlderThan(cutoff)) ?? 0;
+    }
+    // §B7：消息原文有独立的、更短的保留期（`RAW_MESSAGE_RETENTION_DAYS`）；
+    // 只在开启（> 0）时才有数据可清 —— 清空原文后处罚记录仍保留。
+    if ((this.options.rawMessageRetentionDays ?? 0) > 0) {
+      const cutoff = new Date(
+        now - this.options.rawMessageRetentionDays! * DAY_MS,
+      );
+      result.messageExcerptsCleared =
+        (await this.punishments?.clearMessageExcerptsBefore(cutoff)) ?? 0;
     }
     if (this.options.joinRequestRetentionDays > 0) {
       const cutoff = new Date(
@@ -121,6 +140,7 @@ export class RetentionService {
       result.notificationsRemoved > 0 ||
       result.activityNotificationsRemoved > 0 ||
       result.punishmentsRemoved > 0 ||
+      result.messageExcerptsCleared > 0 ||
       result.appealsRemoved > 0 ||
       result.joinRequestsExpired > 0
     ) {

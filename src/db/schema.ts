@@ -248,7 +248,9 @@ CREATE INDEX IF NOT EXISTS blacklist_entries_user_idx
 -- §B7 处罚记录：一次关键词处罚的完整档案（命中规则 / 实际动作 / 消息 id），
 -- 供「撤回后通知」私信卡片与申诉卡片在其上**直接调整处罚**（解除 / 改禁言时长 / 踢出 / 拉黑）。
 -- record_id 是 6 位随机短码（形如 #A1B2C3），不复用 short_codes 表，避免老库 kind CHECK 限制。
--- 注意：与审计一致，**不保存消息原文**（隐私优先）。
+-- message_excerpt 是**可选**的消息原文（单行截断），只有本群 RAW_MESSAGE_RETENTION_DAYS > 0
+-- 时才写入、到期由 RetentionService 清空；为 '' 时卡片显示「（未保留原文）」。
+-- 与审计一致：**默认不保存消息原文**（隐私优先）。
 CREATE TABLE IF NOT EXISTS punishment_records (
   record_id TEXT PRIMARY KEY,
   group_id TEXT NOT NULL,
@@ -257,6 +259,7 @@ CREATE TABLE IF NOT EXISTS punishment_records (
   source TEXT NOT NULL DEFAULT 'keyword',
   rule_reason TEXT NOT NULL DEFAULT '',
   message_id TEXT NOT NULL DEFAULT '',
+  message_excerpt TEXT NOT NULL DEFAULT '',
   actions TEXT NOT NULL DEFAULT '{}',
   detail TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active',

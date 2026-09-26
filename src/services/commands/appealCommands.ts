@@ -53,7 +53,7 @@ export async function handleAppeal(
   }
   const reason = parts.slice(2).join(" ");
   const result = await appeals.submit({ punishment: record, userId, reason });
-  const receipt = notifier.appealReceipt(result.appeal, result.updated);
+  const receipt = notifier.appealReceipt(result.appeal, record, result.updated);
   await notifier.notifyAppellant(userId, receipt);
   if (!result.updated) {
     await notifier.notifyAppeal(result.appeal, record);
@@ -135,8 +135,32 @@ export async function appealCallbackCard(
       // 只有当事人能申诉；无权时不产生任何群消息（避免在群里暴露申诉行为）
       return undefined;
     }
-    await notifier.notifyAppellant(userId, notifier.appealGuide(record, userId));
-    return undefined;
+    const sent = await notifier.notifyAppellant(
+      userId,
+      notifier.appealGuide(record, userId),
+    );
+    if (sent.ok) {
+      return undefined;
+    }
+    // §B8 降级：私信不可用（沙箱限制 / 从没私聊过机器人 / 主动消息被关）时，
+    // 不能让申诉直接丢掉 —— 直接按**无理由**建单，审核员照常收到申诉通知；
+    // 群里只回一条**不含申诉内容**的提示（与 `/whois` 私信失败的口径一致）。
+    const result = await appeals.submit({
+      punishment: record,
+      userId,
+      reason: "",
+    });
+    if (!result.updated) {
+      await notifier.notifyAppeal(result.appeal, record);
+    }
+    const card = renderCard({
+      title: "申诉已提交",
+      lines: [
+        `<@!${userId}>`,
+        "私信暂时发不出去，已按**无理由**提交申诉，审核员会处理。",
+      ],
+    });
+    return { ok: true, text: card.text, rich: card };
   }
 
   if (action === "accept" || action === "reject") {

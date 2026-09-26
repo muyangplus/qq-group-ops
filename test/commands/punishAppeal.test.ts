@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { KeywordPunish } from "../../src/core/enums.js";
 import { newIncomingMessage } from "../../src/core/models.js";
-import { MessageGuardService } from "../../src/services/messageGuard.js";
+import {
+  MessageGuardService,
+  RAW_MESSAGE_EXCERPT_MAX,
+} from "../../src/services/messageGuard.js";
 import { RuleEngine } from "../../src/services/moderation.js";
 import { RichMessageSender } from "../../src/services/richMessages.js";
 import {
@@ -122,6 +125,61 @@ describe("AdminCommandService · blacklist / punish / appeal", () => {
     expect(denied?.text).toContain("权限不足");
   });
 
+  it("auto-submits a reason-less appeal when the private guide cannot be delivered", async () => {
+    const record = await createPunishment("member");
+    // 沙箱 / 没私聊过机器人：任何私信都发不出去
+    api.failPrivateMessages = true;
+    try {
+      const result = await service.appealCallbackCard("new", [record.recordId], "member");
+      // 群里回一条不含申诉内容的提示
+      expect(result?.ok).toBe(true);
+      expect(result?.text).toContain("申诉已提交");
+      expect(String(result?.rich?.markdown)).toContain("无理由");
+      expect(String(result?.rich?.markdown)).toContain("<@!member>");
+      // 申诉真的建了单，且理由为空
+      const appeal = appeals.pendingByPunishment(record.recordId)[0];
+      expect(appeal).toBeDefined();
+      expect(appeal?.reason).toBe("");
+    } finally {
+      api.failPrivateMessages = false;
+    }
+  });
+
+  it("stores the triggering message only when message retention is on", async () => {
+    configStore.setOverride({
+      groupId: "g1",
+      keywords: ["广告"],
+      keywordPunish: KeywordPunish.Mute,
+      wordFilterEnabled: true,
+    });
+    const buildGuard = (): MessageGuardService =>
+      new MessageGuardService(
+        api,
+        new RuleEngine(),
+        configStore,
+        undefined,
+        undefined,
+        new RichMessageSender(api),
+        punishments,
+      );
+
+    // 默认 rawMessageRetentionDays = 0：不落库
+    await buildGuard().handleMessage(
+      newIncomingMessage("g1", "member", "m1", "这是广告 快来买"),
+    );
+    expect(punishments.listForUser("g1", "member")[0]?.messageExcerpt).toBe("");
+
+    // 开启 7 天后：落库原文（压成单行 + 截断）
+    configStore.setOverride({ groupId: "g1", rawMessageRetentionDays: 7 });
+    await buildGuard().handleMessage(
+      newIncomingMessage("g1", "member", "m2", `这是广告\n${"长".repeat(300)}`),
+    );
+    const record = punishments.listForUser("g1", "member")[0]!;
+    expect(record.messageExcerpt.startsWith("这是广告 ")).toBe(true);
+    expect(record.messageExcerpt).not.toContain("\n");
+    expect(record.messageExcerpt).toHaveLength(RAW_MESSAGE_EXCERPT_MAX);
+  });
+
   it("adds an appeal button to the keyword warning card and records the punishment", async () => {
     configStore.setOverride({
       groupId: "g1",
@@ -146,7 +204,8 @@ describe("AdminCommandService · blacklist / punish / appeal", () => {
     // 规则本身是「警告」，群配置额外要求禁言，因此 action 仍是 warn
     expect(result.action).toBe("warn");
     const warning = api.sentMessages.at(-1);
-    expect(String(warning?.markdown)).toContain("关键词命中");
+    expect(String(warning?.markdown)).toContain("处罚通知");
+    expect(String(warning?.markdown)).not.toContain("命中规则");
     expect(JSON.stringify(warning?.keyboard)).toContain("appeal");
     const record = punishments.listForUser("g1", "member")[0]!;
     expect(record.actions.muted).toBe(true);

@@ -42,6 +42,8 @@ export interface PunishmentCreateInput {
   source?: string | undefined;
   ruleReason?: string | undefined;
   messageId?: string | undefined;
+  /** 触发处罚的消息原文（已压成单行并截断）；只有开启消息保留时才传。 */
+  messageExcerpt?: string | undefined;
   actions: PunishmentActions;
 }
 
@@ -134,6 +136,7 @@ export class PunishmentService {
       source: input.source ?? "keyword",
       ruleReason: input.ruleReason ?? "",
       messageId: input.messageId ?? "",
+      messageExcerpt: input.messageExcerpt ?? "",
       actions: { ...input.actions },
       detail: "",
       status: "active",
@@ -356,8 +359,37 @@ export class PunishmentService {
     };
   }
 
-  public async pruneOlderThan(cutoff: Date): Promise<number> {
-    let removed = 0;
+  /**
+   * 清空早于 `cutoff` 的**消息原文**（§B7，受 `RAW_MESSAGE_RETENTION_DAYS` 控制）。
+   *
+   * 只清原文、**保留处罚记录本身**（记录还要支撑申诉、处罚卡与审计回看）；
+   * 返回被清空的条数，便于日志与测试断言。
+   */
+  public async clearMessageExcerptsBefore(cutoff: Date): Promise<number> {
+    let cleared = 0;
+    for (const record of [...this.records.values()]) {
+      if (record.messageExcerpt.length === 0) {
+        continue;
+      }
+      if (record.createdAt.getTime() >= cutoff.getTime()) {
+        continue;
+      }
+      const updated: PunishmentRecord = {
+        ...record,
+        messageExcerpt: "",
+        updatedAt: this.now(),
+      };
+      this.records.set(updated.recordId, updated);
+      this.persist(updated);
+      cleared += 1;
+    }
+    if (cleared > 0) {
+      log.info("punishment message excerpts cleared", { cleared });
+    }
+    return cleared;
+  }
+
+  public async pruneOlderThan(cutoff: Date): Promise<number> {    let removed = 0;
     for (const record of [...this.records.values()]) {
       if (record.createdAt < cutoff) {
         this.records.delete(record.recordId);

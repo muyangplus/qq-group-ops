@@ -38,6 +38,13 @@ export interface PunishmentRecord {
   ruleReason: string;
   /** 触发处罚的消息 id（可空）。 */
   messageId: string;
+  /**
+   * 触发处罚的消息原文（§B7，已压成单行并截断）。
+   *
+   * 只有本群 `rawMessageRetentionDays > 0` 时才写入；`''` 表示未保留
+   * （卡片上显示「（未保留原文）」），到期后由 `RetentionService` 清空。
+   */
+  messageExcerpt: string;
   actions: PunishmentActions;
   /** 各动作的执行结果（`recall+mute+warn`、`mute_failed` …）。 */
   detail: string;
@@ -60,6 +67,7 @@ interface PunishmentRow {
   source: string;
   rule_reason: string;
   message_id: string;
+  message_excerpt: string;
   actions: string;
   detail: string;
   status: string;
@@ -69,7 +77,7 @@ interface PunishmentRow {
 
 const SELECT_ALL_SQL = `
 SELECT record_id, group_id, user_id, actor_id, source, rule_reason, message_id,
-       actions, detail, status, created_at, updated_at
+       message_excerpt, actions, detail, status, created_at, updated_at
 FROM punishment_records
 ORDER BY created_at ASC
 `.trim();
@@ -77,13 +85,14 @@ ORDER BY created_at ASC
 const UPSERT_SQL = `
 INSERT INTO punishment_records (
   record_id, group_id, user_id, actor_id, source, rule_reason, message_id,
-  actions, detail, status, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+  message_excerpt, actions, detail, status, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (record_id) DO UPDATE SET
-  actions = $8,
-  detail = $9,
-  status = $10,
-  updated_at = $12
+  message_excerpt = $8,
+  actions = $9,
+  detail = $10,
+  status = $11,
+  updated_at = $13
 `.trim();
 
 const DELETE_OLDER_THAN_SQL = `
@@ -108,6 +117,7 @@ export class SqlPunishmentRepository implements PunishmentRepository {
       record.source,
       record.ruleReason,
       record.messageId,
+      record.messageExcerpt,
       JSON.stringify(record.actions),
       record.detail,
       record.status,
@@ -130,6 +140,7 @@ function rowToRecord(row: PunishmentRow): PunishmentRecord {
     source: row.source,
     ruleReason: row.rule_reason,
     messageId: row.message_id,
+    messageExcerpt: row.message_excerpt ?? "",
     actions: parseActions(row.actions),
     detail: row.detail,
     status: row.status as PunishmentStatus,

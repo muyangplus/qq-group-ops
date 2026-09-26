@@ -225,15 +225,17 @@ describe("acceptance dry run (sqlite)", () => {
       expect(blocked.kind).toBe("message");
       expect(blocked.action).toBe(ModerationAction.Warn);
       expect(blocked.executed).toBe(true);
-      // B2：命中反馈是一张卡片（@ 当事人 + 命中规则 + 处理动作 + 群规则文案），被动回复原消息
+      // B2 + §隐私：群内是一张「处罚通知」卡（@ 当事人 + 处理动作 + 群规则文案），
+      // 不写命中的具体规则、不带消息原文
       const warning = api.sentMessages.at(-1);
       expect(warning?.groupId).toBe("g1");
       expect(warning?.msgId).toBe("m1");
       const warningText = String(warning?.markdown ?? warning?.content ?? "");
       expect(warningText).toContain("<@!member-openid>");
-      expect(warningText).toContain("命中规则");
       expect(warningText).toContain("仅警告");
       expect(warningText).toContain("请遵守群规");
+      expect(warningText).not.toContain("命中规则");
+      expect(warningText).not.toContain("测试违禁词");
 
       const audit = await runtime.router.handle({
         type: "admin_command",

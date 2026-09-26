@@ -40,8 +40,14 @@ export class ModerationNotifier {
     this.userLabel = options.userLabel ?? ((userId) => userId);
   }
 
+  /**
+   * 私信卡片的按钮开关。
+   *
+   * §0.14.1 真机回归：按钮可用性按目标分开记录，而处罚 / 申诉卡片**全是私信**，
+   * 所以这里必须看 **user** 目标 —— 群键盘被平台拒过一次，不该让私信卡片一起丢按钮。
+   */
   public get keyboardAvailable(): boolean {
-    return this.notifications.keyboardAvailable;
+    return this.notifications.keyboardAvailableFor("user");
   }
 
   /** 处罚事件：推送给订阅者，卡片上可直接调整处罚。 */
@@ -86,6 +92,7 @@ export class ModerationNotifier {
       userLabel: this.userLabel(record.userId),
       recordId: record.recordId,
       ruleReason: record.ruleReason,
+      messageExcerpt: record.messageExcerpt,
       actions: record.actions,
       detail: record.detail,
       createdAt: record.createdAt,
@@ -106,6 +113,7 @@ export class ModerationNotifier {
       recordId: punishment.recordId,
       appealId: appeal.appealId,
       reason: appeal.reason,
+      messageExcerpt: punishment.messageExcerpt,
       actions: punishment.actions,
       createdAt: appeal.createdAt,
       recipientId,
@@ -122,6 +130,7 @@ export class ModerationNotifier {
     return buildAppealGuideCard({
       recordId: punishment.recordId,
       groupLabel: this.groupLabel(punishment.groupId),
+      messageExcerpt: punishment.messageExcerpt,
       recipientId,
       withButtons: this.keyboardAvailable,
     });
@@ -130,13 +139,17 @@ export class ModerationNotifier {
   /** 申诉回执（发给申诉人）。 */
   public appealReceipt(
     appeal: AppealRecord,
+    punishment: PunishmentRecord,
     updated: boolean,
   ): RichMessage {
     return buildAppealReceiptCard({
       recordId: appeal.punishmentId,
       reason: appeal.reason,
       groupLabel: this.groupLabel(appeal.groupId),
+      messageExcerpt: punishment.messageExcerpt,
       updated,
+      recipientId: appeal.userId,
+      withButtons: this.keyboardAvailable,
     });
   }
 

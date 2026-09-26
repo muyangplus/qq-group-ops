@@ -4,9 +4,12 @@ import type { Scheduler } from "../src/adapters/reconnectingWebSocketGateway.js"
 import { AuditStatus, JoinRequestStatus } from "../src/core/enums.js";
 import { utcNow } from "../src/core/models.js";
 import type { AuditRecord } from "../src/core/models.js";
+import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import type { AuditRepository } from "../src/db/auditRepository.js";
 import { AuditLogStore } from "../src/services/audit.js";
+import { BlacklistService } from "../src/services/blacklist.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
+import { PunishmentService } from "../src/services/punishments.js";
 import { RetentionService } from "../src/services/retention.js";
 
 class FakeAuditRepository implements AuditRepository {
@@ -125,10 +128,69 @@ describe("RetentionService", () => {
       notificationsRemoved: 0,
       activityNotificationsRemoved: 0,
       punishmentsRemoved: 0,
+      messageExcerptsCleared: 0,
       appealsRemoved: 0,
       joinRequestsExpired: 0,
     });
     expect(auditLog.all()).toHaveLength(1);
+  });
+
+  it("clears punishment message excerpts after RAW_MESSAGE_RETENTION_DAYS", async () => {
+    const now = Date.UTC(2026, 0, 20);
+    const api = new FakeQQOfficialAPI();
+    const punishments = new PunishmentService(api, new BlacklistService(api, {
+      auditLog: new AuditLogStore(),
+      listBoundGroups: () => ["g1"],
+    }), { now: () => new Date(now) });
+    const oldRecord = await punishments.create({
+      groupId: "g1",
+      userId: "u1",
+      messageExcerpt: "十几天前的原文",
+      actions: {
+        recalled: false,
+        muted: false,
+        muteDurationSeconds: 0,
+        kicked: false,
+        blacklist: "",
+      },
+    });
+    const freshRecord = await punishments.create({
+      groupId: "g1",
+      userId: "u2",
+      messageExcerpt: "今天的原文",
+      actions: {
+        recalled: false,
+        muted: false,
+        muteDurationSeconds: 0,
+        kicked: false,
+        blacklist: "",
+      },
+    });
+    // 把第一条拨回 10 天前（保留期设 7 天）
+    (punishments.get(oldRecord.recordId) as { createdAt: Date }).createdAt =
+      new Date(now - 10 * 24 * 60 * 60 * 1_000);
+
+    const service = new RetentionService(
+      new AuditLogStore(),
+      new JoinAuditService(),
+      {
+        auditLogRetentionDays: 0,
+        joinRequestRetentionDays: 0,
+        rawMessageRetentionDays: 7,
+        clock: () => now,
+      },
+      undefined,
+      undefined,
+      punishments,
+    );
+
+    const result = await service.runOnce();
+
+    expect(result.messageExcerptsCleared).toBe(1);
+    expect(punishments.get(oldRecord.recordId)?.messageExcerpt).toBe("");
+    expect(punishments.get(freshRecord.recordId)?.messageExcerpt).toBe("今天的原文");
+    // 记录本身还在（处罚与申诉仍可回看）
+    expect(punishments.get(oldRecord.recordId)?.recordId).toBe(oldRecord.recordId);
   });
 
   it("expires pending join requests past the TTL", async () => {

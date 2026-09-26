@@ -4,6 +4,7 @@ import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { AppealService } from "../src/services/appeals.js";
 import { AuditLogStore } from "../src/services/audit.js";
 import { BlacklistService } from "../src/services/blacklist.js";
+import { buildAppealGuideCard } from "../src/services/moderationCards.js";
 import { ModerationNotifier } from "../src/services/moderationNotifier.js";
 import { NotificationService, NOTIFY_SCOPE_ALL } from "../src/services/notifications.js";
 import { PermissionService } from "../src/services/permissions.js";
@@ -63,7 +64,61 @@ describe("PunishmentService", () => {
     expect(String(card?.markdown)).toContain("处罚通知");
     expect(String(card?.markdown)).toContain("#000000");
     expect(String(card?.markdown)).toContain("禁言 10 分钟");
+    // 没传 messageExcerpt（默认不保留原文）时卡片如实标注
+    expect(String(card?.markdown)).toContain("**原文**：（未保留原文）");
     expect(punishments.get("#000000")?.detail).toBe("recall+mute+warn");
+  });
+
+  it("carries the original message on every private card of the appeal flow", async () => {
+    const { api, appeals, notifier, punishments } = setup();
+    const kept = await punishments.create({
+      groupId: "g1",
+      userId: "u1",
+      ruleReason: "广告",
+      messageExcerpt: "快来买广告",
+      actions: {
+        recalled: false,
+        muted: false,
+        muteDurationSeconds: 0,
+        kicked: false,
+        blacklist: "",
+      },
+    });
+    await punishments.markExecuted(kept.recordId, "warn");
+    const push = api.sentPrivateMessages
+      .filter((item) => item.userOpenid === "mod")
+      .at(-1);
+    expect(String(push?.markdown)).toContain("**原文**：快来买广告");
+
+    const submitted = await appeals.submit({
+      punishment: kept,
+      userId: "u1",
+      reason: "误判",
+    });
+    const notice = notifier.appealCard(submitted.appeal, kept, "mod");
+    expect(String(notice.markdown)).toContain("**原文**：快来买广告");
+    expect(notice.keyboard).toBeDefined();
+
+    const guide = notifier.appealGuide(kept, "u1");
+    expect(String(guide.markdown)).toContain("**原文**：快来买广告");
+    expect(guide.keyboard).toBeDefined();
+    // 有按钮时不再重复写用法文字
+    expect(String(guide.markdown)).not.toContain("/appeal");
+
+    const receipt = notifier.appealReceipt(submitted.appeal, kept, false);
+    expect(String(receipt.markdown)).toContain("**原文**：快来买广告");
+    expect(receipt.keyboard).toBeDefined();
+
+    // 键盘不可用时（老客户端 / 平台拒绝）引导卡必须给出可复制的等价指令
+    const fallback = buildAppealGuideCard({
+      recordId: kept.recordId,
+      groupLabel: "g1",
+      messageExcerpt: "快来买广告",
+      recipientId: "u1",
+      withButtons: false,
+    });
+    expect(fallback.keyboard).toBeUndefined();
+    expect(String(fallback.markdown)).toContain(`/appeal #${kept.recordId}`);
   });
 
   it("does not push the same punishment twice", async () => {
