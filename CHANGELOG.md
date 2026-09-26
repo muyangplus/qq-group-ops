@@ -7,7 +7,15 @@
 
 ## [Unreleased]
 
-（暂无未发布改动）
+### 新增
+
+- **`@全体` 探测日志（真机清单 R1）**：群里出现「@全体 / @all / @everyone」类消息时，按 **info** 级记一条
+  `mention probe: at-all candidate`——只记**形状**（前 16 个码点的转义预览、原始/清洗后长度、不可见码点、
+  提及是否被剥离、清洗后是否是指令），不打印完整正文、不落库、不写审计；
+  其它带 @ 或不可见字符的内容在 `LOG_LEVEL=debug` 下记 `mention probe: mention-like content`，
+  其中 `stripped=false` 且 `isCommand=false` 表示这个提及格式没被 `stripBotMention` 识别出来。
+  日志位置：`logs/qq-group-ops.log`，检索 `grep "mention probe"`。
+  用途：回填 R1（官方事件里 @全体 的真实表示）→ 解锁 **B3（跳过 @全体）**。
 
 
 ## [0.15.0] - 2026-09-26
