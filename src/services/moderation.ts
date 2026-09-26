@@ -58,7 +58,9 @@ export class RuleEngine {
       try {
         this.compiled.set(
           rule.ruleId,
-          new RegExp(rule.pattern, rule.caseSensitive ? "" : "i"),
+          // 与写入校验（`requireValidRegex`）用同一套标志：`i` 默认不区分大小写，`u` 保证
+          // `\p{Han}` 这类只有 unicode 模式成立的写法真能生效（曾经校验带 u、编译丢 u）。
+          new RegExp(rule.pattern, rule.caseSensitive ? "u" : "iu"),
         );
       } catch (error) {
         throw new Error(
@@ -134,7 +136,7 @@ export class RuleEngine {
         continue;
       }
       try {
-        new RegExp(pattern, "u");
+        new RegExp(pattern, "iu");
       } catch {
         continue;
       }

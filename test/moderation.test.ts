@@ -17,6 +17,15 @@ describe("RuleEngine", () => {
     expect(engine.evaluate("this is SPAM content")).toHaveLength(1);
   });
 
+  it("compiles regex with the same flags as validation (iu)", () => {
+    // 曾经校验带 u、编译丢 u：\p{sc=Han} 能通过校验但匹配时被当普通字符，规则永远不生效
+    const engine = RuleEngine.fromRegex(["\\p{sc=Han}+"]);
+    expect(engine.evaluate("中文广告")).toHaveLength(1);
+    // 默认不区分大小写
+    const urls = RuleEngine.fromRegex(["(?:pan\\.baidu\\.com|lanzou[a-z]?\\.com)"]);
+    expect(urls.evaluate("https://PAN.BAIDU.COM/s/1")).toHaveLength(1);
+  });
+
   it("matches regex rules", () => {
     const engine = new RuleEngine([
       {

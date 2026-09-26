@@ -56,6 +56,24 @@ describe("AdminCommandService · rules", () => {
     expect(invalid.text).toContain("未知的违规处理动作");
   });
 
+  it("reports content-audit regex errors with the right label and a Chinese hint", async () => {
+    // 真机踩过：内容审核正则报错写成「入群正则不合法」，让人以为配错了字段
+    const bad = await service.handle("g1", "admin", "/rules add regex (?i)foo");
+    expect(bad.ok).toBe(false);
+    expect(bad.text).toContain("内容审核正则不合法");
+    expect(bad.text).toContain("不支持内联标志");
+    expect(bad.text).not.toContain("入群正则");
+
+    const join = await service.handle(
+      "g1",
+      "admin",
+      "/rules set joinAnswerPattern (?i)材化\\d+",
+    );
+    expect(join.ok).toBe(false);
+    expect(join.text).toContain("入群答案正则不合法");
+    expect(join.text).toContain("不支持内联标志");
+  });
+
   it("updates group keywords with /rules set", async () => {
     const result = await service.handle("g1", "admin", "/rules set keywords 广告,刷屏");
 

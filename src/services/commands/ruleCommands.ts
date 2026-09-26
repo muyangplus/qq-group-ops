@@ -1556,7 +1556,7 @@ export async function handleRulesListAdd(
       };
     }
     try {
-      requireValidRegex(raw);
+      requireValidRegex(raw, "内容审核正则");
     } catch (error) {
       return { ok: false, text: `正则不合法：${formatError(error)}` };
     }

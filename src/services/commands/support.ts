@@ -1177,7 +1177,7 @@ export function parseRuleSetting(
     case "入群正则":
       return {
         groupId,
-        joinAnswerPattern: cleared ? "" : requireValidRegex(value),
+        joinAnswerPattern: cleared ? "" : requireValidRegex(value, "入群答案正则"),
       };
     case "joinreviewopinion":
     case "审核意见":
@@ -1265,7 +1265,7 @@ export function parseRegexRules(value: string): string[] {
     if (pattern.length > RULE_REGEX_MAX_LENGTH) {
       throw new Error(`单条正则不能超过 ${RULE_REGEX_MAX_LENGTH} 个字符`);
     }
-    requireValidRegex(pattern);
+    requireValidRegex(pattern, "内容审核正则");
   }
   return patterns;
 }
@@ -1354,15 +1354,45 @@ export function parseJoinDecision(value: string): JoinDecisionModeType {
   return parsed;
 }
 
-export function requireValidRegex(value: string): string {
+/**
+ * 正则合法性校验（内容审核正则与入群答案正则共用）。
+ *
+ * - 编译标志与引擎一致：`iu`（引擎默认不区分大小写；`u` 缺了会让 `\p{Han}` 这类写法失效）；
+ * - `label` 由调用方给，避免内容审核正则报错写成「入群正则不合法」（真机踩过）；
+ * - 常见写法错误翻成中文提示（`(?i)` 是 PCRE/Python 的写法，JS 不支持），
+ *   后面仍附上 V8 原文（含 pattern 本身，方便当场对照修改）。
+ */
+export function requireValidRegex(
+  value: string,
+  label = "入群答案正则",
+): string {
   try {
-    new RegExp(value, "u");
+    new RegExp(value, "iu");
     return value;
   } catch (error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    const hint = regexSyntaxHint(value, raw);
     throw new Error(
-      `入群正则不合法：${error instanceof Error ? error.message : String(error)}`,
+      hint.length > 0 ? `${label}不合法：${hint}；原始报错：${raw}` : `${label}不合法：${raw}`,
     );
   }
+}
+
+/** 把最常见的几种正则写法错误翻成中文（命中不了就返回空串，只报 V8 原文）。 */
+function regexSyntaxHint(pattern: string, rawError: string): string {
+  if (/Invalid group/u.test(rawError) && /\(\?[a-zA-Z-]/u.test(pattern)) {
+    return "JS 正则不支持内联标志（如 (?i)），直接去掉即可 —— 匹配默认就不区分大小写";
+  }
+  if (/Nothing to repeat/u.test(rawError)) {
+    return "量词前面没有可重复的内容：想匹配字面量 + * ? 请转义成 \\+ \\* \\?";
+  }
+  if (/Unterminated group|Unmatched '\)'|Lone quantifier brackets/u.test(rawError)) {
+    return "括号没有配平";
+  }
+  if (/Invalid escape|Invalid Unicode escape/u.test(rawError)) {
+    return "转义写法不合法（注意 \\p{...} 这类要配合 u 模式，本项目已默认开启）";
+  }
+  return "";
 }
 
 export function parseToggle(field: string, value: string): boolean {
