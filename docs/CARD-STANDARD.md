@@ -138,7 +138,7 @@
 | `helpTopics.ts`、`commands/helpCommands.ts` | `用法：`、`/xxx` 列表 | **保留**——`/help` 就是用法文案的唯一归属 |
 | `commands/activityCardCommands.ts:717`、`commands/activityCommands.ts:1146` | `查看详情：/activity info #短码` | **保留**——无按钮通道的纯文本降级（活动列表文本 / 参与者通知文本） |
 | `moderationCards.ts` `punishmentFooter` | `自定义禁言时长：/punish mute #记录 <秒>` | **保留**——按钮无法表达（无自定义时长输入） |
-| `messageGuard.sendWarning` 群内「处罚通知」footer | `私聊机器人发送 /appeal #短码 即可申诉（被禁言时群内按钮点不动）` | **保留**——当事人被禁言时群里任何按钮都点不动（客户端拦），这是 §7.7 的明确例外 |
+| `messageGuard.sendWarning` 群内「处罚通知」footer | `点击下方按钮或私聊机器人发送 /appeal #短码 <理由> 即可申诉` | **保留**——当事人被禁言时群里任何按钮都点不动（客户端拦），这是 §7.7 的明确例外 |
 | `activityCards.ts` 成员卡 footer | `/activity join\|quit` 兜底 | **保留**——回调报名按钮在纯文本降级下不可用 |
 | `activityCards.ts` 满员广播 / 报名回执、`activityCardCommands.ts:328/510`、`activityFlowCommands.ts:247/491` | `报名：/activity join …`、`取消报名：/activity quit …`、`重新报名：/activity join …` | **保留**——这些卡上没有对应按钮（群广播 / 私信回执），属于「无按钮通道」；有按钮的成员卡才走按钮 |
 | `cardTemplate.renderCardText` | `可用指令：` + 每条指令按钮 | **保留**——模板自动生成的纯文本降级，不算卡片文案 |
