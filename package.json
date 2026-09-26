@@ -1,6 +1,6 @@
 {
   "name": "qq-group-ops",
-  "version": "0.18.1",
+  "version": "0.18.2",
   "description": "基于 QQ 官方开放平台 API 的开源 QQ 群管理与运营平台：群管、审核、活动报名、信息导出",
   "type": "module",
   "license": "Apache-2.0",

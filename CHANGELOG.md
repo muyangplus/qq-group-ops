@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+（暂无未发布改动）
+
+
+## [0.18.2] - 2026-09-26
+
 ### 修复
 
 - **别人已处理的入群申请不会自动移出待审批**（真机）：别人在群管理后台 / 其它机器人
@@ -724,7 +729,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.2...HEAD
+[0.18.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.4...v0.18.0
 [0.17.4]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.3...v0.17.4
