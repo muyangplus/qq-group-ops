@@ -153,7 +153,6 @@ function buildJoinRequestSpec(input: JoinRequestCardInput): CardSpec {
   return {
     title: "新的入群申请",
     lines,
-    buttonHint: "请审核：点击下方按钮。",
     rows: [
       [
         {

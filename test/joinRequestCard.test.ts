@@ -26,7 +26,6 @@ describe("join request card", () => {
     expect(card.markdown).not.toContain("g1");
     expect(card.markdown).toContain("材化2211 张三");
     expect(card.markdown).toContain("**申请ID**：r1");
-    expect(card.markdown).toContain("请审核：点击下方按钮。");
     // 有按钮时正文不再堆完整指令（太长），指令只放在按钮数据里
     expect(card.markdown).not.toContain("/approve");
     expect(card.markdown).not.toContain("/reject");

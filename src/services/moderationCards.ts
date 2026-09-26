@@ -76,7 +76,6 @@ export function buildPunishmentNoticeCard(
     lines,
     ...(input.withButtons
       ? {
-          buttonHint: "调整处罚：",
           rows: punishmentRows(input),
         }
       : {}),
@@ -171,7 +170,6 @@ export function buildAppealNoticeCard(input: {
     ],
     ...(input.withButtons
       ? {
-          buttonHint: "处理申诉：",
           rows: [
             [
               callbackButton(
@@ -237,7 +235,6 @@ export function buildAppealGuideCard(input: {
     ],
     ...(input.withButtons
       ? {
-          buttonHint: "点击即提交（私聊会自动发送）：",
           rows: [
             [
               {
@@ -273,7 +270,6 @@ export function buildModerationReceipt(input: {
     lines: input.lines,
     ...(input.withButtons
       ? {
-          buttonHint: "下一步：",
           rows: [
             [
               callbackButton(

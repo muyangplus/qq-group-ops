@@ -167,7 +167,6 @@ export function buildUnknownCommandMenu(
       ...(main.lines ?? []),
     ],
     rows: main.rows,
-    buttonHint: "请选择入口：",
     footer: main.footer,
   });
 }
@@ -278,7 +277,6 @@ function mainCard(context: MenuContext, access: MenuAccess): CardSpec {
     lines: [],
     rows,
     // 空串 = 不渲染引导行
-    buttonHint: "",
   };
 }
 
@@ -295,7 +293,6 @@ function activityCard(context: MenuContext): CardSpec {
     title: "活动",
     lines: [],
     rows: [[cmdButton("list", "活动列表", "/activity"), backButton()]],
-    buttonHint: "请选择功能：",
   };
 }
 
@@ -324,7 +321,6 @@ function adminCard(context: MenuContext, access: MenuAccess): CardSpec {
     title: "管理菜单",
     lines: [],
     rows,
-    buttonHint: "请选择功能：",
   };
 }
 
@@ -343,7 +339,6 @@ function reviewCard(context: MenuContext): CardSpec {
       ],
       [menuButton("admin", "管理菜单", "admin"), backButton()],
     ],
-    buttonHint: "请选择功能：",
 
   };
 }
@@ -359,7 +354,6 @@ function opsCard(context: MenuContext): CardSpec {
       ],
       [menuButton("admin", "管理菜单", "admin"), backButton()],
     ],
-    buttonHint: "请选择功能：",
   };
 }
 
@@ -389,7 +383,6 @@ function superCard(context: MenuContext): CardSpec {
         backButton(),
       ],
     ],
-    buttonHint: "请选择功能：",
   };
 }
 

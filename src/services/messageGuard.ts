@@ -327,7 +327,6 @@ export class MessageGuardService {
       ],
       ...(input.punishmentCode
         ? {
-            buttonHint: "对处罚有异议：",
             rows: [
               [
                 {

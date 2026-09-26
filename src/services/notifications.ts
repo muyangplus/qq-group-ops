@@ -507,7 +507,6 @@ export class NotificationService {
                 },
               ],
             ],
-            buttonHint: "请点击按钮：",
           }),
     });
     const outcome = await this.send(userId, input, card);

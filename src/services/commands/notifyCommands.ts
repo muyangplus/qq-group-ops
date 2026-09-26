@@ -92,7 +92,6 @@ export function notifyCard(
 
     return cardFromText("入群申请推送", lines.join("\n"), {
       rows,
-      buttonHint: "点击即生效：",
 
     });
   }
@@ -359,7 +358,6 @@ export function notifyPunishCard(
 
   return cardFromText("处罚通知推送", lines.join("\n"), {
     rows,
-    buttonHint: "点击即生效：",
     footer: [
       "与入群申请推送相互独立：/notify 管理申请推送，/notify punish 管理处罚推送。",
     ],

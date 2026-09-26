@@ -146,7 +146,6 @@ export class ActivityCardService {
       title: activity.title,
       lines,
       rows,
-      buttonHint: "点击下方按钮立即操作：",
       // 纯文本降级里保留可复制的等价指令（按钮不可用时仍能报名 / 取消报名）
       // 按钮不可用时的兜底指令：只保留按钮无法覆盖的报名 / 取消（详情本来就有按钮）
       footer: [`报名：/activity join ${code} · 取消报名：/activity quit ${code}`],
@@ -259,7 +258,6 @@ export class ActivityCardService {
       title: `活动配置 ${code}`,
       lines,
       rows,
-      buttonHint: "点击即生效：",
       footer: [`活动管理：/activity set ${code} <字段> <值>`],
     });
   }
@@ -355,7 +353,6 @@ export class ActivityCardService {
       title: `活动管理 ${code}`,
       lines,
       rows,
-      buttonHint: "点击操作：",
       footer: [`导出与统计：/activity signups ${code}`],
     });
   }
@@ -434,7 +431,6 @@ export class ActivityCardService {
       title: `报名名单 ${code}`,
       lines,
       rows,
-      buttonHint: "翻页与显示：",
       footer,
     });
   }
@@ -468,7 +464,6 @@ export class ActivityCardService {
           ...(groupId.length > 0 ? [this.subscribeButton(groupId, input.viewerId)] : []),
         ],
       ],
-      buttonHint: "点击查看：",
       footer: [`候补报名：/activity join ${code}`],
     });
   }
@@ -546,7 +541,6 @@ export class ActivityCardService {
       title: `绑定群 ${code}`,
       lines,
       rows,
-      buttonHint: "点击操作：",
       footer: [
         `绑定：/activity bind ${code} <群号|#群短码>`,
         `解绑：/activity unbind ${code} <群号|#群短码>`,
@@ -658,7 +652,6 @@ export class ActivityCardService {
       title: kind === "college" ? `学院限制 ${code}` : `年级限制 ${code}`,
       lines,
       rows,
-      buttonHint: "点击切换：",
       footer: [`第 ${page} / ${pageCount} 页`],
     });
   }

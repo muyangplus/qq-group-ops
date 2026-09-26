@@ -190,7 +190,6 @@ export function blacklistCard(
 
   return cardFromText("黑名单", lines.join("\n"), {
     rows,
-    buttonHint: "点击即生效：",
     footer: ["解除按钮带二次确认。", BLACKLIST_USAGE],
   });
 }

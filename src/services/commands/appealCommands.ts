@@ -104,7 +104,6 @@ export function appealListCard(
         viewButton("help", "申诉帮助", "help", "topic", "appeal"),
       ],
     ],
-    buttonHint: "相关入口：",
     footer: [APPEAL_USAGE],
   });
 }
@@ -202,7 +201,6 @@ export async function appealCallbackCard(
           ),
         ],
       ],
-      buttonHint: "下一步：",
       footer: ["已按处罚记录逐项撤销（撤回与踢出无法恢复）。"],
     });
     void replyGroupId;

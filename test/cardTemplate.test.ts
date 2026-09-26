@@ -12,13 +12,11 @@ describe("cardTemplate", () => {
       title: "系统菜单",
       lines: ["**用户**：10001"],
       rows: [[{ id: "sys", label: "系统菜单", command: "/menu sys" }]],
-      buttonHint: "请选择入口：",
-      footer: ["按钮不可用时可手输指令。"],
+        footer: ["按钮不可用时可手输指令。"],
     });
 
     expect(message.markdown).toContain("## 系统菜单");
     expect(message.markdown).toContain("**用户**：10001");
-    expect(message.markdown).toContain("请选择入口：");
     expect(message.markdown).toContain("按钮不可用时可手输指令。");
     expect(message.markdown).not.toContain("/menu sys");
 

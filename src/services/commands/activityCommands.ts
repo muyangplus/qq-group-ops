@@ -237,7 +237,6 @@ export function subscribeCard(
         viewButton("help", "订阅帮助", "help", "topic", "activity"),
       ],
     ],
-    buttonHint: "点击切换：",
   });
 }
 
@@ -842,7 +841,6 @@ export async function handleActivitySetCallback(
         viewButton("open", "开放报名", "activity", "open", activityCode(updated)),
       ],
     ],
-    buttonHint: "配置项在卡片下方按钮上：",
     footer: [`活动管理：/activity set ${activityCode(updated)} <字段> <值>`],
   });
   return { ok: applied.ok, text: card.text, rich: card };

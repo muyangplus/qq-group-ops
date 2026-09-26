@@ -219,7 +219,6 @@ export function testCard(
   }
   const card = cardFromText("自检结果", lines.join("\n"), {
     rows,
-    buttonHint: "常用入口：",
     footer: ["机器人状态异常时：查看日志 logs/qq-group-ops.log"],
   });
   // §F1：test 模块按现状豁免，不在群里自动 @

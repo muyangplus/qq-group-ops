@@ -154,7 +154,6 @@ export function rulesCard(
 
   return cardFromText("群规则", lines.join("\n"), {
     rows,
-    buttonHint: canManage ? "设置入口（点击即生效）：" : "相关入口：",
     footer: [
       `本群：${ctx.helpers.displayGroup(targetGroupId)}`,
       "完整字段用法：/help rules",
@@ -446,7 +445,6 @@ export function rulesKeywordPanel(
   }
   return cardFromText("群规则 · 关键词", body.join("\n"), {
     rows,
-    buttonHint: "每行一个关键词，点击即删除：",
     footer,
   });
 }
@@ -611,7 +609,6 @@ export function rulesRosterPanel(
     ].join("\n"),
     {
       rows,
-      buttonHint: "点击切换选中（● 为已选）：",
       footer: [
         `本群：${ctx.helpers.displayGroup(targetGroupId)}`,
         "学院来自班级库点选；班级库缺失时可用指令按钮手输。",
@@ -752,7 +749,6 @@ export function rulePanelCard(
     ].join("\n"),
     {
       rows,
-      buttonHint: "点击即生效：",
       footer: [
         isGlobal ? "全局规则仅超管可改。" : `本群：${ctx.helpers.displayGroup(targetGroupId)}`,
       ],
@@ -1110,7 +1106,6 @@ export function globalRulesCard(
   ];
   return cardFromText("全局规则（默认）", formatGlobalRules(ctx), {
     rows,
-    buttonHint: "点击即生效：",
     footer: [
       "只影响未单独覆盖该字段的群；单个群可用「恢复本页继承」回落到这里。",
       "手输：/rules set all <字段> <值>",

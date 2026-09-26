@@ -73,7 +73,6 @@ export function helpCard(
           viewButton("topic-menu", "菜单", "help", "topic", "menu"),
         ],
       ],
-      buttonHint: "请选择分类：",
       footer: ["某个指令的详细用法：/help <指令>"],
     });
     return { ok: true, text: card.text, rich: card };
@@ -130,7 +129,6 @@ export function helpCard(
     title: `/${topic.name} · ${topic.title}`,
     lines: renderHelpTopic(topic, context).split("\n"),
     rows: [rows],
-    buttonHint: "相关入口：",
   });
   return { ok: true, text: card.text, rich: card };
 }

@@ -221,7 +221,6 @@ export function statusCard(
           actionButton("test", "自检", "/test"),
         ],
       ],
-      buttonHint: "常用入口：",
       footer: [`本群：${ctx.helpers.displayGroup(targetGroupId)}`],
     });
   }

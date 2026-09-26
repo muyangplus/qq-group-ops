@@ -155,7 +155,6 @@ export function activityListCard(
 
   return cardFromText("活动列表", lines.join("\n"), {
     rows,
-    buttonHint: "点击操作：",
     footer,
   });
 }
@@ -325,7 +324,6 @@ export function activityInfoCard(ctx: AdminCommandContext, userId: string, rawCo
             ),
           ],
     ],
-    buttonHint: "点击操作：",
     footer: [
       `报名：/activity join ${activityCode(activity)}`,
       `报名名单：/activity signups ${activityCode(activity)}（管理者）`,
@@ -465,7 +463,6 @@ export function activityManageNotice(
         viewButton("manage", "刷新管理", "activity", "manage", activityCode(fresh)),
       ],
     ],
-    buttonHint: "操作：",
     footer: [`活动配置：/activity info ${activityCode(fresh)}`],
   });
   return { ok: outcome.ok, text: card.text, rich: card };

@@ -88,13 +88,7 @@ export function renderCard(spec: CardSpec): RichMessage {
 /** 只渲染 Markdown 正文（含按钮引导行，因为降级后指令列表由 text 承担）。 */
 export function renderCardMarkdown(spec: CardSpec): string {
   const lines: string[] = [`## ${spec.title}`, ...(spec.lines ?? [])];
-  if (hasButtons(spec.rows)) {
-    const hint = spec.buttonHint ?? "请点击下方按钮。";
-    // 空串 = 调用方明确要求不渲染引导行
-    if (hint.length > 0) {
-      lines.push("", hint);
-    }
-  }
+  // §卡片规范 v2：不再渲染引导行（buttonHint 已废弃，保留字段仅为兼容）
   if (spec.footer && spec.footer.length > 0) {
     lines.push("", ...spec.footer);
   }

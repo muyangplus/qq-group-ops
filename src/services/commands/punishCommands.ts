@@ -182,7 +182,6 @@ export function punishDetailCard(
         viewButton("release", "解除处罚", "punish", "release", record.recordId),
       ],
     ],
-    buttonHint: "调整处罚：",
     footer: [PUNISH_USAGE],
   });
   return { ok: true, text: fallback.text, rich: fallback };
@@ -248,7 +247,6 @@ export function punishListCard(
   }
   return cardFromText("处罚记录", lines.join("\n"), {
     rows,
-    buttonHint: "查看详情：",
     footer: ["「查看N」仅对本群审核员及以上可见。", PUNISH_USAGE],
   });
 }

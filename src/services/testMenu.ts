@@ -87,7 +87,6 @@ export function buildTestMenuCard(page: number): RichMessage {
       `手动翻页：/testmenu <页码>（1-${TEST_MENU_PAGE_COUNT}）`,
     ],
     rows,
-    buttonHint: "点击翻页：",
     footer: [
       "点按钮后机器人会发出新的一页（官方不支持更新原卡片，旧卡片会留在聊天记录里）。",
     ],

@@ -198,7 +198,6 @@ export function pendingCard(
 
   return cardFromText("待审批入群申请", lines.join("\n"), {
     rows,
-    buttonHint: "点击审批：",
     footer,
   });
 }
@@ -320,7 +319,6 @@ export function auditCard(
   footer.push(`本群：${groupLabel}`);
   return cardFromText("审计记录", lines.join("\n"), {
     rows: [paging],
-    buttonHint: "翻页：",
     footer,
   });
 }
