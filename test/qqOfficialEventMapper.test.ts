@@ -4,12 +4,29 @@ import {
   classifyMentionProbe,
   describeContentShape,
   isAtAllBroadcast,
+  isHandledEventType,
   QQOfficialEventMapper,
   stripBotMention,
 } from "../src/adapters/qqOfficialEventMapper.js";
 
 describe("QQOfficialEventMapper", () => {
   const mapper = new QQOfficialEventMapper();
+
+  it("ignores unknown event types but records them once (A2 / R2 capability probe)", () => {
+    expect(isHandledEventType("GROUP_MESSAGE_CREATE")).toBe(true);
+    expect(isHandledEventType("C2C_MESSAGE_CREATE")).toBe(true);
+    // 官方文档里存在、但本项目还没处理的事件类型
+    expect(isHandledEventType("C2C_FRIEND_ADD")).toBe(false);
+    expect(isHandledEventType("GROUP_ADD_ROBOT")).toBe(false);
+
+    // 未知事件返回 null（不抛错），且重复上报不会重复写日志（幂等）
+    expect(mapper.map("C2C_FRIEND_ADD", { openid: "u1", timestamp: 1 })).toBeNull();
+    expect(mapper.map("C2C_FRIEND_ADD", { openid: "u2" })).toBeNull();
+    expect(mapper.map("GROUP_ADD_ROBOT", { group_openid: "g1" })).toBeNull();
+    expect(mapper.map("", {})).toBeNull();
+    // 已知类型的事件缺失字段时也是 null（不走「未知事件」日志）
+    expect(mapper.map("GROUP_MESSAGE_CREATE", {})).toBeNull();
+  });
 
   it("drops bare @全体 broadcasts instead of answering with the menu (B3)", () => {
     // 真机确认（R1）：`@全体成员` → `<@all> `；`@everyone` → `@everyone`

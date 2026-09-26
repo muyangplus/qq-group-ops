@@ -7,7 +7,33 @@ export interface OfficialEventMapper {
   map(eventType: string, data: unknown): QQEvent | null;
 }
 
+/** 本项目已经处理的事件类型（其余类型只会被记一条日志，便于真机确认官方还会推什么）。 */
+const HANDLED_EVENT_TYPES = new Set([
+  "GROUP_AT_MESSAGE_CREATE",
+  "GROUP_MESSAGE_CREATE",
+  "GROUP_JOIN_REQUEST",
+  "C2C_MESSAGE_CREATE",
+  "INTERACTION_CREATE",
+]);
+
+/** 官方事件类型是否已被本项目处理（纯函数，便于单测）。 */
+export function isHandledEventType(eventType: string): boolean {
+  return HANDLED_EVENT_TYPES.has(eventType);
+}
+
+/**
+ * 官方事件映射器。
+ *
+ * §能力探测（A2 / R2 / R3）：**没被处理的事件类型按 info 级记一条日志**（同一类型只记一次），
+ * 带 `eventType` 与 payload 的**顶层字段名**（不记值，避免隐私）。用途：
+ * - 好友申请 / 机器人被拉进群（A2）：后台不一定能看到，日志能直接证明官方有没有推事件；
+ * - 用户撤回消息（R2）：有事件就会出现在这里；
+ * - 平台新增能力：先把类型和字段形状暴露出来，再决定要不要实现。
+ */
 export class QQOfficialEventMapper implements OfficialEventMapper {
+  /** 已经记过日志的未知事件类型（同类型只记一次，避免刷日志）。 */
+  private readonly reportedUnhandled = new Set<string>();
+
   public map(eventType: string, data: unknown): QQEvent | null {
     if (eventType === "GROUP_AT_MESSAGE_CREATE" || eventType === "GROUP_MESSAGE_CREATE") {
       return mapGroupMessage(data);
@@ -21,7 +47,21 @@ export class QQOfficialEventMapper implements OfficialEventMapper {
     if (eventType === "INTERACTION_CREATE") {
       return mapInteraction(data);
     }
+    this.reportUnhandled(eventType, data);
     return null;
+  }
+
+  /** 未处理事件只记一次：类型 + payload 顶层字段名。 */
+  private reportUnhandled(eventType: string, data: unknown): void {
+    const type = eventType.trim();
+    if (type.length === 0 || this.reportedUnhandled.has(type)) {
+      return;
+    }
+    this.reportedUnhandled.add(type);
+    log.info("unhandled official event (ignored)", {
+      eventType: type,
+      dataKeys: isRecord(data) ? Object.keys(data).slice(0, 40) : [],
+    });
   }
 }
 
