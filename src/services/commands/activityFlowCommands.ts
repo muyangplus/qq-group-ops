@@ -127,13 +127,14 @@ export async function publishActivity(
         `**失败**：${formatGroupList(failedGroups, (id) => ctx.helpers.displayGroup(id)) || "（无）"}`,
         "",
         hint,
-        "",
-        `查看详情：/activity info ${activityCode(opened)}`,
       ],
       rows: [
         [
           viewButton("resend", "重发卡片", "activity", "resend", activityCode(opened)),
           viewButton("close", "关闭报名", "activity", "status", activityCode(opened), "close"),
+        ],
+        [
+          viewButton("info", "查看详情", "activity", "info", activityCode(opened)),
         ],
       ],
     });

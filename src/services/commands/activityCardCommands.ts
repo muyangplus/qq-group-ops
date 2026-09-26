@@ -634,8 +634,16 @@ export async function activityJoinFailure(
     lines: [
       `**活动**：${escapeCardText(activity.title)}（${activityCode(activity)}）`,
       `**原因**：${escapeCardText(reason)}`,
-      "",
-      `查看详情：/activity info ${activityCode(activity)}`,
+    ],
+    rows: [
+      [
+        {
+          id: "info",
+          label: "查看详情",
+          callbackData: `cb:activity:info:${activityCode(activity)}`,
+          style: 1,
+        },
+      ],
     ],
   });
   // §B4：群内静默 —— 结果（含失败原因）只私信，群里一条都不发
@@ -663,7 +671,16 @@ export async function activityJoinFailure(
           ? escapeCardText("报名未通过，原因已私信。")
           : escapeCardText("报名未通过，请先私聊机器人再试（原因只走私信）。"),
       ],
-      footer: [`活动详情：/activity info ${activityCode(activity)}`],
+      rows: [
+        [
+        {
+          id: "info",
+          label: "查看详情",
+          callbackData: `cb:activity:info:${activityCode(activity)}`,
+          style: 1,
+        },
+        ],
+      ],
     });
     return { ok: false, text: card.text, rich: card };
   }
