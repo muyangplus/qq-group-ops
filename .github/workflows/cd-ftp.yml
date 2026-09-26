@@ -1,6 +1,8 @@
 name: CD · FTP 发布
 
 # 触发方式：在 GitHub 上把 tag 发布成 Release（release: published），或手动触发。
+# 上传内容是**运行产物**：dist/ + scripts/ + package.json + pnpm-lock.yaml + .env.example
+# （不含 src / docs / tsconfig / Dockerfile / test / data / logs / *.map）。
 # 注意：只推 tag 但不创建 Release **不会**触发本工作流；要改成 tag 推送即部署，
 # 把 `release:` 换成 `push: { tags: ["v*"] }`（两者都开会导致同一次发布跑两遍）。
 on:
@@ -99,19 +101,20 @@ jobs:
           name: dist
           path: dist
 
-      # 显式白名单组包：宁可少传，也不要把 .env / data / logs / 测试 / 依赖目录带上服务器。
-      - name: 准备部署目录（白名单）
+      # 只发布**运行产物**：dist（`node dist/main.js` 自包含）+ scripts（class:index，纯 node 内置模块）
+      # + 依赖清单。不传 src / docs / tsconfig / Dockerfile / test —— 生产机器不需要它们。
+      - name: 准备部署目录（运行产物白名单）
         run: |
           set -eu
           rm -rf dist-deploy
           mkdir -p dist-deploy
-          for item in dist src scripts docs \
-                      package.json pnpm-lock.yaml tsconfig.json .env.example \
-                      README.md CHANGELOG.md Dockerfile docker-compose.yml; do
+          for item in dist scripts package.json pnpm-lock.yaml .env.example; do
             if [ -e "$item" ]; then
               cp -R "$item" dist-deploy/
             fi
           done
+          # 不传源码时 sourcemap 没有可对照的源文件，删掉省一半体积
+          find dist-deploy -name '*.map' -type f -delete
           echo "将上传以下顶层内容："
           find dist-deploy -maxdepth 1 -mindepth 1 -printf '%f\n' | sort
           du -sh dist-deploy
@@ -147,7 +150,7 @@ jobs:
           local-dir: ./dist-deploy/
           server-dir: ${{ vars.FTP_SERVER_DIR }}
           log-level: standard
-          # 第二层保险：即使组包时漏了，也不上传这些
+          # 第二层保险：即使组包时漏了，也不上传这些（含 sourcemap）
           exclude: |
             **/.git*
             **/.github/**
@@ -159,6 +162,7 @@ jobs:
             **/.env.*
             **/*.log
             **/test/**
+            **/*.map
 
       - name: 部署摘要（审计线索）
         run: |

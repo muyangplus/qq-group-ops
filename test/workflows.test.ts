@@ -150,12 +150,29 @@ describe("CI/CD 工作流审计", () => {
     }
     // 默认 FTPS（显式 TLS），只在显式配置时才退回明文 ftp
     expect(withInput.protocol).toContain("ftps");
-    // 只上传白名单组包目录
+    // 只上传仓库在 CI 里重新组装的白名单目录（避免直接把仓库根传上去）
     expect(withInput["local-dir"]).toBe("./dist-deploy/");
-    // 敏感文件兜底排除
+    // 敏感文件与 sourcemap 兜底排除
     expect(withInput.exclude).toContain("**/.env");
     expect(withInput.exclude).toContain("**/data/**");
     expect(withInput.exclude).toContain("**/test/**");
+    expect(withInput.exclude).toContain("**/*.map");
+  });
+
+  it("only ships the runtime artifacts to the server", () => {
+    const commands = runCommands(cdWorkflow!);
+    // 组包白名单就是「运行产物」这一份清单：多一个都算回归（源码/文档/构建配置不上服务器）
+    const match = /for item in ([^;]+);/u.exec(commands);
+    expect(match, "找不到组包白名单").not.toBeNull();
+    expect(match![1]!.split(/\s+/u).filter(Boolean)).toEqual([
+      "dist",
+      "scripts",
+      "package.json",
+      "pnpm-lock.yaml",
+      ".env.example",
+    ]);
+    // sourcemap 在组包阶段被删除（没有 src 时无法对照）
+    expect(commands).toContain("*.map");
   });
 
   it("keeps a dependabot config for actions and npm", () => {
