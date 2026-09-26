@@ -166,9 +166,10 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "  · 纯文本 `content` 里的 `<@!openid>` 与 `@everyone` **都不生效**；",
       "  · 也就是说官方「内嵌格式只在 content 生效」的文档在群聊 Markdown 上不成立，以实测为准；",
       "  · **@全体成员**：入站真实形态（R1 抓包）是 `<@all> `（`@全体成员`）与 `@everyone`；",
-      "    /testat all 现在穷举 8 种出站写法——markdown `@everyone` / `<@!all>` / `<@!everyone>` /",
-      "    `<@all>` / 纯文字，纯文本 `<@!all>` / `<@all>` / `@everyone`；跑一次把「哪条真的提醒了全群」",
-      "    反馈回来，即可确定机器人能不能 @全体（历史 5 种写法全部不生效）。",
+      "    /testat all 已穷举 8 种出站写法——markdown `@everyone` / `<@!all>` / `<@!everyone>` /",
+      "    `<@all>` / 纯文字，纯文本 `<@!all>` / `<@all>` / `@everyone`；",
+      "  · **结论（2026-09-26，真机已确认）：机器人无法 @全体**，8 种写法全都提醒不到任何人；",
+      "    需要全群提醒时只能由管理员手动 @全体；活动 `提醒@全体` 只提示操作者手动 @，不假装能 @。",
     ],
   },
   {
