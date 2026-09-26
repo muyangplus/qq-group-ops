@@ -18,6 +18,11 @@
 
 ### 备注
 
+- **新增 [`docs/REAL-MACHINE-RUN.md`](docs/REAL-MACHINE-RUN.md)（真机跑批手册）**：把 R2–R18 与交付验证
+  （Docker / 快速开始）压成一次跑完的顺序清单——准备清单（3 个账号 + 临时测试群 + 日志起点）、
+  ①→⑩ 的执行顺序、一键取证命令（`grep "mention probe"` / `grep "unhandled official event"`）、
+  copy-paste 回填模板、排障速查；`REAL-MACHINE-CHECKLIST.md` 与 `TODO.md` 顶部已加指针。
+
 - **「活动签到统计」（C4）确认不做**：报名名单 + 统计 + CSV 导出已覆盖报账需求，
   签到需要第二套数据源与现场实时操作、且官方无扫码/定位能力（防代签强度与成本不成正比）。
   条目已从 `TODO.md` / `docs/ROADMAP.md` / `README.md` 移除，决策记入 `docs/DECISIONS.md` **ADR-0044**。

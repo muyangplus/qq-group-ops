@@ -215,7 +215,8 @@ Phase 2 → E1、E2、B4、B5、B6；Phase 3 → E3–E5；Phase 4 → D6–D9�
   - 验收：普通成员在群里**永远看不到**管理类入口；管理员需手动 `/menu 管理`；超管菜单只在私信出现；
     同步 `COMMANDS` / `CARD-STANDARD` / `ACCEPTANCE` 与 `helpTopics` 的菜单说明。
 
-> **真机待确认项**：见 [docs/REAL-MACHINE-CHECKLIST.md](./docs/REAL-MACHINE-CHECKLIST.md)（R1–R15，跑完把观察结果贴回来即可收尾）。
+> **真机待确认项**：见 [docs/REAL-MACHINE-CHECKLIST.md](./docs/REAL-MACHINE-CHECKLIST.md)（R1–R18，跑完把观察结果贴回来即可收尾）；
+> **一次跑完**：照 [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md)（准备清单 + 执行顺序 + 一键取证命令 + 回填模板）。
 
 ## G. 已完成（归档，细节见 CHANGELOG）
 
