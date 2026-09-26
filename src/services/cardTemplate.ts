@@ -89,7 +89,11 @@ export function renderCard(spec: CardSpec): RichMessage {
 export function renderCardMarkdown(spec: CardSpec): string {
   const lines: string[] = [`## ${spec.title}`, ...(spec.lines ?? [])];
   if (hasButtons(spec.rows)) {
-    lines.push("", spec.buttonHint ?? "请点击下方按钮。");
+    const hint = spec.buttonHint ?? "请点击下方按钮。";
+    // 空串 = 调用方明确要求不渲染引导行
+    if (hint.length > 0) {
+      lines.push("", hint);
+    }
   }
   if (spec.footer && spec.footer.length > 0) {
     lines.push("", ...spec.footer);

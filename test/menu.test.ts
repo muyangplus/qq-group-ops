@@ -156,7 +156,6 @@ describe("menu", () => {
   it("builds an unknown-command card with menu entries", () => {
     const message = buildUnknownCommandMenu("nope", context("member"));
     expect(message.text).toContain("未知指令：nope");
-    expect(message.text).toContain("权限：");
     expect(message.markdown).toContain("## 未知指令");
     expect((message.keyboard?.content.rows ?? []).length).toBeGreaterThan(0);
   });

@@ -239,22 +239,6 @@ function denial(reason: string): SpecResult {
  * 群里绝不通过卡片主动暴露管理类功能（管理员在群里要手动发 `/menu 管理`）。
  */
 function mainCard(context: MenuContext, access: MenuAccess): CardSpec {
-  const lines: string[] = [];
-  if (context.userLabel) {
-    lines.push(`**用户**：${context.userLabel}`);
-  }
-  lines.push(
-    `**权限**：${LEVEL_LABELS[context.permissions.levelFor(context.userId, context.groupId)]}`,
-  );
-  if (context.groupLabel) {
-    lines.push(`**当前群**：${context.groupLabel}`);
-    if (context.groupBound === false) {
-      lines.push("本群未绑定群号：/bind group <群号>");
-    }
-  } else {
-    lines.push("私信中操作群功能时，请在指令里带上群号。");
-  }
-  lines.push("", "常用功能：资料、权限、活动与申诉。");
 
   const rows: CardButton[][] = [];
   if (context.bound) {
@@ -288,11 +272,13 @@ function mainCard(context: MenuContext, access: MenuAccess): CardSpec {
     }
   }
 
+  // 文案要求：常用菜单**只保留标题 + 按钮**，不写任何正文与引导文字
   return {
     title: "常用菜单",
-    lines,
+    lines: [],
     rows,
-    buttonHint: "请选择功能：",
+    // 空串 = 不渲染引导行
+    buttonHint: "",
   };
 }
 
