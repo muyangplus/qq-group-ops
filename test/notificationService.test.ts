@@ -210,7 +210,9 @@ describe("NotificationService", () => {
     const result = await notifications.notifyJoinRequest(PUSH);
 
     expect(result.sent).toBe(1);
-    expect(notifications.keyboardAvailable).toBe(false);
+    expect(notifications.richMessageSender.keyboardAvailableFor("user")).toBe(false);
+    // 真机回归：私信失败不能连累群卡片
+    expect(notifications.keyboardAvailable).toBe(true);
     expect(api.sentPrivateMessages[0]?.keyboard).toBeUndefined();
     expect(api.sentPrivateMessages[0]?.markdown).toContain("新的入群申请");
 

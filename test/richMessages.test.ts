@@ -70,7 +70,9 @@ describe("RichMessageSender", () => {
     expect(result.ok).toBe(true);
     expect(result.mode).toBe("markdown");
     expect(result.detail).toBe("markdown_fallback");
-    expect(sender.keyboardAvailable).toBe(false);
+    expect(sender.keyboardAvailableFor("user")).toBe(false);
+    // 真机回归：私信失败不能连累群卡片
+    expect(sender.keyboardAvailableFor("group")).toBe(true);
     expect(api.sentPrivateMessages[0]?.keyboard).toBeUndefined();
   });
 

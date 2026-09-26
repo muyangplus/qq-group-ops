@@ -49,12 +49,24 @@ interface Attempt {
  * 主动发送失败不影响事件处理链，由调用方决定是否记日志。
  */
 export class RichMessageSender {
-  private keyboardDisabled = false;
+  /**
+   * 自定义按钮可用性**按目标分开**记录：C2C 的一次失败不能连累群卡片（真机回归）。
+   *
+   * 之前的实现是一个全局布尔：沙箱下给新用户发私信 400「沙箱环境不能访问此资源」后，
+   * 后续所有群卡片都被降级成 `keyboard:false`，群里彻底丢按钮。
+   */
+  private readonly keyboardDisabled = { user: false, group: false };
 
   public constructor(private readonly api: QQOfficialAPI) {}
 
+  /** 群里是否还能用自定义按钮（群卡片/群广播的主要判据）。 */
   public get keyboardAvailable(): boolean {
-    return !this.keyboardDisabled;
+    return !this.keyboardDisabled.group;
+  }
+
+  /** 指定目标是否还能用自定义按钮（私信卡片判据）。 */
+  public keyboardAvailableFor(target: "user" | "group"): boolean {
+    return !this.keyboardDisabled[target];
   }
 
   /** 主动私聊发送。 */
@@ -141,7 +153,7 @@ export class RichMessageSender {
     const activeFallback = options.activeFallback ?? true;
 
     const modes: RichSendMode[] = [];
-    if (message.keyboard && !this.keyboardDisabled) {
+    if (message.keyboard && !this.keyboardDisabled[target]) {
       modes.push("markdown+keyboard");
     }
     modes.push("markdown", "text");
@@ -200,10 +212,19 @@ export class RichMessageSender {
 
   /** 记住「平台不支持自定义按钮」；只记一次，避免每条消息都白试。 */
   private disableKeyboard(target: "user" | "group", error: string): void {
-    if (this.keyboardDisabled) {
+    if (this.keyboardDisabled[target]) {
       return;
     }
-    this.keyboardDisabled = true;
+    // 沙箱限制（400 沙箱环境不能访问此资源）与接口未开通（应用无接口访问权限）
+    // 都不是「平台不支持自定义按钮」，不能据此丢掉键盘。
+    if (/沙箱环境|应用无接口访问权限/u.test(error)) {
+      log.warn("keyboard kept: sandbox/permission error, not unsupported keyboard", {
+        target,
+        error,
+      });
+      return;
+    }
+    this.keyboardDisabled[target] = true;
     log.warn(
       "custom keyboard rejected by platform, falling back to markdown/text",
       { target, error },
