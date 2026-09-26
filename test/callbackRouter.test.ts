@@ -154,7 +154,7 @@ describe("CallbackRouter", () => {
     await router.handle(interactionEvent());
 
     // §F1：群内回调回复首行 @ 点击者
-    expect(String(api.sentMessages[0]?.markdown ?? "")).toMatch(/^<@!u1>\n/u);
+    expect(String(api.sentMessages[0]?.markdown ?? "")).toMatch(/^## 演示卡片\n<@!u1>\n/u);
   });
 
   it("keeps the test module callbacks exempt from the mention", async () => {

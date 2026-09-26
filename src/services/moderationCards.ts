@@ -400,12 +400,12 @@ function punishmentRows(input: {
   return rows;
 }
 
-/** 纯文本降级用的等价指令。 */
+/**
+ * 卡片底部提示：**按钮已经覆盖的动作不再写指令**（解除 / 预设时长 / 踢出 / 拉黑都有按钮）。
+ * 只保留按钮做不到的「自定义禁言时长」；纯文本降级里的指令列表由 cardTemplate 自动生成。
+ */
 function punishmentFooter(record: string): string[] {
-  return [
-    `指令方式：/punish release ${record}；/punish mute ${record} <秒>；` +
-      `/punish kick ${record}；/punish blacklist ${record} [本群|全局]`,
-  ];
+  return [`自定义禁言时长：/punish mute ${record} <秒>`];
 }
 
 function callbackButton(

@@ -12,7 +12,11 @@ describe("groupMention", () => {
 
     const mentioned = withGroupMention(card, "u1");
 
-    expect(mentioned.markdown).toBe(`<@!u1>\n${card.markdown}`);
+    // 统一放在标题下一行
+    expect(mentioned.markdown.split("\n").slice(0, 2)).toEqual([
+      "## 常用菜单",
+      "<@!u1>",
+    ]);
     // 纯文本 content 通道不支持提及，不写进去
     expect(mentioned.text).toBe(card.text);
     expect(mentioned.keyboard).toEqual(card.keyboard);

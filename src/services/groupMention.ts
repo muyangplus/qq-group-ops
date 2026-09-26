@@ -18,7 +18,14 @@ export function withGroupMention(
   if (userId2.length === 0 || alreadyMentioned(message.markdown)) {
     return message;
   }
-  return { ...message, markdown: `<@!${userId2}>\n${message.markdown}` };
+  // 统一放在**标题下一行**（真机要求：不出现「有的在标题上、有的在标题下」）
+  const lines = message.markdown.split("\n");
+  const firstContent = lines.findIndex((line) => line.trim().length > 0);
+  const hasTitle =
+    firstContent >= 0 && /^#{1,6}\s+/u.test(lines[firstContent]!.trim());
+  const insertAt = hasTitle ? firstContent + 1 : 0;
+  lines.splice(insertAt, 0, `<@!${userId2}>`);
+  return { ...message, markdown: lines.join("\n") };
 }
 
 /**

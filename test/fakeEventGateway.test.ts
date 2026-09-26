@@ -100,7 +100,7 @@ describe("FakeEventGateway", () => {
 
     expect(api.sentMessages).toHaveLength(1);
     // §F1：群内回复首行 @ 发起人（卡片 markdown 里的提及真机有效）
-    expect(String(api.sentMessages[0]?.markdown ?? "")).toMatch(/^<@!mod>\n/u);
+    expect(String(api.sentMessages[0]?.markdown ?? "")).toMatch(/^## 常用菜单\n<@!mod>\n/u);
     expect(String(api.sentMessages[0]?.markdown ?? "")).toContain("常用菜单");
   });
 
@@ -178,7 +178,7 @@ describe("FakeEventGateway", () => {
     expect(String(api.sentMessages[0]?.markdown ?? "")).toContain("常用菜单");
     expect(api.sentMessages[0]?.msgId).toBe("m1");
     // §F1：空 @机器人 也属于「群内回复」，首行 @ 发起人
-    expect(String(api.sentMessages[0]?.markdown ?? "")).toMatch(/^<@!mod>\n/u);
+    expect(String(api.sentMessages[0]?.markdown ?? "")).toMatch(/^## 常用菜单\n<@!mod>\n/u);
   });
 
   it("does not fail the event when a reply cannot be sent", async () => {
