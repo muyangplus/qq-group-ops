@@ -1,0 +1,171 @@
+name: CD · FTP 发布
+
+# 触发方式：在 GitHub 上把 tag 发布成 Release（release: published），或手动触发。
+# 注意：只推 tag 但不创建 Release **不会**触发本工作流；要改成 tag 推送即部署，
+# 把 `release:` 换成 `push: { tags: ["v*"] }`（两者都开会导致同一次发布跑两遍）。
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 要部署的 tag / commit（留空 = 当前分支）
+        required: false
+        default: ""
+
+# 最小权限：部署只用 FTP 凭据（secrets），不需要 GITHUB_TOKEN 的写权限。
+permissions:
+  contents: read
+
+# 同一 ref 同时只允许一次部署，避免并发写坏服务器目录（排队而非取消）。
+concurrency:
+  group: cd-ftp-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # 部署来源：优先 Release 的 tag，其次手动输入的 ref，最后当前 ref。
+  DEPLOY_REF: ${{ github.event.release.tag_name || inputs.ref || github.ref_name }}
+
+jobs:
+  # 部署前门禁：类型检查 + 全量测试 + 构建；任何一步失败都不会碰服务器。
+  build:
+    name: 构建与测试（部署门禁）
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_REF }}
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: 记录部署来源（审计线索）
+        run: |
+          {
+            echo "### 部署来源"
+            echo ""
+            echo "- ref: \`${DEPLOY_REF}\`"
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- 触发: ${GITHUB_EVENT_NAME}"
+            echo "- 执行者: ${GITHUB_ACTOR}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  # 真正写服务器的任务：放在 Environment 里，可在仓库 Settings → Environments
+  # 给 production-ftp 配 required reviewers / 等待时间，实现「人工放行后才部署」。
+  deploy:
+    name: 上传到 FTP
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production-ftp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_REF }}
+          persist-credentials: false
+
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      # 显式白名单组包：宁可少传，也不要把 .env / data / logs / 测试 / 依赖目录带上服务器。
+      - name: 准备部署目录（白名单）
+        run: |
+          set -eu
+          rm -rf dist-deploy
+          mkdir -p dist-deploy
+          for item in dist src scripts docs \
+                      package.json pnpm-lock.yaml tsconfig.json .env.example \
+                      README.md CHANGELOG.md Dockerfile docker-compose.yml; do
+            if [ -e "$item" ]; then
+              cp -R "$item" dist-deploy/
+            fi
+          done
+          echo "将上传以下顶层内容："
+          find dist-deploy -maxdepth 1 -mindepth 1 -printf '%f\n' | sort
+          du -sh dist-deploy
+
+      # 先校验配置齐全，避免半途失败留下半份文件；只打印非敏感信息。
+      - name: 校验 FTP 配置
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_SERVER_DIR: ${{ vars.FTP_SERVER_DIR }}
+        run: |
+          missing=""
+          [ -z "$FTP_SERVER" ] && missing="$missing FTP_SERVER"
+          [ -z "$FTP_USERNAME" ] && missing="$missing FTP_USERNAME"
+          [ -z "$FTP_PASSWORD" ] && missing="$missing FTP_PASSWORD"
+          [ -z "$FTP_SERVER_DIR" ] && missing="$missing FTP_SERVER_DIR(variable)"
+          if [ -n "$missing" ]; then
+            echo "::error::缺少配置：$missing（见 docs/CD.md）"
+            exit 1
+          fi
+          echo "目标：$FTP_SERVER  目录：$FTP_SERVER_DIR（凭据不回显）"
+
+      - name: 上传到 FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          # 默认 FTPS（显式 TLS）；服务器只支持明文 FTP 时才把变量改成 ftp（不推荐）
+          protocol: ${{ vars.FTP_PROTOCOL || 'ftps' }}
+          port: ${{ vars.FTP_PORT || 21 }}
+          local-dir: ./dist-deploy/
+          server-dir: ${{ vars.FTP_SERVER_DIR }}
+          log-level: standard
+          # 第二层保险：即使组包时漏了，也不上传这些
+          exclude: |
+            **/.git*
+            **/.github/**
+            **/node_modules/**
+            **/data/**
+            **/logs/**
+            **/coverage/**
+            **/.env
+            **/.env.*
+            **/*.log
+            **/test/**
+
+      - name: 部署摘要（审计线索）
+        run: |
+          {
+            echo "### 部署完成"
+            echo ""
+            echo "- 目标：\`${{ vars.FTP_SERVER_DIR }}\`"
+            echo "- 来源：\`${DEPLOY_REF}\`（commit \`${GITHUB_SHA}\`）"
+            echo "- 协议：\`${{ vars.FTP_PROTOCOL || 'ftps' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

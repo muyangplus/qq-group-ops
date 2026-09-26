@@ -5,6 +5,8 @@ node_modules/
 # Build output
 dist/
 coverage/
+# CD 组包目录（.github/workflows/cd-ftp.yml 生成，不提交）
+dist-deploy/
 
 # Environment
 .env

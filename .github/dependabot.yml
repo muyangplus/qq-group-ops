@@ -1,0 +1,25 @@
+version: 2
+# 依赖与工作流的安全更新：每周给 npm 依赖与 GitHub Actions 各开一个分组 PR。
+# 这些 PR 会走 CI（typecheck + 全量测试），合并前人工 review —— 对应 TODO 的 D6。
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        dependency-type: development
+        patterns: ["*"]
+      production-dependencies:
+        dependency-type: production
+        patterns: ["*"]

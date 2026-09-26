@@ -23,7 +23,8 @@
     "pg-mem": "^3.0.14",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.1",
+    "yaml": "^2.9.1"
   },
   "dependencies": {
     "fastify": "^5.12.5",
