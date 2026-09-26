@@ -10,6 +10,20 @@
 （暂无未发布改动）
 
 
+## [0.17.3] - 2026-09-26
+
+### 修复
+
+- **处罚 / 申诉 / 黑名单列表在「同一毫秒」创建时顺序不稳定**（v0.17.2 的 CI 上
+  `punishAppeal`「原文保留」用例间歇性失败）：`Array.prototype.sort` 是**稳定排序**，
+  而这些列表来自 `Map.values()`（插入顺序 = 创建顺序），原来的
+  `sort((a, b) => b.createdAt - a.createdAt)` 在时间戳相同时会保留「旧的在前」——
+  同一份数据在快慢机器上顺序不同。现在统一走 [`src/core/ordering.ts`](src/core/ordering.ts) 的
+  `newestFirst()`（先按时间升序稳定排序再反转 ⇒ 并列项「后创建的在前」），
+  并补 `test/ordering.test.ts` 与 `PunishmentService` 的同毫秒回归用例；
+  那条 CI 用例也改成按 `messageId` 取记录，不再依赖列表排序。
+
+
 ## [0.17.2] - 2026-09-26
 
 ### 修复
@@ -612,7 +626,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.2...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.3...HEAD
+[0.17.3]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.2...v0.17.3
 [0.17.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.16.0...v0.17.0
