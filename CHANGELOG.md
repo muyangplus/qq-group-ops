@@ -7,6 +7,19 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **通知订阅统一成一张菜单（三个频道）**：入群申请 / 处罚与申诉 / 新活动通知共用一张
+  `notification_subscriptions` 表（存储键统一为 `频道:范围`）与一张 `/notify` 菜单卡 ——
+  每个频道一行「本群 / 全部 / 测试」按钮，点一下切换并刷新同一张卡。
+  `migrate()` 会把老的无前缀 scope 补成 `join:`、把 `activity_subscriptions` 搬进统一表（幂等），
+  已订阅的人不受影响；活动推送引擎（每日上限 / 去重 / 限速 / 满员群广播）保持不变。
+  **删除老入口（不兼容）**：`/notify on|off`、`/notify all on|off`、`/notify <群> on|off`、
+  `/notify punish …`、`/activity subscribe|unsubscribe`；`/notify` 只打开菜单，`/notify test [频道]` 自检。
+  订阅资格与推送收件人共用同一套判定（入群 = 群管理员及以上、处罚与申诉 = 审核员及以上、
+  活动 = 不限权限但「全部群」需已绑定 QQ 号），不会再出现「订阅成功却永远收不到」。
+  「全部群」= 所有装了机器人的群（绑定是全局的）。
+
 （暂无未发布改动）
 
 

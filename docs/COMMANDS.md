@@ -482,56 +482,47 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 /activity quit #A7K2Q9                       # 取消报名（群内结果只私信）
 /activity info #A7K2Q9                       # 详情
 /activity signups #A7K2Q9 [+页码] [full]      # 报名名单（群管理员/发布者；每页 5 人，默认不含学号/学院）
-/activity subscribe                          # 订阅「新活动通知」（发布时私信给你）
-/activity unsubscribe                        # 退订
 ```
 
-活动卡片（Markdown + 内嵌按钮，与入群申请共用三级降级）。**成员卡**（发到群里的那张）：
+> 「新活动通知」的订阅已统一到 **`/notify` 菜单**的「活动通知」行（本群 / 全部），
+> 不再有 `/activity subscribe|unsubscribe`。
+
+活动卡片（Markdown + 内嵌按钮，与入群申请共用三级降级）。**成员卡**（发到群里的那张）示例见
+`src/services/activityCards.ts`，字段与按钮在「活动」一节说明。
+
+## 通知订阅（统一菜单 `/notify`）
+
+三个频道共用**一张订阅表**（`notification_subscriptions`，存储键 `频道:范围`）与**一张菜单卡**：
 
 ```text
-
-## 入群申请推送（卡片 + 快捷同意/拒绝）
-
-审核员可以订阅推送：有新的**待人工处理**的入群申请时，机器人会用主动私聊把申请推送给所有订阅了该群的人，卡片底部带「同意 / 拒绝」快捷按钮。
-
-```text
-/notify                               # 查看当前订阅
-/notify on                            # 群内=本群；私信=你担任群管理员的全部群
-/notify off                           # 关闭对应范围
-/notify all on                        # 全部群（群内/私信均可）
-/notify all off
-/notify <group_openid|群号> on|off     # 指定群（私信）
-/notify test                          # 给自己发一张推送测试卡片
+/notify                 # 打开统一订阅菜单
+/notify test [频道]     # 给自己发一张该频道的测试卡片（join / punish / activity）
 ```
 
-订阅规则：
+菜单卡（群内）：每个频道一行「本群 / 全部 / 测试」，点一下切换并刷新同一张卡。
 
-- **只有能审批该群入群申请的人**（群管理员 / 本群超管 / 全局超管）可以订阅与接收；审核员（moderator）目前没有入群审批权限，订阅时会提示权限不足（如需放开，见「权限模型」一节的说明）；
-- 推送时会再按「当前群是否有审批权限」过滤一次，越权订阅不会泄漏申请内容；
-- 订阅持久化在 `notification_subscriptions` 表，重启不丢；
-- 自动通过 / 自动拒绝的申请**不推送**，只有转人工的才找人；
-- 同一 (群, 申请, 人) 只推一次，重启后也不会重复（投递记录写在 `notification_deliveries`）；
-- 接收者需要先 `/bind qq <QQ号>` 绑定自己，否则按钮点下去会先提示绑定（订阅本身已经要求绑定）。
+| 频道 | 推送内容 | 订阅 / 接收资格 |
+|---|---|---|
+| 入群申请 | 新的待处理申请（含自动处理结果，受 `notifyAutoApproved` 控制） | 该群**群管理员及以上** |
+| 处罚与申诉 | 关键词处罚、申诉派发与申诉结果 | 该群**审核员及以上** |
+| 活动通知 | 群里有新活动发布 | **不限权限**；订「全部」需已绑定 QQ 号 |
 
-卡片内容（Markdown + 底部按钮）：
+- 「全部」= **所有装了机器人的群**；绑定是全局的（在一个群绑过 QQ 号即可），不是「当前会话的群」；
+- 订阅资格与推送时的收件人判定**共用同一套规则**（`NotificationService.canReceive`），不会出现「订阅成功但永远收不到」；
+- 订阅持久化在 `notification_subscriptions`，重启不丢；投递去重写在 `notification_deliveries`；
+- 同一 (群, 申请, 人) 只推一次，重启后也不会重复；
+- 接收者需要先 `/bind qq <QQ号>` 绑定自己（活动「全部群」同样要求绑定）。
 
-```text
+**已删除的老入口（不兼容）**：`/notify on|off`、`/notify all on|off`、`/notify <群> on|off`、
+`/notify punish …`、`/activity subscribe|unsubscribe` —— 订阅只通过菜单按钮完成。
 
-## 处罚事件推送（`/notify punish`）
+入群申请卡片的规则（与重构前一致）：
 
-处罚通知是**独立频道**，与入群申请推送互不影响（存储时 scope 带 `punish:` 前缀，老数据不受影响）：
+- 只有仍需**人工处理**的申请才推送，自动通过 / 自动拒绝的不打扰；
+- 审核员（moderator）没有入群审批权限，订阅「入群申请」会提示权限不足（详见「权限模型」）；
+- 卡片底部是「同意 / 拒绝」指令按钮，点击等于发送 `/approve`、`/reject` 并弹二次确认。
 
-```text
-/notify punish                 # 查看处罚通知订阅（本群 / 全部群）
-/notify punish on|off          # 群内=本群；私信=你有审核权限的全部群
-/notify punish all on|off      # 全部群
-/notify punish <群号|#群短码> on|off
-/notify punish test            # 给自己发一张测试卡片
-```
-
-- 接收者必须是该群的**审核员或以上**（`canReviewContent`），推送时再按当前权限过滤一次；
-- 机器人**实际处罚**（撤回 / 禁言 / 移出 / 拉黑）时推送，卡片底部可直接调整处罚；
-- 订阅保存在 `notification_subscriptions`，投递去重复用 `PushService`。
+处罚卡片：机器人**实际处罚**（撤回 / 禁言 / 移出 / 拉黑）时推送，卡片底部可直接解除处罚、改禁言时长、踢出、拉黑本群或全局（全局仅超管）。
 
 ## 处罚记录与卡片改处罚（`/punish`）
 
