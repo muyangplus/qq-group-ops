@@ -7,6 +7,14 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **中文标签排序依赖运行环境 locale，导致线上 CI 失败**：活动统计的 `distributionOf` 与活动卡片的
+  「学院 / 年级 / 班级分布」直接用裸 `localeCompare` —— 不指定 locale 时 ICU 会用**运行环境的默认 locale**，
+  于是本地中文系统排出「甲 → 乙」、GitHub runner（en-US）排出「乙 → 甲」，同一份数据两种顺序。
+  现在统一走 `src/core/collation.ts` 的 `compareLabels`（显式钉 `zh-Hans-CN` + `numeric`，
+  small-icu 环境退化为码点比较），新增 `test/collation.test.ts` 守住「拼音顺序 / 对称性 / 数字顺序」。
+
 ### 新增
 
 - **CD：打 tag 发 Release 自动发布到 FTP**（`.github/workflows/cd-ftp.yml` + [`docs/CD.md`](docs/CD.md)）：
