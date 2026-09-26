@@ -46,7 +46,6 @@ export interface CommandHelpers {
     result: CommandResult,
     rows: readonly (readonly CardButton[])[],
     footer?: readonly string[],
-    buttonHint?: string,
   ): CardResult;
   /** 把 handler 的 notice（可含首行 @）转成卡片正文行。 */
   renderNotice(notice: string | undefined): string[];

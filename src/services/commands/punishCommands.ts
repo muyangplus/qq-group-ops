@@ -206,7 +206,7 @@ export function punishListCard(
   const lines = [
     ...ctx.helpers.renderNotice(notice),
     `**群**：${ctx.helpers.groupLabel(groupId)}`,
-    `**记录数**：${records.length}（第 ${current}/${totalPages} 页）`,
+    `**记录数**：共 ${records.length} 条 · 第 ${current} / ${totalPages} 页`,
   ];
   if (slice.length === 0) {
     lines.push("", "（暂无处罚记录）");

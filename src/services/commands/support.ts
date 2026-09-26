@@ -196,7 +196,6 @@ export function cardFromText(
   text: string,
   options: {
     rows?: readonly (readonly CardButton[])[];
-    buttonHint?: string;
     footer?: readonly string[];
   } = {},
 ): CardResult {
@@ -204,9 +203,6 @@ export function cardFromText(
     title,
     lines: text.split("\n"),
     ...(options.rows ? { rows: options.rows } : {}),
-    ...(options.buttonHint !== undefined
-      ? { buttonHint: options.buttonHint }
-      : {}),
     ...(options.footer ? { footer: options.footer } : {}),
   });
   return { ok: true, text: rich.text, rich };
@@ -231,13 +227,13 @@ export function formatError(error: unknown): string {
  * 定制卡包装：用指定标题、按钮与页脚包装已有指令结果。
  *
  * 正文沿用 `result.text`，因此**纯文本降级与旧输出等价**；已经自带卡片的直接返回。
+ * §卡片规范 v2：页脚缺省为空（不再追加「按钮不可用时可直接输入指令」这类引导行）。
  */
 export function cardify(
   title: string,
   result: CommandResult,
   rows: readonly (readonly CardButton[])[],
-  footer: readonly string[] = ["按钮不可用时可直接输入指令。"],
-  buttonHint = "相关入口：",
+  footer: readonly string[] = [],
 ): CardResult {
   if (result.rich) {
     return {
@@ -248,7 +244,7 @@ export function cardify(
       ...(result.noMention !== undefined ? { noMention: result.noMention } : {}),
     };
   }
-  const card = cardFromText(title, result.text, { rows, footer, buttonHint });
+  const card = cardFromText(title, result.text, { rows, footer });
   return {
     ok: result.ok,
     text: card.text,
@@ -264,9 +260,8 @@ export async function cardifyAsync(
   result: Promise<CommandResult>,
   rows: readonly (readonly CardButton[])[],
   footer?: readonly string[],
-  buttonHint?: string,
 ): Promise<CommandResult> {
-  return cardify(title, await result, rows, footer, buttonHint);
+  return cardify(title, await result, rows, footer);
 }
 
 /**
@@ -325,8 +320,6 @@ export function ensureCard(
   nav.push(viewButton("help", "指令帮助", "help", "home"));
   const card = cardFromText(title, result.text, {
     rows: [nav],
-    ...(groupId ? { buttonHint: "常用入口：" } : {}),
-    footer: ["按钮不可用时可直接输入指令。"],
   });
   return {
     ok: result.ok,
@@ -703,7 +696,13 @@ export const GLOBAL_RULES_DENIED =
 
 export const MAX_MUTE_DURATION_SECONDS = 30 * 24 * 60 * 60;
 export const MAX_AUDIT_LIMIT = 50;
-export const DEFAULT_AUDIT_LIMIT = 10;
+/**
+ * 审计卡的默认每页条数（§卡片规范 v2：列表类每页目标 5 条）。
+ *
+ * 审计条目是纯文本行（没有条目按钮），所以可以直接按标准的 5 条执行，
+ * 不受「键盘 ≤5 行 / 每行 ≤12 字」的例外约束。
+ */
+export const DEFAULT_AUDIT_LIMIT = 5;
 export const GLOBAL_TARGETS = new Set(["all", "global", "default", "全局", "默认"]);
 /** `/perm grant gsuper` 的别名：本群超级管理员。 */
 export const GROUP_SUPER_ROLES = new Set([

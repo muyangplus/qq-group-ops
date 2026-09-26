@@ -66,8 +66,6 @@ export interface CardSpec {
   lines?: readonly string[] | undefined;
   /** 按钮行；最多 5 行、每行最多 5 个按钮。 */
   rows?: readonly (readonly CardButton[])[] | undefined;
-  /** 有按钮时插在按钮前的引导行。 */
-  buttonHint?: string | undefined;
   /** 底部提示行。 */
   footer?: readonly string[] | undefined;
 }
@@ -85,10 +83,14 @@ export function renderCard(spec: CardSpec): RichMessage {
   };
 }
 
-/** 只渲染 Markdown 正文（含按钮引导行，因为降级后指令列表由 text 承担）。 */
+/**
+ * 只渲染 Markdown 正文。
+ *
+ * §卡片规范 v2：结构固定为 **标题 + 正文 + 页脚**，不再渲染任何引导行
+ * （`buttonHint` 字段已从 `CardSpec` 移除）；指令文案统一由 `/help` 承担。
+ */
 export function renderCardMarkdown(spec: CardSpec): string {
   const lines: string[] = [`## ${spec.title}`, ...(spec.lines ?? [])];
-  // §卡片规范 v2：不再渲染引导行（buttonHint 已废弃，保留字段仅为兼容）
   if (spec.footer && spec.footer.length > 0) {
     lines.push("", ...spec.footer);
   }

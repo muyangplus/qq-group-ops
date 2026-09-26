@@ -17,7 +17,8 @@ import type { RichMessage } from "./richMessages.js";
  * 每个按钮都带 `permission.specifyUserIds = [接收者]`，所以同一张卡推给多个审核员时，
  * 只有各自能点自己那份（也用于「拉黑全局」只出现在全局超管的卡上）。
  *
- * 纯文本降级没有任何按钮可复制，因此每张卡的 footer 都给出等价的 `/punish` 指令。
+ * §卡片规范 v2：正文只写业务信息（谁 / 什么规则 / 什么动作 / 记录号）；
+ * 回调按钮覆盖不了的动作（如「自定义禁言时长」）才在 footer 保留一行等价指令。
  */
 
 /** 常用禁言时长预设（按钮点击即生效，自定义走 `/punish mute`）。 */
@@ -69,7 +70,7 @@ export function buildPunishmentNoticeCard(
   ];
   lines.push(
     "",
-    "可直接在下面调整处罚：解除会**按记录逐项撤销**（撤回与踢出无法撤销）。",
+    "**说明**：解除会按记录逐项撤销（撤回与踢出无法撤销）。",
   );
   return renderCard({
     title: "处罚通知",
@@ -130,12 +131,11 @@ export function buildMuteOptionsCard(input: {
       `**群**：${escapeCardText(input.groupLabel)}`,
       `**当前**：${input.currentSeconds > 0 ? `禁言 ${formatDuration(input.currentSeconds)}` : "未禁言"}`,
     ],
-    ...(input.withButtons
-      ? { buttonHint: "选一个时长（点击即生效）：", rows }
-      : {}),
+    ...(input.withButtons ? { rows } : {}),
     footer: [
-      `自定义：/punish mute ${record} <秒>`,
-      `解除禁言：/punish mute ${record} 0`,
+      // 自定义时长按钮做不到 → 保留等价指令；「解除禁言」有按钮时不重复写
+      `自定义时长：/punish mute ${record} <秒>`,
+      ...(input.withButtons ? [] : [`解除禁言：/punish mute ${record} 0`]),
     ],
   });
 }
@@ -397,8 +397,11 @@ function punishmentRows(input: {
 }
 
 /**
- * 卡片底部提示：**按钮已经覆盖的动作不再写指令**（解除 / 预设时长 / 踢出 / 拉黑都有按钮）。
- * 只保留按钮做不到的「自定义禁言时长」；纯文本降级里的指令列表由 cardTemplate 自动生成。
+ * 卡片底部提示（§卡片规范 v2）：**按钮已经覆盖的动作不再写指令**
+ * （解除 / 预设时长 / 踢出 / 拉黑都有回调按钮），只保留按钮做不到的「自定义禁言时长」。
+ *
+ * 回调按钮在纯文本降级里没有可复制指令，属于已知的降级损失；指令按钮的等价指令
+ * 由 `cardTemplate` 自动列进 `text`。
  */
 function punishmentFooter(record: string): string[] {
   return [`自定义禁言时长：/punish mute ${record} <秒>`];

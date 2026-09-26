@@ -80,7 +80,7 @@ export function blacklistCard(
   const lines = [
     ...ctx.helpers.renderNotice(options.notice),
     `**作用范围**：${scopeLabel}`,
-    `**条目数**：${entries.length}（第 ${page}/${totalPages} 页）`,
+    `**条目数**：共 ${entries.length} 条 · 第 ${page} / ${totalPages} 页`,
   ];
   if (slice.length === 0) {
     lines.push("", "（空）");

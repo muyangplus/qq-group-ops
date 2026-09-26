@@ -436,7 +436,6 @@ export async function notifyPunishTestCard(
       "真实的处罚卡片上会有「解除处罚 / 禁言时长 / 踢出 / 拉黑」按钮。",
     ],
     rows: [[viewButton("punishBack", "返回订阅", "notify", "punishView")]],
-    footer: ["用法：/notify punish on|off"],
   });
   const sent = await ctx.notifications.sendPrivateCard(userId, card);
   const notice = `${ctx.helpers.mention(replyGroupId, userId)}${

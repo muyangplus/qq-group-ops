@@ -384,9 +384,8 @@ export class AdminCommandService {
     result: CommandResult,
     rows: readonly (readonly CardButton[])[],
     footer?: readonly string[],
-    buttonHint?: string,
   ): CardResult {
-    return cardify(title, result, rows, footer, buttonHint);
+    return cardify(title, result, rows, footer);
   }
 
   /**
@@ -444,8 +443,6 @@ export class AdminCommandService {
           viewButton("help", "权限帮助", "help", "topic", "perm"),
         ],
       ],
-      [],
-      "",
     );
   }
 
@@ -470,22 +467,14 @@ export class AdminCommandService {
           viewButton("help", "帮助", "help", "topic", "profile"),
         ],
       ],
-      [],
-      "",
     );
   }
 
   /** 领域子模块共享依赖（R1 拆分）：门面只负责组装，业务在 commands/* 里。 */
   private context(): AdminCommandContext {
     const helpers: CommandHelpers = {
-      cardify: (title, result, rows, footer, buttonHint) =>
-        this.cardify(
-          title,
-          result,
-          rows,
-          footer ?? ["按钮不可用时可直接输入指令。"],
-          buttonHint ?? "相关入口：",
-        ),
+      cardify: (title, result, rows, footer) =>
+        this.cardify(title, result, rows, footer),
       renderNotice: (notice) => this.renderNotice(notice),
       mention: (replyGroupId, userId) => this.mention(replyGroupId, userId),
       displayUser: (officialId) => this.displayUser(officialId),
@@ -560,7 +549,6 @@ export class AdminCommandService {
               viewButton("help", "绑定帮助", "help", "topic", "bind"),
             ],
           ],
-          ["详细用法：/help"],
         );
       case "alias":
       case "别名":
@@ -573,7 +561,6 @@ export class AdminCommandService {
               viewButton("help", "查询帮助", "help", "topic", "alias"),
             ],
           ],
-          ["按钮不可用时可直接输入指令。"],
         );
       case "whois":
       case "查询":
@@ -589,7 +576,6 @@ export class AdminCommandService {
               viewButton("myperm", "我的权限", "cmd", "run", "/myperm"),
             ],
           ],
-          ["详细用法：/help"],
         );
       case "pending":
       case "待审批":
@@ -933,7 +919,7 @@ export class AdminCommandService {
   /**
    * 回调：全局规则覆盖率总览（`cb:rules:overrides:<页>`）。
    *
-   * 每页 10 个群，列出该群显式覆盖的字段；没有覆盖的显示「全部继承全局」。
+   * 每页 5 个群（§卡片规范 v2），列出该群显式覆盖的字段；没有覆盖的显示「全部继承全局」。
    */
   public ruleOverridesCard(userId: string, page = 1): CardResult {
     return ruleOverridesCard(this.context(), userId, page);

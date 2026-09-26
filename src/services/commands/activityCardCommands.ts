@@ -86,7 +86,7 @@ export function activityListCard(
   const lines = [
     ...ctx.helpers.renderNotice(notice),
     `**群**：${groupLabel}`,
-    `**活动**：${list.length} 个 · 第 ${current} / ${pageCount} 页`,
+    `**活动**：共 ${list.length} 个 · 第 ${current} / ${pageCount} 页`,
     "",
   ];
   const rows: CardButton[][] = [];
@@ -460,10 +460,10 @@ export function activityManageNotice(
         viewButton("resend", "重发卡片", "activity", "resend", activityCode(fresh)),
       ],
       [
+        viewButton("info", "查看详情", "activity", "info", activityCode(fresh)),
         viewButton("manage", "刷新管理", "activity", "manage", activityCode(fresh)),
       ],
     ],
-    footer: [`活动配置：/activity info ${activityCode(fresh)}`],
   });
   return { ok: outcome.ok, text: card.text, rich: card };
 }

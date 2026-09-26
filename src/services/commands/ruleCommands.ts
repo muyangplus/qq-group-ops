@@ -156,7 +156,6 @@ export function rulesCard(
     rows,
     footer: [
       `本群：${ctx.helpers.displayGroup(targetGroupId)}`,
-      "完整字段用法：/help rules",
       "「恢复本页继承」只清本页字段；「恢复全部继承」清空本群全部覆盖。",
     ],
   });
@@ -429,7 +428,7 @@ export function rulesKeywordPanel(
 
   const body: string[] = [
     ...ctx.helpers.renderNotice(notice),
-    `**关键词**：${keywords.length > 0 ? `${keywords.length} 条 · 第 ${current} / ${pageCount} 页` : "（未配置）"}`,
+    `**关键词**：${keywords.length > 0 ? `共 ${keywords.length} 条 · 第 ${current} / ${pageCount} 页` : "（未配置）"}`,
     ...(slice.length > 0
       ? slice.map((keyword, index) => `${(current - 1) * pageSize + index + 1}. ${keyword}`)
       : ["", "暂无关键词：点「加词」发送 `/rules add keyword <词>`，或手输 `/rules set keywords 广告,刷屏`。"]),
@@ -1116,7 +1115,7 @@ export function globalRulesCard(
 /**
  * 回调：全局规则覆盖率总览（`cb:rules:overrides:<页>`）。
  *
- * 每页 10 个群，列出该群显式覆盖的字段；没有覆盖的显示「全部继承全局」。
+ * 每页 5 个群（§卡片规范 v2），列出该群显式覆盖的字段；没有覆盖的显示「全部继承全局」。
  */
 export function ruleOverridesCard(
   ctx: AdminCommandContext,
@@ -1130,7 +1129,7 @@ export function ruleOverridesCard(
     return { ok: false, text: card.text, rich: card };
   }
   const summaries = ctx.configStore.listOverrideSummaries();
-  const pageSize = 10;
+  const pageSize = 5;
   const pageCount = Math.max(1, Math.ceil(summaries.length / pageSize));
   const current = Math.min(Math.max(page, 1), pageCount);
   const slice = summaries.slice((current - 1) * pageSize, current * pageSize);
@@ -1167,9 +1166,6 @@ export function ruleOverridesCard(
     viewButton("help", "规则帮助", "help", "topic", "rules"),
   ]);
   const footer = [`全局：${formatGlobalRules(ctx).split("\n")[0] ?? ""}`];
-  if (current < pageCount) {
-    footer.push(`下一页：/rules overrides +${current + 1}`);
-  }
   return cardFromText("规则覆盖率总览", lines.join("\n"), {
     rows,
     footer,

@@ -353,11 +353,10 @@ export class ActivityCardService {
       title: `活动管理 ${code}`,
       lines,
       rows,
-      footer: [`导出与统计：/activity signups ${code}`],
     });
   }
 
-  /** d) 名单卡：每页 10 人，管理者专用。 */
+  /** d) 名单卡：每页 5 人（§卡片规范 v2），管理者专用。 */
   public signupsCard(
     input: ActivityCardInput & { page?: number; full?: boolean },
   ): RichMessage {
@@ -419,12 +418,6 @@ export class ActivityCardService {
     }
 
     const footer: string[] = [];
-    if (page < pageCount) {
-      footer.push(`下一页：/activity signups ${code} +${page + 1}`);
-    }
-    if (page > 1) {
-      footer.push(`上一页：/activity signups ${code} +${page - 1}`);
-    }
     footer.push("名单只对管理者可见；默认不含学号与学院。");
 
     return renderCard({

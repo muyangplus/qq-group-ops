@@ -123,7 +123,7 @@ export function pendingCard(
 
   const lines = [
     `**群**：${groupLabel}`,
-    `**待审批**：${pending.length} 条 · 第 ${current} / ${pageCount} 页`,
+    `**待审批**：共 ${pending.length} 条 · 第 ${current} / ${pageCount} 页`,
     ...ctx.helpers.renderNotice(notice),
   ];
   const rows: CardButton[][] = [];
@@ -283,7 +283,7 @@ export function auditCard(
   const slice = all.slice((current - 1) * size, current * size);
   const lines = [
     `**群**：${groupLabel}`,
-    `**审计记录**：${all.length} 条 · 第 ${current} / ${pageCount} 页（每页 ${size}）`,
+    `**审计记录**：共 ${all.length} 条 · 第 ${current} / ${pageCount} 页（每页 ${size}）`,
   ];
   for (const record of slice) {
     const target = record.targetUserId
@@ -309,14 +309,7 @@ export function auditCard(
   paging.push(
     viewButton("refresh", "刷新", "audit", "page", targetGroupId, size, current),
   );
-  const footer: string[] = [];
-  if (current < pageCount) {
-    footer.push(`下一页：/audit +${current + 1}`);
-  }
-  if (current > 1) {
-    footer.push(`上一页：/audit +${current - 1}`);
-  }
-  footer.push(`本群：${groupLabel}`);
+  const footer: string[] = [`本群：${groupLabel}`];
   return cardFromText("审计记录", lines.join("\n"), {
     rows: [paging],
     footer,
@@ -383,7 +376,6 @@ export async function syncCard(
   }
   return cardFromText("同步结果", lines.join("\n"), {
     rows: [[back]],
-    footer: ["待审批列表每页 3 条，可翻页"],
   });
 }
 

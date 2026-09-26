@@ -189,7 +189,7 @@ export async function whoisCard(
       ],
     ];
     const result = handleWhois(ctx, groupId, userId, parts);
-    const card = ctx.helpers.cardify("映射查询", result, rows, ["详细用法：/help"]);
+    const card = ctx.helpers.cardify("映射查询", result, rows);
     if (!groupId) {
       return card;
     }
@@ -221,7 +221,6 @@ export async function whoisCard(
         `**结果**：私信发送失败（${sent.detail}），请先私聊机器人再试。\n（/whois 的结果涉及隐私，不会在群里展示）`,
       ],
       rows,
-      footer: ["详细用法：/help"],
     });
     return { ok: true, text: notice.text, rich: notice };
   }

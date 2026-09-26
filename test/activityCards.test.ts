@@ -333,13 +333,13 @@ describe("ActivityCardService", () => {
       viewerId: "admin",
       canManage: true,
     });
-    expect(first.markdown).toContain(`第 1 / 2 页`);
+    expect(first.markdown).toContain(`第 1 / 3 页`);
     expect(first.markdown).toContain("同学1（材化2211）");
     expect(first.markdown).not.toContain("22123456789");
-    if (SIGNUP_PAGE_SIZE !== 10) {
-      throw new Error("名单卡每页人数应为 10");
+    if (SIGNUP_PAGE_SIZE !== 5) {
+      throw new Error("名单卡每页人数应为 5（§卡片规范 v2）");
     }
-    expect(first.markdown).not.toContain("同学11");
+    expect(first.markdown).not.toContain("同学6");
 
     const second = service.signupsCard({
       activity: makeActivity({ capacity: 20 }),
@@ -348,12 +348,14 @@ describe("ActivityCardService", () => {
       viewerId: "admin",
       canManage: true,
     });
-    expect(second.markdown).toContain("第 2 / 2 页");
+    expect(second.markdown).toContain("第 2 / 3 页");
     const buttons = buttonsOf(second);
     expect(buttons.find((button) => button.id === "prev")?.action.data).toBe(
       "cb:activity:signups:#ACT001:1",
     );
-    expect(buttons.some((button) => button.id === "next")).toBe(false);
+    expect(buttons.find((button) => button.id === "next")?.action.data).toBe(
+      "cb:activity:signups:#ACT001:3",
+    );
 
     const full = service.signupsCard({
       activity: makeActivity({ capacity: 20 }),
@@ -367,7 +369,8 @@ describe("ActivityCardService", () => {
     expect(buttonsOf(full).find((button) => button.id === "full")?.action.data).toBe(
       "cb:activity:signups:#ACT001:1",
     );
-    expect(first.text).toContain("下一页：/activity signups #ACT001 +2");
+    // §卡片规范 v2：翻页由按钮承担，卡片里不再出现等价指令
+    expect(first.text).not.toContain("/activity signups");
   });
 
   it("lists the waitlist separately with a cap", () => {

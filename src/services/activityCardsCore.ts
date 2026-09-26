@@ -31,7 +31,7 @@ import type { UserProfile } from "./userProfiles.js";
  *   报名与取消报名带官方 `modal` 二次确认；
  * - **配置卡**：`/activity create` 之后返回，`cb:activity:config:<短码>` 也打开；
  * - **管理卡**：`cb:activity:manage:<短码>`，含待释放名额与班级/年级分布；
- * - **名单卡**：每页 10 人，默认只列「序号 姓名（班级）备注」（**不显示学号/学院**），
+ * - **名单卡**：每页 5 人（§卡片规范 v2），默认只列「序号 姓名（班级）备注」（**不显示学号/学院**），
  *   `完整信息` 开关才切到含学号/学院；只对管理者可用。
  *
  * 需要 §B3 提供的能力（统计图片、CSV 导出）在这里是**可选依赖**：没装配时
@@ -99,8 +99,8 @@ export interface ActivityCardServiceOptions {
   now?: (() => Date) | undefined;
 }
 
-/** 名单卡每页人数（用户确认）。 */
-export const SIGNUP_PAGE_SIZE = 10;
+/** 名单卡每页人数（§卡片规范 v2：列表类每页目标 5 条；条目是纯文本行，不受键盘约束）。 */
+export const SIGNUP_PAGE_SIZE = 5;
 /**
  * 学院按钮每页个数。
  *
