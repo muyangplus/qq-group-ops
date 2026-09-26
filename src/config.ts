@@ -18,6 +18,16 @@ export type DatabaseTarget =
 export interface Settings {
   qqBotAppId: string;
   qqBotClientSecret: string;
+  /** 事件通道：websocket（默认）或 webhook（§D5）。 */
+  eventMode: EventMode;
+  /** webhook 监听端口（`WEBHOOK_PORT`，默认 3000；通常由反向代理转发到 443）。 */
+  webhookPort: number;
+  /** webhook 监听地址（`WEBHOOK_HOST`，默认 127.0.0.1，只给本机反代访问）。 */
+  webhookHost: string;
+  /** webhook 回调路径（`WEBHOOK_PATH`，默认 `/webhook/qq`，需与后台填写一致）。 */
+  webhookPath: string;
+  /** webhook 回调密钥（`WEBHOOK_SECRET`）；缺省回落到机器人密钥。 */
+  webhookSecret: string;
   qqBotToken: string;
   qqBotSandbox: boolean;
   /** access token / 网关地址缓存文件；空字符串表示只用内存缓存。 */
@@ -104,6 +114,25 @@ export function resolveMenuFirstPushMode(
     return "persistent";
   }
   throw new Error(`MENU_FIRST_PUSH 只支持 memory / persistent，收到：${value}`);
+}
+
+/** 事件通道：WebSocket 长连接（默认）或 Webhook 回调（§D5）。 */
+export type EventMode = "websocket" | "webhook";
+
+/**
+ * 解析事件通道（`EVENT_MODE`）。
+ *
+ * 未设置 = `websocket`（保持既有部署行为）；两条通道**二选一**，避免同一事件被重复消费。
+ */
+export function resolveEventMode(value: string | undefined): EventMode {
+  const raw = value?.trim().toLowerCase() ?? "";
+  if (raw.length === 0 || raw === "websocket" || raw === "ws") {
+    return "websocket";
+  }
+  if (raw === "webhook" || raw === "http") {
+    return "webhook";
+  }
+  throw new Error(`EVENT_MODE 只支持 websocket / webhook，收到：${value}`);
 }
 
 function asBool(value: string | undefined, fallback = false): boolean {
@@ -196,6 +225,11 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
   return {
     qqBotAppId: env.QQ_BOT_APP_ID ?? "",
     qqBotClientSecret: env.QQ_BOT_CLIENT_SECRET ?? "",
+    eventMode: resolveEventMode(env.EVENT_MODE),
+    webhookPort: asNonNegativeInt(env.WEBHOOK_PORT, 3000),
+    webhookHost: asText(env.WEBHOOK_HOST, "127.0.0.1"),
+    webhookPath: asText(env.WEBHOOK_PATH, "/webhook/qq"),
+    webhookSecret: (env.WEBHOOK_SECRET ?? env.QQ_BOT_CLIENT_SECRET ?? "").trim(),
     qqBotToken: env.QQ_BOT_TOKEN ?? "",
     qqBotSandbox: asBool(env.QQ_BOT_SANDBOX),
     qqBotCacheFile: env.QQ_BOT_CACHE_FILE ?? DEFAULT_BOT_CACHE_FILE,

@@ -1,8 +1,10 @@
 import { NativeWebSocketFactory } from "./adapters/nativeWebSocketFactory.js";
+import type { EventGateway } from "./adapters/eventGateway.js";
 import { QQOfficialEventMapper } from "./adapters/qqOfficialEventMapper.js";
 import { QQOfficialGateway } from "./adapters/qqOfficialGateway.js";
+import { WebhookEventGateway } from "./adapters/webhookEventGateway.js";
 import { isRateLimitedError } from "./adapters/qqOfficial.js";
-import { hasQqCredentials, loadSettings } from "./config.js";
+import { hasQqCredentials, loadSettings, type Settings } from "./config.js";
 import { instrumentEventGateway } from "./core/instrumentation.js";
 import { closeLogging, configureLogging, getLogger } from "./core/logger.js";
 import { retryWithBackoff } from "./core/retry.js";
@@ -121,34 +123,36 @@ async function main(): Promise<void> {
   activityReminder.start();
   appealWatcher.start();
 
-  const gateway = instrumentEventGateway(
-    new QQOfficialGateway({
-      api: runtime.api,
-      createSocket: (url) => new NativeWebSocketFactory(url).create(),
-      mapper: new QQOfficialEventMapper(),
-      onHello: (heartbeatIntervalMs) => {
-        log.debug("gateway hello", { heartbeatIntervalMs });
-      },
-      onReady: () => {
-        log.info("gateway ready: bot authenticated");
-      },
-      onError: (error) => {
-        log.error("gateway error", { error: formatError(error) });
-      },
-      onReconnect: (info) => {
-        log.warn("gateway reconnect scheduled", {
-          attempt: info.attempt,
-          delayMs: info.delayMs,
-          reason: info.reason,
-          rateLimited: info.rateLimited,
-        });
-      },
-      onGroupMessageMode: (groupId, enabled) => {
-        runtime.groupMessageMode.setEnabled(groupId, enabled);
-        void runtime.flush();
-        log.info("group full-message mode changed", { groupId, enabled });
-      },
-    }),
+  const gateway: EventGateway = instrumentEventGateway(
+    settings.eventMode === "webhook"
+      ? buildWebhookGateway(settings, runtime)
+      : new QQOfficialGateway({
+          api: runtime.api,
+          createSocket: (url) => new NativeWebSocketFactory(url).create(),
+          mapper: new QQOfficialEventMapper(),
+          onHello: (heartbeatIntervalMs) => {
+            log.debug("gateway hello", { heartbeatIntervalMs });
+          },
+          onReady: () => {
+            log.info("gateway ready: bot authenticated");
+          },
+          onError: (error) => {
+            log.error("gateway error", { error: formatError(error) });
+          },
+          onReconnect: (info) => {
+            log.warn("gateway reconnect scheduled", {
+              attempt: info.attempt,
+              delayMs: info.delayMs,
+              reason: info.reason,
+              rateLimited: info.rateLimited,
+            });
+          },
+          onGroupMessageMode: (groupId, enabled) => {
+            runtime.groupMessageMode.setEnabled(groupId, enabled);
+            void runtime.flush();
+            log.info("group full-message mode changed", { groupId, enabled });
+          },
+        }),
     log,
   );
 
@@ -187,7 +191,7 @@ async function main(): Promise<void> {
     }
     throw error;
   }
-  log.info("official WebSocket gateway started");
+  log.info("event gateway started", { mode: settings.eventMode });
 
   const shutdown = async (): Promise<void> => {
     retention.stop();
@@ -212,4 +216,29 @@ void main().catch((error: unknown) => {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * §D5：装配 Webhook 事件通道（`EVENT_MODE=webhook`）。
+ *
+ * 与 WebSocket 网关**二选一**：两条通道同时开会把同一条事件消费两次。
+ * 密钥用于 Ed25519 验签（官方回调签名 + `op=13` URL 校验握手），
+ * 缺省取机器人密钥 `QQ_BOT_CLIENT_SECRET`，可用 `WEBHOOK_SECRET` 单独覆盖。
+ */
+function buildWebhookGateway(
+  settings: Settings,
+  runtime: ReturnType<typeof createRuntime>,
+): WebhookEventGateway {
+  if (settings.webhookSecret.length === 0) {
+    throw new Error(
+      "EVENT_MODE=webhook 需要 WEBHOOK_SECRET（或 QQ_BOT_CLIENT_SECRET）来校验回调签名",
+    );
+  }
+  return new WebhookEventGateway({
+    secret: settings.webhookSecret,
+    port: settings.webhookPort,
+    host: settings.webhookHost,
+    path: settings.webhookPath,
+    mapper: new QQOfficialEventMapper(),
+  });
 }

@@ -5,6 +5,7 @@ import {
   hasQqCredentials,
   loadSettings,
   resolveDatabaseTarget,
+  resolveEventMode,
   resolveMenuFirstPushMode,
 } from "../src/config.js";
 
@@ -24,6 +25,42 @@ describe("loadSettings", () => {
     expect(settings.logColor).toBe("auto");
     // 正式启动默认入库持久化；dev 入口会把这个值覆盖成 memory
     expect(settings.menuFirstPush).toBe("persistent");
+  });
+
+  it("resolves the event mode and webhook settings (§D5)", () => {
+    // 默认 websocket，保持既有部署行为
+    expect(resolveEventMode(undefined)).toBe("websocket");
+    expect(resolveEventMode("")).toBe("websocket");
+    expect(resolveEventMode("ws")).toBe("websocket");
+    expect(resolveEventMode("WebHook")).toBe("webhook");
+    expect(() => resolveEventMode("socket")).toThrow("EVENT_MODE");
+
+    const defaults = loadSettings({});
+    expect(defaults.eventMode).toBe("websocket");
+    expect(defaults.webhookPort).toBe(3000);
+    expect(defaults.webhookHost).toBe("127.0.0.1");
+    expect(defaults.webhookPath).toBe("/webhook/qq");
+    expect(defaults.webhookSecret).toBe("");
+
+    const webhook = loadSettings({
+      EVENT_MODE: "webhook",
+      WEBHOOK_PORT: "8443",
+      WEBHOOK_HOST: "0.0.0.0",
+      WEBHOOK_PATH: "/cb/qq",
+      WEBHOOK_SECRET: " 回调密钥 ",
+      QQ_BOT_CLIENT_SECRET: "机器人密钥",
+    });
+    expect(webhook.eventMode).toBe("webhook");
+    expect(webhook.webhookPort).toBe(8443);
+    expect(webhook.webhookHost).toBe("0.0.0.0");
+    expect(webhook.webhookPath).toBe("/cb/qq");
+    // 显式 WEBHOOK_SECRET 优先，并去掉首尾空白
+    expect(webhook.webhookSecret).toBe("回调密钥");
+
+    // 没填 WEBHOOK_SECRET 时回落到机器人密钥
+    expect(loadSettings({ QQ_BOT_CLIENT_SECRET: "机器人密钥" }).webhookSecret).toBe(
+      "机器人密钥",
+    );
   });
 
   it("loads environment values", () => {
