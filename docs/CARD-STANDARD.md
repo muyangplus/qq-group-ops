@@ -36,7 +36,7 @@
 | 每行按钮 | ≤ 5 个，且**整行文字 ≤ 12 字** | 模板已强制 |
 | 单个按钮文字 | ≤ 10 字 | 模板会截断 |
 | 群内首行 | 标题下一行 `<@!发起人>` | §F1；私聊不加；已带 @ 的卡不重复 |
-| 引导行 | 尽量不用 | 需要时 ≤ 6 字（如「请选择功能：」） |
+| 引导行 | **禁止** | `buttonHint` 已从代码里删除，模板不再渲染任何引导行 |
 
 ## 3. 卡片分类与结构模板
 
@@ -62,13 +62,13 @@
 | # | 位置 | 动作 |
 |---|---|---|
 | 1 | `menu.ts` 各菜单卡 | ✅ 已完成（删掉全部用法文字，超管菜单补「帮助」） |
-| 2 | `activityCardCommands.ts:633/659/703`、`activityCommands.ts:1148`、`activityFlowCommands.ts:131` | 删掉 `查看详情：/activity info …` 行 → 加「查看详情」按钮 |
+| 2 | `activityCardCommands.ts`、`activityCommands.ts`、`activityFlowCommands.ts` 的 `查看详情：/activity info …` | ✅ 已完成（改成「查看详情」按钮；纯文本列表降级保留指令） |
 | 3 | `activityCards.ts` 成员卡 footer | ✅ 已完成（去掉详情行，保留报名/取消兜底） |
-| 4 | `commands/profileCommands.ts` 空态 | ✅ 已完成（引导组合指令） |
-| 5 | 全仓扫描 `指令方式：` / `查看详情：` / `用法：` 出现在 `renderCard` 正文或 footer 的位置 | 有按钮覆盖 → 删；无按钮 → 保留但压到一行 |
-| 6 | 结果卡通用模板 | 统一 `**结果**：…` 前缀 + 返回按钮，禁止“操作成功，你可以…”这类叙述 |
-| 7 | 列表卡 | 统一“第 X / Y 页 · 共 N 条”，条目按钮固定「查看N / 解除N」 |
-| 8 | 通知卡 | 只保留业务信息（谁/什么规则/什么动作/记录号），不写怎么用指令 |
+| 4 | `commands/profileCommands.ts` 空态 | ✅ 已完成（引导一条可直接发送的组合指令） |
+| 5 | 全仓扫描 `指令方式：` / `查看详情：` / `用法：` 出现在 `renderCard` 正文或 footer 的位置 | ✅ 已完成，逐条判定见 §9 |
+| 6 | 结果卡通用模板 | ✅ 已完成：`renderNotice` 统一 `**结果**：…`；审计 / 同步 / 处罚 / 黑名单 / 活动管理卡都带返回按钮，删除叙述句 |
+| 7 | 列表卡 | ✅ 已完成：统一 `共 N 条 · 第 X / Y 页`；每页 5 条，例外见 §7.4 |
+| 8 | 通知卡 | ✅ 已完成：处罚 / 申诉卡只留业务信息（谁 / 规则 / 动作 / 记录号），删掉「可直接在下面调整处罚」这类引导句；入群申请卡本来就是业务信息 + 动作按钮 |
 
 ## 6. 验收（补进 ACCEPTANCE）
 
@@ -77,16 +77,22 @@
 - J64 个人资料空态引导可直接复制发送的组合指令；
 - J65 每张卡的按钮是否覆盖了它要表达的**全部可执行动作**（有遗漏就补按钮，而不是写指令）。
 
+（以上四条已按此文本补进 `docs/ACCEPTANCE.md`。）
+
 ## 7. 已确认口径（2026-09-26）
 
 1. 「按钮优先 / 卡片不写指令 / 用法只进 `/help`」= **硬约束**；
-2. 引导行 `buttonHint` **全部废弃**（模板已不渲染，全仓 45 处属性已删）；
+2. 引导行 `buttonHint` **全部废弃**：模板不再渲染，`CardSpec.buttonHint` 字段与
+   `cardify` / `cardifyAsync` / `cardFromText` 的参数已从代码里**删除**（不是保留兼容）；
+   全仓连「按钮不可用时可直接输入指令。」这类 footer 默认值也一并清掉；
 3. 危险动作（移出群 / 拉黑 / 取消活动）**保留**二次确认；
 4. 列表类每页目标 **5 条**；受「键盘 ≤5 行 / 每行文字 ≤12 字」约束时按下列例外：
    - 黑名单：4 条（5 个「解除N」按钮 = 15 字 > 12 字上限）；
+   - 处罚记录：4 条（每条一个「查看N」按钮，加翻页行已占满 5 行）；
    - 关键词子卡：3 条（每条一个删除按钮，加上「加词 / 清空 / 翻页 / 恢复 / 返回」行已占满 5 行）；
-   - 学院 / 年级点选：4 条（每行一个选项 + 模式切换与翻页行）；
-   - 其余（审计、报名名单、待审批等纯文本条目）按 5 条执行。
+   - 学院 / 年级点选：4 条（学院一行只能放 1 个长名字，留出模式切换与翻页行）；
+   - 待审批：3 条（每条要一行「通过 / 拒绝」按钮，5 条会超 5 行）；活动列表：3 条（每条要一行按钮）；
+   - 其余（审计、报名名单、全局规则覆盖率总览等纯文本条目）按 5 条执行。
 5. v2 并入正式文档：本文件即正式版，提案文件已删除。
 
 ## 8. 原待确认点（已按上表定稿）
@@ -96,3 +102,31 @@
 3. 危险动作的二次确认保留吗？（移出群 / 拉黑 / 取消活动）建议：**保留**，属于防误触。
 4. 列表类卡片每页条数是否统一？（现为 3-10 不等）建议：**统一 5 条**，便于口述与翻页。
 5. 需要我把这份改成 `docs/CARD-STANDARD.md` 的 v2 正式版（替换旧内容 + 迁移说明）吗？
+
+## 9. 最终扫描结果（清单第 5 项，2026-09-26）
+
+扫描范围：`src/**` 里所有 `renderCard` / `cardFromText` / `cardify` 的 `lines` 与 `footer`。
+
+| 位置 | 原文案 | 判定 |
+|---|---|---|
+| `adminCommands.ts` `/bind`、`/perm` 卡 footer | `详细用法：/help` | **删**（两张卡都已有「…帮助」按钮） |
+| `adminCommands.ts` `/alias` 卡 footer | `按钮不可用时可直接输入指令。` | **删**（v2 不再有引导行） |
+| `commands/whoisCommands.ts` 卡 footer | `详细用法：/help` | **删**（卡上已有「查询帮助」按钮） |
+| `commands/notifyCommands.ts` 处罚通知测试卡 footer | `用法：/notify punish on\|off` | **删**（返回订阅卡上有开关按钮） |
+| `commands/ruleCommands.ts` 群规则卡 footer | `完整字段用法：/help rules` | **删**（卡上已有「规则帮助」按钮） |
+| `commands/ruleCommands.ts` 覆盖率总览 footer | `下一页：/rules overrides +N` | **删**（翻页是回调按钮） |
+| `commands/reviewCommands.ts` 审计卡 footer | `下一页：/audit +N` / `上一页：/audit +N` | **删**（翻页是回调按钮） |
+| `commands/reviewCommands.ts` 同步结果卡 footer | `待审批列表每页 3 条，可翻页` | **删**（纯解释，无信息量） |
+| `activityCards.ts` 管理卡 footer | `导出与统计：/activity signups #短码` | **删**（卡上已有「报名名单」「统计」按钮） |
+| `activityCards.ts` 名单卡 footer | `上一页/下一页：/activity signups …` | **删**（翻页是回调按钮）；保留「名单只对管理者可见…」 |
+| `commands/activityCardCommands.ts` 活动管理回执 footer | `活动配置：/activity info #短码` | **换成按钮**「查看详情」（`cb:activity:info`） |
+| `moderationCards.ts` 处罚卡正文 / 修改禁言子卡 | `可直接在下面调整处罚…`、`自定义：/punish mute …`、`解除禁言：/punish mute …` | **改**：正文改成 `**说明**：解除会按记录逐项撤销…`；footer 只留按钮做不到的「自定义时长」（`withButtons=false` 时才补解除指令） |
+| `cardTemplate.ts` / `commands/support.ts` | `CardSpec.buttonHint`、`cardify` 默认 footer `按钮不可用时可直接输入指令。` | **删字段/删默认值**（`ensureCard` 的「常用入口：」引导行同删） |
+| `commands/support.ts` / `commands/context.ts` 等 12 类指令结果 | `用法：/xxx` | **保留**——这是**指令失败/用法提示文本**（`CommandResult.text`），不是卡片正文 |
+| `helpTopics.ts`、`commands/helpCommands.ts` | `用法：`、`/xxx` 列表 | **保留**——`/help` 就是用法文案的唯一归属 |
+| `commands/activityCardCommands.ts:717`、`commands/activityCommands.ts:1146` | `查看详情：/activity info #短码` | **保留**——无按钮通道的纯文本降级（活动列表文本 / 参与者通知文本） |
+| `moderationCards.ts` `punishmentFooter` | `自定义禁言时长：/punish mute #记录 <秒>` | **保留**——按钮无法表达（无自定义时长输入） |
+| `activityCards.ts` 成员卡 footer | `/activity join\|quit` 兜底 | **保留**——回调报名按钮在纯文本降级下不可用 |
+| `activityCards.ts` 满员广播 / 报名回执、`activityCardCommands.ts:328/510`、`activityFlowCommands.ts:247/491` | `报名：/activity join …`、`取消报名：/activity quit …`、`重新报名：/activity join …` | **保留**——这些卡上没有对应按钮（群广播 / 私信回执），属于「无按钮通道」；有按钮的成员卡才走按钮 |
+| `cardTemplate.renderCardText` | `可用指令：` + 每条指令按钮 | **保留**——模板自动生成的纯文本降级，不算卡片文案 |
+
