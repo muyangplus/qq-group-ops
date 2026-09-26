@@ -7,6 +7,8 @@ import {
   resolveDatabaseTarget,
   resolveEventMode,
   resolveMenuFirstPushMode,
+  resolveWebhookKeyDerivation,
+  resolveWebhookSignContent,
 } from "../src/config.js";
 
 describe("loadSettings", () => {
@@ -61,6 +63,36 @@ describe("loadSettings", () => {
     expect(loadSettings({ QQ_BOT_CLIENT_SECRET: "机器人密钥" }).webhookSecret).toBe(
       "机器人密钥",
     );
+    // 真机踩过：`.env` 里写 `WEBHOOK_SECRET=`（空字符串）也必须回落到机器人密钥，
+    // 用 `??` 会卡在空串上，导致 webhook 模式直接启动失败
+    expect(
+      loadSettings({
+        WEBHOOK_SECRET: "",
+        QQ_BOT_CLIENT_SECRET: "机器人密钥",
+      }).webhookSecret,
+    ).toBe("机器人密钥");
+    expect(
+      loadSettings({
+        WEBHOOK_SECRET: "   ",
+        QQ_BOT_CLIENT_SECRET: "机器人密钥",
+      }).webhookSecret,
+    ).toBe("机器人密钥");
+    // 两个都空 → 空串，由 main 明确报错
+    expect(
+      loadSettings({ WEBHOOK_SECRET: "", QQ_BOT_CLIENT_SECRET: "" }).webhookSecret,
+    ).toBe("");
+
+    // 密钥派生 / 拼接顺序：默认即官方算法，显式值可切换
+    expect(defaults.webhookKeyDerivation).toBe("auto");
+    expect(defaults.webhookSignContent).toBe("ts_token");
+    expect(resolveWebhookKeyDerivation(undefined)).toBe("auto");
+    expect(resolveWebhookKeyDerivation("   ")).toBe("auto");
+    expect(resolveWebhookKeyDerivation("HEX")).toBe("hex");
+    expect(resolveWebhookKeyDerivation("sha256")).toBe("sha256");
+    expect(() => resolveWebhookKeyDerivation("raw")).toThrow("WEBHOOK_KEY_DERIVATION");
+    expect(resolveWebhookSignContent(undefined)).toBe("ts_token");
+    expect(resolveWebhookSignContent("TOKEN_TS")).toBe("token_ts");
+    expect(() => resolveWebhookSignContent("body_ts")).toThrow("WEBHOOK_SIGN_CONTENT");
   });
 
   it("loads environment values", () => {

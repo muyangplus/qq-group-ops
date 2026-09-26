@@ -1,3 +1,10 @@
+import {
+  WEBHOOK_KEY_DERIVATIONS,
+  WEBHOOK_SIGN_CONTENTS,
+  type WebhookKeyDerivation,
+  type WebhookSignContent,
+} from "./adapters/qqWebhookSignature.js";
+
 export const DEFAULT_SQLITE_PATH = "data/qq-group-ops.db";
 export const DEFAULT_BOT_CACHE_FILE = "data/qq-bot-cache.json";
 export const DEFAULT_CLASS_INDEX_FILE = "data/class-index.json";
@@ -28,6 +35,10 @@ export interface Settings {
   webhookPath: string;
   /** webhook 回调密钥（`WEBHOOK_SECRET`）；缺省回落到机器人密钥。 */
   webhookSecret: string;
+  /** webhook 密钥派生策略（`WEBHOOK_KEY_DERIVATION`，默认 `auto`）。 */
+  webhookKeyDerivation: WebhookKeyDerivation;
+  /** webhook 校验握手签名内容（`WEBHOOK_SIGN_CONTENT`，默认 `ts_token`）。 */
+  webhookSignContent: WebhookSignContent;
   qqBotToken: string;
   qqBotSandbox: boolean;
   /** access token / 网关地址缓存文件；空字符串表示只用内存缓存。 */
@@ -118,7 +129,6 @@ export function resolveMenuFirstPushMode(
 
 /** 事件通道：WebSocket 长连接（默认）或 Webhook 回调（§D5）。 */
 export type EventMode = "websocket" | "webhook";
-
 /**
  * 解析事件通道（`EVENT_MODE`）。
  *
@@ -133,6 +143,45 @@ export function resolveEventMode(value: string | undefined): EventMode {
     return "webhook";
   }
   throw new Error(`EVENT_MODE 只支持 websocket / webhook，收到：${value}`);
+}
+
+/**
+ * 解析 webhook 密钥派生策略（`WEBHOOK_KEY_DERIVATION`）。
+ *
+ * 默认 `auto` 就是官方《安全和授权》的算法（密钥 repeat 翻倍 → 取前 32 字节作 Ed25519 种子）。
+ * `hex` / `sha256` 是排障用的逃生舱：平台只回「签名校验不通过」，改 `.env` + 重启即可逐个试。
+ */
+export function resolveWebhookKeyDerivation(
+  value: string | undefined,
+): WebhookKeyDerivation {
+  const raw = value?.trim().toLowerCase() ?? "";
+  if (raw.length === 0) {
+    return "auto";
+  }
+  const found = WEBHOOK_KEY_DERIVATIONS.find((item) => item === raw);
+  if (!found) {
+    throw new Error(
+      `WEBHOOK_KEY_DERIVATION 只支持 ${WEBHOOK_KEY_DERIVATIONS.join(" / ")}，收到：${value}`,
+    );
+  }
+  return found;
+}
+
+/** 解析校验握手的签名内容（`WEBHOOK_SIGN_CONTENT`，默认 `event_ts + plain_token`）。 */
+export function resolveWebhookSignContent(
+  value: string | undefined,
+): WebhookSignContent {
+  const raw = value?.trim().toLowerCase() ?? "";
+  if (raw.length === 0) {
+    return "ts_token";
+  }
+  const found = WEBHOOK_SIGN_CONTENTS.find((item) => item === raw);
+  if (!found) {
+    throw new Error(
+      `WEBHOOK_SIGN_CONTENT 只支持 ${WEBHOOK_SIGN_CONTENTS.join(" / ")}，收到：${value}`,
+    );
+  }
+  return found;
 }
 
 function asBool(value: string | undefined, fallback = false): boolean {
@@ -179,6 +228,22 @@ function splitCsv(value: string | undefined): string[] {  if (!value) {
     .split(",")
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
+}
+
+/**
+ * 取第一个非空白的值（都为空时返回空串）。
+ *
+ * `.env` 里留空写成 `WEBHOOK_SECRET=` 是常态，此时 dotenv 给的是空字符串而不是 `undefined`，
+ * 用 `??` 回退会「卡住」空值 —— 必须按「空白 = 没填」处理才能落到下一个候选。
+ */
+function firstNonBlank(...values: (string | undefined)[]): string {
+  for (const value of values) {
+    const trimmed = value?.trim() ?? "";
+    if (trimmed.length > 0) {
+      return trimmed;
+    }
+  }
+  return "";
 }
 
 /**
@@ -229,7 +294,12 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     webhookPort: asNonNegativeInt(env.WEBHOOK_PORT, 3000),
     webhookHost: asText(env.WEBHOOK_HOST, "127.0.0.1"),
     webhookPath: asText(env.WEBHOOK_PATH, "/webhook/qq"),
-    webhookSecret: (env.WEBHOOK_SECRET ?? env.QQ_BOT_CLIENT_SECRET ?? "").trim(),
+    // 留空（`WEBHOOK_SECRET=`）视为没填，回落到机器人密钥：`??` 认不出空字符串
+    webhookSecret: firstNonBlank(env.WEBHOOK_SECRET, env.QQ_BOT_CLIENT_SECRET),
+    webhookKeyDerivation: resolveWebhookKeyDerivation(
+      env.WEBHOOK_KEY_DERIVATION,
+    ),
+    webhookSignContent: resolveWebhookSignContent(env.WEBHOOK_SIGN_CONTENT),
     qqBotToken: env.QQ_BOT_TOKEN ?? "",
     qqBotSandbox: asBool(env.QQ_BOT_SANDBOX),
     qqBotCacheFile: env.QQ_BOT_CACHE_FILE ?? DEFAULT_BOT_CACHE_FILE,

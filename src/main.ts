@@ -240,5 +240,7 @@ function buildWebhookGateway(
     host: settings.webhookHost,
     path: settings.webhookPath,
     mapper: new QQOfficialEventMapper(),
+    keyDerivation: settings.webhookKeyDerivation,
+    signContent: settings.webhookSignContent,
   });
 }
