@@ -146,18 +146,15 @@ export function formatProfile(
     const profile = ctx.userProfiles?.get(userId);
     const userLabel = ctx.helpers.displayUser(userId);
     if (!profile) {
-      return `个人资料（${userLabel}）：尚未填写\n\n${PROFILE_USAGE}`;
+      return "尚未填写，请用下面按钮补全。";
     }
     return [
-      `个人资料（${userLabel}）：`,
       `姓名：${profile.name || "（未填）"}`,
       `学号：${profile.studentId || "（未填）"}${
         profile.studentId && profile.year ? `（${profile.year} 级）` : ""
       }`,
       `班级：${profile.className || "（未填）"}`,
       `学院：${profile.college || "（未填）"}`,
-      "",
-      PROFILE_USAGE,
     ].join("\n");
   }
 

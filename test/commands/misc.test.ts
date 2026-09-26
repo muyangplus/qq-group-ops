@@ -236,8 +236,9 @@ describe("AdminCommandService · misc", () => {
       "/profile set 22123456789 材化2211 张三",
     );
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("已更新：");
-    expect(result.text).toContain("识别到：");
+    expect(result.silent).toBe(true);
+    expect(privateText("member")).toContain("已更新：");
+    expect(privateText("member")).toContain("识别到：");
     expect(profiles.get("member")).toMatchObject({
       name: "张三",
       studentId: "22123456789",
@@ -283,9 +284,9 @@ describe("AdminCommandService · misc", () => {
       "/profile set 材化2211 环工2414 张三",
     );
     expect(ambiguous.ok).toBe(false);
-    expect(ambiguous.text).toContain("多个班级");
-    expect(ambiguous.text).toContain("材化2211");
-    expect(ambiguous.text).toContain("环工2414");
+    expect(privateText("member")).toContain("多个班级");
+    expect(privateText("member")).toContain("材化2211");
+    expect(privateText("member")).toContain("环工2414");
     expect(profiles.get("member")).toBeUndefined();
 
     const leftover = await svc.handle(
@@ -294,7 +295,7 @@ describe("AdminCommandService · misc", () => {
       "/profile set 材化2211 张三 abc",
     );
     expect(leftover.ok).toBe(false);
-    expect(leftover.text).toContain("无法识别");
+    expect(privateText("member")).toContain("无法识别");
     expect(profiles.get("member")).toBeUndefined();
 
     // 班级不在班级库里 → 整体不写入
@@ -304,12 +305,12 @@ describe("AdminCommandService · misc", () => {
       "/profile set 班级=材化9999 姓名=张三",
     );
     expect(unknownClass.ok).toBe(false);
-    expect(unknownClass.text).toContain("不在班级库中");
+    expect(privateText("member")).toContain("不在班级库中");
     expect(profiles.get("member")).toBeUndefined();
 
     const empty = await svc.handle("g1", "member", "/profile set");
     expect(empty.ok).toBe(false);
-    expect(empty.text).toContain("用法");
+    expect(privateText("member")).toContain("用法");
   });
 
   it("keeps the positional /profile set form working", async () => {
@@ -317,7 +318,7 @@ describe("AdminCommandService · misc", () => {
 
     const result = await svc.handle("g1", "member", "/profile set class 材化2211");
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("已更新：班级");
+    expect(privateText("member")).toContain("已更新：班级");
     expect(profiles.get("member")).toMatchObject({
       className: "材化2211",
       college: "化学与生命科学学院",

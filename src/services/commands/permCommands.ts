@@ -23,23 +23,25 @@ export function handleMyPermission(
   userId: string,
 ): CommandResult {
   const level = ctx.permissions.levelFor(userId, groupId);
+  const scope = groupId ?? "";
+  const mark = (ok: boolean): string => (ok ? "\u2713" : "\u2717");
+  // 文案要求：只留两行（等级 + 能力标记），说明类文字一律进按钮 / 帮助
+  const flags = [
+    `审批 ${mark(ctx.permissions.canApproveJoin(userId, scope))}`,
+    `规则 ${mark(ctx.permissions.canManageRules(userId, scope))}`,
+    `审核 ${mark(ctx.permissions.canReviewContent(userId, scope))}`,
+    `导出 ${mark(ctx.permissions.canExportData(userId, scope))}`,
+    ...(ctx.permissions.isSuperAdmin(userId) ? ["配置权限 \u2713"] : []),
+  ].join(" \u00b7 ");
+  const scopeLabel =
+    groupId && ctx.permissions.isGroupSuperAdmin(userId, groupId)
+      ? "（本群超管）"
+      : ctx.permissions.isSuperAdmin(userId)
+        ? "（全局超管）"
+        : "";
   return {
     ok: true,
-    text: [
-      `你的权限等级：${level}`,
-      `全局超级管理员：${ctx.permissions.isSuperAdmin(userId)}`,
-      groupId
-        ? `本群超级管理员：${ctx.permissions.isGroupSuperAdmin(userId, groupId)}`
-        : undefined,
-      groupId ? `当前群：${ctx.helpers.displayGroup(groupId)}` : "当前会话：私聊",
-      `审核入群：${ctx.permissions.canApproveJoin(userId, groupId ?? "")}`,
-      `管理规则：${ctx.permissions.canManageRules(userId, groupId ?? "")}`,
-      `内容审核：${ctx.permissions.canReviewContent(userId, groupId ?? "")}`,
-      `导出数据：${ctx.permissions.canExportData(userId, groupId ?? "")}`,
-      `配置权限：${ctx.permissions.isSuperAdmin(userId)}`,
-    ]
-      .filter((line): line is string => line !== undefined)
-      .join("\n"),
+    text: [`权限等级：${level}${scopeLabel}`, flags].join("\n"),
   };
 }
 

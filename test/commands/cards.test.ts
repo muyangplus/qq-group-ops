@@ -136,11 +136,8 @@ describe("AdminCommandService · cards", () => {
 
   it("gives tailored cards to the remaining commands", async () => {
     const cases: Array<[string, string]> = [
-      ["/myperm", "我的权限"],
       ["/bind", "绑定"],
-      // `/whois` 在群里一律走私信（A4），群里只留静默占位卡，不再断言按钮
       ["/perm list", "权限配置"],
-      ["/profile", "个人资料"],
     ];
     for (const [command, title] of cases) {
       const result = await service.handle("g1", "root", command);
@@ -151,6 +148,21 @@ describe("AdminCommandService · cards", () => {
       ).toBeGreaterThan(0);
       // 非 help 卡片不再罗列手动指令
       expect(result.text, command).not.toContain("手动指令");
+    }
+  });
+
+  it("keeps /myperm and /profile private-only in groups", async () => {
+    for (const [command, title] of [
+      ["/myperm", "我的权限"],
+      ["/profile", "个人资料"],
+    ] as Array<[string, string]>) {
+      const result = await service.handle("g1", "root", command);
+      expect(result.silent, command).toBe(true);
+      expect(api.sentPrivateMessages.length).toBeGreaterThan(0);
+      expect(
+        String(api.sentPrivateMessages.at(-1)?.markdown ?? ""),
+        command,
+      ).toContain(title);
     }
   });
 

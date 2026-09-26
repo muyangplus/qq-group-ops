@@ -10,6 +10,7 @@ import {
   permissions,
   service,
   withProfiles,
+  privateText,
 } from "../helpers/adminCommandsHarness.js";
 
 /**
@@ -26,8 +27,9 @@ describe("AdminCommandService · perm", () => {
   it("shows own permissions", async () => {
     const result = await service.handle("g1", "member", "/myperm");
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("你的权限等级：member");
-    expect(result.text).toContain("配置权限：false");
+    expect(result.silent).toBe(true);
+    expect(privateText("member")).toContain("权限等级：member");
+    expect(privateText("member")).not.toContain("配置权限");
   });
 
   it("allows super admin to list and grant permissions", async () => {
@@ -42,7 +44,7 @@ describe("AdminCommandService · perm", () => {
     expect(grant.text).toContain("已更新权限：mod 10005");
 
     const memberPermission = await service.handle("g1", "u3", "/myperm");
-    expect(memberPermission.text).toContain("你的权限等级：moderator");
+    expect(privateText("u3")).toContain("权限等级：moderator");
 
     const revoke = await service.handle("g1", "root", "/perm revoke mod u3");
     expect(revoke.ok).toBe(true);
@@ -59,11 +61,8 @@ describe("AdminCommandService · perm", () => {
     expect(grant.ok).toBe(true);
     expect(permissions.isGroupSuperAdmin("u4", "g1")).toBe(true);
 
-    const myperm = await service.handle("g1", "u4", "/myperm");
-    expect(myperm.text).toContain("你的权限等级：super_admin");
-    expect(myperm.text).toContain("本群超级管理员：true");
-    expect(myperm.text).toContain("全局超级管理员：false");
-    expect(myperm.text).toContain("配置权限：false");
+    await service.handle("g1", "u4", "/myperm");
+    expect(privateText("u4")).toContain("权限等级：super_admin（本群超管）");
 
     // 在本群内可以做群管理与审批
     joinAudit.submit("g1", "u1", "想加入", "r1");
@@ -118,8 +117,8 @@ describe("AdminCommandService · perm", () => {
     // u4 已绑定 QQ 10006 → 只显示 QQ号
     expect(grant.text).toContain("已更新权限：mod 10006");
 
-    const groupPermission = await service.handle("g1", "u4", "/myperm");
-    expect(groupPermission.text).toContain("你的权限等级：moderator");
+    await service.handle("g1", "u4", "/myperm");
+    expect(privateText("u4")).toContain("权限等级：moderator");
   });
 
   it("resolves QQ numbers when granting permissions", async () => {
@@ -128,8 +127,8 @@ describe("AdminCommandService · perm", () => {
     expect(grant.ok).toBe(true);
     expect(identityMap.resolveUserId("123456")).toBe("member");
 
-    const permission = await service.handle("g1", "member", "/myperm");
-    expect(permission.text).toContain("你的权限等级：moderator");
+    await service.handle("g1", "member", "/myperm");
+    expect(privateText("member")).toContain("权限等级：moderator");
   });
 
   it("allows super admin to bind arbitrary ids and query mappings", async () => {

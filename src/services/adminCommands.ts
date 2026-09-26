@@ -1,5 +1,5 @@
 import type { CardResult, CommandResult } from "./commands/support.js";
-import { cardify, cardifyAsync, ensureCard, mention, renderNotice } from "./commands/support.js";
+import { actionButton, cardify, cardifyAsync, ensureCard, mention, renderNotice } from "./commands/support.js";
 import {
   displayGroup,
   displayRequest,
@@ -389,6 +389,92 @@ export class AdminCommandService {
     return cardify(title, result, rows, footer, buttonHint);
   }
 
+  /**
+   * §隐私口径：`/whois`、`/profile`、`/myperm` 在群里**只走私信**——
+   * 成功则群里静默（`silent`），只有私信失败才回一条 @发起人的提示。
+   */
+  private async privateOnlyResult(
+    groupId: string | undefined,
+    userId: string,
+    card: CardResult,
+  ): Promise<CommandResult> {
+    if (groupId === undefined) {
+      return card;
+    }
+    const sent = await this.sendPrivateCard(userId, card.rich);
+    if (sent.ok) {
+      return {
+        ok: card.ok,
+        text: "结果已私信发送。",
+        rich: { markdown: "结果已私信发送。", text: "结果已私信发送。" },
+        silent: true,
+      };
+    }
+    return {
+      ok: false,
+      text: `${this.mention(groupId, userId)}私信发送失败（${sent.detail}），请先私聊机器人再试。`,
+    };
+  }
+
+  /** 私信发一张卡片：优先通知服务，其次门面的发送器。 */
+  private async sendPrivateCard(
+    userId: string,
+    card: RichMessage,
+  ): Promise<{ ok: boolean; detail: string }> {
+    if (this.notifications) {
+      return this.notifications.sendPrivateCard(userId, card);
+    }
+    const sender = this.cardSender();
+    if (!sender) {
+      return { ok: false, detail: "发送通道未启用" };
+    }
+    const result = await sender.sendToUser(userId, card);
+    return { ok: result.ok, detail: result.detail };
+  }
+
+  /** `/myperm` 卡片：两行 + 按钮，不写说明文字。 */
+  private myPermissionCard(groupId: string | undefined, userId: string): CardResult {
+    return this.cardify(
+      "我的权限",
+      handleMyPermission(this.context(), groupId, userId),
+      [
+        [
+          actionButton("profile", "我的资料", "/profile"),
+          viewButton("activity", "活动", "activity", "page", groupId ?? "", 1),
+          viewButton("help", "权限帮助", "help", "topic", "perm"),
+        ],
+      ],
+      [],
+      "",
+    );
+  }
+
+  /** `/profile` 卡片：四行资料 + 按钮，不写用法（出错时才在正文里给用法）。 */
+  private profileCard(
+    groupId: string | undefined,
+    userId: string,
+    parts: readonly string[],
+  ): CardResult {
+    return this.cardify(
+      "个人资料",
+      handleProfile(this.context(), userId, parts),
+      [
+        [
+          actionButton("set-name", "填姓名", "/profile set 姓名 "),
+          actionButton("set-id", "填学号", "/profile set 学号 "),
+          actionButton("set-class", "填班级", "/profile set 班级 "),
+          actionButton("set-college", "填学院", "/profile set 学院 "),
+        ],
+        [
+          viewButton("activity", "活动", "activity", "page", groupId ?? "", 1),
+          viewButton("help", "帮助", "help", "topic", "profile"),
+        ],
+      ],
+      [],
+      "",
+    );
+  }
+
   /** 领域子模块共享依赖（R1 拆分）：门面只负责组装，业务在 commands/* 里。 */
   private context(): AdminCommandContext {
     const helpers: CommandHelpers = {
@@ -458,17 +544,10 @@ export class AdminCommandService {
         return this.handleMenu(groupId, userId, parts);
       case "myperm":
       case "我的权限":
-        return this.cardify(
-          "我的权限",
-          handleMyPermission(this.context(), groupId, userId),
-          [
-            [
-              viewButton("profile", "我的资料", "cmd", "run", "/profile"),
-              viewButton("activity", "活动", "activity", "page", groupId ?? "", 1),
-              viewButton("help", "指令帮助", "help", "home"),
-            ],
-          ],
-          ["详细用法：/help"],
+        return this.privateOnlyResult(
+          groupId,
+          userId,
+          this.myPermissionCard(groupId, userId),
         );
       case "bind":
       case "绑定":
@@ -538,16 +617,10 @@ export class AdminCommandService {
         return handleAppeal(this.context(), groupId, userId, parts);
       case "profile":
       case "资料":
-        return this.cardify(
-          "个人资料",
-          handleProfile(this.context(), userId, parts),
-          [
-            [
-              viewButton("activity", "活动", "activity", "page", groupId ?? "", 1),
-              viewButton("help", "资料帮助", "help", "topic", "profile"),
-            ],
-          ],
-          ["详细用法：/help"],
+        return this.privateOnlyResult(
+          groupId,
+          userId,
+          this.profileCard(groupId, userId, parts),
         );
       case "activity":
       case "活动":

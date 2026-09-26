@@ -98,16 +98,16 @@ describe("activity & profile commands", () => {
   it("lets a user configure and view their profile", async () => {
     const bad = await service.handle("g1", "member", "/profile set id 20221234567");
     expect(bad.ok).toBe(false);
-    expect(bad.text).toContain("前两位");
+    expect(String(api.sentPrivateMessages.at(-1)?.markdown ?? api.sentPrivateMessages.at(-1)?.content ?? "")).toContain("前两位");
 
     await fillProfile("member", "小明", "22123456789", "材化2211");
-    const view = await service.handle("g1", "member", "/profile");
-    expect(view.ok).toBe(true);
-    expect(view.text).toContain("姓名：小明");
-    expect(view.text).toContain("学号：22123456789（22 级）");
-    expect(view.text).toContain("班级：材化2211");
+    await service.handle("g1", "member", "/profile");
+    const view = String(api.sentPrivateMessages.at(-1)?.markdown ?? api.sentPrivateMessages.at(-1)?.content ?? "");
+    expect(view).toContain("姓名：小明");
+    expect(view).toContain("学号：22123456789（22 级）");
+    expect(view).toContain("班级：材化2211");
     // 学院由班级库自动带出
-    expect(view.text).toContain("学院：化学与生命科学学院");
+    expect(view).toContain("学院：化学与生命科学学院");
   });
 
   it("runs the full publish / signup / manage flow", async () => {
