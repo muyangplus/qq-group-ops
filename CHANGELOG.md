@@ -7,6 +7,15 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **webhook 密钥派生：32 位机器人密钥必须直接作 Ed25519 种子**（真机联调）：
+  之前的实现是「非 64 位十六进制就回退 `sha256`」，而 QQ 机器人密钥的真实形态是 **32 个字符** ——
+  官方 Go 示例是 `ed25519.NewKeyFromSeed([]byte(secret))`（**原始字节**，不做哈希）。
+  结果平台保存回调地址时报「签名校验不通过」。现在派生顺序改为：
+  **① 正好 32 字节 → 原始字节作种子（`seedSource: raw32`）；② ≥64 位十六进制 → hex 解码（`hex`）；
+  ③ 其它 → `sha256` 兜底并打 warn**。启动日志里的 `seedSource` 可直接对照判断。
+
 ### 备注
 
 - **CD 首次联调：FTP 被动模式数据连接超时**（`Timeout when trying to open data connection to ***:<端口>`）——

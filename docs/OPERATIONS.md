@@ -102,6 +102,7 @@ WEBHOOK_SECRET=            # 留空则复用 QQ_BOT_CLIENT_SECRET
 
 | 现象 | 先看 |
 |---|---|
+| 平台保存回调地址报「**签名校验不通过**」 | 看启动日志 `webhook gateway listening` 里的 **`seedSource`**：32 位机器人密钥应为 `raw32`，32 字节十六进制为 `hex`；若是 `sha256` 说明密钥格式没认出来（多半 `WEBHOOK_SECRET` 填错），换成后台的机器人密钥后重启再保存 |
 | 平台校验不通过 | 回调路径是否与后台一致；反代是否改写了 body；`seedSource` 是不是 `sha256`（说明密钥不是十六进制，可能密钥填错了） |
 | 事件进来但机器人不回 | 日志有没有 `webhook request rejected: bad signature`（401）；有则核对密钥与反代是否改写请求体 |
 | 重复处理 | 是不是多实例部署，或同时开了 WebSocket |

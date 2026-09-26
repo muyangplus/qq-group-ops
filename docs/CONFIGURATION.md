@@ -43,7 +43,7 @@ cp .env.example .env
 | `WEBHOOK_PORT` | 否 | 仅 webhook 模式：监听端口，默认 `3000`（通常由反向代理把 443 转发到这里） |
 | `WEBHOOK_HOST` | 否 | 仅 webhook 模式：监听地址，默认 `127.0.0.1`（只让本机反代访问）；确需直接暴露才用 `0.0.0.0` |
 | `WEBHOOK_PATH` | 否 | 仅 webhook 模式：回调路径，默认 `/webhook/qq`，**必须与开放平台后台填写的一致** |
-| `WEBHOOK_SECRET` | 否 | 仅 webhook 模式：回调签名密钥（Ed25519 种子）；留空则复用 `QQ_BOT_CLIENT_SECRET` |
+| `WEBHOOK_SECRET` | 否 | 仅 webhook 模式：回调签名密钥（Ed25519 种子）；留空则复用 `QQ_BOT_CLIENT_SECRET`。**32 位机器人密钥直接取原始字节作种子**；≥64 位十六进制按 hex 解码；其它格式才回退 `sha256`（会打 warn，此时平台校验多半不通过） |
 
 ## 限流与重连
 
