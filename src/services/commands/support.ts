@@ -50,6 +50,9 @@ import {
 import { findHelpTopic, type HelpTopic } from "../helpTopics.js";
 /** 关键词单条上限（与卡片标准一致：太长会挤爆按钮）。 */
 const RULE_KEYWORD_MAX_LENGTH = 50;
+/** §B1 正则单条上限 / 列表条数上限（防御 ReDoS 与卡片过长）。 */
+export const RULE_REGEX_MAX_LENGTH = 200;
+export const RULE_LIST_MAX_COUNT = 50;
 import {
   buildMenu,
   buildUnknownCommandMenu,
@@ -435,6 +438,7 @@ export type RulePanelId =
   | "decision"
   | "punish"
   | "keyword"
+  | "regex"
   | "roster"
   | "more";
 
@@ -443,6 +447,14 @@ export function normalizeRulePanel(panel: string | undefined): RulePanelId {
     case "keyword":
     case "keywords":
       return "keyword";
+    // §B1：正则 + 用户白名单独立子卡
+    case "regex":
+    case "regexrules":
+    case "whitelist":
+    case "userwhitelist":
+    case "正则":
+    case "白名单":
+      return "regex";
     case "roster":
     case "college":
     case "year":
@@ -465,6 +477,7 @@ export const RULE_PANEL_FIELDS: Record<RulePanelId, readonly (keyof GroupConfigO
   decision: ["joinDecision"],
   punish: ["keywordPunish", "muteDurationSeconds"],
   keyword: ["keywords"],
+  regex: ["regexRules", "userWhitelist"],
   roster: ["allowColleges", "denyColleges", "allowYears", "denyYears"],
   more: [
     "enabled",
@@ -489,6 +502,8 @@ export const RULE_FIELD_LABELS: Record<keyof GroupConfigOverride, string> = {
   joinAuditEnabled: "入群审核",
   autoApproveJoin: "自动通过",
   keywords: "关键词",
+  regexRules: "正则规则",
+  userWhitelist: "用户白名单",
   wordFilterEnabled: "关键词过滤",
   exportEnabled: "导出功能",
   rawMessageRetentionDays: "消息保留天数",
@@ -514,6 +529,8 @@ export const RULE_FIELD_SHORT_LABELS: Partial<Record<keyof GroupConfigOverride, 
   joinAuditEnabled: "入群",
   autoApproveJoin: "自动",
   keywords: "关键词",
+  regexRules: "正则",
+  userWhitelist: "白名单",
   wordFilterEnabled: "过滤",
   exportEnabled: "导出",
   muteDurationSeconds: "禁言",
@@ -659,15 +676,20 @@ export const RULES_SET_USAGE = [
 /** `/rules add keyword` 的用法（关键词逐条增删，§C）。 */
 export const RULES_ADD_USAGE = [
   "用法：/rules add keyword <词>",
-  "私信：/rules add <群号|#群短码> keyword <词>",
-  "全局：/rules add all keyword <词>（仅超管）",
-  `关键词会 trim、去重、按字典序保存，单条不超过 ${RULE_KEYWORD_MAX_LENGTH} 字。`,
+  "      /rules add regex <正则>          消息侧正则（§B1，命中与关键词同一条处罚管道）",
+  "      /rules add whitelist <QQ号|#短码|userId>   用户白名单（豁免关键词 / 正则判断）",
+  "私信：/rules add <群号|#群短码> <keyword|regex|whitelist> <值>",
+  "全局：/rules add all <字段> <值>（仅超管）",
+  `关键词会 trim、去重、按字典序保存，单条不超过 ${RULE_KEYWORD_MAX_LENGTH} 字；`,
+  "正则会校验合法性、单条不超过 200 字；白名单按用户解析成内部 id。",
 ].join("\n");
 
 export const RULES_DEL_USAGE = [
   "用法：/rules del keyword <词>",
-  "私信：/rules del <群号|#群短码> keyword <词>",
-  "全局：/rules del all keyword <词>（仅超管）",
+  "      /rules del regex <序号|正则>     删除一条正则（序号见规则子卡）",
+  "      /rules del whitelist <QQ号|#短码|userId>   移出用户白名单",
+  "私信：/rules del <群号|#群短码> <keyword|regex|whitelist> <值>",
+  "全局：/rules del all <字段> <值>（仅超管）",
 ].join("\n");
 
 export const GLOBAL_RULES_SET_USAGE = [
@@ -1127,6 +1149,24 @@ export function parseRuleSetting(
         groupId,
         rawMessageRetentionDays: cleared ? 0 : parseRetentionDays(field, value),
       };
+    // §B1 消息侧正则规则：逗号 / 顿号 / 空格分隔；每条都必须是合法正则
+    case "regexrules":
+    case "regex":
+    case "正则":
+    case "正则规则":
+      return {
+        groupId,
+        regexRules: cleared ? [] : parseRegexRules(value),
+      };
+    // §B1 用户白名单：逗号 / 顿号 / 空格分隔的 QQ号 / #短码 / userId
+    case "userwhitelist":
+    case "whitelist":
+    case "白名单":
+    case "用户白名单":
+      return {
+        groupId,
+        userWhitelist: cleared ? [] : parseListItems(value),
+      };
     default:
       throw new Error(`未知字段：${field}`);
   }
@@ -1138,6 +1178,33 @@ export function parseListItems(value: string): string[] {
     .split(/[,，、\s]+/u)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+/**
+ * §B1 正则规则列表。
+ *
+ * 多条用**顿号 / 换行**分隔（不用逗号/空格，避免把 `a{1,3}` 这类正则拆坏）；
+ * 每条先做长度上限与正则合法性校验，任一条不合法就整体拒绝（不静默丢弃）。
+ * 含顿号的正则请用 `/rules add regex <pattern>` 逐条添加。
+ */
+export function parseRegexRules(value: string): string[] {
+  const patterns = value
+    .split(/[、\n]+/u)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  if (patterns.length === 0) {
+    throw new Error("正则规则不能为空（清空请用 clear）");
+  }
+  if (patterns.length > RULE_LIST_MAX_COUNT) {
+    throw new Error(`正则规则最多 ${RULE_LIST_MAX_COUNT} 条`);
+  }
+  for (const pattern of patterns) {
+    if (pattern.length > RULE_REGEX_MAX_LENGTH) {
+      throw new Error(`单条正则不能超过 ${RULE_REGEX_MAX_LENGTH} 个字符`);
+    }
+    requireValidRegex(pattern);
+  }
+  return patterns;
 }
 
 export function parseKeywordPunish(value: string): KeywordPunish {

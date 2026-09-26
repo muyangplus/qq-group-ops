@@ -20,7 +20,9 @@ import {
   rosterModeButton,
   RULE_COLLEGE_PAGE_SIZE,
   RULE_KEYWORD_PAGE_SIZE,
+  RULE_LIST_MAX_COUNT,
   RULE_PANEL_FIELDS,
+  RULE_REGEX_MAX_LENGTH,
   ruleChoiceButton,
   ruleDeleteLabel,
   ruleFieldLabel,
@@ -30,10 +32,12 @@ import {
   RULES_SET_USAGE,
   ruleToggleButton,
   RuleToggleSpec,
+  requireValidRegex,
   viewButton,
   viewButtonWithOptions,
 } from "./support.js";
 import { DEFAULT_GROUP_ID, type GroupConfigOverride } from "../groupConfig.js";
+import { resolveUserId } from "./targetResolvers.js";
 import { PROFILE_ENTRY_YEARS } from "../userProfiles.js";
 
 /**
@@ -190,6 +194,8 @@ export function rulesPanelCard(
   switch (normalized) {
     case "keyword":
       return rulesKeywordPanel(ctx, targetGroupId, userId, page, notice);
+    case "regex":
+      return rulesRegexPanel(ctx, targetGroupId, userId, notice);
     case "roster":
       return rulesRosterPanel(ctx, targetGroupId, userId, mode, page, notice);
     case "toggle":
@@ -346,6 +352,9 @@ export function rulesPunishPanel(
     ruleChoiceButton("mute-3600", "1小时", targetGroupId, "muteDurationSeconds", "3600", config.muteDurationSeconds === 3600, "punish"),
   ]);
   rows.push([
+    viewButton("regex-panel", "正则白名单", "rules", "panel", targetGroupId, "regex"),
+  ]);
+  rows.push([
     ruleRestoreButton(ctx, "punish", targetGroupId, ["keywordPunish", "muteDurationSeconds"]),
     ruleBackButton(ctx, targetGroupId),
   ]);
@@ -440,6 +449,60 @@ export function rulesKeywordPanel(
     buttonHint: "每行一个关键词，点击即删除：",
     footer,
   });
+}
+
+/** 子卡：正则规则 + 用户白名单（§B1）。 */
+export function rulesRegexPanel(
+  ctx: AdminCommandContext,
+  targetGroupId: string,
+  userId: string,
+  notice?: string,
+): CardResult {
+  const config = ctx.configStore.get(targetGroupId);
+  const regexRules = [...config.regexRules];
+  const whitelist = [...config.userWhitelist];
+  const rows: CardButton[][] = [
+    [
+      actionButton("add-regex", "加正则", "/rules add regex "),
+      actionButton("add-whitelist", "加白名单", "/rules add whitelist "),
+    ],
+    [
+      viewButtonWithOptions(
+        "clear-regex",
+        "清空正则",
+        encodeCallback("rules", "clearList", targetGroupId, "regexRules"),
+        { modal: confirmRuleResetModal("本群正则规则") },
+      ),
+      viewButtonWithOptions(
+        "clear-whitelist",
+        "清空白名单",
+        encodeCallback("rules", "clearList", targetGroupId, "userWhitelist"),
+        { modal: confirmRuleResetModal("本群用户白名单") },
+      ),
+    ],
+    [
+      ruleRestoreButton(ctx, "regex", targetGroupId, ["regexRules", "userWhitelist"]),
+      ruleBackButton(ctx, targetGroupId),
+    ],
+  ];
+  const body: string[] = [
+    `**正则规则**：${regexRules.length > 0 ? `${regexRules.length} 条` : "（未配置）"}`,
+    ...regexRules
+      .slice(0, 5)
+      .map((rule, index) => `${index + 1}. ${rule}`),
+    ...(regexRules.length > 5
+      ? [`…… 还有 ${regexRules.length - 5} 条（用 /rules del regex <序号> 删除）`]
+      : []),
+    `**用户白名单**：${whitelist.length > 0 ? `${whitelist.length} 人` : "（未配置）"}`,
+    ...whitelist
+      .slice(0, 5)
+      .map((id, index) => `${index + 1}. ${ctx.helpers.displayUser(id)}`),
+    "",
+    "正则命中与关键词**同一条处罚管道**：按本群「命中处罚」执行，多个命中取最高动作。",
+    "白名单内用户与审核员一样豁免判断（不警告、不撤回、不处罚、不写审计）。",
+    "多条正则用顿号分隔；含顿号的正则请逐条 `/rules add regex <pattern>` 添加。",
+  ];
+  return rulePanelCard(ctx, "群规则 · 正则 / 白名单", targetGroupId, userId, notice, rows, body);
 }
 
 /** 子卡：名单筛选（学院点选 + 年级点选，白/黑名单切换）。 */
@@ -1129,9 +1192,17 @@ export async function handleRules(
     return handleRulesSet(ctx, groupId, userId, parts);
   }
   if (action === "add" || action === "新增" || action === "加") {
+    const peek = resolveRuleTarget(ctx, groupId, parts);
+    if (peek.ok && listFieldOf(peek.field) !== undefined) {
+      return handleRulesListAdd(ctx, groupId, userId, parts);
+    }
     return handleRulesKeywordAdd(ctx, groupId, userId, parts);
   }
   if (action === "del" || action === "delete" || action === "删除") {
+    const peek = resolveRuleTarget(ctx, groupId, parts);
+    if (peek.ok && listFieldOf(peek.field) !== undefined) {
+      return handleRulesListDelete(ctx, groupId, userId, parts);
+    }
     return handleRulesKeywordDelete(ctx, groupId, userId, parts);
   }
   if (action === "overrides" || action === "覆盖") {
@@ -1296,6 +1367,161 @@ export function resolveRuleTarget(
 }
 
 /** 全局规则：仅超级管理员可查看。 */
+/** §B1 列表字段（正则 / 白名单）的字段名归一化。 */
+const RULE_LIST_FIELDS: Record<string, "regexRules" | "userWhitelist"> = {
+  regex: "regexRules",
+  regexrules: "regexRules",
+  正则: "regexRules",
+  正则规则: "regexRules",
+  whitelist: "userWhitelist",
+  userwhitelist: "userWhitelist",
+  白名单: "userWhitelist",
+  用户白名单: "userWhitelist",
+};
+
+function listFieldOf(field: string): "regexRules" | "userWhitelist" | undefined {
+  return RULE_LIST_FIELDS[normalize(field)];
+}
+
+/** `/rules add regex|whitelist`：逐条追加（权限与目标群解析同 `/rules set`）。 */
+export async function handleRulesListAdd(
+  ctx: AdminCommandContext,
+  groupId: string | undefined,
+  userId: string,
+  parts: readonly string[],
+): Promise<CommandResult> {
+  const target = resolveRuleTarget(ctx, groupId, parts);
+  if (!target.ok) {
+    return { ok: false, text: target.text };
+  }
+  if (!ctx.permissions.canManageRules(userId, target.groupId)) {
+    return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
+  }
+  const field = listFieldOf(target.field);
+  const raw = target.value.trim();
+  if (!field || raw.length === 0) {
+    return { ok: false, text: RULES_ADD_USAGE };
+  }
+  const config = ctx.configStore.get(target.groupId);
+  const current = [...config[field]];
+  if (current.length >= RULE_LIST_MAX_COUNT) {
+    return {
+      ok: false,
+      text: `${ruleFieldLabel(field)}最多 ${RULE_LIST_MAX_COUNT} 条。`,
+    };
+  }
+  let entry = raw;
+  if (field === "regexRules") {
+    if (raw.length > RULE_REGEX_MAX_LENGTH) {
+      return {
+        ok: false,
+        text: `单条正则不能超过 ${RULE_REGEX_MAX_LENGTH} 个字符。`,
+      };
+    }
+    try {
+      requireValidRegex(raw);
+    } catch (error) {
+      return { ok: false, text: `正则不合法：${formatError(error)}` };
+    }
+  } else {
+    const resolved = resolveUserId(ctx, raw);
+    if (!resolved) {
+      return { ok: false, text: "请提供 QQ号 / #用户短码 / userId。" };
+    }
+    entry = resolved;
+  }
+  if (current.includes(entry)) {
+    return { ok: false, text: `${ruleFieldLabel(field)}已存在：${entry}` };
+  }
+  const patch: GroupConfigOverride =
+    field === "regexRules"
+      ? { groupId: target.groupId, regexRules: [...current, entry] }
+      : { groupId: target.groupId, userWhitelist: [...current, entry] };
+  ctx.configStore.setOverride(patch);
+  log.info("rule list entry added", { targetGroupId: target.groupId, field, entry, userId });
+  return {
+    ok: true,
+    text: `已添加${ruleFieldLabel(field)}：${entry}\n\n${formatRules(ctx, target.groupId)}`,
+  };
+}
+
+/** `/rules del regex|whitelist`：正则支持按序号或内容删，白名单支持 QQ号 / 短码 / userId。 */
+export async function handleRulesListDelete(
+  ctx: AdminCommandContext,
+  groupId: string | undefined,
+  userId: string,
+  parts: readonly string[],
+): Promise<CommandResult> {
+  const target = resolveRuleTarget(ctx, groupId, parts);
+  if (!target.ok) {
+    return { ok: false, text: target.text };
+  }
+  if (!ctx.permissions.canManageRules(userId, target.groupId)) {
+    return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
+  }
+  const field = listFieldOf(target.field);
+  const raw = target.value.trim();
+  if (!field || raw.length === 0) {
+    return { ok: false, text: RULES_DEL_USAGE };
+  }
+  const config = ctx.configStore.get(target.groupId);
+  const current = [...config[field]];
+  const entry =
+    field === "userWhitelist" ? (resolveUserId(ctx, raw) ?? raw) : raw;
+  let index = current.indexOf(entry);
+  if (field === "regexRules" && index < 0) {
+    const serial = Number.parseInt(raw, 10);
+    if (Number.isInteger(serial) && serial >= 1 && serial <= current.length) {
+      index = serial - 1;
+    }
+  }
+  if (index < 0) {
+    return { ok: false, text: `${ruleFieldLabel(field)}里没有：${raw}` };
+  }
+  const removed = current[index]!;
+  const next = current.filter((_item, i) => i !== index);
+  const patch: GroupConfigOverride =
+    field === "regexRules"
+      ? { groupId: target.groupId, regexRules: next }
+      : { groupId: target.groupId, userWhitelist: next };
+  ctx.configStore.setOverride(patch);
+  log.info("rule list entry removed", { targetGroupId: target.groupId, field, removed, userId });
+  return {
+    ok: true,
+    text: `已删除${ruleFieldLabel(field)}：${removed}\n\n${formatRules(ctx, target.groupId)}`,
+  };
+}
+
+/** 回调：清空正则 / 白名单（`cb:rules:clearList:<群>:<字段>`）。 */
+export function clearRuleListCard(
+  ctx: AdminCommandContext,
+  targetGroupId: string,
+  rawField: string,
+  userId: string,
+  replyGroupId?: string,
+): CardResult {
+  if (!ctx.permissions.canManageRules(userId, targetGroupId)) {
+    const card = cardFromText("群规则", "权限不足：需要群管理员或以上权限。");
+    return { ok: false, text: card.text, rich: card.rich };
+  }
+  const field = listFieldOf(rawField);
+  if (!field) {
+    return cardFromText("群规则", "未知字段。");
+  }
+  const patch: GroupConfigOverride =
+    field === "regexRules"
+      ? { groupId: targetGroupId, regexRules: [] }
+      : { groupId: targetGroupId, userWhitelist: [] };
+  ctx.configStore.setOverride(patch);
+  log.info("rule list cleared via callback", { targetGroupId, field, userId });
+  return rulesRegexPanel(
+    ctx,
+    targetGroupId,
+    userId,
+    `${ctx.helpers.mention(replyGroupId, userId)}已清空${ruleFieldLabel(field)}。`,
+  );
+}
+
 export function handleGlobalRulesView(
   ctx: AdminCommandContext,
   userId: string): CommandResult {

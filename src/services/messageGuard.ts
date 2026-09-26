@@ -70,13 +70,19 @@ export class MessageGuardService {
    * 关键词命中默认动作是警告，内容取该群的 warningMessage。
    */
   private engineFor(config: EffectiveGroupConfig): RuleEngine {
-    const keywordsKey = config.keywords.join("\u0000");
+    // 缓存键必须同时覆盖关键词与正则（§B1）
+    const keywordsKey = `${config.keywords.join("\u0000")}\u0001${config.regexRules.join("\u0000")}`;
     const cached = this.engines.get(config.groupId);
     if (cached && cached.keywordsKey === keywordsKey) {
       return cached.engine;
     }
     const keywordEngine = RuleEngine.fromKeywords(config.keywords);
-    const engine = new RuleEngine([...this.rules.rules, ...keywordEngine.rules]);
+    const regexEngine = RuleEngine.fromRegex(config.regexRules);
+    const engine = new RuleEngine([
+      ...this.rules.rules,
+      ...keywordEngine.rules,
+      ...regexEngine.rules,
+    ]);
     this.engines.set(config.groupId, { keywordsKey, engine });
     return engine;
   }
@@ -96,6 +102,15 @@ export class MessageGuardService {
         level: this.permissions.levelFor(message.userId, message.groupId),
       });
       return this.result(message, ModerationAction.Allow, [], false, "exempt");
+    }
+
+    // §B1 用户白名单：名单内用户与审核员一样豁免关键词 / 正则判断（不警告、不撤回、不处罚、不写审计）
+    if (config.userWhitelist.includes(message.userId)) {
+      log.debug("moderation whitelist exemption", {
+        groupId: message.groupId,
+        userId: message.userId,
+      });
+      return this.result(message, ModerationAction.Allow, [], false, "whitelisted");
     }
 
     const engine = this.engineFor(config);

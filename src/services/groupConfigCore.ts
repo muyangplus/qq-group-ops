@@ -16,6 +16,10 @@ export interface GroupConfig {
   joinAuditEnabled?: boolean;
   autoApproveJoin?: boolean;
   keywords?: readonly string[];
+  /** 消息侧正则规则：每条一个正则，命中后与关键词走同一条处罚管道（§B1）。 */
+  regexRules?: readonly string[];
+  /** 用户白名单：这些 userId 不做关键词 / 正则判断（审核员豁免之外的补充，§B1）。 */
+  userWhitelist?: readonly string[];
   wordFilterEnabled?: boolean;
   exportEnabled?: boolean;
   rawMessageRetentionDays?: number;
@@ -53,6 +57,8 @@ export interface EffectiveGroupConfig {
   joinAuditEnabled: boolean;
   autoApproveJoin: boolean;
   keywords: readonly string[];
+  regexRules: readonly string[];
+  userWhitelist: readonly string[];
   wordFilterEnabled: boolean;
   exportEnabled: boolean;
   rawMessageRetentionDays: number;
@@ -94,6 +100,8 @@ export const SQL_FIELDS = [
 export const SETTING_FIELDS = [
   "keywordRecall",
   "keywordPunish",
+  "regexRules",
+  "userWhitelist",
   "joinDecision",
   "joinRequireClass",
   "joinRequireName",
@@ -127,6 +135,8 @@ export const DEFAULT_CONFIG: EffectiveGroupConfig = {
   joinAuditEnabled: true,
   autoApproveJoin: false,
   keywords: [],
+  regexRules: [],
+  userWhitelist: [],
   wordFilterEnabled: true,
   exportEnabled: false,
   rawMessageRetentionDays: 0,
@@ -162,6 +172,12 @@ export function normalizeOverride(override: GroupConfigOverride): GroupConfigOve
     ...override,
     ...(override.keywords !== undefined
       ? { keywords: normalizeKeywords(override.keywords) }
+      : {}),
+    ...(override.regexRules !== undefined
+      ? { regexRules: normalizeKeywords(override.regexRules) }
+      : {}),
+    ...(override.userWhitelist !== undefined
+      ? { userWhitelist: normalizeKeywords(override.userWhitelist) }
       : {}),
     ...(override.allowColleges !== undefined
       ? { allowColleges: normalizeKeywords(override.allowColleges) }
@@ -219,6 +235,8 @@ export function cloneConfig(config: EffectiveGroupConfig): EffectiveGroupConfig 
   return {
     ...config,
     keywords: [...config.keywords],
+    regexRules: [...config.regexRules],
+    userWhitelist: [...config.userWhitelist],
     allowColleges: [...config.allowColleges],
     denyColleges: [...config.denyColleges],
     allowYears: [...config.allowYears],
@@ -239,6 +257,14 @@ export function mergeIntoDefault(
       override.keywords !== undefined
         ? normalizeKeywords(override.keywords)
         : base.keywords,
+    regexRules:
+      override.regexRules !== undefined
+        ? normalizeKeywords(override.regexRules)
+        : base.regexRules,
+    userWhitelist:
+      override.userWhitelist !== undefined
+        ? normalizeKeywords(override.userWhitelist)
+        : base.userWhitelist,
   };
 }
 
@@ -298,6 +324,8 @@ export function applySettingField(
       target.joinAnswerPattern = value;
       return true;
     }
+    case "regexRules":
+    case "userWhitelist":
     case "allowColleges":
     case "denyColleges":
     case "allowYears":

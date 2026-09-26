@@ -475,6 +475,18 @@ export function createRuntime(
             event.groupId,
           ).rich;
         }
+        if (parsed.action === "clearList") {
+          const [targetGroupId, field] = parsed.args;
+          if (!targetGroupId || !field) {
+            return undefined;
+          }
+          return adminCommands.clearRuleListCard(
+            targetGroupId,
+            field,
+            userId,
+            event.groupId,
+          ).rich;
+        }
         if (parsed.action === "clearKeyword") {
           const [targetGroupId] = parsed.args;
           if (!targetGroupId) {

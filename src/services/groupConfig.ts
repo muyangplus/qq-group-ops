@@ -64,6 +64,12 @@ export class GroupConfigStore {
       keywords: normalizeKeywords(
         defaultConfig.keywords ?? DEFAULT_CONFIG.keywords,
       ),
+      regexRules: normalizeKeywords(
+        defaultConfig.regexRules ?? DEFAULT_CONFIG.regexRules,
+      ),
+      userWhitelist: normalizeKeywords(
+        defaultConfig.userWhitelist ?? DEFAULT_CONFIG.userWhitelist,
+      ),
       allowColleges: normalizeKeywords(
         defaultConfig.allowColleges ?? DEFAULT_CONFIG.allowColleges,
       ),
@@ -154,6 +160,9 @@ export class GroupConfigStore {
       joinAuditEnabled: override.joinAuditEnabled ?? this.defaultConfig.joinAuditEnabled,
       autoApproveJoin: override.autoApproveJoin ?? this.defaultConfig.autoApproveJoin,
       keywords: override.keywords ?? this.defaultConfig.keywords,
+      regexRules: override.regexRules ?? this.defaultConfig.regexRules,
+      userWhitelist:
+        override.userWhitelist ?? this.defaultConfig.userWhitelist,
       wordFilterEnabled: override.wordFilterEnabled ?? this.defaultConfig.wordFilterEnabled,
       exportEnabled: override.exportEnabled ?? this.defaultConfig.exportEnabled,
       rawMessageRetentionDays:

@@ -40,6 +40,7 @@ import {
 } from "./commands/activityCardCommands.js";
 import {
   clearKeywordsCard,
+  clearRuleListCard,
   delKeywordCard,
   handleRules,
   resetAllRulesCard,
@@ -777,6 +778,16 @@ export class AdminCommandService {
     replyGroupId?: string,
   ): CardResult {
     return delKeywordCard(this.context(), targetGroupId, serial, page, userId, replyGroupId);
+  }
+
+  /** 回调：`cb:rules:clearList:<群>:<字段>`（清空正则 / 白名单，§B1）。 */
+  public clearRuleListCard(
+    targetGroupId: string,
+    field: string,
+    userId: string,
+    replyGroupId?: string,
+  ): CardResult {
+    return clearRuleListCard(this.context(), targetGroupId, field, userId, replyGroupId);
   }
 
   public clearKeywordsCard(

@@ -117,6 +117,39 @@ export class RuleEngine {
     );
   }
 
+  /**
+   * §B1：把群配置里的正则规则编译成规则集。
+   *
+   * 单条非法正则不会让整个引擎抛错（配置可能来自旧数据 / 手工改库），只跳过该条；
+   * `/rules set|add regex` 在写入前已经用 `requireValidRegex` 校验过。
+   */
+  public static fromRegex(
+    patterns: readonly string[],
+    options: { action?: ModerationAction; risk?: RiskLevel } = {},
+  ): RuleEngine {
+    const valid: ModerationRule[] = [];
+    for (const raw of patterns) {
+      const pattern = raw.trim();
+      if (pattern.length === 0) {
+        continue;
+      }
+      try {
+        new RegExp(pattern, "u");
+      } catch {
+        continue;
+      }
+      valid.push({
+        ruleId: `regex:${pattern}`,
+        pattern,
+        action: options.action ?? ModerationAction.Warn,
+        reason: `命中正则：${pattern}`,
+        risk: options.risk ?? RiskLevel.Medium,
+        isRegex: true,
+      });
+    }
+    return new RuleEngine(valid);
+  }
+
   private matches(rule: ResolvedRule, content: string): boolean {
     if (rule.isRegex) {
       return this.compiled.get(rule.ruleId)?.test(content) ?? false;
