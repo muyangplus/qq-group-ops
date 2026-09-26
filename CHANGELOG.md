@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+（暂无未发布改动）
+
+
+## [0.17.1] - 2026-09-26
+
 ### 修复
 
 - **中文标签排序依赖运行环境 locale，导致线上 CI 失败**：活动统计的 `distributionOf` 与活动卡片的
@@ -23,15 +28,19 @@
   上传的是**运行产物**（`dist` + `scripts` + `package.json` + `pnpm-lock.yaml` + `.env.example`），
   **不含** `src` / `docs` / `tsconfig` / `Dockerfile` / `test` / `.env` / `data` / `logs` / `*.map`；
   默认 `ftps`（显式 TLS），凭据只来自 `secrets.*`；`dangerous-clean-slate` 关闭（不删服务器上多余文件）。
-- **依赖与 Action 安全更新**：`.github/dependabot.yml` 每周给 npm 依赖与 GitHub Actions 开分组 PR（对应 TODO D6）。
+- **依赖与 Action 安全更新**：`.github/dependabot.yml` 每周给 npm 依赖与 GitHub Actions 开分组 PR（对应 TODO D6）；
+  首个 Actions 分组 PR（checkout / setup-node / pnpm-action-setup / upload-artifact / download-artifact /
+  FTP-Deploy-Action 共 6 项）已合并。
 - **工作流安全审计测试**：`test/workflows.test.ts` 用 YAML 解析器守住不变量 ——
   工作流必须可解析、`uses:` 必须钉版本、禁用 `pull_request_target`、
-  CD 必须具备最小权限 / 并发保护 / 部署门禁 / Environment / secrets-only / FTPS 默认 / 敏感文件排除。
+  CD 必须具备最小权限 / 并发保护 / 部署门禁 / Environment / secrets-only / FTPS 默认 / 敏感文件排除、
+  组包白名单只能含运行产物。
 
 ### 备注
 
 - **Dependabot 规则**：`@types/node` 的 **major** 更新在 `.github/dependabot.yml` 里被忽略 ——
-  类型大版本必须与运行时 Node 一致（当前 24），否则类型检查会放行 Node 24 不存在的 API。
+  类型大版本必须与运行时 Node 一致（当前 24），否则类型检查会放行 Node 24 不存在的 API
+  （据此关闭了 Dependabot 的 `@types/node` 24 → 26 PR）。
   PR 审核口径（dev / 生产依赖 / CI 用到的 Action / 仅 CD 用到的 Action）见 [`docs/CD.md`](docs/CD.md) §4.0。
 - 需要在 GitHub 配置：Secrets `FTP_SERVER` / `FTP_USERNAME` / `FTP_PASSWORD`；
   Variables `FTP_SERVER_DIR`（必须）、`FTP_PROTOCOL` / `FTP_PORT`（可选）；
@@ -575,6 +584,7 @@
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
 [Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.2...HEAD
+[0.17.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.15.1...v0.15.2
