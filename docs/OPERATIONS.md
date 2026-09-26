@@ -102,12 +102,46 @@ WEBHOOK_SECRET=            # 留空则复用 QQ_BOT_CLIENT_SECRET
 
 | 现象 | 先看 |
 |---|---|
-| 平台保存回调地址报「**签名校验不通过**」 | 看启动日志 `webhook gateway listening` 里的 **`seedSource`**：32 位机器人密钥应为 `raw32`，32 字节十六进制为 `hex`；若是 `sha256` 说明密钥格式没认出来（多半 `WEBHOOK_SECRET` 填错），换成后台的机器人密钥后重启再保存 |
-| 平台校验不通过 | 回调路径是否与后台一致；反代是否改写了 body；`seedSource` 是不是 `sha256`（说明密钥不是十六进制，可能密钥填错了） |
+| 平台保存回调地址报「签名校验不通过」 | 见下节「校验不通过怎么试」：九成是密钥填错/密钥格式不符，不是算法 |
 | 事件进来但机器人不回 | 日志有没有 `webhook request rejected: bad signature`（401）；有则核对密钥与反代是否改写请求体 |
 | 重复处理 | 是不是多实例部署，或同时开了 WebSocket |
 | 完全收不到 | 反代是否只暴露了路径前缀、HTTPS 证书是否有效、后台是否保存了回调地址 |
 
+### 校验不通过怎么试（签名算法对齐）
+
+事件回调和 URL 校验握手**用同一对 Ed25519 密钥**，密钥由机器人密钥（Bot Secret）派生。
+官方《安全和授权》写得很明确，本项目 `auto`（默认）与它逐字节一致：
+
+```go
+seed := botSecret                                    // 密钥原文字节
+for len(seed) < ed25519.SeedSize { seed = strings.Repeat(seed, 2) }  // 翻倍到 ≥32 字节
+rand := strings.NewReader(seed[:ed25519.SeedSize])    // 取前 32 字节
+// 验签：msg = X-Signature-Timestamp + HTTP Body（header 原文 + 原始 body，不是 JSON）
+```
+
+`test/webhookSignature.test.ts` 里钉了官方 Demo 的公钥向量（secret 28 位 → seed 32 位 → 32 字节公钥逐字节比对），
+算法被改错测试必红。
+
+所以「签名校验不通过」基本不是算法问题，先按这个顺序查：
+
+1. `WEBHOOK_SECRET` / `QQ_BOT_CLIENT_SECRET` 填的是不是 **Bot Secret**（别填成 AppID / Token）；
+2. 反向代理有没有改写请求头或请求体 —— `X-Signature-*` 与**原始 body** 必须原样透传；
+3. 后台填的回调地址与本服务 `WEBHOOK_PATH` 是否完全一致（含路径与结尾斜杠）。
+
+仍不通过时，才动下面这两个**不用改代码**的逃生舱：每次都是「改 `.env` → 重启 → 回后台再点一次保存」，
+并对照启动日志的 `seedSource` / `signContent`：
+
+| 顺序 | `WEBHOOK_KEY_DERIVATION` | `WEBHOOK_SIGN_CONTENT` | 适用情况 |
+|---|---|---|---|
+| 1（默认） | `auto`（官方算法，日志 `seed-repeat`） | `ts_token` | 应当直接成功；失败先查上面三条 |
+| 2 | `hex` | `ts_token` | 密钥是十六进制（32 位 → 解码 16 字节右侧补零，日志 `hex-pad`；64 位 → `hex`） |
+| 3 | `sha256` | `ts_token` | 平台侧额外做过哈希（少见） |
+| 4 | 上面任一 | `token_ts` | 试反过来的顺序：`plain_token + event_ts` |
+
+> 重启后日志会打印实际用的策略，例如
+> `webhook gateway listening {"seedSource":"seed-repeat","signContent":"ts_token"}`；
+> 握手成功/失败各记一条（`webhook url validation answered`）。
+> 四种组合都失败时，把「后台密钥字段的原文形态（多少位、是否含非十六进制字符）」+ 这两行日志发我。
 
 ## 迎新晚会
 材料学院迎新联欢，欢迎参加。

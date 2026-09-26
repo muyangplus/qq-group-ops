@@ -43,7 +43,9 @@ cp .env.example .env
 | `WEBHOOK_PORT` | 否 | 仅 webhook 模式：监听端口，默认 `3000`（通常由反向代理把 443 转发到这里） |
 | `WEBHOOK_HOST` | 否 | 仅 webhook 模式：监听地址，默认 `127.0.0.1`（只让本机反代访问）；确需直接暴露才用 `0.0.0.0` |
 | `WEBHOOK_PATH` | 否 | 仅 webhook 模式：回调路径，默认 `/webhook/qq`，**必须与开放平台后台填写的一致** |
-| `WEBHOOK_SECRET` | 否 | 仅 webhook 模式：回调签名密钥（Ed25519 种子）；留空则复用 `QQ_BOT_CLIENT_SECRET`。**32 位机器人密钥直接取原始字节作种子**；≥64 位十六进制按 hex 解码；其它格式才回退 `sha256`（会打 warn，此时平台校验多半不通过） |
+| `WEBHOOK_SECRET` | 否 | 仅 webhook 模式：回调签名密钥（派生 Ed25519 密钥对）；**留空或写 `WEBHOOK_SECRET=` 都会回落到 `QQ_BOT_CLIENT_SECRET`**（空字符串不会「卡住」回落） |
+| `WEBHOOK_KEY_DERIVATION` | 否 | 仅 webhook 模式：密钥派生策略，默认 `auto` = 官方《安全和授权》算法（密钥 repeat 翻倍到 ≥32 字节后取前 32 字节，日志 `seed-repeat`）。逃生舱：`hex`（十六进制解码后取前 32 字节，不足则右侧补零记 `hex-pad`）/ `sha256`（平台侧额外哈希时才对）。**平台报「签名校验不通过」时才需要动它**（改完重启再点保存），日志里的 `seedSource` 会告诉你实际用的哪种 |
+| `WEBHOOK_SIGN_CONTENT` | 否 | 仅 webhook 模式：`op=13` 校验握手的签名内容，默认 `ts_token` = `event_ts + plain_token`；备选 `token_ts`（反过来拼） |
 
 ## 限流与重连
 

@@ -9,12 +9,21 @@
 
 ### 修复
 
-- **webhook 密钥派生：32 位机器人密钥必须直接作 Ed25519 种子**（真机联调）：
-  之前的实现是「非 64 位十六进制就回退 `sha256`」，而 QQ 机器人密钥的真实形态是 **32 个字符** ——
-  官方 Go 示例是 `ed25519.NewKeyFromSeed([]byte(secret))`（**原始字节**，不做哈希）。
-  结果平台保存回调地址时报「签名校验不通过」。现在派生顺序改为：
-  **① 正好 32 字节 → 原始字节作种子（`seedSource: raw32`）；② ≥64 位十六进制 → hex 解码（`hex`）；
-  ③ 其它 → `sha256` 兜底并打 warn**。启动日志里的 `seedSource` 可直接对照判断。
+- **webhook 密钥派生改为官方《安全和授权》的算法**（真机联调 + 官方文档核对）：
+  之前的实现是「非 64 位十六进制就回退 `sha256`」，而官方规则是**把 Bot Secret 按字节 repeat 翻倍到 ≥32 字节、
+  取前 32 字节作 Ed25519 种子**（短密钥补齐、长密钥截断、已 32 字节则原样），
+  结果平台保存回调地址时报「签名校验不通过」。现在 `auto` 与官方逐字节一致，
+  并在 `test/webhookSignature.test.ts` 里钉了官方 Demo 的公钥向量（secret 28 位 → 32 字节种子 → 32 字节公钥），
+  启动日志 `seedSource: seed-repeat` 可直接对照。事件回调的 `timestamp + body` 拼接、
+  `X-Signature-*` 头名与签名末字节高 3 位校验也一并按官方文档核对。
+- **`WEBHOOK_SECRET=` 留空时没有回落到 `QQ_BOT_CLIENT_SECRET`**：`.env` 里留空得到的是空字符串，
+  原来的 `??` 回退卡在空串上，导致 webhook 模式启动直接报错；现在空字符串/纯空白都视为没填。
+
+### 新增
+
+- **`WEBHOOK_KEY_DERIVATION` / `WEBHOOK_SIGN_CONTENT`**（仅 webhook 模式）：平台对验签失败只回一句
+  「签名校验不通过」，所以留了两个不用改代码的逃生舱 —— `hex` / `sha256` 派生、`token_ts` 拼接顺序，
+  改 `.env` + 重启即可逐个试；逐条排查步骤见 [`docs/OPERATIONS.md`](docs/OPERATIONS.md) §「校验不通过怎么试」。
 
 ### 备注
 

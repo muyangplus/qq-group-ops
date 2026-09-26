@@ -983,17 +983,22 @@
   3. **Ed25519 验签（fail-closed）**：请求头 `X-Signature-Ed25519` / `X-Signature-Timestamp`，
      签名内容 = `timestamp + rawBody`（所以注册了自定义 content-type parser 保留原始 body），
      验签失败一律 401；`op=13` 的 URL 校验握手（平台不签名）用私钥对 `event_ts + plain_token` 回签；
-  4. **密钥派生**：`WEBHOOK_SECRET`（缺省回落机器人密钥 `QQ_BOT_CLIENT_SECRET`）按下面的顺序判定，
-     并在日志里写 `seedSource` 便于联调：
-     1. **正好 32 字节**（QQ 机器人密钥的真实形态是 32 位字符串）→ **直接取 UTF-8 原始字节作种子** ——
-        官方 Go 示例就是 `ed25519.NewKeyFromSeed([]byte(secret))`；
-     2. **≥64 位十六进制**（32 字节十六进制，QQ 频道风格密钥）→ 十六进制解码取前 32 字节；
-     3. 其它 → `sha256(secret)` 兜底并打 **warn**（大概率密钥填错）。
-     ⚠️ **真机踩过**：32 位密钥若走 sha256，平台保存回调地址时会报「签名校验不通过」——
-     所以「长度 32 字节」必须优先于「sha256」，判断依据是**字节长度**而不是"是否十六进制"。
-  5. **先回 ACK、再串行处理**：回调里先返回 `{op:12,d:{}}`，事件进队列按接收顺序串行处理，
+  4. **密钥派生**：`WEBHOOK_SECRET`（留空或写 `WEBHOOK_SECRET=` 都回落到机器人密钥 `QQ_BOT_CLIENT_SECRET`，
+     空字符串不能「卡住」回落）按**官方《安全和授权》**的算法派生，并在日志里写 `seedSource` 便于联调：
+     1. **默认 `auto` = 官方算法**：把 Bot Secret **按字节 repeat 翻倍**到不少于 32 字节，取前 32 字节作 Ed25519 种子
+        （官方 Demo：secret `naOC0ocQE3shWLAfffVLB1rhYPG7` → seed `naOC0ocQE3shWLAfffVLB1rhYPG7naOC`，
+        `test/webhookSignature.test.ts` 用官方给出的 32 字节公钥逐字节比对，日志记 `seed-repeat`）；
+     2. `WEBHOOK_KEY_DERIVATION=hex`：十六进制解码取前 32 字节（不足则右侧补零，记 `hex-pad`）——逃生舱；
+     3. `WEBHOOK_KEY_DERIVATION=sha256`：`sha256(secret)` 作种子 —— 逃生舱（平台侧额外哈希时才对）。
+     ⚠️ **真机踩过两轮**：① 最初按「十六进制解码」实现，32 位机器人密钥（非十六进制）走进 `sha256` 兜底，
+     平台保存回调地址时报「签名校验不通过」；② 只改成「正好 32 字节用原始字节」还不够 ——
+     官方规则对**短于 32 字节的密钥也要 repeat 补齐**，且对超过 32 字节的密钥取前 32 字节。
+     官方 Demo 向量进测试后，这类偏差不会再溜过去。
+  5. **签名内容**：事件回调是 `X-Signature-Timestamp + HTTP Body`（官方已写明）；
+     `op=13` 校验握手是 `event_ts + plain_token`（官方页面没写全，留 `WEBHOOK_SIGN_CONTENT=token_ts` 备选）。
+  6. **先回 ACK、再串行处理**：回调里先返回 `{op:12,d:{}}`，事件进队列按接收顺序串行处理，
      避免我们发卡片耗时导致平台超时重推、进而重复处理；单条事件抛错只记日志，不影响后续；
-  6. **HTTP 实现用 Fastify**（用户选择）：顺带为 Phase 2 的 Web 后台（登录鉴权 / 管理 API）打底。
+  7. **HTTP 实现用 Fastify**（用户选择）：顺带为 Phase 2 的 Web 后台（登录鉴权 / 管理 API）打底。
 - 理由：Webhook 是「平台推给我们」的模型，必须自己兜住验签与 ACK 超时；把协议差异关在一个适配器里，
   事件处理链、路由、卡片、命令都不需要知道事件是从哪条通道来的。
 - 影响：新增 `src/adapters/webhookEventGateway.ts`、`src/adapters/qqWebhookSignature.ts`、
@@ -1001,6 +1006,7 @@
   测试：`test/webhookSignature.test.ts`（派生/自签自验/篡改拒绝/握手）、
   `test/webhookGateway.test.ts`（真实端口 + 签名请求：握手、分发、401、400、乱序容错）、
   `test/config.test.ts`（五个设置与回落）。
-  **真机核对点**：回调体字段名、ACK 响应体、`X-Signature-*` 头名与「timestamp+body」拼接顺序、
-  以及密钥是否需要十六进制解码 —— 联调时看日志 `webhook gateway listening`（`seedSource` 字段）
-  与 401 记录即可定位。
+  **已按官方文档核对**：`X-Signature-Ed25519` / `X-Signature-Timestamp` 头名、`timestamp + body` 拼接顺序、
+  hex 签名（含末字节高 3 位为 0 的额外校验）、Bot Secret 的 repeat 派生算法（含官方 Demo 公钥向量）。
+  **仍需真机核对**：回调体字段名、ACK 响应体 `{op:12,d:{}}`、`op=13` 握手的拼接顺序 ——
+  联调时看日志 `webhook gateway listening`（`seedSource`）与 `webhook url validation answered` 即可定位。
