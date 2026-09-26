@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+（暂无未发布改动）
+
+
+## [0.15.1] - 2026-09-26
+
 ### 修复
 
 - **群里 `@全体成员` 会被机器人抢答菜单（§B3）**：真机确认官方表示是 `<@all> ` / `@everyone`，
@@ -34,6 +39,7 @@
   其中 `stripped=false` 且 `isCommand=false` 表示这个提及格式没被 `stripBotMention` 识别出来。
   日志位置：`logs/qq-group-ops.log`，检索 `grep "mention probe"`。
   用途：回填 R1（官方事件里 @全体 的真实表示）→ 解锁 **B3（跳过 @全体）**。
+
 
 
 ## [0.15.0] - 2026-09-26
@@ -415,6 +421,7 @@
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
 [Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.2...HEAD
+[0.15.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.2...v0.15.0
 [0.14.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.0...v0.14.1
