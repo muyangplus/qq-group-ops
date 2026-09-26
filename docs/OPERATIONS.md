@@ -68,6 +68,46 @@ pnpm start       # 运行编译后的入口（需先 pnpm build）
 > 想再按精确值兜底，可以在本地运行测试时设置 `PRIVACY_GUARD_IDS=<值1>,<值2>`（**只放本地环境变量，不要提交**）。
 > 示例值统一用一眼假的占位符：`10001` / `654321` / `123456789` / `0123456789ABCDEF0123456789ABCDEF`。
 
+## 事件通道：WebSocket 还是 Webhook（§D5）
+
+默认走**官方 WebSocket 长连接**（出站连接，内网/家用宽带的机器都能跑，不需要公网入口）。
+如果平台侧要求 HTTP 回调，或你的部署环境只提供公网 HTTPS 入站，则切到 **Webhook 模式**：
+
+| | WebSocket（默认） | Webhook |
+|---|---|---|
+| 公网入口 | 不需要（出站连接） | **必须有**：公网 HTTPS 域名 + 证书（可挂反向代理） |
+| 实例数 | 可多实例（官方网关按 session 分流） | **只能单实例**：多实例会重复收到同一事件 |
+| 配置 | 零配置 | `EVENT_MODE=webhook` + `WEBHOOK_*` 五项 + 后台填回调地址 |
+| 事件顺序 | 网关保证顺序 | 本项目**先回 ACK、再按接收顺序串行处理**（单实例内保序） |
+
+切换步骤：
+
+```bash
+# .env
+EVENT_MODE=webhook
+WEBHOOK_PORT=3000          # 反向代理把 443 转发到这里
+WEBHOOK_HOST=127.0.0.1     # 只让本机反代访问；确需直接暴露才写 0.0.0.0
+WEBHOOK_PATH=/webhook/qq   # 必须与开放平台后台填写的一致
+WEBHOOK_SECRET=            # 留空则复用 QQ_BOT_CLIENT_SECRET
+```
+
+1. 反向代理（Nginx / Caddy / frp 等）把 `https://<你的域名>/webhook/qq` 转发到 `127.0.0.1:3000`，
+   **不要**改写请求头与请求体（`X-Signature-Ed25519` / `X-Signature-Timestamp` 与原始 body 都要原样透传）；
+2. 在开放平台后台把回调地址填成同一个 URL，保存时平台会发一次 `op=13` 校验请求 ——
+   日志出现 `webhook url validation answered` 即校验通过；
+3. 启动后日志应出现 `webhook gateway listening`（含 `seedSource`）与 `event gateway started {mode:"webhook"}`；
+4. **不要再开 WebSocket 通道**（`EVENT_MODE` 二选一），否则同一事件会被处理两次。
+
+排查：
+
+| 现象 | 先看 |
+|---|---|
+| 平台校验不通过 | 回调路径是否与后台一致；反代是否改写了 body；`seedSource` 是不是 `sha256`（说明密钥不是十六进制，可能密钥填错了） |
+| 事件进来但机器人不回 | 日志有没有 `webhook request rejected: bad signature`（401）；有则核对密钥与反代是否改写请求体 |
+| 重复处理 | 是不是多实例部署，或同时开了 WebSocket |
+| 完全收不到 | 反代是否只暴露了路径前缀、HTTPS 证书是否有效、后台是否保存了回调地址 |
+
+
 ## 迎新晚会
 材料学院迎新联欢，欢迎参加。
 

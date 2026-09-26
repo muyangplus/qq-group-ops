@@ -56,6 +56,7 @@
 - ADR-0046：群内处罚卡去规则/去原文，原文改为可选短期落库（§B7 / §B8）
 - ADR-0047：申诉派发「管理员全通知 + 审核员轮单」，并补齐处理闭环（§B8）
 - ADR-0048：违规处理改为五选多选（`punishActions`），拉黑不连坐踢出（§B2）
+- ADR-0049：Webhook 事件通道（`EVENT_MODE`，Fastify + Ed25519 验签）（§D5）
 
 ---
 
@@ -966,3 +967,35 @@
   `blacklist.ts`（`add({ kick:false })`）、`ruleCommands.ts`（多选面板 + `punishToggle` 回调）、
   `support.ts`（`parsePunishActions` / 字段标签 / 帮助文本）、`runtime.ts`（装配黑名单 + 回调路由）。
   验收：**J69**；文档：COMMANDS / CONFIGURATION / ACCEPTANCE / REAL-MACHINE-RUN。
+
+## ADR-0049：Webhook 事件通道（`EVENT_MODE`，Fastify + Ed25519 验签）（§D5）
+
+- 状态：已采纳（0.17.0，2026-09-26）
+- 背景：此前只有官方 WebSocket 长连接一条事件通道（`QQOfficialGateway`），
+  平台侧若要求 HTTP 回调（或部署环境只给公网 HTTPS 入站、不便于长连接）就没有接入方式；
+  `TODO.md` D5 早已记录「当前代码没有任何 webhook 实现」。
+- 决策：
+  1. **通道二选一**：新增 `EVENT_MODE=websocket|webhook`（默认 `websocket`，不改变既有部署），
+     启动时装配对应适配器 —— 两条同时开会把同一条事件消费两次；
+  2. **复用同一套事件链**：`WebhookEventGateway` 实现既有 `EventGateway` 接口，
+     内部用 `QQOfficialEventMapper` 把 `t`（事件类型）+ `d`（事件体）映射成内部 `QQEvent`，
+     交给同一个 `eventRouter`；按钮回调的 `PUT /interactions/{id}` 是 REST，与通道无关，照旧可用；
+  3. **Ed25519 验签（fail-closed）**：请求头 `X-Signature-Ed25519` / `X-Signature-Timestamp`，
+     签名内容 = `timestamp + rawBody`（所以注册了自定义 content-type parser 保留原始 body），
+     验签失败一律 401；`op=13` 的 URL 校验握手（平台不签名）用私钥对 `event_ts + plain_token` 回签；
+  4. **密钥派生**：`WEBHOOK_SECRET`（缺省回落机器人密钥 `QQ_BOT_CLIENT_SECRET`）按**十六进制**取前 32 字节
+     作为 Ed25519 种子；不是合法十六进制时退化为 `sha256(secret)` 并在日志里标注 `seedSource`，
+     便于真机联调时判断是不是密钥格式不对；
+  5. **先回 ACK、再串行处理**：回调里先返回 `{op:12,d:{}}`，事件进队列按接收顺序串行处理，
+     避免我们发卡片耗时导致平台超时重推、进而重复处理；单条事件抛错只记日志，不影响后续；
+  6. **HTTP 实现用 Fastify**（用户选择）：顺带为 Phase 2 的 Web 后台（登录鉴权 / 管理 API）打底。
+- 理由：Webhook 是「平台推给我们」的模型，必须自己兜住验签与 ACK 超时；把协议差异关在一个适配器里，
+  事件处理链、路由、卡片、命令都不需要知道事件是从哪条通道来的。
+- 影响：新增 `src/adapters/webhookEventGateway.ts`、`src/adapters/qqWebhookSignature.ts`、
+  依赖 `fastify`、`config.ts`（`EVENT_MODE` / `WEBHOOK_*` 五个设置）、`main.ts`（按模式装配 + 启动日志）。
+  测试：`test/webhookSignature.test.ts`（派生/自签自验/篡改拒绝/握手）、
+  `test/webhookGateway.test.ts`（真实端口 + 签名请求：握手、分发、401、400、乱序容错）、
+  `test/config.test.ts`（五个设置与回落）。
+  **真机核对点**：回调体字段名、ACK 响应体、`X-Signature-*` 头名与「timestamp+body」拼接顺序、
+  以及密钥是否需要十六进制解码 —— 联调时看日志 `webhook gateway listening`（`seedSource` 字段）
+  与 401 记录即可定位。

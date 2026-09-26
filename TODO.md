@@ -185,8 +185,12 @@ Phase 2 → E1、E2、B4、B5、B6；Phase 3 → E3–E5；Phase 4 → D6–D9�
   据此修正 `docs/OPERATIONS.md`：补「必须在仓库根目录启动（`.env`/`data`/`logs` 都是相对路径）」、
   「缺 QQ 凭据时进入 fake 模式并直接退出，可作冒烟验证」与「`pnpm start` 需先 `pnpm build`」。
 - [ ] **D4 真机验收 `ACCEPTANCE.md` J32–J56 + M 组**（P0 · 批次2）外加 B/C 节里的具体确认项。
-- [ ] **D5 Webhook 模式**（P2 · 批次4 · Phase 1 范围）当前代码没有任何 webhook 实现；如需支持，要新增
-  HTTP 接入 + 签名校验，并与 WebSocket 网关二选一装配。
+- [x] **D5 Webhook 模式**（P2 · 批次4 · **已完成（0.17.0）**）新增 `EVENT_MODE=websocket|webhook` 二选一装配：
+  用 Fastify 实现 `WebhookEventGateway`（实现既有 `EventGateway` 接口、复用 `QQOfficialEventMapper` 与 `eventRouter`），
+  `op=13` 回签 URL 校验、`op=0` 按官方 Ed25519 规范验签（`X-Signature-Ed25519` / `X-Signature-Timestamp`，
+  对 `timestamp + rawBody` 验签，失败一律 401），密钥由 `WEBHOOK_SECRET`（缺省回落 `QQ_BOT_CLIENT_SECRET`）派生；
+  先回 ACK 再按序串行处理。配置 5 项：`WEBHOOK_PORT` / `HOST` / `PATH` / `SECRET` + `EVENT_MODE`。
+  决策见 [ADR-0049](./docs/DECISIONS.md)，部署见 [OPERATIONS.md](./docs/OPERATIONS.md)。
 - [ ] **D6 安全审计与依赖更新策略**（P2 · 批次5 · Phase 4）`pnpm audit` 周期化 + 依赖升级与回归流程；
   产出「安全与合规检查清单」（Phase 4 退出条件之一）。
 - [ ] **D7 个人数据删除能力**（P2 · 批次5 · Phase 4）过期数据清理已有；按用户删除 / 导出个人数据未做。

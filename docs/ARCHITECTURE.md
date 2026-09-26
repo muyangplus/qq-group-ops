@@ -26,13 +26,15 @@
 ```text
 QQ 官方开放平台
       │
-      │ WebSocket 已实现 / Webhook 预留
+      │ WebSocket（默认）/ Webhook（§D5，`EVENT_MODE` 二选一）
       ▼
 QQ Group Ops 官方接入层
   ├── adapters/eventGateway.ts     事件网关接口
   ├── adapters/fakeEventGateway.ts 测试网关
   ├── adapters/webSocketGateway.ts WebSocket 网关骨架
   ├── adapters/reconnectingWebSocketGateway.ts 自动重连网关
+  ├── adapters/webhookEventGateway.ts Webhook 回调（Fastify，Ed25519 验签 + 先回 ACK）
+  ├── adapters/qqWebhookSignature.ts Ed25519 密钥派生 / 验签 / 握手下签名
   ├── adapters/eventMapper.ts      通用事件映射器
   ├── adapters/qqOfficialEventMapper.ts 官方事件映射器
   ├── adapters/standardWebSocketFactory.ts 标准 WebSocket 工厂
@@ -151,9 +153,9 @@ Web 管理 API + 管理后台（Phase 2）
 
 ```text
 QQ 官方开放平台
-      │ WebSocket / Webhook
+      │ WebSocket / Webhook（§D5 二选一，EVENT_MODE）
       ▼
-官方接入层（Phase 1 实现）
+官方接入层（Phase 1 实现：WebSocket 网关 / Webhook 回调，共用事件映射器）
       │
       ▼
 QQ Group Ops 核心服务

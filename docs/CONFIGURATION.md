@@ -39,6 +39,11 @@ cp .env.example .env
 | `QQ_BOT_TOKEN` | 否 | 已有人工 token；填写后不再自动获取与刷新 |
 | `QQ_BOT_SANDBOX` | 否 | 是否使用沙箱环境，默认 `false` |
 | `QQ_BOT_CACHE_FILE` | 否 | access token 与网关地址缓存文件，默认 `data/qq-bot-cache.json`；留空则只用内存缓存 |
+| `EVENT_MODE` | 否 | 事件通道：`websocket`（默认，官方长连接，无需公网入口）/ `webhook`（官方回调推送到本服务，§D5）；**二选一**，同时开会重复消费事件 |
+| `WEBHOOK_PORT` | 否 | 仅 webhook 模式：监听端口，默认 `3000`（通常由反向代理把 443 转发到这里） |
+| `WEBHOOK_HOST` | 否 | 仅 webhook 模式：监听地址，默认 `127.0.0.1`（只让本机反代访问）；确需直接暴露才用 `0.0.0.0` |
+| `WEBHOOK_PATH` | 否 | 仅 webhook 模式：回调路径，默认 `/webhook/qq`，**必须与开放平台后台填写的一致** |
+| `WEBHOOK_SECRET` | 否 | 仅 webhook 模式：回调签名密钥（Ed25519 种子）；留空则复用 `QQ_BOT_CLIENT_SECRET` |
 
 ## 限流与重连
 

@@ -10,6 +10,27 @@
 （暂无未发布改动）
 
 
+## [0.17.0] - 2026-09-26
+
+### 新增
+
+- **Webhook 事件通道（§D5）**：新增 `EVENT_MODE=websocket|webhook`（默认 `websocket`，**二选一**装配）。
+  `webhook` 模式用 Fastify 起一条回调服务，按官方 Ed25519 规范验签（`X-Signature-Ed25519` /
+  `X-Signature-Timestamp`，签名内容 = `timestamp + rawBody`，失败一律 401），
+  `op=13` 的 URL 校验握手用私钥回签 `event_ts + plain_token`；
+  收到事件**先回 ACK 再按接收顺序串行处理**（避免发卡片耗时导致平台超时重推），
+  事件映射与路由复用同一套 `QQOfficialEventMapper` / `eventRouter`（按钮回调的 REST 与通道无关）。
+- 新增配置：`WEBHOOK_PORT`（默认 3000）、`WEBHOOK_HOST`（默认 `127.0.0.1`）、
+  `WEBHOOK_PATH`（默认 `/webhook/qq`）、`WEBHOOK_SECRET`（缺省回落 `QQ_BOT_CLIENT_SECRET`）。
+- 新增依赖 `fastify`（顺带为 Phase 2 的 Web 后台打底）。
+
+### 备注
+
+- **真机核对点**：回调体字段名、ACK 响应体、`X-Signature-*` 头名与拼接顺序、密钥是否十六进制 ——
+  联调时看 `webhook gateway listening`（`seedSource` 字段）与 401 日志即可定位；决策见 **ADR-0049**。
+- 部署要点（公网 HTTPS + 反向代理 + **单实例**）与排查表见 `docs/OPERATIONS.md`「事件通道」。
+
+
 ## [0.16.0] - 2026-09-26
 
 ### 变更
@@ -525,6 +546,7 @@
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
 [Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.2...HEAD
+[0.17.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.15.0...v0.15.1
