@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+（暂无未发布改动）
+
+
+## [0.15.2] - 2026-09-26
+
 ### 修复
 
 - **「写理由提交」按钮把命令直接发出去了**（真机反馈）：指令按钮默认 `enter: true`，单聊客户端点击即发送，
@@ -497,6 +502,7 @@
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
 [Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.2...HEAD
+[0.15.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.2...v0.15.0
 [0.14.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.1...v0.14.2
