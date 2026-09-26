@@ -777,6 +777,25 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 - `clear`（也接受 `清空`、`默认`、`reset`）表示清空关键词；
 - 修改立即生效。
 
+> **别和「入群答案正则」搞混**：本节的 `regexRules` 是**内容审核正则**（命中后按「违规处理」处罚）；
+> 入群答案判定用的是另一个字段 `joinAnswerPattern`（`/rules set joinAnswerPattern <正则>`，决定通过 / 转人工）。
+> 两者报错文案现在会分别写明「内容审核正则」/「入群答案正则」。
+
+### 2.0.1 内容审核正则（`regexRules`）
+
+```text
+/rules add regex (?:\+?86)?1[3-9]\d{9}     # 追加一条（命中即按「违规处理」执行）
+/rules del regex 2                         # 按序号删除
+/rules set regex 广告、刷屏                # 整组替换（只用顿号/换行分隔，避免拆坏 a{1,3}）
+```
+
+- 上限：**50 条**（`RULE_LIST_MAX_COUNT`），单条 ≤ **200** 字（`RULE_REGEX_MAX_LENGTH`）；
+- 匹配标志固定 **`iu`**：默认**不区分大小写** + Unicode 模式；
+  ⚠️ 因此**不要写 `(?i)`**（那是 PCRE/Python 的内联标志，JS 会报 `Invalid group`），直接去掉即可；
+  写错时报错会给出中文提示 + 原始报错（含 pattern 本身，便于当场对照修改）；
+- 与关键词共用同一条链路：也是 `RuleEngine`、同样走「违规处理」多选动作、同样写 `moderation:*` 审计；
+- 非法内容读库时会被**静默跳过**（配置可能来自旧数据/手工改库），所以改完记得用 `/rules` 看是否生效。
+
 ### 2.1 学院 / 年级名单筛选
 
 「名单筛选」子卡从**班级库**出按钮点选（学院每页 4 个、年级 22–26 一行），
