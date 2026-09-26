@@ -99,6 +99,11 @@ export class AppealService {
     );
   }
 
+  /** 全部待处理申诉（申诉值班轮转服务按它推进转派）。 */
+  public listPending(): AppealRecord[] {
+    return this.all().filter((appeal) => appeal.status === "pending");
+  }
+
   public listForUser(userId: string, limit = 10): AppealRecord[] {
     return this.all()
       .filter((appeal) => appeal.userId === userId)

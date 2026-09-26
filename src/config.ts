@@ -60,6 +60,19 @@ export interface Settings {
    */
   activityRemindIntervalMs: number;
   /**
+   * 申诉「值班」单人持有时间（分钟，`APPEAL_HOLD_MINUTES`，默认 15）。
+   *
+   * 申诉默认通知**所有管理员**，审核员之间**轮单**（一次只通知一位）；
+   * 超过这个时间仍未处理，自动转给下一位审核员；`0` = 不自动转派（只通知第一位）。
+   */
+  appealHoldMinutes: number;
+  /**
+   * 申诉值班超时扫描间隔（`APPEAL_FORWARD_INTERVAL_MS`，默认 60000）。
+   *
+   * `0` = 关闭扫描（等价于不自动转派）；精度即轮询间隔。
+   */
+  appealForwardIntervalMs: number;
+  /**
    * 活动统计图片的字体下载地址（`ACTIVITY_STATS_FONT_URL`）。
    *
    * 系统已有中文字体（Windows 雅黑 / Linux Noto CJK 等）时不会用到；
@@ -208,6 +221,11 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     ),
     activityRemindIntervalMs: asNonNegativeInt(
       env.ACTIVITY_REMIND_INTERVAL_MS,
+      60_000,
+    ),
+    appealHoldMinutes: asNonNegativeInt(env.APPEAL_HOLD_MINUTES, 15),
+    appealForwardIntervalMs: asNonNegativeInt(
+      env.APPEAL_FORWARD_INTERVAL_MS,
       60_000,
     ),
     activityStatsFontUrl: asText(

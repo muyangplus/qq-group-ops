@@ -237,11 +237,13 @@ export function createRuntime(
       identityMap.listGroups().map((group) => group.officialId),
   });
   // §B7/B8 处罚 / 申诉私信卡片：复用入群申请推送的发送通道与订阅表（频道 `punish`）。
+  // §B8 申诉派发口径：管理员全部通知，审核员轮单（超时由 AppealWatcher 转下一位）。
   const moderationNotifier = new ModerationNotifier({
     notifications,
     permissions,
     groupLabel: (groupId) => display.group(groupId),
     userLabel: (userId) => display.user(userId),
+    appealHoldMs: settings.appealHoldMinutes * 60_000,
   });
   const punishments = new PunishmentService(api, blacklist, {
     repository: repositories.punishments,

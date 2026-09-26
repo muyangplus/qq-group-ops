@@ -11,6 +11,7 @@ import { attachGateway } from "./gatewayRunner.js";
 import { connectPersistence } from "./persistence.js";
 import { createRuntime } from "./runtime.js";
 import { ActivityReminderService } from "./services/activityReminder.js";
+import { AppealWatcher } from "./services/appealWatcher.js";
 import { RetentionService } from "./services/retention.js";
 
 /** 启动阶段命中限流时的固定冷却时间。 */
@@ -86,6 +87,14 @@ async function main(): Promise<void> {
     intervalMs: settings.activityRemindIntervalMs,
   });
 
+  // §B8 申诉值班轮转：超时未处理的申诉转给下一位审核员（管理员本来就全通知）
+  const appealWatcher = new AppealWatcher(
+    runtime.moderationNotifier,
+    runtime.appeals,
+    runtime.punishments,
+    { intervalMs: settings.appealForwardIntervalMs },
+  );
+
   log.info("qq-group-ops Node.js runtime");
   log.info("configuration loaded", {
     qqCredentialsConfigured: hasQqCredentials(settings),
@@ -93,6 +102,7 @@ async function main(): Promise<void> {
     databaseDriver: persistence?.driver ?? "memory",
     rawMessageRetentionDays: settings.rawMessageRetentionDays,
     auditLogRetentionDays: settings.auditLogRetentionDays,
+    appealHoldMinutes: settings.appealHoldMinutes,
     logLevel: settings.logLevel,
     logFile: settings.logFile,
   });
@@ -109,6 +119,7 @@ async function main(): Promise<void> {
   retention.start();
   await activityReminder.runOnce();
   activityReminder.start();
+  appealWatcher.start();
 
   const gateway = instrumentEventGateway(
     new QQOfficialGateway({

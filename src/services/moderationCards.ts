@@ -239,6 +239,7 @@ export function buildAppealReceiptCard(input: {
                 id: "appeal-again",
                 label: "补充理由",
                 command: `/appeal ${record} `,
+                fillOnly: true,
                 unsupportTips: `请直接发送 /appeal ${record} <理由>`,
               },
             ],
@@ -297,6 +298,8 @@ export function buildAppealGuideCard(input: {
                 id: "appeal",
                 label: "写理由提交",
                 command: `/appeal ${record} `,
+                // 只填入输入框，用户补完理由再自己发送（否则客户端直接发出去、理由没地方写）
+                fillOnly: true,
                 unsupportTips: `请直接发送 /appeal ${record} <理由>`,
               },
             ],
@@ -326,6 +329,63 @@ export function excerptLines(excerpt: string): string[] {
     return ["**原文**：（未保留原文）", ""];
   }
   return ["**原文**：", `> ${escapeCardText(text)}`, ""];
+}
+
+/**
+ * 申诉处理结果卡（私信给**申诉人本人**）。
+ *
+ * §B8 真机反馈：此前只有审核员看到处理结果，申诉人永远收不到通知 —— 现在通过 / 驳回都发这张。
+ */
+export function buildAppealDecisionCard(input: {
+  appealId: string;
+  recordId: string;
+  groupLabel: string;
+  approved: boolean;
+  reviewerLabel: string;
+  note: string;
+  createdAt: Date;
+}): RichMessage {
+  const lines = [
+    `**申诉**：#${input.appealId}`,
+    `**处罚记录**：#${input.recordId}`,
+    `**群**：${escapeCardText(input.groupLabel)}`,
+    `**结果**：${input.approved ? "已通过（处罚已解除）" : "已驳回（处罚保持不变）"}`,
+    `**处理人**：${escapeCardText(input.reviewerLabel)}`,
+    ...(input.note.trim().length > 0
+      ? [`**处理备注**：${escapeCardText(input.note)}`]
+      : []),
+    "",
+    `**时间**：${formatTimestamp(input.createdAt)}`,
+  ];
+  return renderCard({
+    title: input.approved ? "申诉已通过" : "申诉已驳回",
+    lines,
+  });
+}
+
+/**
+ * 申诉处理结果同步卡（私信给**其他订阅了处罚通知的审核员**）。
+ *
+ * 目的：一个人处理完之后，其余人不该再重复处理，也不该完全不知情。
+ * 因此不写按钮 —— 只做「状态同步」。
+ */
+export function buildAppealHandledNoticeCard(input: {
+  appealId: string;
+  recordId: string;
+  groupLabel: string;
+  appellantLabel: string;
+  approved: boolean;
+  reviewerLabel: string;
+}): RichMessage {
+  return renderCard({
+    title: "申诉已处理",
+    lines: [
+      `**申诉**：#${input.appealId}（处罚 #${input.recordId}）`,
+      `**群**：${escapeCardText(input.groupLabel)}`,
+      `**申诉人**：${escapeCardText(input.appellantLabel)}`,
+      `**结果**：${input.approved ? "已通过（处罚已解除）" : "已驳回（处罚保持不变）"} · 由 ${escapeCardText(input.reviewerLabel)} 处理`,
+    ],
+  });
 }
 
 /** 通用处理回执卡（动作结果 + 返回入口）。 */

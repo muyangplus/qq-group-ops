@@ -323,9 +323,11 @@ export class NotificationService {
     channel: NotifyChannel;
     /** 去重 id，建议带频道前缀，例如 `punish:#ABC123`。 */
     dedupeId: string;
+    /** 只推给这些人（缺省 = 该群该频道的全部订阅者；用于「值班轮转」只推一人）。 */
+    recipients?: readonly string[] | undefined;
     cardFor: (recipientId: string) => RichMessage;
   }): Promise<PushSummary> {
-    const recipients = this.subscribersFor(input.groupId, input.channel);
+    const recipients = input.recipients ?? this.subscribersFor(input.groupId, input.channel);
     const summary = emptySummary(recipients.length);
     if (recipients.length === 0) {
       log.debug("no subscribers for push", {

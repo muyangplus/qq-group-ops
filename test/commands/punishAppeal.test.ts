@@ -14,6 +14,7 @@ import {
   blacklist,
   configStore,
   notifications,
+  privateText,
   punishments,
   service,
 } from "../helpers/adminCommandsHarness.js";
@@ -201,6 +202,44 @@ describe("AdminCommandService · blacklist / punish / appeal", () => {
     const other = await createPunishment("other");
     const denied = await service.appealCallbackCard("submit", [other.recordId], "member");
     expect(denied).toBeUndefined();
+  });
+
+  it("blocks repeat submissions while an appeal is pending", async () => {
+    const record = await createPunishment("member");
+
+    const first = await service.handle("g1", "member", `/appeal #${record.recordId} 误判`);
+    expect(first.ok).toBe(true);
+
+    // 再提交：被拦下（否则被处罚人可以反复刷单骚扰审核员）
+    const again = await service.handle("g1", "member", `/appeal #${record.recordId} 再申一次`);
+    expect(again.ok).toBe(false);
+    expect(privateText("member")).toContain("已有待处理申诉");
+
+    // 私信卡片的「直接提交」按钮同样被拦
+    const viaButton = await service.appealCallbackCard("submit", [record.recordId], "member");
+    expect(viaButton?.ok).toBe(false);
+    expect(viaButton?.text).toContain("已有待处理");
+
+    // 群内「我要申诉」也不再重复发引导卡
+    await service.appealCallbackCard("new", [record.recordId], "member");
+    expect(privateText("member")).toContain("已有待处理申诉");
+
+    // 全程只有一条待处理申诉，理由没被覆盖
+    const pending = appeals.listPending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.reason).toBe("误判");
+  });
+
+  it("notifies the appellant when the appeal is decided", async () => {
+    notifications.subscribe("mod", "__all__", "punish");
+    const record = await createPunishment("member");
+    await service.handle("g1", "member", `/appeal #${record.recordId} 误判`);
+    const appeal = appeals.pendingByPunishment(record.recordId)[0]!;
+
+    // 驳回 → 申诉人自己收到结果
+    await service.appealCallbackCard("reject", [appeal.appealId], "mod");
+    expect(privateText("member")).toContain("申诉已驳回");
+    expect(privateText("member")).toContain("驳回");
   });
 
   it("adds an appeal button to the keyword warning card and records the punishment", async () => {

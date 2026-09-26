@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { AppealService } from "../src/services/appeals.js";
+import { AppealWatcher } from "../src/services/appealWatcher.js";
 import { AuditLogStore } from "../src/services/audit.js";
 import { BlacklistService } from "../src/services/blacklist.js";
 import { buildAppealGuideCard } from "../src/services/moderationCards.js";
@@ -13,14 +14,29 @@ import { PunishmentService } from "../src/services/punishments.js";
 /**
  * §B7 处罚记录 + 卡片动作，§B8 申诉记录。
  */
-function setup(options: { listBoundGroups?: () => string[] } = {}) {
+function setup(
+  options: {
+    listBoundGroups?: () => string[];
+    /** §B8 派发口径：管理员全部通知、审核员轮单。 */
+    admins?: readonly string[];
+    moderators?: readonly string[];
+    appealHoldMs?: number;
+    now?: () => number;
+    /** 申诉短码随机源（默认全 0，便于断言；多条申诉的用例要传递增源避免撞码）。 */
+    appealRandomInt?: (max: number) => number;
+  } = {},
+) {
   const api = new FakeQQOfficialAPI();
+  const admins = options.admins ?? ["root"];
+  const moderators = options.moderators ?? ["mod"];
   const permissions = new PermissionService({
-    superAdminIds: new Set(["root"]),
-    moderatorIds: new Map([["g1", new Set(["mod"])]]),
+    superAdminIds: new Set(admins),
+    moderatorIds: new Map([["g1", new Set(moderators)]]),
   });
   const notifications = new NotificationService(api, permissions);
-  notifications.subscribe("mod", NOTIFY_SCOPE_ALL, "punish");
+  for (const userId of [...admins, ...moderators]) {
+    notifications.subscribe(userId, NOTIFY_SCOPE_ALL, "punish");
+  }
   const blacklist = new BlacklistService(api, {
     auditLog: new AuditLogStore(),
     listBoundGroups: options.listBoundGroups ?? (() => ["g1"]),
@@ -30,13 +46,28 @@ function setup(options: { listBoundGroups?: () => string[] } = {}) {
     permissions,
     groupLabel: (groupId) => groupId,
     userLabel: (userId) => userId,
+    ...(options.appealHoldMs !== undefined
+      ? { appealHoldMs: options.appealHoldMs }
+      : {}),
+    ...(options.now !== undefined ? { now: options.now } : {}),
   });
   const punishments = new PunishmentService(api, blacklist, {
     notifier,
     randomInt: () => 0,
   });
-  const appeals = new AppealService({ randomInt: () => 0 });
+  const appeals = new AppealService({
+    ...(options.appealRandomInt !== undefined
+      ? { randomInt: options.appealRandomInt }
+      : { randomInt: () => 0 }),
+  });
   return { api, permissions, notifications, blacklist, notifier, punishments, appeals };
+}
+
+/** 收到「申诉通知」卡的人（按发送顺序）。 */
+function appealRecipients(api: FakeQQOfficialAPI): string[] {
+  return api.sentPrivateMessages
+    .filter((message) => String(message.markdown ?? "").includes("申诉通知"))
+    .map((message) => String(message.userOpenid));
 }
 
 describe("PunishmentService", () => {
@@ -112,6 +143,17 @@ describe("PunishmentService", () => {
     // 主按钮是回调（被禁言也能点），另有预填指令的「写理由提交」
     expect(JSON.stringify(guide.keyboard)).toContain("cb:appeal:submit");
     expect(JSON.stringify(guide.keyboard)).toContain("写理由提交");
+    const guideButtons = (guide.keyboard?.content.rows ?? []).flatMap(
+      (row) => row.buttons,
+    );
+    // §B8 真机反馈：「写理由提交」必须只填入输入框（`enter: false`），
+    // 否则客户端会把命令直接发出去，用户根本没机会补理由
+    expect(
+      guideButtons.find((button) => button.label === "写理由提交")?.action,
+    ).toMatchObject({ type: 2, enter: false });
+    expect(
+      guideButtons.find((button) => button.label === "直接提交")?.action,
+    ).toMatchObject({ type: 1 });
     // 1:1 私信卡片不带 permission.specifyUserIds（真机出现「无权限操作」）
     expect(JSON.stringify(guide.keyboard)).not.toContain("specifyUserIds");
     // 有按钮时不再重复写用法文字
@@ -135,6 +177,142 @@ describe("PunishmentService", () => {
     });
     expect(fallback.keyboard).toBeUndefined();
     expect(String(fallback.markdown)).toContain(`/appeal #${kept.recordId}`);
+  });
+
+  it("notifies every admin but only one moderator, then rotates on timeout", async () => {
+    let clock = 1_000;
+    let appealSeed = 0;
+    const { api, appeals, notifier, punishments } = setup({
+      admins: ["root"],
+      moderators: ["mod", "mod2"],
+      appealHoldMs: 60_000,
+      now: () => clock,
+      appealRandomInt: () => appealSeed++,
+    });
+    const record = await punishments.create({
+      groupId: "g1",
+      userId: "u1",
+      ruleReason: "广告",
+      actions: {
+        recalled: false,
+        muted: true,
+        muteDurationSeconds: 600,
+        kicked: false,
+        blacklist: "",
+      },
+    });
+
+    // 第一条：管理员全通知（root）+ 轮到的审核员（mod）
+    const first = await appeals.submit({ punishment: record, userId: "u1", reason: "一" });
+    await notifier.notifyAppeal(first.appeal, record);
+    expect(appealRecipients(api)).toEqual(["root", "mod"]);
+    expect(notifier.appealHolder(first.appeal.appealId)).toBe("mod");
+
+    // 第二条：群内游标前进，轮到 mod2（mod 不再收到）
+    const second = await appeals.submit({ punishment: record, userId: "u2", reason: "二" });
+    await notifier.notifyAppeal(second.appeal, record);
+    expect(appealRecipients(api).slice(2)).toEqual(["root", "mod2"]);
+
+    // 未到持有时间：不转派
+    clock += 59_000;
+    expect(await notifier.forwardAppealIfStale(first.appeal, record)).toBe(false);
+
+    // 超过持有时间：转给下一位审核员
+    clock += 2_000;
+    expect(await notifier.forwardAppealIfStale(first.appeal, record)).toBe(true);
+    expect(notifier.appealHolder(first.appeal.appealId)).toBe("mod2");
+
+    // 审核员轮完一圈：不再无限转派
+    clock += 61_000;
+    expect(await notifier.forwardAppealIfStale(first.appeal, record)).toBe(false);
+  });
+
+  it("syncs the decision to other reviewers and skips the handler", async () => {
+    const { api, appeals, notifier, punishments } = setup({
+      admins: ["root"],
+      moderators: ["mod"],
+    });
+    const record = await punishments.create({
+      groupId: "g1",
+      userId: "u1",
+      actions: {
+        recalled: false,
+        muted: true,
+        muteDurationSeconds: 600,
+        kicked: false,
+        blacklist: "",
+      },
+    });
+    const submitted = await appeals.submit({
+      punishment: record,
+      userId: "u1",
+      reason: "误判",
+    });
+    await notifier.notifyAppeal(submitted.appeal, record);
+    api.sentPrivateMessages.length = 0;
+
+    await notifier.notifyAppealHandled(submitted.appeal, record, true, "mod");
+    const notice = api.sentPrivateMessages.find(
+      (message) => String(message.markdown ?? "").includes("申诉已处理"),
+    );
+    expect(notice?.userOpenid).toBe("root");
+    expect(String(notice?.markdown)).toContain("已通过");
+    // 处理人自己不再收同步卡
+    expect(
+      api.sentPrivateMessages.some((message) => message.userOpenid === "mod"),
+    ).toBe(false);
+    // 值班记录释放，不会内存泄漏
+    expect(notifier.appealHolder(submitted.appeal.appealId)).toBeUndefined();
+  });
+
+  it("forwards a stale appeal to the next moderator through AppealWatcher", async () => {
+    let clock = 1_000;
+    let appealSeed = 0;
+    const { api, appeals, notifier, punishments } = setup({
+      admins: [],
+      moderators: ["mod", "mod2"],
+      appealHoldMs: 60_000,
+      now: () => clock,
+      appealRandomInt: () => appealSeed++,
+    });
+    const record = await punishments.create({
+      groupId: "g1",
+      userId: "u1",
+      actions: {
+        recalled: false,
+        muted: true,
+        muteDurationSeconds: 600,
+        kicked: false,
+        blacklist: "",
+      },
+    });
+    const submitted = await appeals.submit({
+      punishment: record,
+      userId: "u1",
+      reason: "误判",
+    });
+    // 没有管理员订阅时，第一位审核员也会收到（否则没人处理）
+    await notifier.notifyAppeal(submitted.appeal, record);
+    expect(appealRecipients(api)).toEqual(["mod"]);
+    api.sentPrivateMessages.length = 0;
+
+    const watcher = new AppealWatcher(notifier, appeals, punishments, {
+      intervalMs: 0,
+    });
+    expect(await watcher.runOnce()).toBe(0);
+    clock += 61_000;
+    expect(await watcher.runOnce()).toBe(1);
+    expect(appealRecipients(api)).toEqual(["mod2"]);
+
+    // 处理掉之后不再转派
+    await appeals.decide({
+      code: submitted.appeal.appealId,
+      reviewerId: "mod2",
+      status: "rejected",
+      note: "已驳回",
+    });
+    clock += 61_000;
+    expect(await watcher.runOnce()).toBe(0);
   });
 
   it("does not push the same punishment twice", async () => {

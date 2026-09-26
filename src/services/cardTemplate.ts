@@ -42,6 +42,14 @@ export interface CardButton {
   /** 指令按钮（`action.type = 2`）：点击后发送该指令文本。 */
   command?: string | undefined;
   /**
+   * 指令按钮专用：`true` = 点击后**只把指令填进输入框**，由用户补完参数再自己发送
+   * （官方 `enter: false`）。默认 `false`（单聊客户端会自动发送，群聊本来就是填入）。
+   *
+   * 需要用户补自由文本的动作（如申诉理由）必须用 `fillOnly: true`，
+   * 否则客户端会把预填内容**直接发出去**，用户根本没机会补理由（真机反馈）。
+   */
+  fillOnly?: boolean | undefined;
+  /**
    * 回调按钮（`action.type = 1`）：点击后官方推送 `INTERACTION_CREATE`，
    * `data` 原样回传给机器人（`data.resolved.button_data`）。
    *
@@ -216,8 +224,9 @@ function toKeyboardButton(
           ...(button.permission !== undefined
             ? { permission: button.permission }
             : {}),
-          // 单聊会自动发送（客户端 8983+）；群聊里点击只是把指令填进输入框。
-          enter: true,
+          // `enter: false` = 只填入输入框、不发送（留给用户补参数）；
+          // `reply: false` = 不把指令当被动回复的 msg_id。
+          enter: button.fillOnly !== true,
           reply: false,
           unsupportTips: button.unsupportTips ?? DEFAULT_UNSUPPORT_TIPS,
           ...(button.modal !== undefined ? { modal: button.modal } : {}),

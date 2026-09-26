@@ -1,4 +1,6 @@
-import { renderCard } from "../cardTemplate.js";
+import { renderCard, escapeCardText } from "../cardTemplate.js";
+import type { RichMessage } from "../richMessages.js";
+import type { AppealRecord } from "../../db/appealRepository.js";
 import type { PunishmentRecord } from "../../db/punishmentRepository.js";
 import { getLogger } from "../../core/logger.js";
 import type { AdminCommandContext } from "./context.js";
@@ -27,6 +29,60 @@ export const APPEAL_USAGE = [
 ].join("\n");
 
 const log = getLogger("appeal-commands");
+
+/**
+ * 已有待处理申诉时的提示卡（回给当事人本人）。
+ *
+ * §B8 真机反馈：允许无限次提交会骚扰审核员；只要还有待处理申诉，就不接受重复提交 / 补充理由，
+ * 等到审核员处理（通过 / 驳回）后才能再提交。
+ */
+function duplicateAppealCard(pending: AppealRecord): RichMessage {
+  return renderCard({
+    title: "已有待处理申诉",
+    lines: [
+      `**申诉**：#${pending.appealId}`,
+      `**处罚记录**：#${pending.punishmentId}`,
+      `**已提交理由**：${pending.reason.length > 0 ? escapeCardText(pending.reason) : "（未填写）"}`,
+      "",
+      "审核员还没处理，处理结果会私信通知你；在那之前不能重复提交或补充理由。",
+    ],
+  });
+}
+
+/**
+ * 申诉出结果后的收尾（§B8）：
+ *
+ * 1. **通知申诉人本人**（通过 / 驳回 + 处理人 + 备注）——真机反馈此前只有审核员知道结果；
+ * 2. **同步给其他订阅者**，避免别人再重复处理。
+ */
+async function afterAppealDecided(
+  ctx: AdminCommandContext,
+  appeal: AppealRecord,
+  punishment: PunishmentRecord | undefined,
+  approved: boolean,
+  reviewerId: string,
+  note: string,
+): Promise<void> {
+  const notifier = ctx.moderationNotifier;
+  if (!notifier || !punishment) {
+    return;
+  }
+  const sent = await notifier.notifyAppealDecision(
+    appeal,
+    punishment,
+    approved,
+    reviewerId,
+    note,
+  );
+  if (!sent.ok) {
+    log.warn("appeal decision notify failed", {
+      appealId: appeal.appealId,
+      userId: appeal.userId,
+      error: sent.detail,
+    });
+  }
+  await notifier.notifyAppealHandled(appeal, punishment, approved, reviewerId);
+}
 
 /**
  * 建一条**无理由**申诉并通知审核员（§B8 降级路径与「直接提交」按钮共用）。
@@ -97,6 +153,19 @@ export async function handleAppeal(
   }
   if (record.userId !== userId) {
     return { ok: false, text: "只能对自己的处罚提交申诉。" };
+  }
+  // §B8：只要还有待处理申诉，就不接受重复提交 / 补充理由（避免刷单骚扰审核员）；
+  // 审核员处理（通过 / 驳回）之后才能再提交。
+  const pending = appeals.pendingFor(record.recordId, userId);
+  if (pending) {
+    const card = duplicateAppealCard(pending);
+    const sent = await notifier.notifyAppellant(userId, card);
+    return {
+      ok: false,
+      text: sent.ok ? "结果已私信发送。" : card.text,
+      rich: card,
+      ...(groupId !== undefined ? { silent: true } : {}),
+    };
   }
   const reason = parts.slice(2).join(" ");
   const result = await appeals.submit({ punishment: record, userId, reason });
@@ -184,6 +253,12 @@ export async function appealCallbackCard(
       // 只有当事人能申诉；无权时不产生任何群消息（避免在群里暴露申诉行为）
       return undefined;
     }
+    // §B8：还有待处理申诉时不再重复发引导卡（否则被处罚人可以反复点、骚扰审核员）
+    const pending = appeals.pendingFor(record.recordId, userId);
+    if (pending) {
+      await notifier.notifyAppellant(userId, duplicateAppealCard(pending));
+      return undefined;
+    }
     const sent = await notifier.notifyAppellant(
       userId,
       notifier.appealGuide(record, userId),
@@ -212,6 +287,12 @@ export async function appealCallbackCard(
       // 只有当事人能申诉；无权时不产生任何消息
       return undefined;
     }
+    // §B8：已有待处理申诉 → 不再建新单（回执卡上会说明，避免刷单骚扰审核员）
+    const pending = appeals.pendingFor(record.recordId, userId);
+    if (pending) {
+      const card = duplicateAppealCard(pending);
+      return { ok: false, text: card.text, rich: card };
+    }
     // 回调一键提交：不经过客户端发送，所以被禁言也能用；之后可在回执卡上「补充理由」
     return submitReasonlessAppeal(ctx, record, userId, false);
   }
@@ -238,6 +319,7 @@ export async function appealCallbackCard(
         status: "rejected",
         note: "已驳回",
       });
+      await afterAppealDecided(ctx, appeal, punishment, false, userId, "已驳回");
       const card = renderCard({
         title: "申诉已驳回",
         lines: [
@@ -245,7 +327,6 @@ export async function appealCallbackCard(
           `**处罚记录**：#${appeal.punishmentId}`,
           `**处理人**：${notifier.userLabelOf(userId)}`,
         ],
-        footer: ["处罚保持不变。"],
       });
       return { ok: true, text: card.text, rich: card };
     }
@@ -254,12 +335,14 @@ export async function appealCallbackCard(
       actorId: userId,
       note: "通过申诉",
     });
+    const note = released?.text ?? "已通过申诉";
     await appeals.decide({
       code: appeal.appealId,
       reviewerId: userId,
       status: "accepted",
-      note: released?.text ?? "已通过申诉",
+      note,
     });
+    await afterAppealDecided(ctx, appeal, punishment, true, userId, note);
     const card = renderCard({
       title: "申诉已通过",
       lines: [
