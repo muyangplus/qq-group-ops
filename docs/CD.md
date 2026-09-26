@@ -86,6 +86,22 @@ pnpm start               # = node dist/main.js；需要班级索引时先 pnpm c
 
 ## 4. 安全审计清单
 
+### 4.0 Dependabot PR 怎么审（对应 TODO D6）
+
+Dependabot 每周会给 npm 依赖与 GitHub Actions 开分组 PR（`.github/dependabot.yml`）。判定规则：
+
+| PR 类型 | 怎么处理 |
+|---|---|
+| **devDependencies**（vitest / yaml / tsx / typescript 等） | CI（typecheck + 全量测试）全绿即可合并；major 也可合，但要看 CHANGELOG 有无行为变更 |
+| **`@types/node`** | **大版本必须与运行时 Node 一致**（`engines.node` 与 CI matrix 都是 24）→ major 已在配置里 `ignore`；小版本可以合。理由：类型升到 26 后，类型检查会放行 Node 24 不存在的 API，属于"过了 CI、线上炸" |
+| **生产依赖**（`pg`、`fastify`） | 合并前看上游 CHANGELOG（尤其 fastify 的 major：插件/路由 API 变更），合并后必须真机跑一遍（机器人能起来 + 收得到事件） |
+| **GitHub Actions：`ci.yml` 里用到的**（checkout / setup-node / pnpm-action-setup） | 由 CI 自动验证 —— PR 上 CI 绿即可合并 |
+| **GitHub Actions：只在 `cd-ftp.yml` 里用到的**（upload/download-artifact、FTP-Deploy-Action） | CI 覆盖不到（CD 只在 Release/手动触发时跑）→ 合并后**手动 `Run workflow` 跑一次**确认能上传；不放心就先不动，需要时再单独升 |
+
+> 想要更严的供应链策略：把 `.github` 里的 `uses:` 钉到 commit SHA（`owner/repo@<40 位 SHA> # vX.Y.Z`），
+> Dependabot 会继续为这些 pin 开 PR；`test/workflows.test.ts` 只要求"钉在版本标签上"，
+> 换成 SHA + 注释同样能通过。
+
 ### 4.1 本仓库已落实（`test/workflows.test.ts` 会守住这些不变量）
 
 - **最小权限**：工作流为 `permissions: contents: read`，不使用 `GITHUB_TOKEN` 的写权限；

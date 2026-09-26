@@ -30,6 +30,9 @@
 
 ### 备注
 
+- **Dependabot 规则**：`@types/node` 的 **major** 更新在 `.github/dependabot.yml` 里被忽略 ——
+  类型大版本必须与运行时 Node 一致（当前 24），否则类型检查会放行 Node 24 不存在的 API。
+  PR 审核口径（dev / 生产依赖 / CI 用到的 Action / 仅 CD 用到的 Action）见 [`docs/CD.md`](docs/CD.md) §4.0。
 - 需要在 GitHub 配置：Secrets `FTP_SERVER` / `FTP_USERNAME` / `FTP_PASSWORD`；
   Variables `FTP_SERVER_DIR`（必须）、`FTP_PROTOCOL` / `FTP_PORT`（可选）；
   Environment `production-ftp`（建议配 required reviewers，并把 FTP secrets 放到 Environment 作用域）。
