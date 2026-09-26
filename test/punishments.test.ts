@@ -88,7 +88,11 @@ describe("PunishmentService", () => {
     const push = api.sentPrivateMessages
       .filter((item) => item.userOpenid === "mod")
       .at(-1);
-    expect(String(push?.markdown)).toContain("**原文**：快来买广告");
+    // §B7：原文是「标签 + 引用段落」，且必须在标题下第一段
+    expect(String(push?.markdown)).toContain("**原文**：\n> 快来买广告");
+    expect(String(push?.markdown).indexOf("**原文**：")).toBeLessThan(
+      String(push?.markdown).indexOf("**群**："),
+    );
 
     const submitted = await appeals.submit({
       punishment: kept,
@@ -96,18 +100,24 @@ describe("PunishmentService", () => {
       reason: "误判",
     });
     const notice = notifier.appealCard(submitted.appeal, kept, "mod");
-    expect(String(notice.markdown)).toContain("**原文**：快来买广告");
+    expect(String(notice.markdown)).toContain("**原文**：\n> 快来买广告");
     expect(notice.keyboard).toBeDefined();
 
     const guide = notifier.appealGuide(kept, "u1");
-    expect(String(guide.markdown)).toContain("**原文**：快来买广告");
+    expect(String(guide.markdown)).toContain("**原文**：\n> 快来买广告");
     expect(guide.keyboard).toBeDefined();
+    // 主按钮是回调（被禁言也能点），另有预填指令的「写理由提交」
+    expect(JSON.stringify(guide.keyboard)).toContain("cb:appeal:submit");
+    expect(JSON.stringify(guide.keyboard)).toContain("写理由提交");
     // 有按钮时不再重复写用法文字
     expect(String(guide.markdown)).not.toContain("/appeal");
 
     const receipt = notifier.appealReceipt(submitted.appeal, kept, false);
-    expect(String(receipt.markdown)).toContain("**原文**：快来买广告");
+    expect(String(receipt.markdown)).toContain("**原文**：\n> 快来买广告");
     expect(receipt.keyboard).toBeDefined();
+    // 当事人卡片不再出现审核员专属的「查看处罚」
+    expect(JSON.stringify(receipt.keyboard)).not.toContain("cb:punish:view");
+    expect(JSON.stringify(guide.keyboard)).not.toContain("cb:punish:view");
 
     // 键盘不可用时（老客户端 / 平台拒绝）引导卡必须给出可复制的等价指令
     const fallback = buildAppealGuideCard({

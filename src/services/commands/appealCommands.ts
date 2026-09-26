@@ -1,4 +1,6 @@
 import { renderCard } from "../cardTemplate.js";
+import type { PunishmentRecord } from "../../db/punishmentRepository.js";
+import { getLogger } from "../../core/logger.js";
 import type { AdminCommandContext } from "./context.js";
 import {
   cardFromText,
@@ -23,6 +25,51 @@ export const APPEAL_USAGE = [
   "  /appeal <#处罚短码> [理由]   对某条处罚提交申诉（只能申诉自己的处罚）",
   "  /appeal list                 查看我提交过的申诉",
 ].join("\n");
+
+const log = getLogger("appeal-commands");
+
+/**
+ * 建一条**无理由**申诉并通知审核员（§B8 降级路径与「直接提交」按钮共用）。
+ *
+ * `replyInGroup` = 私信引导卡发不出去时为 true：此时只能在群里回一条**不含申诉内容**的提示，
+ * 让当事人知道申诉没有丢。回调「直接提交」发生在私信里，`replyInGroup` = false。
+ */
+async function submitReasonlessAppeal(
+  ctx: AdminCommandContext,
+  record: PunishmentRecord,
+  userId: string,
+  replyInGroup: boolean,
+): Promise<CardResult> {
+  const appeals = ctx.appeals!;
+  const notifier = ctx.moderationNotifier!;
+  const result = await appeals.submit({
+    punishment: record,
+    userId,
+    reason: "",
+  });
+  if (!result.updated) {
+    await notifier.notifyAppeal(result.appeal, record);
+  }
+  log.info("reason-less appeal submitted", {
+    punishmentId: record.recordId,
+    appealId: result.appeal.appealId,
+    updated: result.updated,
+    replyInGroup,
+  });
+  if (!replyInGroup) {
+    // 私信里的「直接提交」：回执本身就是回复，还能点「补充理由」
+    const receipt = notifier.appealReceipt(result.appeal, record, result.updated);
+    return { ok: true, text: receipt.text, rich: receipt };
+  }
+  const card = renderCard({
+    title: "申诉已提交",
+    lines: [
+      `<@!${userId}>`,
+      "私信暂时发不出去，已按**无理由**提交申诉，审核员会处理。",
+    ],
+  });
+  return { ok: true, text: card.text, rich: card };
+}
 
 export async function handleAppeal(
   ctx: AdminCommandContext,
@@ -111,8 +158,10 @@ export function appealListCard(
 /**
  * `cb:appeal:*` 回调入口。
  *
- * - `new`：群内警告卡的「我要申诉」按钮 → 只私信引导卡给当事人，**不在群里发任何消息**
- *   （返回 `undefined`，由 CallbackRouter 只回包）；
+ * - `new`：群内处罚卡（或旧卡）的「我要申诉」按钮 → 只私信引导卡给当事人，**不在群里发任何消息**
+ *   （返回 `undefined`，由 CallbackRouter 只回包）；私信发不出去时**降级为直接建单**；
+ * - `submit`：私信引导卡上的「直接提交」（回调，一键建**无理由**单）——
+ *   用回调而不是指令按钮，是因为被禁言的当事人点指令按钮会被 QQ 客户端拦住；
  * - `accept` / `reject`：审核员在申诉卡片上处理。
  */
 export async function appealCallbackCard(
@@ -140,27 +189,31 @@ export async function appealCallbackCard(
       notifier.appealGuide(record, userId),
     );
     if (sent.ok) {
+      log.info("appeal guide sent", {
+        punishmentId: record.recordId,
+        userId,
+      });
       return undefined;
     }
     // §B8 降级：私信不可用（沙箱限制 / 从没私聊过机器人 / 主动消息被关）时，
     // 不能让申诉直接丢掉 —— 直接按**无理由**建单，审核员照常收到申诉通知；
     // 群里只回一条**不含申诉内容**的提示（与 `/whois` 私信失败的口径一致）。
-    const result = await appeals.submit({
-      punishment: record,
+    log.warn("appeal guide failed, submitting reason-less appeal", {
+      punishmentId: record.recordId,
       userId,
-      reason: "",
+      error: sent.detail,
     });
-    if (!result.updated) {
-      await notifier.notifyAppeal(result.appeal, record);
+    return submitReasonlessAppeal(ctx, record, userId, true);
+  }
+
+  if (action === "submit") {
+    const record = punishments.get(args[0]);
+    if (!record || record.userId !== userId) {
+      // 只有当事人能申诉；无权时不产生任何消息
+      return undefined;
     }
-    const card = renderCard({
-      title: "申诉已提交",
-      lines: [
-        `<@!${userId}>`,
-        "私信暂时发不出去，已按**无理由**提交申诉，审核员会处理。",
-      ],
-    });
-    return { ok: true, text: card.text, rich: card };
+    // 回调一键提交：不经过客户端发送，所以被禁言也能用；之后可在回执卡上「补充理由」
+    return submitReasonlessAppeal(ctx, record, userId, false);
   }
 
   if (action === "accept" || action === "reject") {

@@ -66,11 +66,12 @@ export function buildPunishmentNoticeCard(
 ): RichMessage {
   const record = `#${input.recordId}`;
   const lines = [
+    // §B7：原文固定放在标题下第一段（引用段落）
+    ...excerptLines(input.messageExcerpt),
     `**群**：${escapeCardText(input.groupLabel)}`,
     `**当事人**：${escapeCardText(input.userLabel)}`,
     `**处罚记录**：${record}`,
     `**命中规则**：${escapeCardText(input.ruleReason) || "（关键词）"}`,
-    excerptLine(input.messageExcerpt),
     `**执行动作**：${describePunishmentActions(input.actions)}`,
     ...(input.detail ? [`**执行结果**：${escapeCardText(input.detail)}`] : []),
     "",
@@ -167,11 +168,11 @@ export function buildAppealNoticeCard(input: {
   return renderCard({
     title: "申诉通知",
     lines: [
+      ...excerptLines(input.messageExcerpt),
       `**群**：${escapeCardText(input.groupLabel)}`,
       `**申诉人**：${escapeCardText(input.userLabel)}`,
       `**处罚记录**：${record}（申诉 ${appeal}）`,
       `**原处罚**：${describePunishmentActions(input.actions)}`,
-      excerptLine(input.messageExcerpt),
       `**申诉理由**：${escapeCardText(input.reason) || "（未填写）"}`,
       "",
       `**时间**：${formatTimestamp(input.createdAt)}`,
@@ -224,9 +225,9 @@ export function buildAppealReceiptCard(input: {
   return renderCard({
     title: input.updated ? "申诉已更新" : "申诉已提交",
     lines: [
+      ...excerptLines(input.messageExcerpt),
       `**处罚记录**：${record}`,
       `**群**：${escapeCardText(input.groupLabel)}`,
-      excerptLine(input.messageExcerpt),
       `**申诉理由**：${escapeCardText(input.reason) || "（未填写）"}`,
       "",
       "已私信给该群的审核员及以上成员，处理结果会再私信通知你。",
@@ -245,12 +246,6 @@ export function buildAppealReceiptCard(input: {
                 },
                 unsupportTips: `请直接发送 /appeal ${record} <理由>`,
               },
-              callbackButton(
-                "view",
-                "查看处罚",
-                encodeCallback("punish", "view", input.recordId),
-                input.recipientId,
-              ),
             ],
           ],
         }
@@ -258,7 +253,14 @@ export function buildAppealReceiptCard(input: {
   });
 }
 
-/** 申诉引导卡（点群内「我要申诉」按钮后私信给当事人）。 */
+/**
+ * 申诉引导卡（点群内「我要申诉」按钮后私信给当事人）。
+ *
+ * §B8（用户真机反馈后调整）：当事人**正在禁言**时，QQ 客户端会拦住指令按钮的发送
+ * （PC 端弹「禁言中，请解禁后再试」），所以主按钮必须是**回调**：
+ * 「直接提交」= 一键建**无理由**单（回调，不经过客户端发送）；
+ * 「写理由提交」= 指令按钮（预填 `/appeal #码 `），能发出去时就带着理由提交。
+ */
 export function buildAppealGuideCard(input: {
   recordId: string;
   groupLabel: string;
@@ -268,13 +270,17 @@ export function buildAppealGuideCard(input: {
 }): RichMessage {
   const record = `#${input.recordId}`;
   const lines = [
+    ...excerptLines(input.messageExcerpt),
     `**处罚记录**：${record}`,
     `**群**：${escapeCardText(input.groupLabel)}`,
-    excerptLine(input.messageExcerpt),
   ];
   if (!input.withButtons) {
     // 没有按钮时（老客户端 / 键盘被平台拒绝）必须给出可复制的等价指令
-    lines.push("", "请回复下面的指令提交申诉（可以在后面补一句理由）：", `/appeal ${record} <理由>`);
+    lines.push(
+      "",
+      "私聊机器人发送下面这条即可提交（可以补一句理由）：",
+      `/appeal ${record} <理由>`,
+    );
   }
   return renderCard({
     title: "我要申诉",
@@ -283,10 +289,16 @@ export function buildAppealGuideCard(input: {
       ? {
           rows: [
             [
+              callbackButton(
+                "appeal-submit",
+                "直接提交",
+                encodeCallback("appeal", "submit", input.recordId),
+                input.recipientId,
+                { style: STYLE_PRIMARY },
+              ),
               {
                 id: "appeal",
-                label: "提交申诉",
-                style: 1 as const,
+                label: "写理由提交",
                 command: `/appeal ${record} `,
                 permission: {
                   type: 0 as const,
@@ -294,12 +306,6 @@ export function buildAppealGuideCard(input: {
                 },
                 unsupportTips: `请直接发送 /appeal ${record} <理由>`,
               },
-              callbackButton(
-                "view",
-                "查看处罚",
-                encodeCallback("punish", "view", input.recordId),
-                input.recipientId,
-              ),
             ],
           ],
         }
@@ -310,11 +316,20 @@ export function buildAppealGuideCard(input: {
 /**
  * 原文行（§B7）：**只在私信卡片上调用**，群里那张（处罚通知）不带原文与规则名。
  *
- * 未保留原文时明确写出来，避免审核员误以为「没写就是没问题」。
+ * 渲染格式（用户确认）：标签 + **Markdown 引用段落**，并且要放在**标题下第一段**：
+ * ```
+ * ## 标题
+ * 原文：
+ * > 违规内容全文
+ * ```
+ * 未保留原文时只给一行「（未保留原文）」。
  */
-export function excerptLine(excerpt: string): string {
+export function excerptLines(excerpt: string): string[] {
   const text = excerpt.trim();
-  return `**原文**：${text.length > 0 ? escapeCardText(text) : "（未保留原文）"}`;
+  if (text.length === 0) {
+    return ["**原文**：（未保留原文）"];
+  }
+  return ["**原文**：", `> ${escapeCardText(text)}`];
 }
 
 /** 通用处理回执卡（动作结果 + 返回入口）。 */

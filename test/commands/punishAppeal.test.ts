@@ -180,6 +180,23 @@ describe("AdminCommandService · blacklist / punish / appeal", () => {
     expect(record.messageExcerpt).toHaveLength(RAW_MESSAGE_EXCERPT_MAX);
   });
 
+  it("submits a reason-less appeal from the private card callback (muted-safe)", async () => {
+    const record = await createPunishment("member");
+
+    // 回调「直接提交」：不经过客户端发送，被禁言也能用
+    const receipt = await service.appealCallbackCard("submit", [record.recordId], "member");
+    expect(receipt?.ok).toBe(true);
+    expect(receipt?.text).toContain("申诉已提交");
+    expect(JSON.stringify(receipt?.rich?.keyboard)).toContain("补充理由");
+    const appeal = appeals.pendingByPunishment(record.recordId)[0];
+    expect(appeal?.reason).toBe("");
+
+    // 别人的处罚不能替人申诉（不产生任何卡片）
+    const other = await createPunishment("other");
+    const denied = await service.appealCallbackCard("submit", [other.recordId], "member");
+    expect(denied).toBeUndefined();
+  });
+
   it("adds an appeal button to the keyword warning card and records the punishment", async () => {
     configStore.setOverride({
       groupId: "g1",

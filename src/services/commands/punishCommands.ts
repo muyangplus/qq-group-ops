@@ -6,7 +6,7 @@ import {
   buildModerationReceipt,
   buildMuteOptionsCard,
   describePunishmentActions,
-  excerptLine,
+  excerptLines,
 } from "../moderationCards.js";
 import { normalizeCode } from "../punishments.js";
 import type { AdminCommandContext } from "./context.js";
@@ -435,11 +435,13 @@ function punishmentDetailLines(
 ): string[] {
   const notifier = ctx.moderationNotifier;
   return [
+    // §B7：原文固定放在标题下第一段（引用段落）
+    ...excerptLines(record.messageExcerpt),
     `**记录**：#${record.recordId}`,
     `**群**：${notifier?.groupLabelOf(record.groupId) ?? ctx.helpers.groupLabel(record.groupId)}`,
     `**当事人**：${notifier?.userLabelOf(record.userId) ?? ctx.helpers.displayUser(record.userId)}`,
     `**命中规则**：${record.ruleReason || "（关键词）"}`,
-    excerptLine(record.messageExcerpt),
+    ...excerptLines(record.messageExcerpt),
     `**动作**：${describePunishmentActions(record.actions)}`,
     `**状态**：${record.status === "released" ? "已解除" : "生效中"}`,
     ...(record.detail ? [`**执行结果**：${record.detail}`] : []),
