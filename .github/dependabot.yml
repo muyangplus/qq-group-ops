@@ -23,3 +23,8 @@ updates:
       production-dependencies:
         dependency-type: production
         patterns: ["*"]
+    # @types/node 必须与**运行时 Node 大版本**一致（engines.node / CI matrix 都是 24），
+    # 否则类型检查会允许调用运行时并不存在的 API：类型过了、线上炸。major 一律不看。
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]

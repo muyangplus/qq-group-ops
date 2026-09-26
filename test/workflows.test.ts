@@ -177,9 +177,23 @@ describe("CI/CD 工作流审计", () => {
 
   it("keeps a dependabot config for actions and npm", () => {
     const text = readFileSync(join(ROOT, ".github", "dependabot.yml"), "utf8");
-    const doc = parse(text) as { updates?: Array<{ "package-ecosystem"?: string }> };
+    const doc = parse(text) as {
+      updates?: Array<{
+        "package-ecosystem"?: string;
+        ignore?: Array<{ "dependency-name"?: string; "update-types"?: string[] }>;
+      }>;
+    };
     const ecosystems = (doc.updates ?? []).map((item) => item["package-ecosystem"]);
     expect(ecosystems).toContain("github-actions");
     expect(ecosystems).toContain("npm");
+
+    // @types/node 的类型大版本必须跟着运行时 Node 走（当前 24），major 更新一律忽略
+    const npmEntry = (doc.updates ?? []).find(
+      (item) => item["package-ecosystem"] === "npm",
+    );
+    const ignored = npmEntry?.ignore?.find(
+      (rule) => rule["dependency-name"] === "@types/node",
+    );
+    expect(ignored?.["update-types"]).toContain("version-update:semver-major");
   });
 });
