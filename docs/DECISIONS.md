@@ -54,6 +54,7 @@
 - ADR-0044：不做「活动签到统计」（C4 取消）
 - ADR-0045：`@全体` 能力边界与群内 @全体 的短路处理（§B3）
 - ADR-0046：群内处罚卡去规则/去原文，原文改为可选短期落库（§B7 / §B8）
+- ADR-0047：申诉派发「管理员全通知 + 审核员轮单」，并补齐处理闭环（§B8）
 
 ---
 
@@ -908,3 +909,29 @@
   `retention.ts`（新增 `messageExcerptsCleared`）、`messageGuard.sendWarning`（改名 + 去规则/原文）、
   `moderationCards`（4 张私信卡 + `excerptLine`）、`moderationNotifier`（user 键盘标志）、
   `appealCommands`（降级建单）；文档见 COMMANDS / CONFIGURATION / DATA-COMPLIANCE / SECURITY / ARCHITECTURE。
+
+## ADR-0047：申诉派发「管理员全通知 + 审核员轮单」，并补齐处理闭环（§B8）
+
+- 状态：已采纳（2026-09-26）
+- 背景：真机跑批暴露申诉闭环四处缺口 —— ① 申诉通知一次推给**所有**订阅者，打扰面过大，
+  且**一个人处理完其他人不知道**（重复处理）；② 被处罚人可以**无限次提交**申诉骚扰审核员；
+  ③ 通过 / 驳回**不通知申诉人**；④ 私信引导卡的「写理由提交」是指令按钮（`enter: true`），
+  客户端点击即发送，用户**没机会补理由**。
+- 决策（用户逐条确认）：
+  1. **派发模型**：申诉**默认通知所有管理员**（群管理员 / 本群超管 / 全局超管），
+     **审核员之间轮单** —— 按订阅顺序一次只通知一位（群内游标让连续几条申诉落到不同人）；
+     超过 `APPEAL_HOLD_MINUTES`（默认 15 分钟）未处理，由新增的 `AppealWatcher`
+     （`APPEAL_FORWARD_INTERVAL_MS`，默认 60s）转给下一位；轮完一圈不再无限转派。
+     值乘：管理员是"必须有人知道"的兜底，审核员轮单控制打扰面；
+  2. **防刷单**：只要存在**待处理**申诉，`/appeal`、群内「我要申诉」、私信「直接提交」
+     三条路径都只回「已有待处理申诉 #短码」，等审核员给出结果后才能再提交；
+  3. **闭环通知**：通过 / 驳回都私信通知**申诉人本人**；处理完成后给**其他订阅者**发一张
+     「申诉已处理（由 X 通过/驳回）」同步卡（去重键 `appeal-done:<id>`，处理人不重复收）；
+  4. **写理由按钮不自动发送**：`CardButton.fillOnly`（官方 `enter: false`）让「写理由提交」/「补充理由」
+     只把 `/appeal #短码 ` 填进输入框；需要"一键提交"的走**回调**（不受禁言限制）。
+- 理由：通知面 ÷ 值班轮转 = 既保证有人处理、又不全员打扰；状态机（待处理 → 已处理）是防刷单的天然闸门；
+  申诉人收到结果才算闭环；`enter: false` 是官方提供的唯一"只填入不发送"能力。
+- 影响：`moderationNotifier.ts`（`appealAudience` / `nextModerator` / `forwardAppealIfStale` /
+  `notifyAppealHandled` / `notifyAppealDecision`）、新增 `appealWatcher.ts` 与 `config.ts` 两个环境变量、
+  `notifications.pushToSubscribers({ recipients })`、`cardTemplate.fillOnly`、`appealCommands.ts`
+  （重复提交拦截与结果通知）、`moderationCards.ts`（结果卡与同步卡）。验收：**J68**。
