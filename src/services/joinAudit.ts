@@ -167,6 +167,26 @@ export class JoinAuditService {
     );
   }
 
+  /**
+   * 官方提示「申请已经被处理」（别人在群管理后台 / 其它机器人处理了）时，把本地这条
+   * **立即**标为已处理并移出待审批。
+   *
+   * 真机现象：机器人再点「通过」会收到 `400 申请已经被处理`，而本地一直挂在待审批里 ——
+   * 这里复用对账那条路径（`expirePending` + 审计），只是**不等 `minAgeMs`**。
+   */
+  public markHandledExternally(
+    requestId: string,
+    reason = "官方侧提示申请已被处理，自动移出待审批",
+  ): boolean {
+    const request = this.requests.get(requestId);
+    if (!request || request.status !== JoinRequestStatus.Pending) {
+      return false;
+    }
+    return (
+      this.expirePending((item) => item.requestId === requestId, reason) > 0
+    );
+  }
+
   private expirePending(
     predicate: (request: JoinRequest) => boolean,
     reason: string,

@@ -60,6 +60,18 @@ export function resolveReviewTarget(
   return { targetGroupId, requestId, reasonParts: parts.slice(2) };
 }
 
+/**
+ * 官方是否在说「这条申请已经被处理」。
+ *
+ * 只认这一种情形：别人在群管理后台 / 其它机器人处理过，官方会回
+ * `400 申请已经被处理`。**其它 400（网络/权限/限流）绝不能当成「已处理」**，
+ * 否则会把还挂在官方那边的待审批申请误删。
+ */
+function isAlreadyHandledError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /申请已经被处理|申请已被处理|已经被处理/u.test(message);
+}
+
 export function pendingCard(
   ctx: AdminCommandContext,
   groupId: string | undefined,
@@ -461,6 +473,22 @@ export async function handleApprove(
     }
     await ctx.joinApproval.approve(targetGroupId, requestId, userId);
   } catch (error) {
+    if (isAlreadyHandledError(error)) {
+      // 别人已经处理过：本地立即收敛，别让这条僵尸申请一直挂在待审批里
+      ctx.joinAudit.markHandledExternally(requestId);
+      log.warn("join request already handled elsewhere", {
+        requestId,
+        error: formatError(error),
+      });
+      return approvalResultCard(
+        ctx,
+        targetGroupId,
+        userId,
+        "该申请已被其他人处理（群管理后台 / 其它管理员），已从待审批列表移除。",
+        true,
+        groupId,
+      );
+    }
     log.warn("approve failed", { requestId, error: formatError(error) });
     return { ok: false, text: `审批失败：${formatError(error)}` };
   }
@@ -503,6 +531,21 @@ export async function handleReject(
     }
     await ctx.joinApproval.reject(targetGroupId, requestId, userId, reason);
   } catch (error) {
+    if (isAlreadyHandledError(error)) {
+      ctx.joinAudit.markHandledExternally(requestId);
+      log.warn("join request already handled elsewhere", {
+        requestId,
+        error: formatError(error),
+      });
+      return approvalResultCard(
+        ctx,
+        targetGroupId,
+        userId,
+        "该申请已被其他人处理（群管理后台 / 其它管理员），已从待审批列表移除。",
+        true,
+        groupId,
+      );
+    }
     log.warn("reject failed", { requestId, error: formatError(error) });
     return { ok: false, text: `审批失败：${formatError(error)}` };
   }
