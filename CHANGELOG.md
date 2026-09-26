@@ -7,7 +7,24 @@
 
 ## [Unreleased]
 
-（暂无未发布改动）
+### 新增
+
+- **CD：打 tag 发 Release 自动发布到 FTP**（`.github/workflows/cd-ftp.yml` + [`docs/CD.md`](docs/CD.md)）：
+  触发方式为 **Release published**（或手动 dispatch，可填 ref 用于回滚）；
+  部署前跑 `typecheck + test + build` 门禁；部署任务挂在 `production-ftp` Environment（可配 required reviewers）；
+  白名单组包 + 排除兜底，`.env` / `data/` / `logs/` / `test/` / `node_modules/` **不会**上传；
+  默认 `ftps`（显式 TLS），凭据只来自 `secrets.*`；`dangerous-clean-slate` 关闭（不删服务器上多余文件）。
+- **依赖与 Action 安全更新**：`.github/dependabot.yml` 每周给 npm 依赖与 GitHub Actions 开分组 PR（对应 TODO D6）。
+- **工作流安全审计测试**：`test/workflows.test.ts` 用 YAML 解析器守住不变量 ——
+  工作流必须可解析、`uses:` 必须钉版本、禁用 `pull_request_target`、
+  CD 必须具备最小权限 / 并发保护 / 部署门禁 / Environment / secrets-only / FTPS 默认 / 敏感文件排除。
+
+### 备注
+
+- 需要在 GitHub 配置：Secrets `FTP_SERVER` / `FTP_USERNAME` / `FTP_PASSWORD`；
+  Variables `FTP_SERVER_DIR`（必须）、`FTP_PROTOCOL` / `FTP_PORT`（可选）；
+  Environment `production-ftp`（建议配 required reviewers，并把 FTP secrets 放到 Environment 作用域）。
+  完整清单与安全审计的建议项见 [`docs/CD.md`](docs/CD.md)。
 
 
 ## [0.17.0] - 2026-09-26

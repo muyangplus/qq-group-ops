@@ -142,6 +142,7 @@
 - [路线图](docs/ROADMAP.md)
 - [真实环境验收清单](docs/ACCEPTANCE.md)
 - [真机跑批手册（一次跑完 R2–R18 + 交付验证）](docs/REAL-MACHINE-RUN.md)
+- [CD：打 tag 发 Release 自动发布到 FTP（含 GitHub 配置清单与安全审计）](docs/CD.md)
 - [数据合规建议](docs/DATA-COMPLIANCE.md)
 - [待办与已知限制](TODO.md)（待澄清 / 已知限制 / 待真机验收 / 新功能待办的唯一入口）
 - [变更日志](CHANGELOG.md)
