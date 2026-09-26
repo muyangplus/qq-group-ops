@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+（暂无未发布改动）
+
+
+## [0.18.0] - 2026-09-26
+
 ### 变更
 
 - **通知订阅统一成一张菜单（三个频道）**：入群申请 / 处罚与申诉 / 新活动通知共用一张
@@ -19,6 +24,13 @@
   订阅资格与推送收件人共用同一套判定（入群 = 群管理员及以上、处罚与申诉 = 审核员及以上、
   活动 = 不限权限但「全部群」需已绑定 QQ 号），不会再出现「订阅成功却永远收不到」。
   「全部群」= 所有装了机器人的群（绑定是全局的）。
+- **短码统一成全局唯一码池**：`user / group / join_request` 之外，处罚记录码、申诉码、活动码也改从
+  `reserveGlobalCode()` 取号，共用同一份进程级码池，`#A1B2C3` 不会再同时是处罚码和申请码；
+  各服务 `load()` 时把已入库的短码灌回码池，重启后也不会跨类型重码。
+  （测试夹具注入自定义随机源时不参与码池，保留可断言性。）
+- **`/approve`、`/reject` 去掉冗余的群参数**：短码全局唯一、本身就能定位申请所属群，
+  现在统一为 `/approve <#申请短码>`、`/reject <#申请短码> [原因]`（群内 / 私信同一写法）。
+  老写法 `/approve <群号|#群短码> <#申请短码>` 已删除。
 
 （暂无未发布改动）
 
@@ -652,7 +664,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.4...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.4...v0.18.0
 [0.17.4]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.3...v0.17.4
 [0.17.3]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.2...v0.17.3
 [0.17.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.1...v0.17.2

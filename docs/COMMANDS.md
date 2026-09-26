@@ -484,8 +484,8 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 /activity signups #A7K2Q9 [+页码] [full]      # 报名名单（群管理员/发布者；每页 5 人，默认不含学号/学院）
 ```
 
-> 「新活动通知」的订阅已统一到 **`/notify` 菜单**的「活动通知」行（本群 / 全部），
-> 不再有 `/activity subscribe|unsubscribe`。
+> 「新活动通知」的订阅已统一到 **`/notify` 菜单**的「活动通知」行（本群 / 全部）；
+> `/activity subscribe|unsubscribe` 仍可用，但写入的是**同一份订阅表**（不再是独立存储）。
 
 活动卡片（Markdown + 内嵌按钮，与入群申请共用三级降级）。**成员卡**（发到群里的那张）示例见
 `src/services/activityCards.ts`，字段与按钮在「活动」一节说明。
@@ -525,6 +525,10 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 处罚卡片：机器人**实际处罚**（撤回 / 禁言 / 移出 / 拉黑）时推送，卡片底部可直接解除处罚、改禁言时长、踢出、拉黑本群或全局（全局仅超管）。
 
 ## 处罚记录与卡片改处罚（`/punish`）
+
+> **短码全局唯一**：`user / group / join_request / 处罚 / 申诉 / 活动` 六类短码共用一份进程级码池
+> （`reserveGlobalCode()`），因此同一个 `#A1B2C3` 不会既是处罚码又是申请码；服务启动时会把已入库的短码灌回码池，
+> 重启后也不会跨类型重码。所以**凡是接短码的指令都不再需要群参数**（`/approve`、`/reject`、`/punish`、`/appeal` …）。
 
 每条处罚生成 6 位随机短码（如 `#A1B2C3`），保存**规则说明与动作**；消息原文**默认不保存**，
 需要时用 `/rules set rawMessageRetentionDays <天数>` 开启短期保留（单行截断 ≤200 字，只在私信卡片展示）：
@@ -617,7 +621,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 
 > 「回答」来自官方的入群验证信息：`verify_info.method = verify_message` 时取 `verify_message`；`admin_review_qa`（管理员设置问题）时取 `review_qa_list[].answer`（多个答案用空格拼接），同时展示问题文本与申请人昵称。被邀请入群（`apply_source = invited`）没有验证信息，此时「回答」为空，班级类规则会自动转人工。
 
-「同意 / 拒绝」是**指令按钮**：点击后自动发送 `/approve <#申请短码>` / `/reject <#申请短码> <原因>`，并带二次确认弹窗。短码唯一，处理时会自动定位申请所属群（也可以显式写群号：`/approve 654321 #M7K2Q9`）。按钮走的是与手动输入**完全相同**的指令与权限校验，不存在绕过。
+「同意 / 拒绝」是**指令按钮**：点击后自动发送 `/approve <#申请短码>` / `/reject <#申请短码> <原因>`，并带二次确认弹窗。短码全局唯一，处理时会自动定位申请所属群 —— 群内和私信**都是同一个写法**，不再需要写群号（老写法 `/approve 654321 #M7K2Q9` 已删除）。按钮走的是与手动输入**完全相同**的指令与权限校验，不存在绕过。
 
 第二行是**预设拒绝原因**，拒绝按钮统一用红色（官方样式 `3`＝白底红字，是官方唯一提供的红色按钮样式），一键把回复作为官方 `reject_reason` 提交给申请人：
 
