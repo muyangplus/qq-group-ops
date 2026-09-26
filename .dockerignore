@@ -1,0 +1,29 @@
+# 依赖与构建产物（镜像里重新安装 / 重新编译）
+node_modules/
+dist/
+
+# 运行数据与日志：绝不进入构建上下文
+data/
+logs/
+*.log
+
+# 环境与密钥：compose 通过 env_file 注入，不打进镜像
+.env
+.env.*
+!.env.example
+
+# 版本控制 / CI / 编辑器
+.git/
+.github/
+.gitignore
+.editorconfig
+.vscode/
+
+# 文档与测试：镜像构建只需要 package.json / lock / tsconfig / src
+docs/
+test/
+*.md
+
+# 本地杂项
+.pnpm-store/
+tmp/
