@@ -7,7 +7,13 @@
 
 ## [Unreleased]
 
-（暂无未发布改动）
+### 备注
+
+- **CD 首次联调：FTP 被动模式数据连接超时**（`Timeout when trying to open data connection to ***:<端口>`）——
+  控制连接（21）与写权限都正常，卡在**被动模式的数据连接**：需要服务端在防火墙/云安全组放行
+  pure-ftpd 的 `PassivePortRange`（示例 `39000 40000`），NAT 后面还要设 `ForcePassiveIP <公网 IP>`。
+  工作流相应加了 `timeout: 120000`、`log-level: verbose`，以及手动触发时的 **`dry_run`**（只试连不写文件）；
+  逐条排查步骤见 [`docs/CD.md`](docs/CD.md) §7。
 
 
 ## [0.17.1] - 2026-09-26

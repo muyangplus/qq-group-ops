@@ -138,11 +138,68 @@ Dependabot 每周会给 npm 依赖与 GitHub Actions 开分组 PR（`.github/dep
 3. 服务器上 `pnpm install --prod` → 重启进程（`pnpm start`）；
 4. 如果改动涉及数据库结构（例如 0.16.0 的 `punishActions` 是键值表，无迁移风险），优先用备份恢复。
 
-## 6. 排障
+## 7. FTP 被动模式排障（首次联调必看）
+
+失败长这样：
+
+```
+Making changes to N files/folders to sync server state     ← 登录、列目录、建目录都成功
+Error: None of the available transfer strategies work.
+       Last error response was 'Error: Timeout when trying to open data connection to ***:39575'
+```
+
+**含义**：FTP 的控制连接（21）通、账号有写权限，但**传文件要另开一条数据连接**（被动模式 PASV/EPSV），
+服务器回了端口（示例里的 `39575`）而客户端连不上 → 超时。Actions 里的 `uses:` 也改不了这一点，
+**必须在服务端/网络层修**。（GitHub runner 无法用主动模式 PORT —— runner 不接受入站连接。）
+
+按顺序检查：
+
+1. **服务端被动端口范围已配置**（pure-ftpd 示例）：
+   ```ini
+   PassivePortRange          39000 40000
+   # 服务器在 NAT/路由器后面时**必须**打开下面这行，否则 PASV 回内网地址，客户端连不上
+   # ForcePassiveIP          <服务器公网 IP>
+   ```
+   改完 `systemctl restart pure-ftpd`（宝塔面板改完记得点保存并重启服务）。
+
+2. **防火墙 / 云安全组放行这段 TCP 端口**（只有 21 通是不够的）：
+   ```bash
+   # firewalld
+   firewall-cmd --permanent --add-port=39000-40000/tcp && firewall-cmd --reload
+   # ufw
+   ufw allow 39000:40000/tcp
+   # iptables
+   iptables -I INPUT -p tcp --dport 39000:40000 -j ACCEPT
+   ```
+   **云安全组**（阿里云/腾讯云/宝塔的「安全」页）同样要放行 `39000-40000/tcp`；
+   来源可以先限自己 IP + GitHub Actions 出网 IP（Actions 出口 IP 不固定，最省事是 `0.0.0.0/0` 后按日志再收紧）。
+
+3. **从外部验证数据端口真的通**（在国内机器上执行，或让同事在别的网络试）：
+   ```bash
+   # 先看服务器回哪个 IP/端口（登录后发 PASV）
+   ftp -p <host> 21     # 登录后执行：quote PASV
+   # 再直接连那个端口，能建立 TCP 就算通了
+   nc -vz <host> <PASV 返回的端口>
+   ```
+
+4. **在 Actions 里空跑验证**（不写服务器文件）：
+   Actions → `CD · FTP 发布` → Run workflow → 勾 **`dry_run`** → 观察是否还报数据连接超时。
+   工作流已加 `timeout: 120000` 与 `log-level: verbose`，日志里能看到 PASV/EPSV 交互细节。
+
+> 如果这段端口**实在没法开**（例如服务器在严格的内网策略后面），换 **SFTP/SSH** 是更省心的路：
+> 单条连接、无被动端口、无 NAT 伪装问题；代价是要在服务器上放一把部署专用 SSH 公钥，
+> 并给仓库加 `SSH_PRIVATE_KEY` 等 Secrets（见 §4.2 第 1 条）。
+
+> 如果这段端口**实在没法开**（例如服务器在严格的内网策略后面），换 **SFTP/SSH** 是更省心的路：
+> 单条连接、无被动端口、无 NAT 伪装问题；代价是要在服务器上放一把部署专用 SSH 公钥，
+> 并给仓库加 `SSH_PRIVATE_KEY` 等 Secrets（见 §4.2 第 1 条）。
+
+## 6. 排障速查
 
 | 现象 | 先看 |
 |---|---|
 | Release 发布了但工作流没跑 | 触发的是 **Release published** 而不是 tag push；检查是否建了 Release（draft 不算） |
+| `Timeout when trying to open data connection to ***:<端口>` | **被动模式**问题，见 §7 逐条检查（端口范围 / 防火墙 / 云安全组 / NAT 的 `ForcePassiveIP`） |
 | `缺少配置：FTP_SERVER_DIR(variable)` | 忘了配 Variable（不是 Secret），见 §2.2 |
 | 连接失败 / TLS 报错 | `FTP_PROTOCOL` 与服务端是否匹配（显式 FTPS 通常是 21 端口 + `AUTH TLS`）；服务器证书是否有效 |
 | 上传成功但服务器跑不起来 | `dist/` 是否上传（门禁里 `pnpm build` 成功才有）、服务器是否 `pnpm install --prod`、`.env` 是否自己放好 |
