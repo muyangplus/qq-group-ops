@@ -318,15 +318,13 @@ export function buildAppealGuideCard(input: {
  * 原文：
  * > 违规内容全文
  * ```
- * 未保留原文时只给一行「（未保留原文）」。
- *
- * 注意：引用块**后面必须补一个空行**，否则后面的 `**群**：` / `**处罚记录**：` 会被
- * Markdown 当成引用块的**懒惰延续**，整段都画进灰色引用里（真机踩过）。
+ * 未保留原文时给一行提示：说明是「没开启保留」而不是「丢了」，并配一个「开启保留」按钮
+ * （按钮由 `ModerationNotifier` 在只有群管理员及以上可见时追加，见 §B7）。
  */
 export function excerptLines(excerpt: string): string[] {
   const text = excerpt.trim();
   if (text.length === 0) {
-    return ["**原文**：（未保留原文）", ""];
+    return ["**原文**：（未保留 · 本群未开启消息保留）", ""];
   }
   return ["**原文**：", `> ${escapeCardText(text)}`, ""];
 }

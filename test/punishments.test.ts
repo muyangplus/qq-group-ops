@@ -96,7 +96,8 @@ describe("PunishmentService", () => {
     expect(String(card?.markdown)).toContain("#000000");
     expect(String(card?.markdown)).toContain("禁言 10 分钟");
     // 没传 messageExcerpt（默认不保留原文）时卡片如实标注
-    expect(String(card?.markdown)).toContain("**原文**：（未保留原文）");
+    // 没传 messageExcerpt（默认不保留原文）时卡片如实标注，并说明是「没开启保留」
+    expect(String(card?.markdown)).toContain("**原文**：（未保留 · 本群未开启消息保留）");
     expect(punishments.get("#000000")?.detail).toBe("recall+mute+warn");
   });
 
