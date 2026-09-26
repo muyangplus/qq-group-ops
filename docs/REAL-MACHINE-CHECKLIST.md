@@ -14,7 +14,7 @@
 
 | # | 待确认 | 怎么测 | 预期/观察点 |
 |---|---|---|---|
-| R1 | **别人发「@全体成员」在事件里长什么样**（B3） | 让群成员发一条 @全体 消息（可以带内容也可以不带）；然后 `grep "mention probe" logs/qq-group-ops.log`；再私信发 `/testat all` 作对照 | 日志里应有一条 `level: info` 的 `mention probe: at-all candidate`，其中 `leading` 就是官方原文形状（不可见字符会转义成 `\uXXXX`，只打印前 16 个码点）；同时记录机器人有没有收到该事件。据此实现 B3 的精确拦截 |
+| R1 | **别人发「@全体成员」在事件里长什么样**（B3） | 让群成员发一条 @全体 消息（可以带内容也可以不带）；然后 `grep "mention probe" logs/qq-group-ops.log`；再私信发 `/testat all` 作对照 | ✅ **已确认（2026-09-26）**：`@全体成员` → **`<@all> `**（`rawLength=7`、`hasAngleMention=true`、无不可见字符）；`@everyone` → **`@everyone`**（`rawLength=9`）。两者 `cleanedLength=0` 且被路由成 `command: "menu"`——即**原来会抢答常用菜单**。B3 已据此实现（见 R16） |
 | R2 | **用户撤回消息是否有下行事件**（B7 口径扩展） | 让成员发消息后撤回；看原始事件流里有没有新 event | 有 → 可以把「撤回后通知」扩到用户撤回；没有 → 保持现状（只推机器人自己的处罚） |
 | R3 | **内容安全 / 图片文件审核接口是否存在**（B4/B5） | 在 QQ 开放平台后台看机器人「权限集」里有没有内容安全/媒体审核相关权限；若文档给出接口，用超管账号调一次记错误码 | 公开资料只能确认**小程序**体系的 `msgSecCheck`，机器人开放平台未证实；有权限集+接口才实现，否则保持「能力未确认」 |
 | R4 | **官方群拉黑接口是否对本机器人开放**（A5） | `/blacklist add <小号>`，看日志里 `updateMemberBlacklist` 的返回 | 成功 → 官方拉黑生效；`11253` 等 → 只有本地拦截生效（当前已在日志与卡片文案里区分） |
@@ -39,6 +39,7 @@
 | R13 | Docker Compose（D2） | 启动 Docker Desktop 后：`docker compose -p qqops-smoke build bot`；`POSTGRES_PASSWORD=<临时> docker compose -p qqops-smoke --profile postgres up -d db`；`docker compose -p qqops-smoke ps` | 镜像构建成功；db 容器 healthy；测完 `docker compose -p qqops-smoke --profile postgres down -v` 清掉（不要用默认项目名，避免污染真实数据卷） |
 | R14 | 快速开始复现（D3 已本机验证，真机再走一遍） | 按 OPERATIONS「快速开始」从零：填 `.env` → `pnpm dev` | 收到 `gateway ready: bot authenticated`；群里发 `/test` 有自检卡 |
 | R15 | 真机验收 J32–J61 + M 组（D4） | 按 `docs/ACCEPTANCE.md` 逐条执行并记录 | 全部通过或记录差异 |
+| R16 | **`@全体` 不再被抢答**（B3，R1 的修复复验） | 群里依次发：① `@全体成员`（不带内容）② `@everyone` ③ `@全体成员 大家好` ④ `@全体成员 /menu` ⑤ 空 `@机器人` | ①②：机器人**一条都不回**（日志只有 `mention probe: skipped at-all mention`，`/audit` 无记录）；③：按普通发言审核（命中关键词照常处理）；④：照常执行 `/menu`；⑤：仍然回常用菜单（不能被误伤） |
 
 ## 回填方式
 
