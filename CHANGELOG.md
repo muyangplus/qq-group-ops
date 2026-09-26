@@ -10,6 +10,19 @@
 （暂无未发布改动）
 
 
+## [0.17.4] - 2026-09-26
+
+### 修复
+
+- **规则按钮点完不再「谎报」结果，并且一定回刷新后的菜单**（真机）：
+  回调路径把群 id 丢了，改用「私信指令」的口径去反查 `#短码 / 绑定群号` ——
+  群没绑定过时点了开关却回「私信中设置规则需要提供已绑定的群号」，
+  而卡片已经写死「已更新：入群决策 = approve_on_match」，三句话自相矛盾。
+  现在回调直接用回传的群 id（`__default__` / 全局别名仍走 `handleGlobalRulesSet` 的超管校验），
+  点完**统一回同一张菜单**：成功写 `已更新：入群决策 → 命中通过`（中文名 + 中文值，
+  面板按钮怎么写就怎么写），失败写 `未修改：<原因>` 并保留 `ok=false`，当前状态一眼可见。
+
+
 ## [0.17.3] - 2026-09-26
 
 ### 修复
@@ -626,7 +639,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.3...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.4...HEAD
+[0.17.4]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.3...v0.17.4
 [0.17.3]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.2...v0.17.3
 [0.17.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.0...v0.17.1
