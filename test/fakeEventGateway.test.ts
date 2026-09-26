@@ -78,6 +78,30 @@ describe("FakeEventGateway", () => {
       String(api.sentMessages[0]?.markdown ?? api.sentMessages[0]?.content),
     ).toContain("测试成功");
     expect(api.sentMessages[0]?.msgId).toBe("m1");
+    // §F1：test 模块豁免，群里不自动 @
+    expect(String(api.sentMessages[0]?.markdown ?? "")).not.toMatch(/^<@!/u);
+  });
+
+  it("mentions the group initiator on command replies", async () => {
+    const runtime = createRuntime(loadSettings({ ADMIN_USER_IDS: "mod" }));
+    runtime.identityMap.bindUser("mod", "10001");
+    runtime.identityMap.bindGroup("g1", "654321");
+    const api = runtime.api as FakeQQOfficialAPI;
+    const gateway = new FakeEventGateway();
+    await attachGateway(runtime, gateway);
+
+    await gateway.emit({
+      type: "group_message",
+      groupId: "g1",
+      userId: "mod",
+      messageId: "m1",
+      content: "/menu",
+    });
+
+    expect(api.sentMessages).toHaveLength(1);
+    // §F1：群内回复首行 @ 发起人（卡片 markdown 里的提及真机有效）
+    expect(String(api.sentMessages[0]?.markdown ?? "")).toMatch(/^<@!mod>\n/u);
+    expect(String(api.sentMessages[0]?.markdown ?? "")).toContain("常用菜单");
   });
 
   it("sends private command replies", async () => {
@@ -101,6 +125,8 @@ describe("FakeEventGateway", () => {
       String(reply?.markdown ?? reply?.content),
     ).toContain("已绑定");
     expect(reply?.msgId).toBe("m1");
+    // §F1：只在群内 @，私聊不加
+    expect(String(reply?.markdown ?? "")).not.toMatch(/^<@!/u);
 
     const menu = api.sentPrivateMessages[1];
     expect(menu?.msgId).toBeUndefined();
@@ -151,6 +177,8 @@ describe("FakeEventGateway", () => {
     expect(api.sentMessages).toHaveLength(1);
     expect(String(api.sentMessages[0]?.markdown ?? "")).toContain("常用菜单");
     expect(api.sentMessages[0]?.msgId).toBe("m1");
+    // §F1：空 @机器人 也属于「群内回复」，首行 @ 发起人
+    expect(String(api.sentMessages[0]?.markdown ?? "")).toMatch(/^<@!mod>\n/u);
   });
 
   it("does not fail the event when a reply cannot be sent", async () => {

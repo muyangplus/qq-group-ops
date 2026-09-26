@@ -95,6 +95,12 @@ export interface CommandResult {
    * 私聊路径不使用该字段（私聊里原地回复）。
    */
   silent?: boolean | undefined;
+  /**
+   * §F1：`true` 时群内回复**不自动 @ 发起人**（仅 `test` 模块使用）。
+   *
+   * 默认 `undefined` = 群内发送层会在卡片首行加 `<@!发起人>`。
+   */
+  noMention?: boolean | undefined;
 }
 
 /**
@@ -107,6 +113,8 @@ export interface CardResult {
   rich: RichMessage;
   /** §B4 群内静默（与 `CommandResult.silent` 同义）。 */
   silent?: boolean | undefined;
+  /** §F1 群内回复不自动 @ 发起人（仅 `test` 模块使用）。 */
+  noMention?: boolean | undefined;
 }
 
 /** 活动列表卡的分组标题（报名中 / 草稿 / 已结束）。 */
@@ -234,6 +242,7 @@ export function cardify(
       text: result.text,
       rich: result.rich,
       ...(result.silent !== undefined ? { silent: result.silent } : {}),
+      ...(result.noMention !== undefined ? { noMention: result.noMention } : {}),
     };
   }
   const card = cardFromText(title, result.text, { rows, footer, buttonHint });
@@ -242,6 +251,7 @@ export function cardify(
     text: card.text,
     rich: card.rich,
     ...(result.silent !== undefined ? { silent: result.silent } : {}),
+    ...(result.noMention !== undefined ? { noMention: result.noMention } : {}),
   };
 }
 
@@ -320,6 +330,7 @@ export function ensureCard(
     text: card.text,
     rich: card.rich,
     ...(result.silent !== undefined ? { silent: result.silent } : {}),
+    ...(result.noMention !== undefined ? { noMention: result.noMention } : {}),
   };
 }
 

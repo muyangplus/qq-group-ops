@@ -2,6 +2,7 @@ import type { EventGateway } from "./adapters/eventGateway.js";
 import { isRateLimitedError } from "./adapters/qqOfficial.js";
 import { getLogger } from "./core/logger.js";
 import type { Runtime } from "./runtime.js";
+import { withGroupMention } from "./services/groupMention.js";
 import type { RichMessage } from "./services/richMessages.js";
 
 const log = getLogger("gateway-runner");
@@ -31,7 +32,10 @@ export async function attachGateway(
           ok: result.ok,
         });
       } else {
-        await sendReply(runtime, event, result.text ?? "", result.rich);
+        // §F1：群内回复由发送层在卡片首行 @ 发起人（test 模块通过 noMention 豁免）。
+        await sendReply(runtime, event, result.text ?? "", result.rich, {
+          noMention: result.noMention === true,
+        });
       }
     }
     // 空私信的回复本身就是主菜单，不再重复推一次
@@ -45,7 +49,7 @@ export async function attachGateway(
 
 type ReplyEvent =
   | { type: "private_message"; userId: string; messageId: string }
-  | { type: "group_message"; groupId: string; messageId: string }
+  | { type: "group_message"; groupId: string; userId: string; messageId: string }
   | { type: "admin_command"; groupId: string; userId: string }
   /** 互动事件由处理器自行回包与回复，这里只是让类型联合完整。 */
   | { type: "interaction" }
@@ -64,6 +68,7 @@ async function sendReply(
   event: ReplyEvent,
   text: string,
   rich?: RichMessage | undefined,
+  options: { noMention?: boolean | undefined } = {},
 ): Promise<void> {
   try {
     if (event.type === "private_message") {
@@ -94,15 +99,19 @@ async function sendReply(
       return;
     }
     if (event.type === "group_message") {
+      const reply =
+        rich && options.noMention !== true
+          ? withGroupMention(rich, event.userId)
+          : rich;
       log.debug("sending command reply", {
         groupId: event.groupId,
         messageId: event.messageId,
-        rich: Boolean(rich),
+        rich: Boolean(reply),
       });
-      if (rich) {
+      if (reply) {
         const result = await runtime.richMessages.replyToGroup(
           event.groupId,
-          rich,
+          reply,
           { msgId: event.messageId },
         );
         if (!result.ok) {
@@ -117,12 +126,16 @@ async function sendReply(
       return;
     }
     if (event.type === "admin_command") {
+      const reply =
+        rich && options.noMention !== true
+          ? withGroupMention(rich, event.userId)
+          : rich;
       log.debug("sending admin reply", {
         groupId: event.groupId,
-        rich: Boolean(rich),
+        rich: Boolean(reply),
       });
-      if (rich) {
-        await runtime.richMessages.sendToGroup(event.groupId, rich);
+      if (reply) {
+        await runtime.richMessages.sendToGroup(event.groupId, reply);
         return;
       }
       await runtime.api.sendGroupMessage(event.groupId, text);

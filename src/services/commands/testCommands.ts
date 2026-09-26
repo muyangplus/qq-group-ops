@@ -28,6 +28,7 @@ export function handleTestMenu(
       return {
         ok: false,
         text: "权限不足：/testmenu 需要全局超级管理员权限。",
+        noMention: true,
       };
     }
     const raw = parts[1];
@@ -42,12 +43,14 @@ export function handleTestMenu(
         return {
           ok: false,
           text: `页码范围 1-${TEST_MENU_PAGE_COUNT}，例如 /testmenu 2`,
+          noMention: true,
         };
       }
       page = parsed;
     }
     const card = buildTestMenuCard(page);
-    return { ok: true, text: card.text, rich: card };
+    // §F1：test 模块按现状豁免，不在群里自动 @
+    return { ok: true, text: card.text, rich: card, noMention: true };
   }
 
   /**
@@ -71,11 +74,15 @@ export async function handleTestAt(
     parts: readonly string[],
   ): Promise<CommandResult> {
     if (!ctx.permissions.isSuperAdmin(userId)) {
-      return { ok: false, text: "权限不足：/testat 需要全局超级管理员权限。" };
+      return {
+        ok: false,
+        text: "权限不足：/testat 需要全局超级管理员权限。",
+        noMention: true,
+      };
     }
     const sender = ctx.richMessages;
     if (!sender) {
-      return { ok: false, text: "发送通道未启用，无法自检。" };
+      return { ok: false, text: "发送通道未启用，无法自检。", noMention: true };
     }
     if (!groupId) {
       return {
@@ -83,6 +90,7 @@ export async function handleTestAt(
         text:
           "请在群里执行 /testat（要验证的是群消息里的 @ 渲染）。\n" +
           "额外验证 @全体成员候选写法：/testat all（会真的打扰全群，请谨慎）。",
+        noMention: true,
       };
     }
     const wantAll = normalize(parts[1]) === "all" || parts[1] === "全体";
@@ -168,7 +176,8 @@ export async function handleTestAt(
       ],
       footer: ["测完请把有效的编号告诉开发者，据此实现活动发布的 @全体。"],
     });
-    return { ok: true, text: card.text, rich: card };
+    // §F1：test 模块按现状豁免，不在群里自动 @
+    return { ok: true, text: card.text, rich: card, noMention: true };
   }
 
 /** `/test`：自检结果卡 + 常用入口。 */
@@ -184,7 +193,7 @@ export function testCard(
       lines: ["需要审核员或以上权限。"],
       rows: [[viewButton("help", "指令帮助", "help", "home")]],
     });
-    return { ok: false, text: card.text, rich: card };
+    return { ok: false, text: card.text, rich: card, noMention: true };
   }
   log.info("test command", { groupId, userId });
   const rows: CardButton[][] = [];
@@ -208,11 +217,13 @@ export function testCard(
       `**全量消息模式**：${ctx.groupMessageMode?.get(groupId) ?? "unknown"}`,
     );
   }
-  return cardFromText("自检结果", lines.join("\n"), {
+  const card = cardFromText("自检结果", lines.join("\n"), {
     rows,
     buttonHint: "常用入口：",
     footer: ["机器人状态异常时：查看日志 logs/qq-group-ops.log"],
   });
+  // §F1：test 模块按现状豁免，不在群里自动 @
+  return { ...card, noMention: true };
 }
 
 /** `/test` 的指令入口（回调 renderer 也走它）。 */

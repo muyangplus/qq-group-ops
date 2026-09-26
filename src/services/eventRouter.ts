@@ -105,6 +105,11 @@ export interface EventRouterResult {
    * 群里连「原因已私信」都不发。
    */
   silent?: boolean | undefined;
+  /**
+   * §F1：`true` 时群内回复**不自动 @ 发起人**（仅 `test` 模块使用）。
+   * 默认由 `gatewayRunner` 在卡片首行加 `<@!发起人>`。
+   */
+  noMention?: boolean | undefined;
 }
 
 /** 互动事件处理器（例如 `/testmenu` 的回调翻页）。 */
@@ -143,6 +148,7 @@ export class EventRouter {
             text: commandResult.text,
             rich: commandResult.rich,
             silent: commandResult.silent,
+            noMention: commandResult.noMention,
           };
         }
         if (content.length === 0) {
@@ -282,6 +288,7 @@ export class EventRouter {
           text: result.text,
           rich: result.rich,
           silent: result.silent,
+          noMention: result.noMention,
         };
       }
       case "interaction": {

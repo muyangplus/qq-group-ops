@@ -142,5 +142,28 @@ describe("CallbackRouter", () => {
 
     expect(api.sentPrivateMessages).toHaveLength(1);
     expect(api.sentMessages).toHaveLength(0);
+    // §F1：私聊不加 @
+    expect(String(api.sentPrivateMessages[0]?.markdown ?? "")).not.toMatch(
+      /^<@!/u,
+    );
+  });
+
+  it("mentions the clicker on group callback cards", async () => {
+    const { api, router } = createRouter({ demo: async () => demoCard });
+
+    await router.handle(interactionEvent());
+
+    // §F1：群内回调回复首行 @ 点击者
+    expect(String(api.sentMessages[0]?.markdown ?? "")).toMatch(/^<@!u1>\n/u);
+  });
+
+  it("keeps the test module callbacks exempt from the mention", async () => {
+    const { api, router } = createRouter({ testmenu: async () => demoCard });
+
+    await router.handle(
+      interactionEvent({ buttonData: "cb:testmenu:page:2" }),
+    );
+
+    expect(String(api.sentMessages[0]?.markdown ?? "")).not.toMatch(/^<@!/u);
   });
 });

@@ -2,6 +2,7 @@ import type { QQOfficialAPI } from "../adapters/qqOfficial.js";
 import { getLogger } from "../core/logger.js";
 import { parseCallback, type ParsedCallback } from "./callbackData.js";
 import type { InteractionEvent, InteractionHandler } from "./eventRouter.js";
+import { withGroupMention } from "./groupMention.js";
 import type { RichMessage, RichMessageSender } from "./richMessages.js";
 
 const log = getLogger("callback-router");
@@ -78,7 +79,11 @@ export class CallbackRouter implements InteractionHandler {
         detail: `${parsed.namespace}:${parsed.action}_no_card${suffix}`,
       };
     }
-    const mode = await this.send(event, card);
+    const mode = await this.send(event, card, {
+      // §F1：群里回复卡片在首行 @ 点击者；test 模块（/test、/testmenu）按现状豁免。
+      mention:
+        parsed.namespace !== "test" && parsed.namespace !== "testmenu",
+    });
     return {
       handled: true,
       detail: `${parsed.namespace}:${parsed.action}_${mode}${suffix}`,
@@ -103,9 +108,14 @@ export class CallbackRouter implements InteractionHandler {
   private async send(
     event: InteractionEvent,
     card: RichMessage,
+    options: { mention: boolean },
   ): Promise<string> {
     if (event.groupId) {
-      return describeSend(await this.sender.sendToGroup(event.groupId, card));
+      const reply =
+        options.mention && event.userId
+          ? withGroupMention(card, event.userId)
+          : card;
+      return describeSend(await this.sender.sendToGroup(event.groupId, reply));
     }
     if (event.userId) {
       return describeSend(await this.sender.sendToUser(event.userId, card));
