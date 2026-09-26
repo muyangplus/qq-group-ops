@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+（暂无未发布改动）
+
+
+## [0.17.2] - 2026-09-26
+
 ### 修复
 
 - **webhook 密钥派生改为官方《安全和授权》的算法**（真机联调 + 官方文档核对）：
@@ -607,7 +612,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.2...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.2...HEAD
+[0.17.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.15.2...v0.16.0
