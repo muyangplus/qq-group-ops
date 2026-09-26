@@ -53,6 +53,7 @@
 - ADR-0043：申诉入口用「群内按钮 + 私信指令」双通道，且按钮不直接建单
 - ADR-0044：不做「活动签到统计」（C4 取消）
 - ADR-0045：`@全体` 能力边界与群内 @全体 的短路处理（§B3）
+- ADR-0046：群内处罚卡去规则/去原文，原文改为可选短期落库（§B7 / §B8）
 
 ---
 
@@ -865,3 +866,31 @@
 - 影响：`src/adapters/qqOfficialEventMapper.ts`（`stripBotMention` / `isAtAllBroadcast` / 探测日志）、
   `src/services/commands/testCommands.ts` 与 `support.ts`（`/testat all` 候选扩到 8 条）、
   `TODO.md`（B3 完成、C9 记录能力边界）、真机清单 R1 / R16 / R17。
+
+## ADR-0046：群内处罚卡去规则/去原文，原文改为可选短期落库（§B7 / §B8）
+
+- 状态：已采纳（2026-09-26）
+- 背景：真机跑批（R16）暴露两件事——① 群内的关键词命中卡写着命中的具体关键词 / 正则，
+  等于把**规则内容本身**贴进群里（规则一旦公开就失去拦截意义）；② 点「我要申诉」时如果私信发不出去
+  （沙箱 / 从没私聊过机器人），引导卡送不达 → 申诉直接丢失（日志 `appeal:new_no_card`）；
+  ③ 处罚 / 申诉卡片上没有原文，审核员无法判断申诉是否成立。
+- 决策（用户逐条确认）：
+  1. **群内卡片**（标题由「关键词命中」改为「**处罚通知**」）只保留 `@当事人 + 处理动作 + 群规则文案`：
+     **不写命中的具体规则**（关键词 / 正则都算隐私），**不写「命中群规则」这类触发行**，**不带原文**；
+  2. **原文改为可选落库**：本群 `rawMessageRetentionDays > 0`（`RAW_MESSAGE_RETENTION_DAYS`，默认 `0` = 不落库）时，
+     把**触发处罚的那条消息**压成单行、截断 ≤200 字写进 `punishment_records.message_excerpt`；
+     到期由 `RetentionService` **只清原文、保留处罚记录**（该配置从"形同虚设"变成真正生效）；
+  3. **原文只出现在私信卡片**：处罚通知（审核员）、我要申诉引导、申诉已提交回执、申诉通知（审核员）
+     ——统一渲染 `**原文**：…`，未保留时显示「（未保留原文）」；
+  4. **申诉卡片补按钮**：我要申诉引导卡 = 「提交申诉」（指令按钮，预填 `/appeal #码 `）+「查看处罚」；
+     申诉已提交回执 = 「补充理由」+「查看处罚」（回执卡此前完全没有按钮）；私信卡片的按钮开关改看
+     **user** 目标的键盘可用性（此前误用群目标，群键盘被拒会连累私信卡片）；
+  5. **申诉降级**：点「我要申诉」而私信发不出去时，**不再丢单** —— 直接按「无理由」建单并照常通知审核员，
+     群里只回一条**不含申诉内容**的提示（与 `/whois` 私信失败的口径一致）。
+- 理由：规则内容与原文都属隐私，群里可见范围不可控；审核员需要原文才能判断申诉；
+  申诉是用户的正式诉求，不能因为"发不出引导卡"就静默丢弃。
+- 影响：`src/db/schema.ts`（新列）与 `src/db/migrate.ts`（老库补列，容忍"列已存在"）、
+  `punishmentRepository` / `punishments`（`messageExcerpt` + `clearMessageExcerptsBefore`）、
+  `retention.ts`（新增 `messageExcerptsCleared`）、`messageGuard.sendWarning`（改名 + 去规则/原文）、
+  `moderationCards`（4 张私信卡 + `excerptLine`）、`moderationNotifier`（user 键盘标志）、
+  `appealCommands`（降级建单）；文档见 COMMANDS / CONFIGURATION / DATA-COMPLIANCE / SECURITY / ARCHITECTURE。

@@ -803,7 +803,11 @@ pnpm db:up     # docker compose --profile postgres up -d db
 - 查询 `/pending` 时还会做一次懒清理，保证卡片里不出现过期项。
 - 清理同时作用于内存缓存与数据库，避免启动全量载入导致内存无限增长。
 
-`RAW_MESSAGE_RETENTION_DAYS` 目前是「无数据可清理」的状态：项目默认不保存消息原文，只保存审核结果与规则命中信息。保留该变量是为了后续需要短期留存原文时使用。
+`RAW_MESSAGE_RETENTION_DAYS` 控制**触发处罚的那条消息原文**的保留期：默认 `0` 表示不落库
+（隐私优先，只保存审核结果与规则命中信息）；设为 `3–7` 后，关键词 / 正则命中的消息会以**单行 + 截断 ≤200 字**
+存进 `punishment_records.message_excerpt`，只用于审核员与当事人本人的**私信卡片**（群里那张「处罚通知」不带原文、
+也不写命中的具体规则）。到期由 `RetentionService` **只清原文**，处罚记录本身仍按 `AUDIT_LOG_RETENTION_DAYS` 保留。
+也可按群覆盖：`/rules set rawMessageRetentionDays 7`（`clear` 归零）。
 
 `ACTIVITY_STATS_FONT_URL` 只影响活动统计图片：系统已有中文字体（Windows 雅黑 / Linux Noto CJK 等）时
 根本不会请求它；下载成功的字体会缓存到 `data/fonts/activity-stats.otf`（`data/` 已 gitignore，

@@ -18,7 +18,7 @@
 1. **仅使用官方 API**：不引入任何个人号协议端。
 2. **适配层隔离**：事件接入与官方 REST 调用分开，便于替换和测试。
 3. **业务逻辑可测试**：规则引擎、审核状态机、权限模型不依赖 QQ 平台即可单元测试。
-4. **数据最小化**：默认不保存消息原文；审计日志使用内部 ID，不默认保存敏感内容。
+4. **数据最小化**：默认不保存消息原文（开启 `rawMessageRetentionDays` 后才短期保存触发处罚的那条，到期只清原文）；审计日志使用内部 ID，不默认保存敏感内容。
 5. **渐进式实现**：先在测试群验证官方能力，再实现依赖这些能力的功能。
 
 ## 组件
@@ -95,7 +95,7 @@ TypeScript 核心服务
   ├── db/activityRepository.ts   活动与报名仓储
   ├── db/menuDeliveryRepository.ts 主菜单首次推送去重仓储
   ├── db/blacklistRepository.ts  黑名单仓储（本群 / 全局）
-  ├── db/punishmentRepository.ts 处罚记录仓储（动作 JSON，不含消息原文）
+  ├── db/punishmentRepository.ts 处罚记录仓储（动作 JSON；可选保存触发处罚的消息原文，受保留期控制）
   ├── db/appealRepository.ts     申诉记录仓储
   └── persistence.ts             数据库连接、迁移与仓储装配
       │
@@ -197,6 +197,10 @@ QQ Group Ops 核心服务
 - 群聊消息可能包含个人信息甚至敏感个人信息。
 - 长期保存原文会显著增加合规和安全风险。
 - 默认只保存审核结果、规则命中、操作人和时间；需要原文追溯时短期保留并自动删除。
+- 实现：本群 `/rules set rawMessageRetentionDays <天数>`（`RAW_MESSAGE_RETENTION_DAYS`）开启后，
+  只把**触发处罚的那条消息**（单行截断 ≤200 字）存进 `punishment_records.message_excerpt`，
+  仅用于审核员 / 当事人的**私信卡片**（群里那张处罚通知不带原文，也不写命中的具体规则）；
+  到期由 `RetentionService` 只清原文，处罚记录本身继续按 `AUDIT_LOG_RETENTION_DAYS` 保留。
 
 ### 5. 为什么权限分成「全局超管」和「本群超管」？
 
