@@ -1,5 +1,6 @@
 import type { KeyboardModal } from "../adapters/qqOfficial.js";
 import { ActivityStatus } from "../core/enums.js";
+import { compareLabels } from "../core/collation.js";
 import type {
   Activity,
   ActivityRegistration,
@@ -326,7 +327,7 @@ export function distribution(values: readonly string[]): string {
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   const sorted = [...counts.entries()].sort(
-    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+    (left, right) => right[1] - left[1] || compareLabels(left[0], right[0]),
   );
   const head = sorted
     .slice(0, 3)

@@ -1,4 +1,5 @@
 import { DEFAULT_ACTIVITY_STATS_FONT_URL } from "../config.js";
+import { compareLabels } from "../core/collation.js";
 import { getLogger } from "../core/logger.js";
 import type {
   Activity,
@@ -242,7 +243,10 @@ export function distributionOf(values: readonly string[]): DistributionEntry[] {
   }
   return [...counts.entries()]
     .map(([label, count]) => ({ label, count }))
-    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
+    .sort(
+      (left, right) =>
+        right.count - left.count || compareLabels(left.label, right.label),
+    );
 }
 
 export const TITLE_HEIGHT = 44;
