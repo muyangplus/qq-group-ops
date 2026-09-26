@@ -293,20 +293,9 @@ function systemCard(context: MenuContext, access: MenuAccess): CardSpec {
 function activityCard(context: MenuContext): CardSpec {
   return {
     title: "活动",
-    lines: [
-      "活动列表：/activity（按「报名中 / 草稿 / 已结束」分组）",
-      "活动详情：/activity info #短码",
-      "报名：/activity join #短码",
-      "取消报名：/activity quit #短码",
-      "订阅新活动：/activity subscribe（发布时私信给你）",
-    ],
+    lines: [],
     rows: [[cmdButton("list", "活动列表", "/activity"), backButton()]],
-    buttonHint: "报名与取消报名在活动卡片上有一键按钮。",
-    footer: [
-      "活动短码形如 #A7K2Q9，可从活动列表或活动卡片上获取。",
-      "报名前需要补全个人资料：/profile",
-      "订阅只推送新活动，不发群消息（机器人无法 @全体成员）。",
-    ],
+    buttonHint: "请选择功能：",
   };
 }
 
@@ -333,11 +322,7 @@ function adminCard(context: MenuContext, access: MenuAccess): CardSpec {
 
   return {
     title: "管理菜单",
-    lines: [
-      "群管理相关能力按权限分级显示；看不到的入口说明权限不足。",
-      "审批、改规则与导出需要群管理员及以上权限。",
-      "群规则卡：字段级继承（概览 + 开关/审核/处罚/关键词/名单/更多子卡），可恢复本页或全部继承。",
-    ],
+    lines: [],
     rows,
     buttonHint: "请选择功能：",
   };
@@ -346,13 +331,7 @@ function adminCard(context: MenuContext, access: MenuAccess): CardSpec {
 function reviewCard(context: MenuContext): CardSpec {
   return {
     title: "审核操作",
-    lines: [
-      "申请ID 从 /pending 或推送卡片获取，短码 `#XXXXXX` 也可以。",
-      "通过：/approve <申请ID>",
-      "拒绝：/reject <申请ID> <原因>",
-      "处罚记录：/punish list（卡片上可直接解除 / 改时长 / 踢出 / 拉黑）",
-      "黑名单：/blacklist（本群 / 全局）",
-    ],
+    lines: [],
     rows: [
       [
         cmdButton("pending", "待审批", "/pending"),
@@ -364,7 +343,7 @@ function reviewCard(context: MenuContext): CardSpec {
       ],
       [menuButton("admin", "管理菜单", "admin"), backButton()],
     ],
-    buttonHint: "审批动作需要带申请ID，因此这里不提供按钮。",
+    buttonHint: "请选择功能：",
 
   };
 }
@@ -372,14 +351,7 @@ function reviewCard(context: MenuContext): CardSpec {
 function opsCard(context: MenuContext): CardSpec {
   return {
     title: "活动运营",
-    lines: [
-      "新建：/activity create <标题>（自动返回配置卡）",
-      "修改：/activity set #短码 <字段> <值>",
-      "开停：/activity open|close|cancel #短码",
-      "名单：/activity signups #短码 [+页码] [full]",
-      "管理卡：报名名单 / 释放名额 / 重发卡片 / 开关报名",
-      "导出审计：/export [数量]",
-    ],
+    lines: [],
     rows: [
       [
         cmdButton("list", "活动列表", "/activity"),
@@ -387,26 +359,15 @@ function opsCard(context: MenuContext): CardSpec {
       ],
       [menuButton("admin", "管理菜单", "admin"), backButton()],
     ],
-    buttonHint: "创建与修改活动需要带参数，请按上面的用法手输指令。",
+    buttonHint: "请选择功能：",
   };
 }
 
 function superCard(context: MenuContext): CardSpec {
   return {
     title: "超管菜单",
-    lines: [
-      "平台级能力，仅全局超级管理员可用。",
-      "查询映射：/whois <QQ号|userId|群号|短码|group_openid>",
-      "绑定用户：/bind user <userId> <QQ号>",
-      "绑定群号：/bind groupid <group_openid> <群号>",
-      "授权：/perm grant super|gsuper|admin|mod ...",
-      "全局规则：/rules set all <字段> <值>",
-      "全局推送：/notify all on|off",
-      "处罚推送：/notify punish all on|off",
-      "全局黑名单：/blacklist list 全局（add 全局 <用户>）",
-      "班级别名：/alias set <别名> <规范名>",
-      "@ 自检：/testat（群内测 @ 是否生效，/testat all 测 @全体）",
-    ],
+    // 文案要求：菜单只做导航，指令用法一律在 /help 里
+    lines: [],
     rows: [
       [
         cmdButton("perm", "权限", "/perm list"),
@@ -422,9 +383,13 @@ function superCard(context: MenuContext): CardSpec {
         cmdButton("blacklistGlobal", "全局黑名单", "/blacklist list 全局"),
         cmdButton("testat", "@测试", "/testat"),
       ],
-      [cmdButton("pending", "待审批", "/pending"), backButton()],
+      [
+        cmdButton("pending", "待审批", "/pending"),
+        cmdButton("help", "帮助", "/help perm"),
+        backButton(),
+      ],
     ],
-    buttonHint: "常用入口：",
+    buttonHint: "请选择功能：",
   };
 }
 

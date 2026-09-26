@@ -146,7 +146,11 @@ export function formatProfile(
     const profile = ctx.userProfiles?.get(userId);
     const userLabel = ctx.helpers.displayUser(userId);
     if (!profile) {
-      return "尚未填写，请用下面按钮补全。";
+      return [
+        "尚未设置个人资料。",
+        "请发送一条组合指令（学号 / 班级 / 姓名，顺序与分隔符随意）：",
+        `/profile set <学号> <班级> <姓名>`,
+      ].join("\n");
     }
     return [
       `姓名：${profile.name || "（未填）"}`,

@@ -148,10 +148,8 @@ export class ActivityCardService {
       rows,
       buttonHint: "点击下方按钮立即操作：",
       // 纯文本降级里保留可复制的等价指令（按钮不可用时仍能报名 / 取消报名）
-      footer: [
-        `报名：/activity join ${code} · 取消报名：/activity quit ${code}`,
-        `活动详情：/activity info ${code}`,
-      ],
+      // 按钮不可用时的兜底指令：只保留按钮无法覆盖的报名 / 取消（详情本来就有按钮）
+      footer: [`报名：/activity join ${code} · 取消报名：/activity quit ${code}`],
     });
   }
 
