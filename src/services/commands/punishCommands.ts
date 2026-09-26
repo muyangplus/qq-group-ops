@@ -441,7 +441,6 @@ function punishmentDetailLines(
     `**群**：${notifier?.groupLabelOf(record.groupId) ?? ctx.helpers.groupLabel(record.groupId)}`,
     `**当事人**：${notifier?.userLabelOf(record.userId) ?? ctx.helpers.displayUser(record.userId)}`,
     `**命中规则**：${record.ruleReason || "（关键词）"}`,
-    ...excerptLines(record.messageExcerpt),
     `**动作**：${describePunishmentActions(record.actions)}`,
     `**状态**：${record.status === "released" ? "已解除" : "生效中"}`,
     ...(record.detail ? [`**执行结果**：${record.detail}`] : []),

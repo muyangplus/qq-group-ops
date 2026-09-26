@@ -21,12 +21,13 @@ import {
 /**
  * §A5 / §B7 / §B8 的指令与卡片路径（共享夹具）。
  */
-function createPunishment(userId: string) {
+function createPunishment(userId: string, messageExcerpt = "") {
   return punishments.create({
     groupId: "g1",
     userId,
     ruleReason: "广告",
     messageId: "m1",
+    ...(messageExcerpt.length > 0 ? { messageExcerpt } : {}),
     actions: {
       recalled: true,
       muted: true,
@@ -68,7 +69,7 @@ describe("AdminCommandService · blacklist / punish / appeal", () => {
   });
 
   it("shows the punish record list and denies members", async () => {
-    const record = await createPunishment("member");
+    const record = await createPunishment("member", "快来买广告");
 
     const denied = await service.handle("g1", "member", "/punish list");
     expect(denied.ok).toBe(false);
@@ -81,6 +82,11 @@ describe("AdminCommandService · blacklist / punish / appeal", () => {
     const detail = await service.handle("g1", "mod", `/punish #${record.recordId}`);
     expect(detail.ok).toBe(true);
     expect(detail.text).toContain("广告");
+    // 原文只渲染一次（标题下第一段的引用段落），且后面的字段没被吞进引用
+    expect(String(detail.rich?.markdown).match(/原文/gu) ?? []).toHaveLength(1);
+    expect(String(detail.rich?.markdown)).toContain(
+      "**原文**：\n> 快来买广告\n\n**群**：",
+    );
   });
 
   it("submits an appeal, notifies subscribers and lets them release the punishment", async () => {
@@ -228,7 +234,7 @@ describe("AdminCommandService · blacklist / punish / appeal", () => {
     expect(record.actions.muted).toBe(true);
     expect(record.actions.muteDurationSeconds).toBe(configStore.get("g1").muteDurationSeconds);
     // §B8：被禁言时群里按钮点不动，所以群里那张卡必须给出私聊申诉的等价指令
-    expect(String(warning?.markdown)).toContain(`/appeal #${record.recordId}`);
-    expect(String(warning?.markdown)).toContain("被禁言时群内按钮点不动");
+    expect(String(warning?.markdown)).toContain(`/appeal #${record.recordId} <理由>`);
+    expect(String(warning?.markdown)).toContain("点击下方按钮或私聊机器人发送");
   });
 });

@@ -103,6 +103,8 @@ describe("PunishmentService", () => {
     const notice = notifier.appealCard(submitted.appeal, kept, "mod");
     expect(String(notice.markdown)).toContain("**原文**：\n> 快来买广告\n\n**群**：");
     expect(notice.keyboard).toBeDefined();
+    // §卡片规范 v2：不再写「通过申诉 = 解除处罚…」这类解释句
+    expect(String(notice.markdown)).not.toContain("通过申诉");
 
     const guide = notifier.appealGuide(kept, "u1");
     expect(String(guide.markdown)).toContain("**原文**：\n> 快来买广告\n\n**处罚记录**：");

@@ -176,8 +176,6 @@ export function buildAppealNoticeCard(input: {
       `**申诉理由**：${escapeCardText(input.reason) || "（未填写）"}`,
       "",
       `**时间**：${formatTimestamp(input.createdAt)}`,
-      "",
-      "「通过申诉」= 解除处罚；改时长 / 踢出 / 拉黑会记为「已调整处罚」。",
     ],
     ...(input.withButtons
       ? {
