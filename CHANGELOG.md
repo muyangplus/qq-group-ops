@@ -10,6 +10,20 @@
 （暂无未发布改动）
 
 
+## [0.14.2] - 2026-09-26
+
+### 变更
+
+- **`/profile`、`/myperm` 与 `/whois` 统一口径**：群内**一切响应只走私信**（查询、设置确认、用法与错误提示、权限不足），
+  群里静默；只有私信失败才回一条 `@发起人 + 请先私聊机器人再试`。
+- **文案精简**：个人资料卡只留四行（姓名 / 学号（含年级）/ 班级 / 学院）+ 按钮
+  （填姓名 / 填学号 / 填班级 / 填学院 / 活动 / 帮助）；我的权限卡只留两行
+  （`权限等级：…` + `审批 ✓ · 规则 ✓ · 审核 ✗ · 导出 ✗`，超管多一项 `配置权限 ✓`）+ 按钮；用法说明只在输入有误时出现。
+
+### 备注
+
+- 数据本身不变，只是**落点**从群内改为私信；`/profile`、`/myperm` 卡片上的按钮改为指令按钮，避免回调把静默占位卡发回群里。
+
 ## [0.14.1] - 2026-09-26
 
 ### 修复
@@ -342,7 +356,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.2...HEAD
+[0.14.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.12.0...v0.13.0
