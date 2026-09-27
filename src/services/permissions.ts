@@ -163,6 +163,16 @@ export class PermissionService {
   }
 
   public hasAnyGroupRole(userId: string, required: PermissionLevel): boolean {
+    return this.meetsAnywhere(userId, required);
+  }
+
+  /**
+   * 「在**任意**群里达到某等级」——`hasAnyGroupRole` 的数值化版本。
+   *
+   * 用于「全部群」语义（例如通知订阅选「全部群」时要求「我至少在某个群有这个角色」），
+   * 与 `meets(user, group, level)`（某一个群）区分开。
+   */
+  public meetsAnywhere(userId: string, required: PermissionLevel): boolean {
     const groupIds = new Set([
       ...this.groupSuperAdminIds.keys(),
       ...this.groupAdminIds.keys(),

@@ -1,4 +1,4 @@
-import { PermissionLevel } from "../../core/enums.js";
+import { PermissionLevel, describeLevel } from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
 import { renderCard } from "../cardTemplate.js";
 import type { AdminCommandContext } from "./context.js";
@@ -42,34 +42,8 @@ export function handleMyPermission(
         : "";
   return {
     ok: true,
-    text: [`权限等级：${levelLabel(level)}${scopeLabel}`, flags].join("\n"),
+    text: [`权限等级：${describeLevel(level)}${scopeLabel}`, flags].join("\n"),
   };
-}
-
-/**
- * 等级 → 中文名（数值等级下的展示层）。
- *
- * TODO(H2)：与 `core/enums.ts` 的 `describeLevel()` / `menu.ts` 的 `LEVEL_LABELS` 合并成一处。
- */
-function levelLabel(level: number): string {
-  switch (level) {
-    case PermissionLevel.Blacklisted:
-      return "拉黑";
-    case PermissionLevel.Guest:
-      return "未绑定";
-    case PermissionLevel.Member:
-      return "群成员";
-    case PermissionLevel.Moderator:
-      return "审核员";
-    case PermissionLevel.GroupAdmin:
-      return "群管理员";
-    case PermissionLevel.SuperAdmin:
-      return "超级管理员";
-    case PermissionLevel.GlobalSuperAdmin:
-      return "全局超级管理员";
-    default:
-      return `等级 ${level}`;
-  }
 }
 
 export function handlePermissionConfig(
