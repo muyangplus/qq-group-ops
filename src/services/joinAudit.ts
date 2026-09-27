@@ -65,6 +65,17 @@ export class JoinAuditService {
     return this.repository !== undefined;
   }
 
+  /** 全局待审批条数（所有群合计，`/status proc` 诊断用）。 */
+  public pendingCount(): number {
+    let count = 0;
+    for (const request of this.requests.values()) {
+      if (request.status === JoinRequestStatus.Pending) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
   public async load(): Promise<void> {
     if (!this.repository) {
       return;

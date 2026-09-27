@@ -1,4 +1,6 @@
 import type { CardButton } from "../cardTemplate.js";
+import type { Settings } from "../../config.js";
+import type { WriteQueue } from "../../db/writeQueue.js";
 import type { AuditLog } from "../audit.js";
 import type { ActivityService } from "../activity.js";
 import type { ActivityCardService, ActivityExportLike, ActivityStatsLike } from "../activityCards.js";
@@ -20,6 +22,7 @@ import type { ModerationNotifier } from "../moderationNotifier.js";
 import type { NotificationService } from "../notifications.js";
 import type { PermissionService } from "../permissions.js";
 import type { PunishmentService } from "../punishments.js";
+import type { RestartHook } from "../restart.js";
 import type { RichMessageSender } from "../richMessages.js";
 import type { UserProfileService } from "../userProfiles.js";
 import type { CardResult, CommandResult } from "./support.js";
@@ -75,9 +78,16 @@ export interface CommandHelpers {
   /** 活动通知服务缺失时的内存兜底订阅表（仅「是否已订阅」状态）。 */
   readonly fallbackSubscriptions: Set<string>;
 }
+export interface DiagnosticsDeps {
+  settings: Settings;
+  writeQueue: WriteQueue;
+}
+
 export interface AdminCommandContext {
   /** 共享小工具（展示名 / 目标解析 / 卡片包装）。 */
   readonly helpers: CommandHelpers;
+  /** 进程级诊断依赖（`/status proc`）：配置摘要 + 写队列；未装配时只显示进程自身信息。 */
+  readonly diagnostics: DiagnosticsDeps | undefined;
   readonly permissions: PermissionService;
   readonly joinAudit: JoinAuditService;
   readonly configStore: GroupConfigStore;
@@ -104,5 +114,7 @@ export interface AdminCommandContext {
   readonly appeals: AppealService | undefined;
   /** 处罚 / 申诉的私信卡片渲染与推送。 */
   readonly moderationNotifier: ModerationNotifier | undefined;
+  /** `/restart` 的重启钩子；未装配时该指令拒绝执行。 */
+  readonly restart: RestartHook | undefined;
   readonly richMessages: RichMessageSender | undefined;
 }

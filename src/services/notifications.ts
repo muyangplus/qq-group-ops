@@ -473,6 +473,17 @@ export class NotificationService {
     );
   }
 
+  /** 诊断计数（`/status proc`）：订阅人数 / 投递记录数。 */
+  public stats(): { subscribers: number; deliveries: number } {
+    let subscribers = 0;
+    for (const scopes of this.subscriptions.values()) {
+      if (scopes.size > 0) {
+        subscribers += 1;
+      }
+    }
+    return { subscribers, deliveries: this.deliveries.size };
+  }
+
   /** 是否已绑定 QQ 号（没有身份库时按「已绑定」处理，保持测试与单机用法可用）。 */
   private isBound(userId: string): boolean {
     if (!this.identityMap) {

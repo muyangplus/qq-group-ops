@@ -77,6 +77,7 @@ import { ModerationNotifier } from "./services/moderationNotifier.js";
 import { RuleEngine } from "./services/moderation.js";
 import { NotificationService } from "./services/notifications.js";
 import { NotifyTopicLevelStore } from "./services/notifyTopics.js";
+import { createRestartHook, type RestartHook } from "./services/restart.js";
 import { PermissionService } from "./services/permissions.js";
 import { PunishmentService } from "./services/punishments.js";
 import { RichMessageSender } from "./services/richMessages.js";
@@ -104,6 +105,8 @@ export interface Runtime {
   notifications: NotificationService;
   /** 通知话题门槛（全局一套，存 `group_settings.__default__`）。 */
   notifyTopics: NotifyTopicLevelStore;
+  /** `/restart` 的重启钩子（未装配时该指令拒绝执行）。 */
+  restart: RestartHook;
   /** §A5 黑名单（本群 / 全局）。 */
   blacklist: BlacklistService;
   /** §B7 处罚记录与卡片动作。 */
@@ -162,6 +165,12 @@ export interface RuntimeRepositories {
 
 export interface RuntimeDependencies {
   repositories?: RuntimeRepositories;
+  /**
+   * `/restart` 的落点：由 `main.ts` 注入「写重启回执 + 优雅关闭 + 进程退出」。
+   * 缺省（纯单测 / 没有进程管理器）时 `runtime.restart.available === false`，
+   * `/restart` 会明确拒绝而不是把进程杀掉。
+   */
+  onRestartRequested?: ((info: { requestedBy: string }) => void) | undefined;
 }
 
 export function createRuntime(
@@ -234,6 +243,7 @@ export function createRuntime(
     repositories.groupSettings,
     writeQueue,
   );
+  const restart = createRestartHook(dependencies.onRestartRequested);
   const notifications = new NotificationService(api, permissions, {
     subscriptions: repositories.notificationSubscriptions,
     deliveries: repositories.notificationDeliveries,
@@ -349,6 +359,8 @@ export function createRuntime(
     moderationNotifier,
     richMessages,
     cardSender: richMessages,
+    diagnostics: { settings, writeQueue },
+    restart,
   });
   const menuState = createFirstMenuPushState(
     settings,
@@ -388,11 +400,25 @@ export function createRuntime(
       },
     ],
     [
+      "restart",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId || parsed.action !== "go") {
+          return undefined;
+        }
+        return adminCommands.restartNowCard(userId, event.groupId).rich;
+      },
+    ],
+    [
       "status",
       async (parsed, event) => {
         const userId = event.userId;
         if (!userId) {
           return undefined;
+        }
+        // `cb:status:proc` → 进程全套详情（仅全局超管）；`cb:status:view:<群>` → 群状态卡
+        if (parsed.action === "proc") {
+          return adminCommands.processCard(userId).rich;
         }
         return adminCommands.statusCard(event.groupId, userId, [
           "status",
@@ -861,6 +887,7 @@ export function createRuntime(
     exportService,
     notifications,
     notifyTopics,
+    restart,
     blacklist,
     punishments,
     appeals,

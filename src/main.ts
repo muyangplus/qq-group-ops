@@ -18,10 +18,19 @@ import { ActivityReminderService } from "./services/activityReminder.js";
 import { AppealWatcher } from "./services/appealWatcher.js";
 import { RetentionService } from "./services/retention.js";
 import { NOTIFY_SCOPE_ALL, topicOfOfficialEvent } from "./services/notifyTopics.js";
+import {
+  restartDoneCard,
+  takeRestartNotice,
+  writeRestartNotice,
+} from "./services/restartNotice.js";
+import { appVersion } from "./core/buildInfo.js";
 import { sendWelcome } from "./services/welcome.js";
 
 /** 启动阶段命中限流时的固定冷却时间。 */
 const RATE_LIMIT_STARTUP_COOLDOWN_MS = 60_000;
+
+/** `/restart` 退出前的固定延迟：留时间把「正在重启」的回执卡片发出去。 */
+const RESTART_EXIT_DELAY_MS = 2_000;
 
 function isRecordLike(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -58,11 +67,20 @@ async function main(): Promise<void> {
   const log = getLogger("main");
 
   const persistence = await connectPersistence(settings);
+  /**
+   * `/restart` 的落点（在 `shutdown` 定义好之前先占位）：
+   * 命令层只调用 `runtime.restart.request(...)`，真正退出由这里的优雅关闭负责。
+   */
+  let restartHandler:
+    | ((info: { requestedBy: string }) => void)
+    | undefined;
   const runtime = createRuntime(
     settings,
-    persistence
-      ? {
-          repositories: {
+    {
+      onRestartRequested: (info) => restartHandler?.(info),
+      ...(persistence
+        ? {
+            repositories: {
             audit: persistence.audit,
             joinRequests: persistence.joinRequests,
             groupConfigs: persistence.groupConfigs,
@@ -86,13 +104,16 @@ async function main(): Promise<void> {
             userProfiles: persistence.userProfiles,
             classAliases: persistence.classAliases,
             menuDeliveries: persistence.menuDeliveries,
-          },
-        }
-      : {},
+           },
+          }
+        : {}),
+    },
   );
   if (persistence) {
     await runtime.load();
   }
+  // 上次 `/restart` 留下的回执：给发起人私信一条「已重启」（说明进程管理器真的拉回来了）
+  await announceRestartIfAny(runtime);
 
   const retention = new RetentionService(
     runtime.auditLog,
@@ -232,12 +253,53 @@ async function main(): Promise<void> {
     await closeLogging();
     process.exit(0);
   };
+  /**
+   * `/restart` 的落点：先写重启回执 → 留 2 秒把「正在重启」的回执发出去 →
+   * 走与 SIGTERM 完全相同的优雅关闭 → 退出，由 docker compose（`restart: unless-stopped`）
+   * / systemd（`Restart=always`）/ pm2 拉起新进程。
+   */
+  restartHandler = (info) => {
+    writeRestartNotice({
+      userId: info.requestedBy,
+      requestedAt: new Date().toISOString(),
+      version: appVersion(),
+    });
+    log.warn("restart requested, exiting for supervisor to relaunch", {
+      requestedBy: info.requestedBy,
+      delayMs: RESTART_EXIT_DELAY_MS,
+    });
+    setTimeout(() => {
+      void shutdown();
+    }, RESTART_EXIT_DELAY_MS);
+  };
   process.once("SIGINT", () => {
     void shutdown();
   });
   process.once("SIGTERM", () => {
     void shutdown();
   });
+}
+
+/**
+ * 启动时的「重启回执」：`/restart` 退出前会写一行文件，新进程起来后读走它，
+ * 给发起人私信一条「已重启」（含版本 / 启动时间 / 请求到启动的耗时），证明进程管理器真的拉回来了。
+ * 投递失败只记日志：这只是一种自证手段，不能影响启动。
+ */
+async function announceRestartIfAny(runtime: Runtime): Promise<void> {
+  const notice = takeRestartNotice();
+  if (!notice) {
+    return;
+  }
+  const result = await runtime.notifications.sendPrivateCard(
+    notice.userId,
+    restartDoneCard(notice, appVersion()),
+  );
+  if (!result.ok) {
+    getLogger("main").warn("restart notice not delivered", {
+      userId: notice.userId,
+      detail: result.detail,
+    });
+  }
 }
 
 void main().catch((error: unknown) => {

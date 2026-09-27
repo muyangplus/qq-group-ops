@@ -53,7 +53,11 @@ import {
   rulesPanelCard,
   toggleRulesCard,
 } from "./commands/ruleCommands.js";
-import { handleStatus, statusCard } from "./commands/statusCommands.js";
+import { handleStatus, processCard, statusCard } from "./commands/statusCommands.js";
+import {
+  restartCard,
+  restartNowCard,
+} from "./commands/restartCommands.js";
 import { handleExport } from "./commands/exportCommands.js";
 import {
   handleNotify,
@@ -72,7 +76,12 @@ import {
 } from "./commands/blacklistCommands.js";
 import { handlePunish, punishCallbackCard } from "./commands/punishCommands.js";
 import { appealCallbackCard, handleAppeal } from "./commands/appealCommands.js";
-import type { AdminCommandContext, CommandHelpers } from "./commands/context.js";
+import type {
+  AdminCommandContext,
+  CommandHelpers,
+  DiagnosticsDeps,
+} from "./commands/context.js";
+import type { RestartHook } from "./restart.js";
 import type { CardButton } from "./cardTemplate.js";
 import { getLogger } from "../core/logger.js";
 import type { AuditLog } from "./audit.js";
@@ -168,6 +177,12 @@ export interface AdminCommandServiceOptions {
 
   /** 活动卡片发送器；缺省时复用 `richMessages`，再缺省用通知服务的发送器。 */
   cardSender?: RichMessageSender | undefined;
+
+  /** 进程级诊断（`/status proc`）：settings + 写队列；缺省时该卡只显示进程自身信息。 */
+  diagnostics?: DiagnosticsDeps | undefined;
+
+  /** `/restart` 的重启钩子（`main.ts` 注入）；缺省时该指令拒绝执行。 */
+  restart?: RestartHook | undefined;
 }
 
 export class AdminCommandService {
@@ -222,6 +237,10 @@ export class AdminCommandService {
 
   private readonly explicitCardSender: RichMessageSender | undefined;
 
+  private readonly diagnostics: DiagnosticsDeps | undefined;
+
+  private readonly restart: RestartHook | undefined;
+
   /** 班级库（活动学院/年级按钮）；runtime.load() 里拿到后注入。 */
   private activityRoster: MemberRoster | undefined;
 
@@ -258,6 +277,8 @@ export class AdminCommandService {
     this.moderationNotifier = options.moderationNotifier;
     this.richMessages = options.richMessages;
     this.explicitCardSender = options.cardSender;
+    this.diagnostics = options.diagnostics;
+    this.restart = options.restart;
   }
 
   /** 班级库在 `runtime.load()` 里才加载完成，因此构造后再注入（与 UserProfileService 同套路）。 */
@@ -494,6 +515,8 @@ export class AdminCommandService {
     };
     return {
       helpers,
+      diagnostics: this.diagnostics,
+      restart: this.restart,
       permissions: this.permissions,
       joinAudit: this.joinAudit,
       configStore: this.configStore,
@@ -628,6 +651,9 @@ export class AdminCommandService {
       case "status":
       case "状态":
         return handleStatus(this.context(), groupId, userId, parts);
+      case "restart":
+      case "重启":
+        return restartCard(this.context(), userId);
       case "test":
       case "测试":
         return handleTest(this.context(), groupId, userId);
@@ -682,13 +708,28 @@ export class AdminCommandService {
     return helpCard(this.context(), groupId, userId, topicQuery);
   }
 
-  /** `/status <群号|#群短码>`：运行状态卡 + 常用入口。 */
+  /** `/status <群号|#群短码>`：运行状态卡 + 常用入口（含一行精简进程信息）。 */
   public statusCard(
     groupId: string | undefined,
     userId: string,
     parts: readonly string[],
   ): CardResult {
     return statusCard(this.context(), groupId, userId, parts);
+  }
+
+  /** 回调：`cb:status:proc` —— 进程全套详情（仅全局超管）。 */
+  public processCard(userId: string): CardResult {
+    return processCard(this.context(), userId);
+  }
+
+  /** `/restart`：重启确认卡（仅全局超管；真正执行在 `cb:restart:go`）。 */
+  public restartCard(userId: string): CardResult {
+    return restartCard(this.context(), userId);
+  }
+
+  /** 回调：`cb:restart:go` —— 安排重启并回执。 */
+  public restartNowCard(userId: string, replyGroupId?: string): CardResult {
+    return restartNowCard(this.context(), userId, replyGroupId);
   }
 
   public pendingCard(

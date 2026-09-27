@@ -1,4 +1,6 @@
 import { FakeQQOfficialAPI } from "../../src/adapters/fakeQqOfficial.js";
+import { loadSettings } from "../../src/config.js";
+import { WriteQueue } from "../../src/db/writeQueue.js";
 import { AdminCommandService } from "../../src/services/adminCommands.js";
 import { AppealService } from "../../src/services/appeals.js";
 import { AuditLogStore } from "../../src/services/audit.js";
@@ -39,6 +41,8 @@ export let joinSync: JoinRequestSyncService;
 export let notifications: NotificationService;
 export let service: AdminCommandService;
 export let shortCodes: ShortCodeService;
+/** `/restart` 钩子的调用记录（每次 beforeEach 清空）。 */
+export const restartRequests: Array<{ requestedBy: string }> = [];
 /** §A5 黑名单（本群 / 全局）。 */
 export let blacklist: BlacklistService;
 /** §B7 处罚记录与卡片动作。 */
@@ -140,6 +144,7 @@ export function scopedShortCodeLabel(
   }
 
   beforeEach(() => {
+    restartRequests.length = 0;
     auditLog = new AuditLogStore();
     permissions = new PermissionService({
       superAdminIds: new Set(["root"]),
@@ -202,5 +207,15 @@ export function scopedShortCodeLabel(
       punishments,
       appeals,
       moderationNotifier,
+      // `/status proc` 的进程全套卡依赖它（settings + 写队列计数）
+      diagnostics: { settings: loadSettings({}), writeQueue: new WriteQueue() },
+      // `/restart` 的钩子替身：测试断言「谁请求了重启」，绝不真的退出进程
+      restart: {
+        available: true,
+        request: (info) => {
+          restartRequests.push(info);
+          return true;
+        },
+      },
     });
   });
