@@ -44,14 +44,56 @@ export const JoinRequestStatus = {
 } as const;
 export type JoinRequestStatus = (typeof JoinRequestStatus)[keyof typeof JoinRequestStatus];
 
+/**
+ * 权限等级：**数值即等级**，留 10 的间隙便于以后插档（如 15 = 值班审核员），
+ * 插入新档不用改动已有数值与历史数据。
+ *
+ * - 判定统一走 `PermissionService.meets(userId, groupId, level)`（数值比较），
+ *   不要再写 `isSuperAdmin() || canXxx()` 这种手写组合；
+ * - `Blacklisted`（-10）目前**只作为「门槛」的一个可选档位**，不改变黑名单的拦截行为
+ *   （拉黑拦截仍在 BlacklistService / 入群审核里做）。
+ */
 export const PermissionLevel = {
-  Guest: "guest",
-  Member: "member",
-  Moderator: "moderator",
-  GroupAdmin: "group_admin",
-  SuperAdmin: "super_admin",
+  /** 拉黑档位（-10）：任何带门槛 >= Guest 的能力都过不了。 */
+  Blacklisted: -10,
+  /** 未绑定 / 陌生访客。 */
+  Guest: 0,
+  /** 群成员。 */
+  Member: 10,
+  /** 审核员：内容审核、处罚与申诉。 */
+  Moderator: 20,
+  /** 群管理员：入群审批、规则管理、导出。 */
+  GroupAdmin: 30,
+  /** 超级管理员：平台级能力（全局或本群）。 */
+  SuperAdmin: 40,
 } as const;
-export type PermissionLevel = (typeof PermissionLevel)[keyof typeof PermissionLevel];
+/**
+ * 权限等级的**类型**直接就是数值：留间隙、可插档（见上面的常量表）。
+ *
+ * 刻意不做成字面量联合：数值档位本身就是开放的（以后可能加 15 / 35），
+ * 用 `number` 更贴合「可扩展」；取值一律用 `PermissionLevel.Xxx` 常量。
+ */
+export type PermissionLevel = number;
+
+/** 等级的中文名（展示用；新增档位时在这里补一行即可）。 */
+export function describeLevel(level: PermissionLevel): string {
+  switch (level) {
+    case PermissionLevel.Blacklisted:
+      return "拉黑";
+    case PermissionLevel.Guest:
+      return "未绑定";
+    case PermissionLevel.Member:
+      return "群成员";
+    case PermissionLevel.Moderator:
+      return "审核员";
+    case PermissionLevel.GroupAdmin:
+      return "群管理员";
+    case PermissionLevel.SuperAdmin:
+      return "超级管理员";
+    default:
+      return `等级 ${level as number}`;
+  }
+}
 
 /** 关键词命中后的处罚动作。 */
 export const KeywordPunish = {

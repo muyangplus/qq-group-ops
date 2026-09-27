@@ -8,14 +8,6 @@ import { WriteQueue } from "../db/writeQueue.js";
 
 const log = getLogger("permissions");
 
-const LEVEL_RANK: Record<PermissionLevel, number> = {
-  [PermissionLevel.Guest]: 0,
-  [PermissionLevel.Member]: 1,
-  [PermissionLevel.Moderator]: 2,
-  [PermissionLevel.GroupAdmin]: 3,
-  [PermissionLevel.SuperAdmin]: 4,
-};
-
 export interface PermissionPolicy {
   superAdminIds?: ReadonlySet<string>;
   groupSuperAdminIds?: ReadonlyMap<string, ReadonlySet<string>>;
@@ -129,12 +121,28 @@ export class PermissionService {
     return PermissionLevel.Member;
   }
 
+  /**
+   * 是否达到某等级：**数值即等级**，直接比较（等级定义见 `core/enums.ts`）。
+   *
+   * 这是全项目唯一的权限判定入口 —— 新能力一律传自己的「最低等级」，
+   * 不要再写 `isSuperAdmin(userId) || canXxx(...)` 这种手写组合
+   * （超管 40 天然覆盖所有更低门槛）。
+   */
   public hasAtLeast(
     userId: string,
     groupId: string | undefined,
     required: PermissionLevel,
   ): boolean {
-    return LEVEL_RANK[this.levelFor(userId, groupId)] >= LEVEL_RANK[required];
+    return this.levelFor(userId, groupId) >= required;
+  }
+
+  /** 语义化别名：`meets(user, group, PermissionLevel.Moderator)` 读起来更直白。 */
+  public meets(
+    userId: string,
+    groupId: string | undefined,
+    required: PermissionLevel,
+  ): boolean {
+    return this.hasAtLeast(userId, groupId, required);
   }
 
   public canApproveJoin(userId: string, groupId: string): boolean {
@@ -160,7 +168,7 @@ export class PermissionService {
       ...this.moderatorIds.keys(),
     ]);
     for (const groupId of groupIds) {
-      if (LEVEL_RANK[this.levelFor(userId, groupId)] >= LEVEL_RANK[required]) {
+      if (this.hasAtLeast(userId, groupId, required)) {
         return true;
       }
     }

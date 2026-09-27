@@ -28,7 +28,7 @@ describe("AdminCommandService · perm", () => {
     const result = await service.handle("g1", "member", "/myperm");
     expect(result.ok).toBe(true);
     expect(result.silent).toBe(true);
-    expect(privateText("member")).toContain("权限等级：member");
+    expect(privateText("member")).toContain("权限等级：群成员");
     expect(privateText("member")).not.toContain("配置权限");
   });
 
@@ -44,7 +44,7 @@ describe("AdminCommandService · perm", () => {
     expect(grant.text).toContain("已更新权限：mod 10005");
 
     const memberPermission = await service.handle("g1", "u3", "/myperm");
-    expect(privateText("u3")).toContain("权限等级：moderator");
+    expect(privateText("u3")).toContain("权限等级：审核员");
 
     const revoke = await service.handle("g1", "root", "/perm revoke mod u3");
     expect(revoke.ok).toBe(true);
@@ -62,7 +62,7 @@ describe("AdminCommandService · perm", () => {
     expect(permissions.isGroupSuperAdmin("u4", "g1")).toBe(true);
 
     await service.handle("g1", "u4", "/myperm");
-    expect(privateText("u4")).toContain("权限等级：super_admin（本群超管）");
+    expect(privateText("u4")).toContain("权限等级：超级管理员（本群超管）");
 
     // 在本群内可以做群管理与审批
     joinAudit.submit("g1", "u1", "想加入", "r1");
@@ -71,8 +71,8 @@ describe("AdminCommandService · perm", () => {
     const rules = await service.handle("g1", "u4", "/rules set keywords 本群词");
     expect(rules.ok).toBe(true);
 
-    // 其他群没有任何权限
-    expect(permissions.levelFor("u4", "g2")).toBe("member");
+    // 其他群没有任何权限（数值等级：成员 = 10）
+    expect(permissions.levelFor("u4", "g2")).toBe(10);
 
     // 拿不到平台级能力
     const perm = await service.handle("g1", "u4", "/perm list");
@@ -118,7 +118,7 @@ describe("AdminCommandService · perm", () => {
     expect(grant.text).toContain("已更新权限：mod 10006");
 
     await service.handle("g1", "u4", "/myperm");
-    expect(privateText("u4")).toContain("权限等级：moderator");
+    expect(privateText("u4")).toContain("权限等级：审核员");
   });
 
   it("resolves QQ numbers when granting permissions", async () => {
@@ -128,7 +128,7 @@ describe("AdminCommandService · perm", () => {
     expect(identityMap.resolveUserId("123456")).toBe("member");
 
     await service.handle("g1", "member", "/myperm");
-    expect(privateText("member")).toContain("权限等级：moderator");
+    expect(privateText("member")).toContain("权限等级：审核员");
   });
 
   it("allows super admin to bind arbitrary ids and query mappings", async () => {
