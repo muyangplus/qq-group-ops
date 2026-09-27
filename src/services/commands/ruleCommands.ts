@@ -1,3 +1,4 @@
+import { PlatformLevel, PermissionLevel } from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
 import {
   describePunishActions,
@@ -79,7 +80,7 @@ export function rulesCard(
   }
   const targetGroupId = ctx.helpers.resolveTargetGroupId(groupId, parts[1]);
   if (!targetGroupId) {
-    if (!parts[1] && ctx.permissions.isSuperAdmin(userId)) {
+    if (!parts[1] && ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
       return globalRulesCard(ctx, userId, 1);
     }
     const card = renderCard({
@@ -92,7 +93,9 @@ export function rulesCard(
     });
     return { ok: false, text: card.text, rich: card };
   }
-  if (!ctx.permissions.canReviewContent(userId, targetGroupId)) {
+  if (
+    !ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.Moderator)
+  ) {
     const card = renderCard({
       title: "权限不足",
       lines: ["需要审核员或以上权限（查看）／群管理员或以上（修改）。"],
@@ -102,9 +105,11 @@ export function rulesCard(
   }
 
   const config = ctx.configStore.get(targetGroupId);
-  const canManage =
-    ctx.permissions.canManageRules(userId, targetGroupId) ||
-    ctx.permissions.isSuperAdmin(userId);
+  const canManage = ctx.permissions.meetsInGroup(
+    userId,
+    targetGroupId,
+    PermissionLevel.GroupAdmin,
+  );
 
   const overridden = ctx.configStore.overriddenFields(targetGroupId);
   const overrideNames = [...overridden]
@@ -141,7 +146,7 @@ export function rulesCard(
       ),
     ]);
   }
-  if (ctx.permissions.isSuperAdmin(userId)) {
+  if (ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
     lastRow.push(viewButton("global", "全局规则", "rules", "all"));
   }
   lastRow.push(viewButton("help", "规则帮助", "help", "topic", "rules"));
@@ -183,9 +188,11 @@ export function rulesPanelCard(
   page = 1,
   mode: "allow" | "deny" = "allow",
 ): CardResult {
-  const canManage =
-    ctx.permissions.canManageRules(userId, targetGroupId) ||
-    ctx.permissions.isSuperAdmin(userId);
+  const canManage = ctx.permissions.meetsInGroup(
+    userId,
+    targetGroupId,
+    PermissionLevel.GroupAdmin,
+  );
   if (!canManage) {
     const card = renderCard({
       title: "权限不足",
@@ -504,8 +511,7 @@ export async function keywordListCard(
   replyGroupId?: string,
 ): Promise<CardResult> {
   if (
-    !ctx.permissions.canManageRules(userId, targetGroupId) &&
-    !ctx.permissions.isSuperAdmin(userId)
+    !ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.GroupAdmin)
   ) {
     return ruleDeniedCard(ctx, targetGroupId, "查看词表需要群管理员或以上权限。");
   }
@@ -975,9 +981,11 @@ export function delKeywordCard(
   userId: string,
   replyGroupId?: string,
 ): CardResult {
-  const canManage =
-    ctx.permissions.canManageRules(userId, targetGroupId) ||
-    ctx.permissions.isSuperAdmin(userId);
+  const canManage = ctx.permissions.meetsInGroup(
+    userId,
+    targetGroupId,
+    PermissionLevel.GroupAdmin,
+  );
   if (!canManage) {
     return ruleDeniedCard(ctx, targetGroupId, "删除关键词需要群管理员或以上权限。");
   }
@@ -1013,9 +1021,11 @@ export function clearKeywordsCard(
   userId: string,
   replyGroupId?: string,
 ): CardResult {
-  const canManage =
-    ctx.permissions.canManageRules(userId, targetGroupId) ||
-    ctx.permissions.isSuperAdmin(userId);
+  const canManage = ctx.permissions.meetsInGroup(
+    userId,
+    targetGroupId,
+    PermissionLevel.GroupAdmin,
+  );
   if (!canManage) {
     return ruleDeniedCard(ctx, targetGroupId, "清空关键词需要群管理员或以上权限。");
   }
@@ -1044,9 +1054,11 @@ export function resetRulePageCard(
   page = 1,
   mode: "allow" | "deny" = "allow",
 ): CardResult {
-  const canManage =
-    ctx.permissions.canManageRules(userId, targetGroupId) ||
-    ctx.permissions.isSuperAdmin(userId);
+  const canManage = ctx.permissions.meetsInGroup(
+    userId,
+    targetGroupId,
+    PermissionLevel.GroupAdmin,
+  );
   if (!canManage) {
     return ruleDeniedCard(ctx, targetGroupId, "恢复继承需要群管理员或以上权限。");
   }
@@ -1082,6 +1094,8 @@ export function resetRulePageCard(
  * 回调：恢复全部继承（`cb:rules:resetAll:<群>`）。
  *
  * 与「恢复本页继承」不同，这里清空该群的全部字段级覆盖，等价于旧 `removeOverride`。
+ *
+ * 门槛沿用历史对外行为 = 群管理员 130（与下方提示文案一致）；H2 不收紧到本群超管 140。
  */
 export function resetAllRulesCard(
   ctx: AdminCommandContext,
@@ -1089,9 +1103,11 @@ export function resetAllRulesCard(
   userId: string,
   replyGroupId?: string,
 ): CardResult {
-  const canManage =
-    ctx.permissions.canManageRules(userId, targetGroupId) ||
-    ctx.permissions.isSuperAdmin(userId);
+  const canManage = ctx.permissions.meetsInGroup(
+    userId,
+    targetGroupId,
+    PermissionLevel.GroupAdmin,
+  );
   if (!canManage) {
     return ruleDeniedCard(ctx, targetGroupId, "恢复继承需要群管理员或以上权限。");
   }
@@ -1112,9 +1128,11 @@ export function punishToggleCard(
   userId: string,
   replyGroupId?: string,
 ): CardResult {
-  const canManage =
-    ctx.permissions.canManageRules(userId, targetGroupId) ||
-    ctx.permissions.isSuperAdmin(userId);
+  const canManage = ctx.permissions.meetsInGroup(
+    userId,
+    targetGroupId,
+    PermissionLevel.GroupAdmin,
+  );
   if (!canManage) {
     return ruleDeniedCard(ctx, targetGroupId, "修改规则需要群管理员或以上权限。");
   }
@@ -1156,9 +1174,11 @@ export function rosterToggleCard(
   replyGroupId?: string,
   page = 1,
 ): CardResult {
-  const canManage =
-    ctx.permissions.canManageRules(userId, targetGroupId) ||
-    ctx.permissions.isSuperAdmin(userId);
+  const canManage = ctx.permissions.meetsInGroup(
+    userId,
+    targetGroupId,
+    PermissionLevel.GroupAdmin,
+  );
   if (!canManage) {
     return ruleDeniedCard(ctx, targetGroupId, "修改名单需要群管理员或以上权限。");
   }
@@ -1224,7 +1244,7 @@ export function ruleDeniedCard(
 export function globalRulesCard(
   ctx: AdminCommandContext,
   userId: string, page = 1): CardResult {
-  if (!ctx.permissions.isSuperAdmin(userId)) {
+  if (!ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
     const card = renderCard({
       title: "权限不足",
       lines: [GLOBAL_RULES_DENIED],
@@ -1266,7 +1286,7 @@ export function globalRulesCard(
 export function ruleOverridesCard(
   ctx: AdminCommandContext,
   userId: string, page = 1): CardResult {
-  if (!ctx.permissions.isSuperAdmin(userId)) {
+  if (!ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
     const card = renderCard({
       title: "权限不足",
       lines: [GLOBAL_RULES_DENIED],
@@ -1386,7 +1406,9 @@ export async function handleRulesKeywordAdd(
   if (!target.ok) {
     return { ok: false, text: target.text };
   }
-  if (!ctx.permissions.canManageRules(userId, target.groupId)) {
+  if (
+    !ctx.permissions.meetsInGroup(userId, target.groupId, PermissionLevel.GroupAdmin)
+  ) {
     return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
   }
   const { field, value } = target;
@@ -1438,7 +1460,9 @@ export async function handleRulesKeywordDelete(
   if (!target.ok) {
     return { ok: false, text: target.text };
   }
-  if (!ctx.permissions.canManageRules(userId, target.groupId)) {
+  if (
+    !ctx.permissions.meetsInGroup(userId, target.groupId, PermissionLevel.GroupAdmin)
+  ) {
     return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
   }
   const { field, value } = target;
@@ -1531,7 +1555,9 @@ export async function handleRulesListAdd(
   if (!target.ok) {
     return { ok: false, text: target.text };
   }
-  if (!ctx.permissions.canManageRules(userId, target.groupId)) {
+  if (
+    !ctx.permissions.meetsInGroup(userId, target.groupId, PermissionLevel.GroupAdmin)
+  ) {
     return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
   }
   const field = listFieldOf(target.field);
@@ -1593,7 +1619,9 @@ export async function handleRulesListDelete(
   if (!target.ok) {
     return { ok: false, text: target.text };
   }
-  if (!ctx.permissions.canManageRules(userId, target.groupId)) {
+  if (
+    !ctx.permissions.meetsInGroup(userId, target.groupId, PermissionLevel.GroupAdmin)
+  ) {
     return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
   }
   const field = listFieldOf(target.field);
@@ -1637,7 +1665,9 @@ export function clearRuleListCard(
   userId: string,
   replyGroupId?: string,
 ): CardResult {
-  if (!ctx.permissions.canManageRules(userId, targetGroupId)) {
+  if (
+    !ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.GroupAdmin)
+  ) {
     const card = cardFromText("群规则", "权限不足：需要群管理员或以上权限。");
     return { ok: false, text: card.text, rich: card.rich };
   }
@@ -1662,7 +1692,7 @@ export function clearRuleListCard(
 export function handleGlobalRulesView(
   ctx: AdminCommandContext,
   userId: string): CommandResult {
-  if (!ctx.permissions.isSuperAdmin(userId)) {
+  if (!ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
     return { ok: false, text: GLOBAL_RULES_DENIED };
   }
   return { ok: true, text: formatGlobalRules(ctx) };
@@ -1689,7 +1719,9 @@ export async function handleRulesSet(
       text: "私信中设置规则需要提供已绑定的群号或 #群短码。用法：/rules set <群号|#群短码> <字段> <值>",
     };
   }
-  if (!ctx.permissions.canManageRules(userId, targetGroupId)) {
+  if (
+    !ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.GroupAdmin)
+  ) {
     return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
   }
   if (!field || valueParts.length === 0) {
@@ -1722,7 +1754,7 @@ export async function handleGlobalRulesSet(
   userId: string,
   args: readonly string[],
 ): Promise<CommandResult> {
-  if (!ctx.permissions.isSuperAdmin(userId)) {
+  if (!ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
     return { ok: false, text: GLOBAL_RULES_DENIED };
   }
   const field = args[0];
