@@ -1,4 +1,8 @@
-import { PLATFORM_LEVEL_MIN, PlatformLevel } from "../../core/enums.js";
+import {
+  describeLevel,
+  PLATFORM_LEVEL_MIN,
+  PlatformLevel,
+} from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
 import { renderCard, type CardButton } from "../cardTemplate.js";
 import {
@@ -9,6 +13,7 @@ import {
 } from "../notifyTopics.js";
 import type { AdminCommandContext } from "./context.js";
 import {
+  actionButton,
   cardFromText,
   viewButton,
   type CardResult,
@@ -104,7 +109,7 @@ export function notifyCard(
   const rows: CardButton[][] = topics.map((topic) =>
     topicRow(notifications, groupId, userId, topic),
   );
-  rows.push(navigationRow(current, pageCount));
+  rows.push(navigationRow(current, pageCount, isSuperAdmin));
 
   return cardFromText(`通知中心（${current}/${pageCount}）`, lines.join("\n"), {
     rows,
@@ -150,8 +155,12 @@ function topicRow(
   return row;
 }
 
-/** 底部导航行：翻页 + 刷新 + 帮助。 */
-function navigationRow(current: number, pageCount: number): CardButton[] {
+/** 底部导航行：翻页 + 刷新（+ 超管改门槛）+ 帮助。 */
+function navigationRow(
+  current: number,
+  pageCount: number,
+  showLevels: boolean,
+): CardButton[] {
   const row: CardButton[] = [];
   if (current > 1) {
     row.push(viewButton("prev", "上一页", "notify", "view", current - 1));
@@ -160,8 +169,135 @@ function navigationRow(current: number, pageCount: number): CardButton[] {
     row.push(viewButton("next", "下一页", "notify", "view", current + 1));
   }
   row.push(viewButton("refresh", "刷新", "notify", "view", current));
-  row.push(viewButton("help", "指令帮助", "help", "topic", "notify"));
+  if (showLevels) {
+    row.push(viewButton("levels", "门槛", "notify", "level"));
+  }
+  row.push(viewButton("help", "帮助", "help", "topic", "notify"));
   return row;
+}
+
+/** 门槛的中文写法：`-1` 在通知里是「不限」，不是「拉黑」。 */
+function notifyLevelLabel(level: number): string {
+  return level <= 0 ? "不限" : describeLevel(level);
+}
+
+/**
+ * 超管子卡：查看 / 修改各话题的**接收门槛**（§H8）。
+ *
+ * 卡片键盘打不了数字，所以每个话题的按钮只「把指令填进输入框」（`fillOnly`），
+ * 数值由超管自己敲；另给一个「恢复默认」按钮，改砸了能一键回退。
+ * 每行两个话题（8 个话题 = 4 行）+ 1 行底部 = 卡片 5 行上限。
+ */
+export function notifyLevelPanel(
+  ctx: AdminCommandContext,
+  userId: string,
+  notice?: string,
+): CardResult {
+  const notifications = ctx.notifications;
+  if (!notifications) {
+    return notifyCard(ctx, undefined, userId, notice);
+  }
+  const lines = [...ctx.helpers.renderNotice(notice)];
+  for (const topic of NOTIFY_CHANNELS) {
+    lines.push(
+      `- **${channelLabel(topic)}**：${notifyLevelLabel(notifications.topicLevel(topic))}`,
+    );
+  }
+  lines.push(
+    "",
+    "改法：点下方按钮（只填指令）后补数值发送，或直接发 `/notify level <话题> <数值>`。",
+    "数值：`-1` = 不限 · `110` 群成员 / `120` 审核员 / `130` 群管理员 / `140` 本群超管 · `210`–`240` 平台档；",
+    "门槛全局一套，改一次全群生效；只有全局超管能改。",
+  );
+
+  const rows: CardButton[][] = [];
+  for (let index = 0; index < NOTIFY_CHANNELS.length; index += 2) {
+    rows.push(
+      NOTIFY_CHANNELS.slice(index, index + 2).map((topic) =>
+        actionButton(
+          `${topic}Level`,
+          `${NOTIFY_TOPIC_META[topic].short}改`,
+          `/notify level ${topic} `,
+          { fillOnly: true },
+        ),
+      ),
+    );
+  }
+  rows.push([
+    viewButton("levelReset", "恢复默认", "notify", "levelReset"),
+    viewButton("back", "返回通知中心", "notify", "view"),
+  ]);
+  return cardFromText("通知中心 · 话题门槛", lines.join("\n"), { rows });
+}
+
+/** 回调：恢复默认门槛（超管）。 */
+export function notifyResetLevelsCard(
+  ctx: AdminCommandContext,
+  userId: string,
+  replyGroupId?: string,
+): CardResult {
+  if (!ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
+    return {
+      ...cardFromText("权限不足", "话题门槛只有全局超管能修改。"),
+      ok: false,
+    };
+  }
+  if (!ctx.notifications) {
+    return { ...cardFromText("通知中心", "推送服务未启用。"), ok: false };
+  }
+  ctx.notifications.resetTopicLevels();
+  return notifyLevelPanel(
+    ctx,
+    userId,
+    `${ctx.helpers.mention(replyGroupId, userId)}已恢复全部话题的默认门槛。`,
+  );
+}
+
+/** `/notify level [话题] [数值]`：看 / 改话题门槛（仅全局超管）。 */
+async function handleNotifyLevel(
+  ctx: AdminCommandContext,
+  userId: string,
+  groupId: string | undefined,
+  parts: readonly string[],
+): Promise<CommandResult> {
+  if (!ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
+    return { ok: false, text: "权限不足：话题门槛只有全局超管能查看和修改。" };
+  }
+  if (!ctx.notifications) {
+    return { ok: false, text: "推送服务未启用。" };
+  }
+  const topic = (parts[2] ?? "").trim().toLowerCase();
+  const raw = (parts[3] ?? "").trim();
+  if (topic.length === 0) {
+    return notifyLevelPanel(ctx, userId);
+  }
+  if (!isNotifyChannel(topic)) {
+    return {
+      ok: false,
+      text: `未知话题：${topic}。可用：${NOTIFY_CHANNELS.join(" / ")}`,
+    };
+  }
+  if (!/^-?\d+$/u.test(raw)) {
+    return {
+      ok: false,
+      text: `数值不合法：${raw || "（空）"}。用法：/notify level <话题> <数值>（-1 = 不限、110–140 群内档、210–240 平台档）。`,
+    };
+  }
+  try {
+    ctx.notifications.setTopicLevel(topic, Number.parseInt(raw, 10));
+  } catch (error) {
+    return {
+      ok: false,
+      text: error instanceof Error ? error.message : String(error),
+    };
+  }
+  return notifyLevelPanel(
+    ctx,
+    userId,
+    `${ctx.helpers.mention(groupId, userId)}已把「${channelLabel(topic)}」的门槛改为 ${notifyLevelLabel(
+      ctx.notifications.topicLevel(topic),
+    )}。`,
+  );
 }
 
 /** 回调：订阅开关（`cb:notify:set:<频道>:<范围>:<on|off>`）。 */
@@ -270,6 +406,9 @@ export async function handleNotify(
     return { ok: false, text: "推送服务未启用。" };
   }
   const arg = (parts[1] ?? "").trim().toLowerCase();
+  if (arg === "level" || arg === "门槛") {
+    return handleNotifyLevel(ctx, userId, groupId, parts);
+  }
   if (arg === "test" || arg === "测试") {
     const requested = (parts[2] ?? "").trim();
     const channel: NotifyChannel = isNotifyChannel(requested)

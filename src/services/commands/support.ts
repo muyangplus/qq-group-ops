@@ -184,7 +184,12 @@ export function actionButton(
   id: string,
   label: string,
   command: string,
-  options: { style?: CardButtonStyle; modal?: KeyboardModal } = {},
+  options: {
+    style?: CardButtonStyle;
+    modal?: KeyboardModal;
+    /** `true` = 只把指令填进输入框，等用户补参数后自己发（需要用户补数字/自由文本时用）。 */
+    fillOnly?: boolean;
+  } = {},
 ): CardButton {
   return {
     id,
@@ -192,6 +197,7 @@ export function actionButton(
     command,
     ...(options.style !== undefined ? { style: options.style } : {}),
     ...(options.modal !== undefined ? { modal: options.modal } : {}),
+    ...(options.fillOnly === true ? { fillOnly: true } : {}),
   };
 }
 
@@ -815,10 +821,12 @@ export const NOTIFY_ALL_WORDS = new Set([
 ]);
 export const NOTIFY_USAGE = [
   "用法：",
-  "  /notify                打开统一通知订阅菜单（入群申请 / 处罚与申诉 / 活动通知）",
-  "  /notify test [频道]    给自己发一张该频道的测试卡片",
+  "  /notify                   打开通知中心（话题 / 门槛 / 退订）",
+  "  /notify test [话题]       给自己发一张该话题的测试卡片",
+  "  /notify level            查看各话题门槛（仅全局超管）",
+  "  /notify level <话题> <数值>  改某话题门槛（仅全局超管；-1 = 不限）",
   "",
-  "订阅都在这张菜单的按钮上完成（`入群 本群` / `处罚 全部` …），",
+  "订阅都在这张面板的按钮上完成（`入群 本群` / `处罚 全部` …），",
   "老的 `/notify on|off|all|<群>` 与 `/notify punish …` 已删除。",
 ].join("\n");
 export const NOTIFY_PERMISSION_DENIED =

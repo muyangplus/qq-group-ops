@@ -377,6 +377,27 @@ export class NotificationService {
   }
 
   /**
+   * 改某个话题的门槛（仅全局超管，通知中心子卡用）：立即对推送与订阅生效并落库。
+   * 没装配门槛存储（例如纯内存测试）时抛错，避免「改了个寂寞」。
+   */
+  public setTopicLevel(topic: NotifyChannel, level: number): void {
+    if (!this.topicLevels) {
+      throw new Error("话题门槛存储未启用，无法修改门槛。");
+    }
+    this.topicLevels.setLevel(topic, level);
+    log.info("notify topic level updated", { topic, level });
+  }
+
+  /** 恢复全部话题的内置默认门槛（通知中心「恢复默认」按钮）。 */
+  public resetTopicLevels(): void {
+    if (!this.topicLevels) {
+      throw new Error("话题门槛存储未启用，无法恢复默认门槛。");
+    }
+    this.topicLevels.resetLevels();
+    log.info("notify topic levels reset");
+  }
+
+  /**
    * 订阅资格：与推送资格（`canReceive`）共用同一份门槛判据。
    *
    * `scope` 是用户点的范围：具体群按该群折算判定；「全部群」按「全局超管，或至少在

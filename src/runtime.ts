@@ -693,6 +693,13 @@ export function createRuntime(
             event.groupId,
           ).rich;
         }
+        // 话题门槛子卡（仅全局超管）：查看 / 恢复默认
+        if (parsed.action === "level") {
+          return adminCommands.notifyLevelPanel(userId).rich;
+        }
+        if (parsed.action === "levelReset") {
+          return adminCommands.notifyResetLevelsCard(userId, event.groupId).rich;
+        }
         // 其余动作（`view` / 未知）都回到通知中心；`view` 可带页码
         const page = parsed.action === "view" ? pageArg(parsed.args) : undefined;
         return adminCommands.notifyCard(event.groupId, userId, undefined, page)

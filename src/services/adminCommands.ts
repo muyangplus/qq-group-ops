@@ -58,6 +58,8 @@ import { handleExport } from "./commands/exportCommands.js";
 import {
   handleNotify,
   notifyCard,
+  notifyLevelPanel,
+  notifyResetLevelsCard,
   notifyTestCard,
   notifyToggleCard,
   notifyUnsubscribeCard,
@@ -776,6 +778,16 @@ export class AdminCommandService {
       userId,
       replyGroupId,
     );
+  }
+
+  /** 回调：`cb:notify:level` —— 话题门槛子卡（仅全局超管）。 */
+  public notifyLevelPanel(userId: string, notice?: string): CardResult {
+    return notifyLevelPanel(this.context(), userId, notice);
+  }
+
+  /** 回调：`cb:notify:levelReset` —— 恢复默认门槛（仅全局超管）。 */
+  public notifyResetLevelsCard(userId: string, replyGroupId?: string): CardResult {
+    return notifyResetLevelsCard(this.context(), userId, replyGroupId);
   }
 
   /** 回调：`cb:notify:set:<频道>:<范围>:<on|off>`。 */

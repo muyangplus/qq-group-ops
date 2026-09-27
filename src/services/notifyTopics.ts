@@ -339,6 +339,12 @@ export class NotifyTopicLevelStore {
     return { ...this.levels };
   }
 
+  /** 恢复全部话题的内置默认门槛（通知中心「恢复默认」用）。 */
+  public resetLevels(): void {
+    this.levels = defaultNotifyTopicLevels();
+    this.persist();
+  }
+
   private persist(): void {
     if (!this.repository) {
       return;

@@ -161,4 +161,42 @@ describe("AdminCommandService · notify", () => {
     const again = service.notifyUnsubscribeCard("join", "g1", "admin", "g1");
     expect(again.rich.markdown).toContain("本来就是关闭的");
   });
+
+  it("话题门槛子卡：只有全局超管能看 / 改，改完立即生效", async () => {
+    const denied = await service.handle("g1", "admin", "/notify level");
+    expect(denied.ok).toBe(false);
+    expect(denied.text).toContain("只有全局超管");
+
+    const card = await service.handle("g1", "root", "/notify level");
+    expect(card.ok).toBe(true);
+    expect(card.rich.markdown).toContain("话题门槛");
+    expect(card.rich.markdown).toContain("入群申请");
+    expect(card.rich.markdown).toContain("不限"); // 活动通知默认 -1
+    const keyboard = JSON.stringify(card.rich.keyboard);
+    expect(keyboard).toContain("/notify level join");
+    expect(keyboard).toContain("cb:notify:levelReset");
+
+    const changed = await service.handle("g1", "root", "/notify level join 240");
+    expect(changed.ok, changed.text).toBe(true);
+    expect(notifications.topicLevel("join")).toBe(240);
+    expect(changed.rich.markdown).toContain("已把「入群申请」的门槛改为");
+    // 门槛立刻生效：群管理员不再满足入群推送的资格
+    expect(notifications.checkTopicReach("admin", "join", "g1").ok).toBe(false);
+
+    const bad = await service.handle("g1", "root", "/notify level join 999");
+    expect(bad.ok).toBe(false);
+    expect(bad.text).toContain("门槛必须");
+
+    const restored = service.notifyResetLevelsCard("root");
+    expect(restored.ok).toBe(true);
+    expect(notifications.topicLevel("join")).toBe(130);
+  });
+
+  it("通知中心：超管能看到「门槛」入口，普通管理员看不到", async () => {
+    const root = await service.handle("g1", "root", "/notify");
+    expect(JSON.stringify(root.rich.keyboard)).toContain("cb:notify:level");
+
+    const admin = await service.handle("g1", "admin", "/notify");
+    expect(JSON.stringify(admin.rich.keyboard)).not.toContain("cb:notify:level");
+  });
 });

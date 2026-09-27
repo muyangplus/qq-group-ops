@@ -14,6 +14,7 @@ import { JoinAuditService } from "../../src/services/joinAudit.js";
 import { JoinRequestSyncService } from "../../src/services/joinAuditSync.js";
 import { MemberRoster } from "../../src/services/memberRoster.js";
 import { NotificationService } from "../../src/services/notifications.js";
+import { NotifyTopicLevelStore } from "../../src/services/notifyTopics.js";
 import { PermissionService } from "../../src/services/permissions.js";
 import { RichMessageSender } from "../../src/services/richMessages.js";
 import { ShortCodeService } from "../../src/services/shortCodes.js";
@@ -163,6 +164,7 @@ export function scopedShortCodeLabel(
     notifications = new NotificationService(api, permissions, {
       identityMap,
       configStore,
+      notifyTopics: new NotifyTopicLevelStore(),
     });
     // §A5：本群黑名单在 g1 生效；全局黑名单踢出所有绑定群（测试里就是 g1）。
     blacklist = new BlacklistService(api, {
