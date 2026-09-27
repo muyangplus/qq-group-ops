@@ -47,50 +47,67 @@ export type JoinRequestStatus = (typeof JoinRequestStatus)[keyof typeof JoinRequ
 /**
  * 权限等级：**数值即等级**，并分成两段互不重叠的区间 —— 这是「全局 / 群内」区分的硬保障：
  *
- * - **群内档 `1..99`**（`GroupLevel`）：成员 10 / 审核员 20 / 群管理员 30 / 本群超管 40；
- * - **平台档 `100..9999`**（`PlatformLevel`，**起点 100**）：全局超管取高位 **1000**，
- *   中间（100…999）留给以后的平台角色（平台审计 110 / 平台运营 120 / 只读平台管理员 …）——
- *   全局超管是平台档里的**高位**而不是起点，这样新平台角色可以排在它下面。
+ * - **群内档 `110..140`**：群成员 110 / 审核员 120 / 群管理员 130 / 本群超管 140；
+ * - **平台档 = 群内档 + 100**：平台用户 210 / 全局审核员 220 / 全局管理员 230 / 全局超管 240；
+ * - 最低档用负值、不与群内档连号：拉黑 -10 / 未绑定 0（只作门槛选项）。
  *
- * 于是：`meetsInGroup`（群内，走「本群 + 全局取最大」）天然容忍全局超管；
- * `meetsGlobal`（平台级）**永远不可能**被群内档位满足（40 < 100，差一个数量级），
- * 反之传错类型也会**编译不过**（两个档位是不同的类型）。
+ * 跨轴折算只有一条公式（`PLATFORM_OFFSET = 100`）：
+ *
+ * ```
+ * 群内权限 = max(群内档, 平台档 - 100)
+ * 平台权限 = 平台档 >= 门槛（200..299）      ← 不看折算后的值
+ * ```
+ *
+ * 于是「全局审核员 220 + 群内管理员 130」在群内 = max(130, 120) = 130，**不会压过**
+ * 本群超管 140；而平台级能力只有平台档能过（本群超管 140 < 200）。
  */
 export const PermissionLevel = {
   /** 拉黑档位（-10）：任何带门槛 >= Guest 的能力都过不了。 */
   Blacklisted: -10,
   /** 未绑定 / 陌生访客。 */
   Guest: 0,
-  /** 群成员。 */
-  Member: 10,
+  /** 群成员（群内档起点）。 */
+  Member: 110,
   /** 审核员：内容审核、处罚与申诉。 */
-  Moderator: 20,
+  Moderator: 120,
   /** 群管理员：入群审批、规则管理、导出。 */
-  GroupAdmin: 30,
+  GroupAdmin: 130,
   /** **本群**超级管理员（群内档最高）。 */
-  SuperAdmin: 40,
-  /** **全局**超级管理员（平台档高位，不是起点）。 */
-  GlobalSuperAdmin: 1000,
+  SuperAdmin: 140,
+  /** 平台绑定用户：有平台身份但无平台角色（平台档基底）。 */
+  PlatformUser: 210,
+  /** 全局审核员。 */
+  GlobalModerator: 220,
+  /** 全局管理员。 */
+  GlobalGroupAdmin: 230,
+  /** **全局**超级管理员（平台档最高）。 */
+  GlobalSuperAdmin: 240,
 } as const;
 
-/** 群内档位取值（1..99，含门槛用的 -10 / 0）。 */
-export type GroupLevel = -10 | 0 | 10 | 20 | 30 | 40;
+/** 平台档相对群内档的固定偏移：折算时 `平台档 - PLATFORM_OFFSET` 即对应群内档。 */
+export const PLATFORM_OFFSET = 100;
 
-/** 平台档**起点**：平台角色一律 >= 100，与群内档（<= 40）相隔一个数量级。 */
-export const PLATFORM_LEVEL_MIN = 100;
+/** 平台档起点：平台角色一律 >= 200，与群内档（<= 140）分开。 */
+export const PLATFORM_LEVEL_MIN = 200;
+
+/** 群内档位取值（含门槛用的负值 -10 / 0）。 */
+export type GroupLevel = -10 | 0 | 110 | 120 | 130 | 140;
 
 declare const platformLevelBrand: unique symbol;
 /**
- * 平台档位取值（100..9999）。
+ * 平台档位取值（200..299）。
  *
- * 用 branded number 而不是字面量联合：平台档是一个**区间**（以后加 110 / 120 … 不用改类型），
- * 同时保证 `meetsInGroup(user, group, 1000)` 这类笔误**编译不过**。
+ * 用 branded number：平台档是一个**区间**（以后加 215 平台只读、250 … 不用改类型），
+ * 同时保证 `meetsInGroup(user, group, 240)` 这类笔误**编译不过**。
  */
 export type PlatformLevel = number & { readonly [platformLevelBrand]: "platform" };
 
-/** 平台档常量（新增平台角色时在这里加一项，并给它一个 100..999 之外的合适值）。 */
+/** 平台档常量（新增平台角色时在这里加一项）。 */
 export const PlatformLevel = {
-  GlobalSuperAdmin: 1000 as PlatformLevel,
+  PlatformUser: 210 as PlatformLevel,
+  GlobalModerator: 220 as PlatformLevel,
+  GlobalGroupAdmin: 230 as PlatformLevel,
+  GlobalSuperAdmin: 240 as PlatformLevel,
 } as const;
 /**
  * 权限等级的**类型**直接就是数值：留间隙、可插档（见上面的常量表）。
@@ -115,6 +132,12 @@ export function describeLevel(level: PermissionLevel): string {
       return "群管理员";
     case PermissionLevel.SuperAdmin:
       return "超级管理员";
+    case PermissionLevel.PlatformUser:
+      return "平台用户";
+    case PermissionLevel.GlobalModerator:
+      return "全局审核员";
+    case PermissionLevel.GlobalGroupAdmin:
+      return "全局管理员";
     case PermissionLevel.GlobalSuperAdmin:
       return "全局超级管理员";
     default:

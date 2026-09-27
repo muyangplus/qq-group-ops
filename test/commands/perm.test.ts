@@ -71,8 +71,8 @@ describe("AdminCommandService · perm", () => {
     const rules = await service.handle("g1", "u4", "/rules set keywords 本群词");
     expect(rules.ok).toBe(true);
 
-    // 其他群没有任何权限（数值等级：成员 = 10）
-    expect(permissions.levelFor("u4", "g2")).toBe(10);
+    // 其他群没有任何权限（数值等级：群成员 = 110）
+    expect(permissions.levelFor("u4", "g2")).toBe(110);
 
     // 拿不到平台级能力
     const perm = await service.handle("g1", "u4", "/perm list");

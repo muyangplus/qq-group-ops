@@ -14,8 +14,10 @@ describe("PermissionService", () => {
   });
 
   it("treats super admin as highest", () => {
-    // 全局超管 99（与「本群超管 40」区分）
-    expect(service.levelFor("root", "g1")).toBe(PermissionLevel.GlobalSuperAdmin);
+    // 全局超管 240 → 群内折算 140（本群超管档）；平台档单独看 globalLevelOf
+    expect(service.levelFor("root", "g1")).toBe(PermissionLevel.SuperAdmin);
+    expect(service.globalLevelOf("root")).toBe(240);
+    expect(service.meetsGlobal("root", 240 as PlatformLevel)).toBe(true);
     expect(service.canExportData("root", "g1")).toBe(true);
   });
 

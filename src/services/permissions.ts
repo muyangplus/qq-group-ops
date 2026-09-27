@@ -1,6 +1,7 @@
 import {
   PermissionLevel,
   PLATFORM_LEVEL_MIN,
+  PLATFORM_OFFSET,
   PlatformLevel,
   type GroupLevel,
 } from "../core/enums.js";
@@ -107,11 +108,21 @@ export class PermissionService {
     await this.queue?.flush();
   }
 
+  /**
+   * 生效的**群内**等级 = `max(群内档, 平台档 - PLATFORM_OFFSET)`（展示与群内判定用）。
+   *
+   * 例：全局超管 240 → 折算 140 = 本群超管；全局审核员 220 → 120 = 审核员。
+   * 平台级判定不看它（用 `meetsGlobal`）。
+   */
   public levelFor(userId: string, groupId?: string): PermissionLevel {
-    // 全局超管 99：与「本群超管 40」区分开（都能覆盖所有更低门槛，但平台级能力只认 99）
-    if (this.superAdminIds.has(userId)) {
-      return PermissionLevel.GlobalSuperAdmin;
-    }
+    const platform = this.globalLevelOf(userId);
+    const folded =
+      platform >= PLATFORM_LEVEL_MIN ? platform - PLATFORM_OFFSET : 0;
+    return Math.max(this.groupLevelOf(userId, groupId), folded);
+  }
+
+  /** 只看**群内**角色（不折算平台档）：0 / 110 / 120 / 130 / 140。 */
+  public groupLevelOf(userId: string, groupId?: string): GroupLevel {
     if (!groupId) {
       return PermissionLevel.Guest;
     }
@@ -128,8 +139,9 @@ export class PermissionService {
   }
 
   /**
-   * 群内判定：`max(全局档, 本群档)` —— 全局超管（1000）天然覆盖所有群内门槛。
+   * 群内判定：`max(群内档, 平台档 - PLATFORM_OFFSET)`。
    *
+   * 例：全局审核员 220 + 群内管理员 130 → max(130, 120) = 130，不会压过本群超管 140。
    * 平台级能力**不要**用它，用 `meetsGlobal`。
    */
   public meetsInGroup(
@@ -140,7 +152,7 @@ export class PermissionService {
     return this.levelFor(userId, groupId) >= required;
   }
 
-  /** 只取全局档：全局超管 1000，其它 0（不看任何群内角色）。 */
+  /** 只取全局档：平台角色按其档位，无平台角色为 0（不看任何群内角色）。 */
   public globalLevelOf(userId: string): PlatformLevel | 0 {
     return this.superAdminIds.has(userId)
       ? PlatformLevel.GlobalSuperAdmin
@@ -150,8 +162,8 @@ export class PermissionService {
   /**
    * 平台级判定（唯一入口）：`/whois`、`/perm`、全局规则 / 黑名单、`/bind groupid` …
    *
-   * 参数类型是 `PlatformLevel`（100..9999），传入群内档位（10/20/30/40）**编译不过**；
-   * 运行期再挡一层：门槛必须 >= `PLATFORM_LEVEL_MIN`（100），防止有人绕类型硬塞小数值。
+   * **只看平台档，不做折算**（参数类型 `PlatformLevel` 200..299，传群内档位编译不过；
+   * 运行期再挡一层 `required < PLATFORM_LEVEL_MIN`）。
    */
   public meetsGlobal(userId: string, required: PlatformLevel): boolean {
     if (required < PLATFORM_LEVEL_MIN) {
