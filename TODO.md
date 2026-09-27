@@ -293,12 +293,14 @@ Phase 2 → E1、E2、B4、B5、B6；Phase 3 → E3–E5；Phase 4 → D6–D9�
       `canExportData` / `hasAnyGroupRole` / `isSuperAdmin` / `listReviewableGroups` / `listModeratedGroups`）保留但**不再被命令层调用**，
       H7 决定是删除还是标注 `@deprecated`。
 
-### H3 通知话题与门槛配置（全局一套）
+### H3 通知话题与门槛配置（全局一套）✅ 已提交（`8d00b20`，未推送）
 
-- [ ] 话题枚举：`join / punish / activity / bot_join / bot_leave / friend / member_join / unknown_event`；
-- [ ] 每个话题一个 `requiredLevel`，存 `group_settings` 的全局行（`__default__` + 键 `notifyTopicLevels`），超管在通知中心改，改一次全群生效；
-- [ ] 默认值 = 现口径：入群 130、处罚与申诉 120、活动 -1（不限）、超管类 240；订阅与推送**各判一次**（同一份判据，禁止两处各写一遍）；
-- [ ] 超管类话题「默认开」：启动时为现有全局超管写入订阅行；退订即删行（新提拔超管重启后生效，不额外加运行期钩子）。
+- [x] 话题枚举：`join / punish / activity / bot_join / bot_leave / friend / member_join / unknown_event`（`src/services/notifyTopics.ts`）；
+- [x] 每个话题一个门槛，存 `group_settings` 的全局行（`__default__` + 键 `notifyTopicLevels`，JSON map）；缺键 / 坏 JSON / 非法值逐项回落默认，**不改 `GroupConfigStore`**（否则会变成每群可覆盖的规则字段）；
+- [x] 默认值：入群 130、处罚与申诉 120、活动 -1（不限）、事件类 240；订阅与推送**共用同一个** `meetsNotifyLevel`（`NotificationService.checkTopicReach` ↔ `canReceive`），禁止两处各写一遍；
+- [x] 超管类话题「默认开」：`runtime.load()` 里给现有全局超管补订阅行（`seedSuperAdminDefaults`，幂等）。
+- [ ] ⚠️ **退订墓碑（H4 必做）**：现在退订=删行，但**下次启动会重新种上**；H4 的「取消订阅此通知」要真正生效，需要一行「已退订」墓碑（否则超管无法退订事件类话题）。
+- [ ] ⚠️ **`/notify` 卡片暂仍只列原有 3 个话题**：卡片上限 5 行，8 个话题放不下，全量展示随 H4 的多选面板一起做（`NOTIFY_CARD_TOPICS`）。
 
 ### H4 通知中心多选面板 + 退订按钮
 
