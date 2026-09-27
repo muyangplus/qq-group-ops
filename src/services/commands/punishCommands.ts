@@ -1,3 +1,4 @@
+import { PlatformLevel, PermissionLevel } from "../../core/enums.js";
 import type { BlacklistScope } from "../../db/blacklistRepository.js";
 import type { PunishmentRecord } from "../../db/punishmentRepository.js";
 import { renderCard } from "../cardTemplate.js";
@@ -59,7 +60,7 @@ export async function handlePunish(
     if (!targetGroupId) {
       return { ok: false, text: `该指令需要在群内使用，或在私信中提供群号 / #群短码。\n\n${PUNISH_USAGE}` };
     }
-    if (!ctx.permissions.canReviewContent(userId, targetGroupId)) {
+    if (!ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.Moderator)) {
       return { ok: false, text: "权限不足：处罚管理需要审核员或以上权限。" };
     }
     const pageToken = parts.find((part) => /^\+\d+$/u.test(part));
@@ -130,7 +131,10 @@ export async function handlePunish(
   if (action === "blacklist" || action === "拉黑") {
     const scope: BlacklistScope =
       parts[3] === "全局" || parts[3] === "global" ? "global" : "group";
-    if (scope === "global" && !ctx.permissions.isSuperAdmin(userId)) {
+    if (
+      scope === "global" &&
+      !ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)
+    ) {
       return { ok: false, text: "权限不足：全局拉黑仅超级管理员可操作。" };
     }
     const reason = parts
@@ -273,7 +277,7 @@ export async function punishCallbackCard(
     if (!targetGroupId) {
       return undefined;
     }
-    if (!ctx.permissions.canReviewContent(userId, targetGroupId)) {
+    if (!ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.Moderator)) {
       return cardFromText("处罚记录", "权限不足：处罚管理需要审核员或以上权限。");
     }
     return punishListCard(
@@ -355,7 +359,10 @@ export async function punishCallbackCard(
   }
   if (action === "blacklist") {
     const scope: BlacklistScope = args[1] === "global" ? "global" : "group";
-    if (scope === "global" && !ctx.permissions.isSuperAdmin(userId)) {
+    if (
+      scope === "global" &&
+      !ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)
+    ) {
       return cardFromText("处罚记录", "权限不足：全局拉黑仅超级管理员可操作。");
     }
     const result = await punishments.blacklistUser({
@@ -387,7 +394,7 @@ function requireReviewer(
   record: PunishmentRecord,
   userId: string,
 ): string | undefined {
-  return ctx.permissions.canReviewContent(userId, record.groupId)
+  return ctx.permissions.meetsInGroup(userId, record.groupId, PermissionLevel.Moderator)
     ? undefined
     : "权限不足：处罚管理需要审核员或以上权限。";
 }

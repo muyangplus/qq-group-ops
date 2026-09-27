@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { AuditStatus } from "../core/enums.js";
+import { AuditStatus, PermissionLevel } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import type { AuditRecord } from "../core/models.js";
 import { utcNow } from "../core/models.js";
@@ -38,7 +38,11 @@ export class ExportService {
     maskUserIds = true,
   ): string {
     this.permissions.ensure(
-      this.permissions.canExportData(actorId, activity.groupId),
+      this.permissions.meetsInGroup(
+        actorId,
+        activity.groupId,
+        PermissionLevel.GroupAdmin,
+      ),
       "permission denied: export activity registrations",
     );
     const headers = [
@@ -81,7 +85,7 @@ export class ExportService {
     maskUserIds = true,
   ): string {
     this.permissions.ensure(
-      this.permissions.canExportData(actorId, groupId),
+      this.permissions.meetsInGroup(actorId, groupId, PermissionLevel.GroupAdmin),
       "permission denied: export audit records",
     );
     const headers = [

@@ -190,7 +190,9 @@ export function statusCard(
       });
       return { ok: false, text: card.text, rich: card };
     }
-    if (!ctx.permissions.canReviewContent(userId, targetGroupId)) {
+    if (
+      !ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.Moderator)
+    ) {
       const card = renderCard({
         title: "权限不足",
         lines: ["需要审核员或以上权限。"],

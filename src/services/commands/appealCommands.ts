@@ -3,6 +3,7 @@ import type { RichMessage } from "../richMessages.js";
 import type { AppealRecord } from "../../db/appealRepository.js";
 import type { PunishmentRecord } from "../../db/punishmentRepository.js";
 import { getLogger } from "../../core/logger.js";
+import { PermissionLevel } from "../../core/enums.js";
 import type { AdminCommandContext } from "./context.js";
 import {
   cardFromText,
@@ -302,7 +303,9 @@ export async function appealCallbackCard(
     if (!appeal) {
       return cardFromText("申诉处理", "未找到该申诉记录。");
     }
-    if (!ctx.permissions.canReviewContent(userId, appeal.groupId)) {
+    if (
+      !ctx.permissions.meetsInGroup(userId, appeal.groupId, PermissionLevel.Moderator)
+    ) {
       return cardFromText("申诉处理", "权限不足：处理申诉需要审核员或以上权限。");
     }
     if (appeal.status !== "pending") {

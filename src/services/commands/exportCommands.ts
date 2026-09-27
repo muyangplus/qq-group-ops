@@ -1,3 +1,4 @@
+import { PermissionLevel } from "../../core/enums.js";
 import type { AdminCommandContext } from "./context.js";
 import {
   cardFromText,
@@ -9,7 +10,7 @@ import {
 /**
  * `/export audit [数量]`：审核日志 CSV 导出（§B6）。
  *
- * - 权限：该群**群管理员及以上**（复用 `ExportService` 的 `canExportData` 校验）；
+ * - 权限：该群**群管理员及以上**（判定走 `meetsInGroup(…, GroupAdmin)`，服务内二次校验）；
  * - 脱敏：统一走 `maskIdentifier`（actor / target 只保留首字符），不导出 openid 原文；
  * - 落点：CSV 只**私信给操作者**；群里完全静默（连「已私信」都不回）。
  */
@@ -45,7 +46,9 @@ export async function handleExport(
   if (!exportService) {
     return { ok: false, text: "导出服务未启用。" };
   }
-  if (!ctx.permissions.canExportData(userId, targetGroupId)) {
+  if (
+    !ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.GroupAdmin)
+  ) {
     return { ok: false, text: "权限不足：导出需要群管理员或以上权限。" };
   }
   const limitToken = parts

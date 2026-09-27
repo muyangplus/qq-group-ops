@@ -1,3 +1,4 @@
+import { PermissionLevel } from "../../core/enums.js";
 import { extractPageToken } from "../callbackData.js";
 import {
   escapeCardText,
@@ -92,7 +93,7 @@ export function pendingCard(
     });
     return { ok: false, text: card.text, rich: card };
   }
-  if (!ctx.permissions.canReviewContent(userId, targetGroupId)) {
+  if (!ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.Moderator)) {
     const card = renderCard({
       title: "权限不足",
       lines: ["需要审核员或以上权限。"],
@@ -217,7 +218,7 @@ export async function approveCard(
   replyGroupId?: string,
 ): Promise<CardResult> {
   const back = viewButton("back", "返回待审批", "pending", "page", targetGroupId, page);
-  if (!ctx.permissions.canApproveJoin(userId, targetGroupId)) {
+  if (!ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.GroupAdmin)) {
     const card = renderCard({
       title: "权限不足",
       lines: ["通过入群申请需要群管理员或以上权限。"],
@@ -264,7 +265,7 @@ export function auditCard(
   page = 1,
   limit = 20,
 ): CardResult {
-  if (!ctx.permissions.canReviewContent(userId, targetGroupId)) {
+  if (!ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.Moderator)) {
     const card = renderCard({
       title: "权限不足",
       lines: ["需要审核员或以上权限。"],
@@ -336,7 +337,7 @@ export async function syncCard(
     targetGroupId,
     1,
   );
-  if (!ctx.permissions.canReviewContent(userId, targetGroupId)) {
+  if (!ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.Moderator)) {
     const card = renderCard({
       title: "权限不足",
       lines: ["需要审核员或以上权限。"],
@@ -463,7 +464,7 @@ export async function handleApprove(
         "  /approve <#申请短码>   群内 / 私信都可以（短码已定位该申请所属群）",
     };
   }
-  if (!ctx.permissions.canApproveJoin(userId, targetGroupId)) {
+  if (!ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.GroupAdmin)) {
     return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
   }
   try {
@@ -520,7 +521,7 @@ export async function handleReject(
         "  /reject <#申请短码> [原因]   群内 / 私信都可以（短码已定位该申请所属群）",
     };
   }
-  if (!ctx.permissions.canApproveJoin(userId, targetGroupId)) {
+  if (!ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.GroupAdmin)) {
     return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
   }
   const reason = reasonParts.join(" ").trim();
