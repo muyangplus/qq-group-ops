@@ -43,6 +43,22 @@ export class DisplayNameService {
     return this.shortCodes.label("join_request", requestId);
   }
 
+  /**
+   * **短码本身**（始终 `#XXXXXX`）。
+   *
+   * 与 `user()` / `group()` 的区别：后两者在「已绑定」时会显示 QQ号/群号（对外展示口径），
+   * 而 `/whois` 的「短码」字段要的就是短码 —— 真机上出现过「短码」字段里显示成
+   * 群号/QQ号而不是短码的错误。
+   */
+  public userCode(officialId: string): string {
+    return this.shortCodes.label("user", officialId);
+  }
+
+  /** 群短码本身（见 `userCode`）。 */
+  public groupCode(groupId: string): string {
+    return this.shortCodes.label("group", groupId);
+  }
+
   /** 解析 `#短码` → 内部 userId；不是短码时返回 undefined（由调用方回退到 QQ号/openid 解析）。 */
   public resolveUser(input: string): string | undefined {
     return this.resolveKind(input, "user");

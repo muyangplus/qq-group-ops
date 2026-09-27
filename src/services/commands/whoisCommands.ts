@@ -39,7 +39,7 @@ export function handleWhois(
         const groupNumber =
           ctx.identityMap.getGroupNumber(groupId) ?? "（未绑定）";
         const shortCode = ctx.display
-          ? `\n短码：${ctx.display.group(groupId)}`
+          ? `\n短码：${ctx.display.groupCode(groupId)}`
           : "";
         return {
           ok: true,
@@ -48,7 +48,7 @@ export function handleWhois(
       }
       const qq = ctx.identityMap.getQq(userId) ?? "（未绑定）";
       const shortCode = ctx.display
-        ? `\n短码：${ctx.display.user(userId)}`
+        ? `\n短码：${ctx.display.userCode(userId)}`
         : "";
       return {
         ok: true,
@@ -130,7 +130,7 @@ export function handleWhois(
     if (resolvedUserId) {
       const qq = ctx.identityMap.getQq(resolvedUserId) ?? "（未绑定）";
       const shortCode = ctx.display
-        ? `\n短码：${ctx.display.user(resolvedUserId)}`
+        ? `\n短码：${ctx.display.userCode(resolvedUserId)}`
         : "";
       return {
         ok: true,
@@ -142,7 +142,7 @@ export function handleWhois(
       const groupNumber =
         ctx.identityMap.getGroupNumber(resolvedGroupId) ?? "（未绑定）";
       const shortCode = ctx.display
-        ? `\n短码：${ctx.display.group(resolvedGroupId)}`
+        ? `\n短码：${ctx.display.groupCode(resolvedGroupId)}`
         : "";
       return {
         ok: true,
@@ -159,7 +159,7 @@ export function userMapping(
   label = "用户",
 ): CommandResult {
     const qq = ctx.identityMap?.getQq(userId) ?? "（未绑定）";
-    const shortCode = ctx.display ? `\n短码：${ctx.display.user(userId)}` : "";
+    const shortCode = ctx.display ? `\n短码：${ctx.display.userCode(userId)}` : "";
     return {
       ok: true,
       text: `类型：${label}\nuserId：${userId}\nQQ：${qq}${shortCode}`,
@@ -263,7 +263,7 @@ export function handleWhoisProfile(
     const qq = ctx.identityMap?.getQq(resolvedUserId) ?? "（未绑定）";
     lines.push(`userId：${resolvedUserId}`, `QQ：${qq}`);
     if (ctx.display) {
-      lines.push(`短码：${ctx.display.user(resolvedUserId)}`);
+      lines.push(`短码：${ctx.display.userCode(resolvedUserId)}`);
     }
     const profile = ctx.userProfiles?.get(resolvedUserId);
     if (!ctx.userProfiles) {
