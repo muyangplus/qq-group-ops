@@ -64,8 +64,10 @@ export const PermissionLevel = {
   Moderator: 20,
   /** 群管理员：入群审批、规则管理、导出。 */
   GroupAdmin: 30,
-  /** 超级管理员：平台级能力（全局或本群）。 */
+  /** **本群**超级管理员：仅在该群内拥有最高权限。 */
   SuperAdmin: 40,
+  /** **全局**超级管理员：平台级能力（与 40 的本群超管区分开）。 */
+  GlobalSuperAdmin: 99,
 } as const;
 /**
  * 权限等级的**类型**直接就是数值：留间隙、可插档（见上面的常量表）。
@@ -90,6 +92,8 @@ export function describeLevel(level: PermissionLevel): string {
       return "群管理员";
     case PermissionLevel.SuperAdmin:
       return "超级管理员";
+    case PermissionLevel.GlobalSuperAdmin:
+      return "全局超级管理员";
     default:
       return `等级 ${level as number}`;
   }

@@ -14,7 +14,8 @@ describe("PermissionService", () => {
   });
 
   it("treats super admin as highest", () => {
-    expect(service.levelFor("root", "g1")).toBe(PermissionLevel.SuperAdmin);
+    // 全局超管 99（与「本群超管 40」区分）
+    expect(service.levelFor("root", "g1")).toBe(PermissionLevel.GlobalSuperAdmin);
     expect(service.canExportData("root", "g1")).toBe(true);
   });
 

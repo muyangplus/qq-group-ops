@@ -103,8 +103,9 @@ export class PermissionService {
   }
 
   public levelFor(userId: string, groupId?: string): PermissionLevel {
+    // 全局超管 99：与「本群超管 40」区分开（都能覆盖所有更低门槛，但平台级能力只认 99）
     if (this.superAdminIds.has(userId)) {
-      return PermissionLevel.SuperAdmin;
+      return PermissionLevel.GlobalSuperAdmin;
     }
     if (!groupId) {
       return PermissionLevel.Guest;

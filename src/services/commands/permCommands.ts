@@ -65,6 +65,8 @@ function levelLabel(level: number): string {
       return "群管理员";
     case PermissionLevel.SuperAdmin:
       return "超级管理员";
+    case PermissionLevel.GlobalSuperAdmin:
+      return "全局超级管理员";
     default:
       return `等级 ${level}`;
   }
