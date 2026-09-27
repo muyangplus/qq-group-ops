@@ -49,7 +49,7 @@ export type JoinRequestStatus = (typeof JoinRequestStatus)[keyof typeof JoinRequ
  *
  * - **群内档 `110..140`**：群成员 110 / 审核员 120 / 群管理员 130 / 本群超管 140；
  * - **平台档 = 群内档 + 100**：平台用户 210 / 全局审核员 220 / 全局管理员 230 / 全局超管 240；
- * - 最低档用负值、不与群内档连号：拉黑 -10 / 未绑定 0（只作门槛选项）。
+ * - 最低档用负值、不与群内档连号：拉黑 -1 / 未绑定 0（只作门槛选项）。
  *
  * 跨轴折算只有一条公式（`PLATFORM_OFFSET = 100`）：
  *
@@ -62,8 +62,8 @@ export type JoinRequestStatus = (typeof JoinRequestStatus)[keyof typeof JoinRequ
  * 本群超管 140；而平台级能力只有平台档能过（本群超管 140 < 200）。
  */
 export const PermissionLevel = {
-  /** 拉黑档位（-10）：任何带门槛 >= Guest 的能力都过不了。 */
-  Blacklisted: -10,
+  /** 拉黑档位（-1）：比未绑定还低一档，任何带门槛 >= Guest 的能力都过不了。 */
+  Blacklisted: -1,
   /** 未绑定 / 陌生访客。 */
   Guest: 0,
   /** 群成员（群内档起点）。 */
@@ -90,8 +90,8 @@ export const PLATFORM_OFFSET = 100;
 /** 平台档起点：平台角色一律 >= 200，与群内档（<= 140）分开。 */
 export const PLATFORM_LEVEL_MIN = 200;
 
-/** 群内档位取值（含门槛用的负值 -10 / 0）。 */
-export type GroupLevel = -10 | 0 | 110 | 120 | 130 | 140;
+/** 群内档位取值（含门槛用的负值 -1 / 0）。 */
+export type GroupLevel = -1 | 0 | 110 | 120 | 130 | 140;
 
 declare const platformLevelBrand: unique symbol;
 /**
