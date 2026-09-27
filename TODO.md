@@ -28,6 +28,19 @@
   - 已完成：`docker compose config --quiet` 通过、`--profile postgres` 服务列表正确、
     `.dockerignore` 实测少传约 106 MB。
   - 待补：镜像 build + postgres 启停（用独立项目名 `-p qqops-smoke`，收尾 `down -v`，避免污染真实数据卷）。
+- [ ] **计时任务统一管理：一个扫描周期配置驱动所有周期检查**（P1）
+  - 现状：三个周期任务各自持有 `setTimeout` 链，启动 / 停止 / 错误处理是三份重复代码 ——
+    `RetentionService`（默认 24h）、`ActivityReminderService`（`ACTIVITY_REMIND_INTERVAL_MS`）、
+    `AppealWatcher`（`APPEAL_FORWARD_INTERVAL_MS`）。
+  - 目标：新增 `TickScheduler`（`src/services/tickScheduler.ts`），全项目**只跑一个定时器**；
+    三个服务改成「注册到 tick」的纯 runner（只留 `runOnce()`），各自声明 `minIntervalMs`（自己的节拍），
+    由统一 tick 判断是否到点；新增配置 `SCAN_INTERVAL_MS`（默认 60s，`0` = 关闭所有周期任务）。
+  - 验收：① 三个服务不再持有定时器；② 一个 tick 内**串行**跑所有到期任务，单任务抛错不影响其它；
+    ③ 上一轮没跑完不叠加下一轮（overrun 保护）；④ 假时钟测试覆盖「未到点 / 到点 / 抛错 / stop」；
+    ⑤ `.env.example` 与 `docs/CONFIGURATION.md` 补 `SCAN_INTERVAL_MS`；⑥ 行为保持：保留清理仍按 24h、
+    提醒与申诉轮转仍按各自配置频率，只是改由统一 tick 驱动。
+  - 顺带（需你确认）：把「待审批申请 TTL 过期」从 24h 的 retention 里拆出来、改成每 tick 检查 ——
+    现在最坏情况下要等 24h 才会从 `/pending` 消失。
 - [ ] **真机确认：`/restart` 在真实部署里确实能拉起新进程**
   - 触发一次 `/restart`，确认：回执卡先到、进程确实退出、几秒内重新起来、并且收到「机器人已重启」的私信回执；
     收不到就查 `data/restart-failed.json` 与启动日志（自我重启助手是脱离会话启动的，SSH 会话断开不影响它）。
