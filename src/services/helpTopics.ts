@@ -1,4 +1,8 @@
-import { PermissionLevel } from "../core/enums.js";
+import {
+  PermissionLevel,
+  PlatformLevel,
+  describeLevel,
+} from "../core/enums.js";
 import type { EffectiveGroupConfig, GroupConfigStore } from "./groupConfig.js";
 import { describePunishActions } from "./groupConfigCore.js";
 import type { IdentityMapService } from "./identityMap.js";
@@ -31,25 +35,36 @@ const GROUP_ADMIN_ONLY = "群管理员或以上";
 const SUPER_ADMIN_ONLY = "仅全局超级管理员";
 
 function isModerator(context: HelpContext): boolean {
-  // 全局超管在私信里没有群上下文，也要能看到群级指令的帮助
-  if (context.permissions.isSuperAdmin(context.userId)) {
-    return true;
-  }
+  // 群内：全局超管折算 140，天然覆盖审核员门槛，一次 `meetsInGroup` 即可；
+  // 私信里没有群上下文：看「在任一群达到该档」，或本身就是全局超管。
   return context.groupId
-    ? context.permissions.canReviewContent(context.userId, context.groupId)
-    : context.permissions.hasAnyGroupRole(
+    ? context.permissions.meetsInGroup(
+        context.userId,
+        context.groupId,
+        PermissionLevel.Moderator,
+      )
+    : context.permissions.meetsGlobal(
+        context.userId,
+        PlatformLevel.GlobalSuperAdmin,
+      ) ||
+      context.permissions.meetsAnywhere(
         context.userId,
         PermissionLevel.Moderator,
       );
 }
 
 function isGroupAdmin(context: HelpContext): boolean {
-  if (context.permissions.isSuperAdmin(context.userId)) {
-    return true;
-  }
   return context.groupId
-    ? context.permissions.canApproveJoin(context.userId, context.groupId)
-    : context.permissions.hasAnyGroupRole(
+    ? context.permissions.meetsInGroup(
+        context.userId,
+        context.groupId,
+        PermissionLevel.GroupAdmin,
+      )
+    : context.permissions.meetsGlobal(
+        context.userId,
+        PlatformLevel.GlobalSuperAdmin,
+      ) ||
+      context.permissions.meetsAnywhere(
         context.userId,
         PermissionLevel.GroupAdmin,
       );
@@ -133,7 +148,11 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     aliases: ["翻页测试"],
     title: "回调按钮翻页试验",
     requirement: SUPER_ADMIN_ONLY,
-    allows: (context) => context.permissions.isSuperAdmin(context.userId),
+    allows: (context) =>
+      context.permissions.meetsGlobal(
+        context.userId,
+        PlatformLevel.GlobalSuperAdmin,
+      ),
     body: () => [
       "用法：",
       "  /testmenu          从第 1 页开始",
@@ -152,7 +171,11 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     aliases: ["@测试", "atest"],
     title: "@ 渲染自检（仅全局超级管理员）",
     requirement: SUPER_ADMIN_ONLY,
-    allows: (context) => context.permissions.isSuperAdmin(context.userId),
+    allows: (context) =>
+      context.permissions.meetsGlobal(
+        context.userId,
+        PlatformLevel.GlobalSuperAdmin,
+      ),
     body: () => [
       "用法（在**群里**执行）：",
       "  /testat           发 3 条测试消息：纯文本 @、Markdown 首行 @、Markdown 正文中间 @",
@@ -242,7 +265,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
         lines.push(
           "",
           "你在此群的权限等级：",
-          `  ${context.permissions.levelFor(context.userId, context.groupId)}`,
+          `  ${describeLevel(context.permissions.levelFor(context.userId, context.groupId))}`,
         );
       }
       return lines;
@@ -289,7 +312,11 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     aliases: ["别名"],
     title: "班级/学院/专业别名表（仅全局超级管理员）",
     requirement: SUPER_ADMIN_ONLY,
-    allows: (context) => context.permissions.isSuperAdmin(context.userId),
+    allows: (context) =>
+      context.permissions.meetsGlobal(
+        context.userId,
+        PlatformLevel.GlobalSuperAdmin,
+      ),
     body: () => [
       "用法：",
       "  /alias                            查看别名表",
@@ -466,7 +493,11 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     aliases: ["权限"],
     title: "权限配置",
     requirement: SUPER_ADMIN_ONLY,
-    allows: (context) => context.permissions.isSuperAdmin(context.userId),
+    allows: (context) =>
+      context.permissions.meetsGlobal(
+        context.userId,
+        PlatformLevel.GlobalSuperAdmin,
+      ),
     body: () => [
       "权限分两层，全部为手工配置（不根据 QQ 群主/管理员身份自动授予）。",
       "",
@@ -497,7 +528,11 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     aliases: ["查询"],
     title: "查询 OpenID ↔ QQ号 / 群号 映射",
     requirement: SUPER_ADMIN_ONLY,
-    allows: (context) => context.permissions.isSuperAdmin(context.userId),
+    allows: (context) =>
+      context.permissions.meetsGlobal(
+        context.userId,
+        PlatformLevel.GlobalSuperAdmin,
+      ),
     body: () => [
       "用法：",
       "  /whois                              不带参数：群聊查当前群，私聊查你自己",

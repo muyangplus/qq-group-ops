@@ -2,7 +2,7 @@ import { renderCard, type CardButton } from "../cardTemplate.js";
 import { findHelpTopic, type HelpTopic } from "../helpTopics.js";
 import { resolveMenuAccess } from "../menu.js";
 import { TEST_MENU_PAGE_COUNT } from "../testMenu.js";
-import { PermissionLevel } from "../../core/enums.js";
+import { PermissionLevel, PlatformLevel } from "../../core/enums.js";
 import type { AdminCommandContext } from "./context.js";
 import { menuContext } from "./menuCommands.js";
 import { viewButton, type CardResult, type CommandResult } from "./support.js";
@@ -171,10 +171,13 @@ function buildHelp(
     "/menu - 打开系统菜单（系统 / 管理 / 超管），按钮点击即执行",
     "/bind qq <QQ号> - 绑定自己的 QQ 号",
   ];
-  const isSuper = ctx.permissions.isSuperAdmin(userId);
+  const isSuper = ctx.permissions.meetsGlobal(
+    userId,
+    PlatformLevel.GlobalSuperAdmin,
+  );
   const canBindGroup =
     groupId !== undefined &&
-    (isSuper || ctx.permissions.canApproveJoin(userId, groupId));
+    ctx.permissions.meetsInGroup(userId, groupId, PermissionLevel.GroupAdmin);
   if (canBindGroup) {
     lines.push("/bind group <群号> - 绑定当前群号");
   }
@@ -214,12 +217,20 @@ function buildHelp(
   lines.push("/activity - 活动列表；/activity join <#活动短码> 报名");
   const canModerate =
     groupId !== undefined
-      ? ctx.permissions.canReviewContent(userId, groupId)
-      : ctx.permissions.hasAnyGroupRole(userId, PermissionLevel.Moderator);
+      ? ctx.permissions.meetsInGroup(
+          userId,
+          groupId,
+          PermissionLevel.Moderator,
+        )
+      : ctx.permissions.meetsAnywhere(userId, PermissionLevel.Moderator);
   const canAdmin =
     groupId !== undefined
-      ? ctx.permissions.canApproveJoin(userId, groupId)
-      : ctx.permissions.hasAnyGroupRole(userId, PermissionLevel.GroupAdmin);
+      ? ctx.permissions.meetsInGroup(
+          userId,
+          groupId,
+          PermissionLevel.GroupAdmin,
+        )
+      : ctx.permissions.meetsAnywhere(userId, PermissionLevel.GroupAdmin);
 
   if (canModerate) {
     lines.push("/pending [#群短码|群号] - 查看待审批入群申请");

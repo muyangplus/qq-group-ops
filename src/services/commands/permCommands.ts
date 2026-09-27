@@ -1,4 +1,8 @@
-import { PermissionLevel, describeLevel } from "../../core/enums.js";
+import {
+  PermissionLevel,
+  PlatformLevel,
+  describeLevel,
+} from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
 import { renderCard } from "../cardTemplate.js";
 import type { AdminCommandContext } from "./context.js";
@@ -28,11 +32,13 @@ export function handleMyPermission(
   const mark = (ok: boolean): string => (ok ? "\u2713" : "\u2717");
   // 文案要求：只留两行（等级 + 能力标记），说明类文字一律进按钮 / 帮助
   const flags = [
-    `审批 ${mark(ctx.permissions.canApproveJoin(userId, scope))}`,
-    `规则 ${mark(ctx.permissions.canManageRules(userId, scope))}`,
-    `审核 ${mark(ctx.permissions.canReviewContent(userId, scope))}`,
-    `导出 ${mark(ctx.permissions.canExportData(userId, scope))}`,
-    ...(ctx.permissions.isSuperAdmin(userId) ? ["配置权限 \u2713"] : []),
+    `审批 ${mark(ctx.permissions.meetsInGroup(userId, scope, PermissionLevel.GroupAdmin))}`,
+    `规则 ${mark(ctx.permissions.meetsInGroup(userId, scope, PermissionLevel.GroupAdmin))}`,
+    `审核 ${mark(ctx.permissions.meetsInGroup(userId, scope, PermissionLevel.Moderator))}`,
+    `导出 ${mark(ctx.permissions.meetsInGroup(userId, scope, PermissionLevel.GroupAdmin))}`,
+    ...(ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)
+      ? ["配置权限 \u2713"]
+      : []),
   ].join(" \u00b7 ");
   const scopeLabel =
     groupId && ctx.permissions.isGroupSuperAdmin(userId, groupId)
@@ -52,7 +58,7 @@ export function handlePermissionConfig(
   userId: string,
   parts: readonly string[],
 ): CommandResult {
-  if (!ctx.permissions.isSuperAdmin(userId)) {
+  if (!ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
     log.warn("permission config denied", { groupId, userId });
     return { ok: false, text: "权限不足：仅超级管理员可以配置权限。" };
   }

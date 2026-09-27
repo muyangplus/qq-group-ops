@@ -1,4 +1,4 @@
-import { PermissionLevel } from "../core/enums.js";
+import { PermissionLevel, PlatformLevel } from "../core/enums.js";
 import { encodeCallback } from "./callbackData.js";
 import { renderCard, escapeCardText, type CardButton, type CardSpec } from "./cardTemplate.js";
 import type { PermissionService } from "./permissions.js";
@@ -105,28 +105,25 @@ export interface MenuView {
   message: RichMessage;
 }
 
-const LEVEL_LABELS: Record<PermissionLevel, string> = {
-  [PermissionLevel.Guest]: "未绑定",
-  [PermissionLevel.Member]: "群成员",
-  [PermissionLevel.Moderator]: "审核员",
-  [PermissionLevel.GroupAdmin]: "群管理员",
-  [PermissionLevel.SuperAdmin]: "超级管理员",
-};
-
 export function resolveMenuAccess(context: MenuContext): MenuAccess {
   const { permissions, userId, groupId } = context;
-  const isSuperAdmin = permissions.isSuperAdmin(userId);
+  const isSuperAdmin = permissions.meetsGlobal(
+    userId,
+    PlatformLevel.GlobalSuperAdmin,
+  );
   const isGroupSuperAdmin = groupId
     ? permissions.isGroupSuperAdmin(userId, groupId)
     : false;
+  // 群内：全局超管折算 140，天然覆盖这两档，一次 `meetsInGroup` 即可；
+  // 私信：没有群上下文 → 「在任一群达到该档」，或本身就是全局超管。
   const canModerate = groupId
-    ? permissions.hasAtLeast(userId, groupId, PermissionLevel.Moderator)
+    ? permissions.meetsInGroup(userId, groupId, PermissionLevel.Moderator)
     : isSuperAdmin ||
-      permissions.hasAnyGroupRole(userId, PermissionLevel.Moderator);
+      permissions.meetsAnywhere(userId, PermissionLevel.Moderator);
   const canAdmin = groupId
-    ? permissions.hasAtLeast(userId, groupId, PermissionLevel.GroupAdmin)
+    ? permissions.meetsInGroup(userId, groupId, PermissionLevel.GroupAdmin)
     : isSuperAdmin ||
-      permissions.hasAnyGroupRole(userId, PermissionLevel.GroupAdmin);
+      permissions.meetsAnywhere(userId, PermissionLevel.GroupAdmin);
   return { isSuperAdmin, isGroupSuperAdmin, canModerate, canAdmin };
 }
 
