@@ -119,6 +119,21 @@ export const NOTIFY_TOPIC_META: Readonly<Record<NotifyChannel, NotifyTopicMeta>>
   },
 };
 
+/** 官方事件类型 → 通知话题（没有映射的类型统一进 `unknown_event`）。 */
+export const OFFICIAL_EVENT_TOPICS: Readonly<Record<string, NotifyChannel>> = {
+  GROUP_ADD_ROBOT: "bot_join",
+  GROUP_DEL_ROBOT: "bot_leave",
+  GROUP_MEMBER_ADD: "member_join",
+  FRIEND_ADD: "friend",
+  FRIEND_DEL: "friend",
+  C2C_FRIEND_ADD: "friend",
+  C2C_FRIEND_DEL: "friend",
+};
+
+export function topicOfOfficialEvent(eventType: string): NotifyChannel {
+  return OFFICIAL_EVENT_TOPICS[eventType] ?? "unknown_event";
+}
+
 /** 内置默认门槛（每个话题一份）。 */
 export function defaultNotifyTopicLevels(): Record<NotifyChannel, number> {
   const levels = {} as Record<NotifyChannel, number>;

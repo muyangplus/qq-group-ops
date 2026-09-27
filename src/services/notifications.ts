@@ -300,6 +300,26 @@ export class NotificationService {
   }
 
   /**
+   * **平台类话题**（机器人入/退群、好友变动、新成员、未知事件）的收件人：
+   * 订阅了该话题「全部群」且够门槛的人 —— 这些事件与具体群无关（未知事件甚至没有群号），
+   * 所以只看「全部群」这一个范围。
+   */
+  public topicSubscribers(topic: NotifyChannel): string[] {
+    const wanted = storageScope(topic, NOTIFY_SCOPE_ALL);
+    const recipients: string[] = [];
+    for (const [userId, scopes] of this.subscriptions) {
+      if (!scopes.has(wanted)) {
+        continue;
+      }
+      if (!this.checkTopicReach(userId, topic, NOTIFY_SCOPE_ALL).ok) {
+        continue;
+      }
+      recipients.push(userId);
+    }
+    return recipients.sort();
+  }
+
+  /**
    * 订阅了该群（或「全部群」）且**有收件资格**的人（见 `canReceive`）。
    *
    * 所有话题共用这张订阅表，资格判定集中在 `canReceive`（推送）与 `checkTopicReach`

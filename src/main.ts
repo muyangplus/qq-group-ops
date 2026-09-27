@@ -17,6 +17,7 @@ import { escapeCardText, renderCard } from "./services/cardTemplate.js";
 import { ActivityReminderService } from "./services/activityReminder.js";
 import { AppealWatcher } from "./services/appealWatcher.js";
 import { RetentionService } from "./services/retention.js";
+import { NOTIFY_SCOPE_ALL, topicOfOfficialEvent } from "./services/notifyTopics.js";
 import { sendWelcome } from "./services/welcome.js";
 
 /** 启动阶段命中限流时的固定冷却时间。 */
@@ -341,28 +342,30 @@ const BOT_MEMBERSHIP_EVENTS: Record<
 };
 
 /**
- * 未处理事件类型：私信全部**全局超管**（每类型一次，由 mapper 去重）。
+ * 未处理事件类型：私信**订阅了该话题的人**（默认超管开，可退订；未知事件每类型一次）。
  *
- * 其中「机器人入群 / 被移出群」单独出卡（`GROUP_ADD_ROBOT` / `GROUP_MEMBER_ADD` /
- * `GROUP_DEL_ROBOT`），标题与正文写清楚是入群还是退群，不再报「未知事件」。
+ * 其中「机器人入群 / 被移出群 / 群成员加入 / 好友变动」各自对应一个话题，
+ * 标题与正文写清楚发生了什么，不再报「未知事件」。
  *
  * 内容含类型、顶层字段名与**截断后的 payload**（用户确认要原文，便于直接判断怎么映射）——
- * 注意 payload 里可能含用户 openid / 发言内容，只发给超管；文本一律过 `escapeCardText`
+ * 注意 payload 里可能含用户 openid / 发言内容，只发给订阅者；文本一律过 `escapeCardText`
  * （真机踩过：JSON 里的成对下划线被 Markdown 当斜体吃掉，`scene_param` 显示成 `sceneparam`）。
  */
 async function alertUnknownEvent(
   runtime: Runtime,
   info: { eventType: string; payload: unknown },
 ): Promise<void> {
-  const admins = runtime.permissions.listSuperAdmins();
-  const membership = BOT_MEMBERSHIP_EVENTS[info.eventType];
-  if (admins.length === 0) {
-    log.warn("no super admin to notify official event", {
+  const topic = topicOfOfficialEvent(info.eventType);
+  const recipients = runtime.notifications.topicSubscribers(topic);
+  if (recipients.length === 0) {
+    // 没人订阅这类通知是正常状态（不是错误），只留 debug
+    log.debug("no subscribers for official event", {
       eventType: info.eventType,
-      membership,
+      topic,
     });
     return;
   }
+  const membership = BOT_MEMBERSHIP_EVENTS[info.eventType];
   const data = isRecordLike(info.payload) ? info.payload : undefined;
   const payload =
     typeof info.payload === "string"
@@ -383,32 +386,23 @@ async function alertUnknownEvent(
     : undefined;
   const payloadLine = escapeCardText(payload, 800);
 
-  const lines = membership
-    ? [
-        `**事件类型**：${info.eventType}`,
-        ...(groupId
-          ? [
-              `**群**：${
-                runtime.identityMap.getGroupNumber(groupId) ?? groupId
-              }`,
-            ]
-          : []),
-        ...(operator ? [`**相关成员**：${operator}`] : []),
-        `**时间**：${formatDisplayTime(new Date())}`,
-        "",
-        `**顶层字段**：${escapeCardText(keys.join("、"))}`,
-        "",
-        "**原始 payload（截断 800 字）**：",
-        payloadLine,
-      ]
-    : [
-        `**事件类型**：${info.eventType}`,
-        `**顶层字段**：${escapeCardText(keys.length > 0 ? keys.join("、") : "（非对象）")}`,
-        `**时间**：${formatDisplayTime(new Date())}`,
-        "",
-        "**原始 payload（截断 800 字）**：",
-        payloadLine,
-      ];
+  const lines = [
+    `**事件类型**：${info.eventType}`,
+    ...(groupId
+      ? [
+          `**群**：${runtime.identityMap.getGroupNumber(groupId) ?? groupId}`,
+        ]
+      : []),
+    ...(operator ? [`**相关成员**：${operator}`] : []),
+    `**时间**：${formatDisplayTime(new Date())}`,
+    "",
+    `**顶层字段**：${escapeCardText(
+      keys.length > 0 ? keys.join("、") : "（非对象）",
+    )}`,
+    "",
+    "**原始 payload（截断 800 字）**：",
+    payloadLine,
+  ];
   const card = renderCard({
     title:
       membership === "added"
@@ -417,22 +411,37 @@ async function alertUnknownEvent(
           ? "机器人被移出群"
           : membership === "member_added"
             ? "群成员加入"
-            : "未知事件类型",
+            : topic === "friend"
+              ? "好友变动"
+              : "未知事件类型",
     lines,
     footer: [
-      membership === "added" || membership === "removed"
-        ? "如需配置本群规则 / 推送，请在群内发送 /status 或 /rules 查看当前状态。"
-        : membership === "member_added"
-          ? "迎新已可用：群管理员在群内发 /rules →「更多设置 → 迎新」，或 /rules set welcome on（默认关，仅群内欢迎）。"
-          : "该事件类型目前没有被机器人处理；如需支持请告知开发者。",
+      "可在 /notify 里调整或退订这类通知（卡片底部也有「取消订阅」按钮）。",
+      ...(topic === "member_join"
+        ? [
+            "迎新已可用：群管理员在群内发 /rules →「更多设置 → 迎新」，或 /rules set welcome on。",
+          ]
+        : []),
+      ...(topic === "unknown_event"
+        ? ["该事件类型目前没有被机器人处理；如需支持请告知开发者。"]
+        : []),
     ],
   });
-  for (const userId of admins) {
-    await runtime.notifications.sendPrivateCard(userId, card);
+  for (const userId of recipients) {
+    // 每张卡底部带「取消订阅此通知」，按钮只允许收件人本人点 → 每人一张
+    await runtime.notifications.sendPrivateCard(
+      userId,
+      runtime.notifications.withUnsubscribeRow(
+        card,
+        topic,
+        NOTIFY_SCOPE_ALL,
+        userId,
+      ),
+    );
   }
   log.info("official event alerted", {
     eventType: info.eventType,
-    membership,
-    admins: admins.length,
+    topic,
+    recipients: recipients.length,
   });
 }

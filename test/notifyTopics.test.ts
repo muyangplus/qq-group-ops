@@ -316,6 +316,25 @@ describe("NotificationService · 订阅与推送同一判据", () => {
     expect(notifications.topicLevel("punish")).toBe(PermissionLevel.GroupAdmin);
     expect(notifications.checkTopicReach("mod", "punish", "g2").ok).toBe(false);
   });
+
+  it("平台类话题的收件人 = 订阅了「全部群」且够门槛的人（H6 事件订阅）", async () => {
+    const { notifications } = await createHarness();
+    expect(notifications.topicSubscribers("bot_join")).toEqual([]);
+
+    // 默认开：超管种子之后机器人入群这类事件就有收件人了
+    notifications.seedSuperAdminDefaults(["root"]);
+    expect(notifications.topicSubscribers("bot_join")).toEqual(["root"]);
+    expect(notifications.topicSubscribers("member_join")).toEqual(["root"]);
+    expect(notifications.topicSubscribers("unknown_event")).toEqual(["root"]);
+
+    // 普通管理员即使硬订上（绕过订阅卡）也收不到：门槛 240
+    notifications.subscribe("admin", NOTIFY_SCOPE_ALL, "bot_join");
+    expect(notifications.topicSubscribers("bot_join")).toEqual(["root"]);
+
+    // 退订（带墓碑）之后不再收
+    notifications.unsubscribe("root", NOTIFY_SCOPE_ALL, "bot_join");
+    expect(notifications.topicSubscribers("bot_join")).toEqual([]);
+  });
 });
 
 describe("notifyTopics · 退订墓碑（入库）", () => {

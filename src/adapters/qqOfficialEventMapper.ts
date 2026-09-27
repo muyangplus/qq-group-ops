@@ -9,8 +9,9 @@ export interface OfficialEventMapper {
 
 export interface OfficialEventMapperOptions {
   /**
-   * 未处理事件类型的回调：**每种类型只回调一次**（进程内去重），由装配方负责
-   * 「私信超管」。日志侧不受影响——每次收到未知类型都会记一条 warn。
+   * 未处理事件类型的回调：**变动类事件每次回调**（机器人入/退群、好友增删、群成员加入），
+   * 其余未处理类型每种只回调一次（进程内去重，避免同一个平台 bug 刷私信）。
+   * 日志侧不受影响——每次收到都会记一条 warn。
    */
   onUnhandledEvent?:
     | ((info: { eventType: string; payload: unknown }) => void)
@@ -45,6 +46,23 @@ const HANDLED_EVENT_TYPES = new Set([
 export function isHandledEventType(eventType: string): boolean {
   return HANDLED_EVENT_TYPES.has(eventType);
 }
+
+/**
+ * **每次都要回调**的事件类型（不按类型去重）：机器人入群 / 被移出群、好友增删、群成员加入。
+ *
+ * 这些是「变动」——每次发生都要通知订阅者；其余未处理类型（平台 bug、未支持能力）
+ * 保持「每类型只通知一次」，否则一个刷屏事件会把私信打爆。
+ */
+export const REPEATING_EVENT_TYPES = new Set([
+  "GROUP_ADD_ROBOT",
+  "GROUP_DEL_ROBOT",
+  "GROUP_MEMBER_ADD",
+  // 真机 checklist 里出现过的是 `C2C_FRIEND_ADD`，两种写法都认，免得只认一个漏掉
+  "FRIEND_ADD",
+  "FRIEND_DEL",
+  "C2C_FRIEND_ADD",
+  "C2C_FRIEND_DEL",
+]);
 
 /**
  * 官方事件映射器。
@@ -85,7 +103,7 @@ export class QQOfficialEventMapper implements OfficialEventMapper {
 
   /**
    * 未处理事件：**每次都记 warn**（带类型、顶层字段名与截断后的 payload），
-   * **每种类型只通知一次超管**（`onUnhandledEvent` 由装配方接线）。
+   * 并回调 `onUnhandledEvent`（变动类事件每次都回调，其余每类型只回调一次）。
    */
   private reportUnhandled(eventType: string, data: unknown): void {
     const type = eventType.trim();
@@ -97,6 +115,10 @@ export class QQOfficialEventMapper implements OfficialEventMapper {
       dataKeys: isRecord(data) ? Object.keys(data).slice(0, 40) : [],
       payload: summarizePayload(data),
     });
+    if (REPEATING_EVENT_TYPES.has(type)) {
+      this.onUnhandledEvent?.({ eventType: type, payload: data });
+      return;
+    }
     if (this.reportedUnhandled.has(type)) {
       return;
     }
