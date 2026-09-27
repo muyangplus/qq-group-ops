@@ -14,7 +14,7 @@ import {
 /** 重启前的二次确认弹窗（与「恢复继承」同一套不可逆动作规范）。 */
 export function confirmRestartModal(): KeyboardModal {
   return {
-    content: "确认重启机器人？重启期间机器人会短暂离线（几秒），由进程管理器自动拉起。",
+    content: "确认重启机器人？重启期间机器人会短暂离线（几秒），随后自行拉起。",
     confirmText: "确认重启",
     cancelText: "取消",
   };
@@ -50,8 +50,7 @@ export function restartCard(
   if (!hook?.available) {
     return denied(
       "重启不可用",
-      "当前进程没有装配重启钩子（一般是直接 `node dist/main.js` 启动、且没有进程管理器）。" +
-        "用 docker compose（`restart: unless-stopped`）或 systemd（`Restart=always`）启动后，这个指令才有意义。",
+      "当前进程没有装配重启钩子（一般是纯测试环境或直接 import 服务层调用），无法重启。",
     );
   }
   return cardFromText(
@@ -61,8 +60,11 @@ export function restartCard(
         process.uptime() * 1000,
       )}`,
       "",
-      "重启会：先落盘所有排队写入 → 关闭网关与数据库 → 进程退出（由进程管理器拉回）。",
-      "重启期间机器人短暂离线（通常几秒）；重启完成后会给**发起人**私信一条回执。",
+      "重启流程：脱离会话拉起自我重启助手（`scripts/respawn.mjs`）→ 落盘排队写入 → 关闭网关与数据库 → 进程退出；",
+      "助手等旧进程退出、端口与句柄释放后，再用同样的命令启动新进程（约几秒）。",
+      "",
+      "**兜底**：助手没起来时旧进程**不会退出**（会私信你「重启已取消」），不会把机器人搞没。",
+      "重启完成后会给**发起人**私信一条回执（版本 / 启动时间 / 请求到启动的耗时）。",
     ].join("\n"),
     {
       rows: [
@@ -102,9 +104,9 @@ export function restartNowCard(
   const card = renderCard({
     title: "正在重启",
     lines: [
-      `${notice}已安排重启，几秒后机器人会离线，然后由进程管理器拉起。`,
+      `${notice}已安排重启：几秒后机器人会离线，随后由自我重启助手拉起。`,
       "",
-      "重启完成后会私信你一条回执；如果一直没收到，说明进程没有被自动拉起，请检查部署配置。",
+      "重启完成后会私信你一条回执；如果一直没收到，说明新进程没起来，请查看 `data/restart-failed.json` 与启动日志。",
     ],
     rows: [[viewButton("refresh", "再看状态", "status", "proc")]],
   });

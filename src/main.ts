@@ -24,6 +24,7 @@ import {
   writeRestartNotice,
 } from "./services/restartNotice.js";
 import { appVersion } from "./core/buildInfo.js";
+import { spawnRespawnHelper } from "./services/respawn.js";
 import { sendWelcome } from "./services/welcome.js";
 
 /** 启动阶段命中限流时的固定冷却时间。 */
@@ -254,21 +255,38 @@ async function main(): Promise<void> {
     process.exit(0);
   };
   /**
-   * `/restart` 的落点：先写重启回执 → 留 2 秒把「正在重启」的回执发出去 →
-   * 走与 SIGTERM 完全相同的优雅关闭 → 退出，由 docker compose（`restart: unless-stopped`）
-   * / systemd（`Restart=always`）/ pm2 拉起新进程。
+   * `/restart` 的落点（**自我重启模式**）：先脱离会话拉起 `scripts/respawn.mjs`
+   * （等旧 PID 消失 → 释放端口/句柄 → 启动新进程），确认助手已起来后写重启回执，
+   * 再走与 SIGTERM 完全相同的优雅关闭并退出。
+   *
+   * 助手没起来就**不退出**：否则机器人就真的没了（命令层会收到 `false` 并回「重启失败」）。
    */
   restartHandler = (info) => {
+    const respawn = spawnRespawnHelper({
+      pid: process.pid,
+      execPath: process.execPath,
+      args: process.argv.slice(1),
+    });
+    if (!respawn.ok) {
+      throw new Error(`重启助手启动失败：${respawn.detail}`);
+    }
     writeRestartNotice({
       userId: info.requestedBy,
       requestedAt: new Date().toISOString(),
       version: appVersion(),
+      mode: "respawn",
     });
-    log.warn("restart requested, exiting for supervisor to relaunch", {
+    log.warn("restart requested: respawn helper armed", {
       requestedBy: info.requestedBy,
       delayMs: RESTART_EXIT_DELAY_MS,
     });
     setTimeout(() => {
+      if (respawn.failed()) {
+        // 助手在启动阶段就报错 → 撤销退出，并私信纠正刚才那张「正在重启」的回执
+        log.error("restart aborted: respawn helper errored before exit");
+        void notifyRestartAborted(runtime, info.requestedBy, respawn.detail);
+        return;
+      }
       void shutdown();
     }, RESTART_EXIT_DELAY_MS);
   };
@@ -278,6 +296,32 @@ async function main(): Promise<void> {
   process.once("SIGTERM", () => {
     void shutdown();
   });
+}
+
+/**
+ * 「重启已取消」的私信：助手没起来 → 旧进程**没有退出**，必须告诉发起人别以为已经重启了。
+ */
+async function notifyRestartAborted(
+  runtime: Runtime,
+  userId: string,
+  detail: string,
+): Promise<void> {
+  const card = renderCard({
+    title: "重启已取消",
+    lines: [
+      "重启助手没能正常启动，**机器人仍在运行**（本次没有重启）。",
+      `**原因**：${detail.length > 0 ? detail : "未知（详见启动日志）"}`,
+      "",
+      "可以改用 docker compose / systemd / pm2 的守护方式再试；或先发一张「进程状态」自检（/status proc）。",
+    ],
+  });
+  const result = await runtime.notifications.sendPrivateCard(userId, card);
+  if (!result.ok) {
+    getLogger("main").warn("restart-aborted notice not delivered", {
+      userId,
+      detail: result.detail,
+    });
+  }
 }
 
 /**

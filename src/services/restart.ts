@@ -1,13 +1,16 @@
+import { getLogger } from "../core/logger.js";
+
 /**
  * `/restart` 的重启钩子。
  *
- * 机器人**自己重启自己**的可靠做法是「优雅关闭 → 进程退出」，由进程管理器拉起：
- * 本项目的 `docker-compose.yml` 两个服务都写了 `restart: unless-stopped`，
- * systemd `Restart=always` / pm2 同理。所以这里只暴露一个钩子：
- * `main.ts` 把「写重启回执 + 延迟调用既有 shutdown()」注入进来，命令层只管调用。
+ * 机器人**自己重启自己**有两条路：
+ * 1. 「优雅关闭 → 进程退出」，由进程管理器拉起（docker compose 的 `restart: unless-stopped`、
+ *    systemd 的 `Restart=always`、pm2 等同理）；
+ * 2. **自我重启**（当前实现，用户选定）：退出前先脱离会话拉起 `scripts/respawn.mjs`，
+ *    助手等旧进程消失、端口与句柄释放之后再启动新进程 —— 直接 `node dist/main.js` 起也能重启。
  *
- * 没注入钩子（例如纯单测、或有人直接 `node dist/main.js` 起进程）时
- * `available === false`，`/restart` 会明确拒绝而不是把进程杀掉。
+ * 命令层只依赖这个钩子：`main.ts` 把实际动作注入进来；`request()` 返回 `false` 表示**未受理**
+ * （没注入钩子、或钩子同步失败），命令层据此回「重启失败」，而不是让进程半死不活。
  */
 export interface RestartHook {
   /** 是否装配了可用的重启钩子。 */
@@ -27,8 +30,17 @@ export function createRestartHook(
       if (!handler) {
         return false;
       }
-      handler(info);
-      return true;
+      try {
+        handler(info);
+        return true;
+      } catch (error) {
+        // 钩子同步失败（例如自我重启助手没拉起来）→ 报告「未受理」，
+        // 命令层会回「重启失败」，而**不是**让回调抛异常或让进程半死不活。
+        getLogger("restart").error("restart request rejected", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      }
     },
   };
 }

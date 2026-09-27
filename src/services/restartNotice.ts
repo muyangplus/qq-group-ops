@@ -18,6 +18,8 @@ export interface RestartNotice {
   requestedAt: string;
   /** 请求时的版本。 */
   version: string;
+  /** 重启方式：`respawn` = 自我重启（当前实现）；`supervisor` = 靠进程管理器拉起。 */
+  mode?: "respawn" | "supervisor" | undefined;
 }
 
 /**
@@ -64,6 +66,9 @@ export function takeRestartNotice(
         userId: parsed.userId,
         requestedAt: parsed.requestedAt,
         version: typeof parsed.version === "string" ? parsed.version : "unknown",
+        ...(parsed.mode === "respawn" || parsed.mode === "supervisor"
+          ? { mode: parsed.mode }
+          : {}),
       };
     }
   } catch (error) {
@@ -91,6 +96,9 @@ export function restartDoneCard(
       `**本次启动**：${formatDisplayTime(new Date(startedAt))}`,
       ...(tookSeconds !== undefined
         ? [`**请求到启动**：约 ${tookSeconds} 秒`]
+        : []),
+      ...(notice.mode === "respawn"
+        ? ["**重启方式**：自我重启（`scripts/respawn.mjs`）"]
         : []),
       "",
       "看到这条说明进程已经重新起来了（重启期间未送达的消息会按平台策略重推）。",
