@@ -194,6 +194,8 @@ ADMIN_USER_IDS=A1B2C3D4E5F6...,F6E5D4C3B2A1...
 /rules set joinAnswerPattern <正则>|clear          # 追加自定义正则
 /rules set joinReviewOpinion on|off                # /pending 是否展示审核意见
 /rules set notifyAutoApproved on|off               # 机器人自动通过/拒绝的申请是否也推送通知
+/rules set welcome on|off                          # 迎新：新成员加入时在群内 @ 他并发出欢迎卡（默认关，仅群内）
+/rules set welcomeMessage 欢迎 {成员} 加入本群       # 欢迎语，{成员} = @ 该成员（clear 恢复默认）
 /rules set allowColleges 某学院,某学院              # 学院白名单（空 = 不限）
 /rules set denyColleges 某学院                      # 学院黑名单（优先于白名单）
 /rules set allowYears 22,23                         # 年级白名单（两位）

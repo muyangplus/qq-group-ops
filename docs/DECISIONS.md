@@ -57,6 +57,8 @@
 - ADR-0047：申诉派发「管理员全通知 + 审核员轮单」，并补齐处理闭环（§B8）
 - ADR-0048：违规处理改为五选多选（`punishActions`），拉黑不连坐踢出（§B2）
 - ADR-0049：Webhook 事件通道（`EVENT_MODE`，Fastify + Ed25519 验签）（§D5）
+- ADR-0050：权限等级数值化，并拆成「群内 / 平台」两轴（§H1 / §H2）
+- ADR-0051：通知中心——话题订阅、全局门槛、退订墓碑、仅群内迎新（§H3–§H6）
 
 ---
 
@@ -1010,3 +1012,62 @@
   hex 签名（含末字节高 3 位为 0 的额外校验）、Bot Secret 的 repeat 派生算法（含官方 Demo 公钥向量）。
   **仍需真机核对**：回调体字段名、ACK 响应体 `{op:12,d:{}}`、`op=13` 握手的拼接顺序 ——
   联调时看日志 `webhook gateway listening`（`seedSource`）与 `webhook url validation answered` 即可定位。
+
+## ADR-0050：权限等级数值化，并拆成「群内 / 平台」两轴（§H1 / §H2）
+
+- 状态：已采纳（未发布，随 0.19.0）
+- 背景：等级原先是**一张按名次排序的表**（`LEVEL_RANK` + 布尔便捷方法），而且两个轴混在一起
+  （全局超管与本群超管共用同一串数字）。做通知中心时暴露出三类问题：
+  ① 「全局角色不该压过本群超管」这类语义，混轴的模型解释不了；
+  ② 卡片/帮助要按数值门槛决定显示，混轴只能靠特判；
+  ③ 全仓曾有 159 处手写权限组合（`isSuperAdmin() || hasAnyGroupRole(...)`），
+  同一件事在不同文件写法不同 —— 通知订阅与推送判定就漂移过（「订阅成功却永远收不到」）。
+- 决策：
+  1. **数值即等级**，两轴分离：群内 `-1 拉黑 / 0 未绑定 / 110 群成员 / 120 审核员 / 130 群管理员 / 140 本群超管`；
+     平台 `210 平台用户 / 220 全局审核员 / 230 全局管理员 / 240 全局超管`；`PLATFORM_OFFSET = 100`、`PLATFORM_LEVEL_MIN = 200`；
+  2. **类型上分流**：`GroupLevel` 用字面量联合、`PlatformLevel` 用带品牌（branded）的 200..299，
+     传错轴**编译期**就报错；运行期 `meetsGlobal` 再挡一层（防止越过类型系统的调用）；
+  3. **跨轴折算固定 `-100`**：群内生效档 = `max(群内档, 平台档 - 100)`，
+     因此平台角色**压不过**本群超管（240 → 140、220 → 120）；平台级判定**不折算**；
+  4. 判定只有三个入口：`meetsInGroup` / `meetsGlobal` / `meetsAnywhere`（「任一群」语义），
+     命令层禁止再写 `isSuperAdmin() || …`；
+  5. `-1 拉黑` **只作门槛档位**（例如「谁都能订/收」的活动通知），不改变黑名单用户的实际拦截行为；
+  6. 全仓 102 处判定统一改走三个入口，**权限行为保持不变**（唯一可见变化是 `/myperm` 等文案改印中文档位名）。
+- 理由：单一事实来源 + 编译期防错，比「改一处、漏三处」的组合表达式可靠；档位留间隙（110/120/130）
+  便于以后插档（如 115 值班审核员）而不破坏既有数值。
+- 影响：`src/core/enums.ts`（数值表 + 品牌类型 + `describeLevel`）、`src/services/permissions.ts`（三个入口 + 兼容层）、
+  23 个文件 102 处调用点；`permissions.ts` 的旧便捷方法（`hasAtLeast` / `canManageRules` …）保留但不再被命令层调用。
+  文档：`TODO.md` 的 H1/H2 清单、`CHANGELOG` 的「变更」。
+
+## ADR-0051：通知中心——话题订阅、全局门槛、退订墓碑、仅群内迎新（§H3–§H6）
+
+- 状态：已采纳（未发布，随 0.19.0）
+- 背景：原先只有三个**频道**（join / punish / activity），订阅存 `notification_subscriptions`（键 `频道:范围`），
+  「谁能收」的判定写在推送与订阅两处（容易漂移）；同时机器人入群/退群、好友变动、新成员、未处理事件
+  是**硬编码私信全部超管** —— 不能退订、也不能只收其中一类。
+- 决策：
+  1. 概念从「频道」升级为**话题**：`join / punish / activity / bot_join / bot_leave / friend / member_join / unknown_event`；
+     前三个名字不变，老订阅行继续有效（存储键仍是 `话题:范围`）；
+  2. 每个话题一个**全局门槛**，存 `group_settings` 的 `__default__` 行键 `notifyTopicLevels`（JSON map），
+     改一次全群生效；缺键 / 坏 JSON / 非法值逐项回落默认（入群 130、处罚与申诉 120、活动 -1、事件类 240）。
+     **不放进 `GroupConfigStore`**：那会把它变成「每群可覆盖」的规则字段，与「全局一套」矛盾；
+  3. 判定唯一入口 `meetsNotifyLevel(level, scope)`：`<= 0` 放行、`>= 200` 走平台轴、其余走群内轴
+     （具体群按该群折算；「全部群」= 全局超管或任一群够档）；**推送与订阅共用它**；
+  4. 事件类话题走订阅：`topicSubscribers(topic)` = 订阅了「全部群」且够门槛的人；
+     **变动类事件每次都通知**（机器人入/退群、好友增删、群成员加入），真正未知的类型保持「每类型一次」；
+  5. 超管专属话题（门槛 >= 200）**默认开**：启动时为现有全局超管种订阅行；
+     退订写**墓碑** `group_settings.__default__.notifyOptOut`（否则重启会被重新种上，等于退不掉），重新订阅清墓碑；
+  6. 每张私信通知卡底部统一带「取消订阅此通知」：按该卡话题 + **实际投递范围**退订，
+     回执卡附「重新订阅」防误点；键盘已满 5 行时宁可不加（`appendKeyboardRow` 的兜底）；
+  7. 迎新**仅群内**（用户确认）：新成员加入时先走纯文本通道 @、再补一张欢迎卡，两条都失败只记日志；不做私信欢迎。
+- 理由：把「谁能收」收敛成一份判据 + 一份全局门槛，杜绝订阅/推送漂移；默认开 + 墓碑让超管既开箱即用、又真的能退订；
+  话题化让「机器人被移出群」这类运维事件也能按需订阅，而不是无条件打扰所有超管。
+- 影响：新增 `src/services/notifyTopics.ts`、`src/services/welcome.ts`；改动 `notifications.ts`、`commands/notifyCommands.ts`、
+  `activityNotifications.ts`、`cardTemplate.ts`（`appendKeyboardRow`）、`runtime.ts`（启动装载 + 种子 + flush）、
+  `main.ts`（事件 → 话题映射、迎新）、`adapters/qqOfficialEventMapper.ts`（变动类事件不做类型去重）、
+  `groupConfigCore.ts` / `groupConfig.ts`（`welcomeEnabled` / `welcomeMessage`）、`commands/ruleCommands.ts`（迎新子卡）、
+  `commands/support.ts`（`parseRuleSetting` / 字段白名单 / 字段名）。
+  测试：`test/notifyTopics.test.ts`、`test/welcome.test.ts`、`test/unknownEvent.test.ts`、`test/commands/notify.test.ts`、
+  `test/activityNotifications.test.ts`。
+  **能力边界**：真机上纯文本 `content` 与 Markdown 卡片的 `<@!openid>` 谁生效与客户端版本有关，所以迎新两条通道都发；
+  个人提醒类活动私信（候补/名额/变更）没有退订按钮（那条路径拿不到群号，塞范围会退错群）。

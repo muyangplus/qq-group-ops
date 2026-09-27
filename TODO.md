@@ -253,7 +253,7 @@ Phase 2 → E1、E2、B4、B5、B6；Phase 3 → E3–E5；Phase 4 → D6–D9�
 > **真机待确认项**：见 [docs/REAL-MACHINE-CHECKLIST.md](./docs/REAL-MACHINE-CHECKLIST.md)（R1–R18，跑完把观察结果贴回来即可收尾）；
 > **一次跑完**：照 [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md)（准备清单 + 执行顺序 + 一键取证命令 + 回填模板）。
 
-## H. 权限等级数值化 + 通知中心（0.19.0 计划）
+## H. 权限等级数值化 + 通知中心（0.19.0）✅ 全部完成，待推送
 
 > 用户口径（已确认）：等级数值**留间隙**；`Blacklisted` **只作为门槛档位、不改现有行为**；
 > 话题门槛**全局一套**（超管配）；迎新**仅群内**；超管专属话题**默认开**（可关）；
@@ -309,23 +309,35 @@ Phase 2 → E1、E2、B4、B5、B6；Phase 3 → E3–E5；Phase 4 → D6–D9�
 - [ ] 个人提醒类的活动私信（候补/名额/变更）**没有**退订按钮：那条路径只知道 `activityId`、不知道群号，塞错范围会退错群。要做的话得先让活动通知带上发布群。
 - [ ] 「取消订阅」按钮文案是 4 字，官方按钮上限 10 字；同一张卡只能有一行退订（id 冲突时不追加）。
 
-### H5 迎新（仅群内）+ `GROUP_MEMBER_ADD`
+### H5 迎新（仅群内）+ `GROUP_MEMBER_ADD` ✅
 
-- [ ] 群配置新增 `welcomeEnabled`（默认关）+ `welcomeMessage`（支持 `{成员}` 占位）；**不做私信欢迎**；
-- [ ] `GROUP_MEMBER_ADD` 触发时：纯文本通道 @新成员 + 一张欢迎卡；任一步失败只记日志；
-- [ ] 面板入口「群规则 → 更多设置」；指令 `/rules set welcome on|off`、`/rules set welcomeMessage <文案>`；
-- [ ] ⚠️ 待真机核对：拉机器人进测试群是否也会收到 `GROUP_MEMBER_ADD`；若是，判据加「`member_openid` ≠ 机器人自己」。
+- [x] 群配置新增 `welcomeEnabled`（默认关）+ `welcomeMessage`（支持 `{成员}` 占位，存 `group_settings`）；**不做私信欢迎**；
+- [x] `GROUP_MEMBER_ADD` 触发时：纯文本通道 @新成员 + 一张欢迎卡（`src/services/welcome.ts`，`main.ts` 接线）；任一步失败只记日志；
+- [x] 面板入口：`/rules` →「更多设置」→「迎新」子卡（更多设置已占满 5 行键盘上限）；指令 `/rules set welcome on|off`、`/rules set welcomeMessage <文案>`；
+- [ ] ⚠️ **待真机核对**：拉机器人进测试群是否也会收到 `GROUP_MEMBER_ADD`（会的话迎新会给机器人发欢迎）。
+      payload 里没有任何能识别「机器人自己」的字段，所以现在**只记日志、不做猜测**；
+- [ ] ⚠️ 能力边界：纯文本 `content` 与 Markdown 卡片 `<@!openid>` 谁生效与客户端版本有关 —— 两条通道都发了，但降级到纯文本时 @ 不保证提醒到人。
 
-### H6 事件类话题接入
+### H6 事件类话题接入 ✅
 
-- [ ] `GROUP_ADD_ROBOT` / `GROUP_DEL_ROBOT` / `FRIEND_ADD` / `FRIEND_DEL` / `GROUP_MEMBER_ADD` / 未知事件 从「硬编码通知超管」改为**走话题订阅**（默认超管开）；
-- [ ] 未知事件保持「每类型只通知一次」；其余每次变动都通知。
+- [x] `GROUP_ADD_ROBOT` / `GROUP_DEL_ROBOT` / `GROUP_MEMBER_ADD` / `FRIEND_ADD` / `FRIEND_DEL`（含真机出现过的 `C2C_FRIEND_*`）/ 未知事件 从「硬编码通知超管」改为**走话题订阅**（默认超管开，可退订）；
+- [x] 未知事件保持「每类型只通知一次」；变动类事件每次变动都通知（`REPEATING_EVENT_TYPES`，mapper 不再按类型去重）；
+- [x] 事件卡底部同样带「取消订阅此通知」。
 
-### H7 文档与验收
+### H7 文档与验收 ✅ 已提交（未推送）
 
-- [ ] ADR：权限数值化（含 `-1` 档位说明）+ 通知中心（话题/门槛/退订口径）；
-- [ ] `docs/COMMANDS.md`（`/notify` 新形态、迎新指令）、`docs/CONFIGURATION.md`（如需新 env）、`CHANGELOG`；
-- [ ] `helpTopics` / `menu` 的可见性计算改为按数值门槛输出。
+- [x] ADR-0050（权限数值化 + 两轴 + `-1` 档位）与 ADR-0051（通知中心：话题/全局门槛/退订墓碑/仅群内迎新）写入 `docs/DECISIONS.md`（含目录）；
+- [x] `docs/COMMANDS.md`（通知中心全节重写 + 迎新一节 + `/rules set` 字段表新增两行 + `/help notify` 描述）、`docs/CONFIGURATION.md`（welcome 两行）；
+- [x] `helpTopics`（`/help notify` 正文重写、`/help rules` 补迎新两行、管理菜单文案）、`menu`（「通知订阅」→「通知中心」）；
+- [ ] 发布动作：`CHANGELOG` 已在 `[Unreleased]` 记好；版本号与 tag 待用户确认（H 全做完再推）。
+
+### H8 已知遗留（不阻塞 0.19.0）
+
+- [ ] 话题门槛的**运行期修改入口**没做：`NotifyTopicLevelStore.setLevel` 可用（有测试），但通知中心只做了订阅开关，改门槛需要超管专用子卡 + 数值输入（面板每页已占满 5 行，得再拆一层）；
+- [ ] 个人提醒类活动私信（候补/名额/变更）**没有**退订按钮：那条路径只有 `activityId`、拿不到群号，塞错范围会退错群；
+- [ ] 「取消订阅」按钮是 4 字（官方上限 10 字）；同一张卡只有一行退订（id 冲突时不追加）；
+- [ ] `permissions.ts` 的旧便捷方法（`hasAtLeast` / `meets` / `canApproveJoin` / `canReviewContent` / `canManageRules` / `canExportData` / `hasAnyGroupRole` / `isSuperAdmin` / `listReviewableGroups` / `listModeratedGroups`）已无命令层调用：H2 遗留项，决定删除还是标 `@deprecated`；
+- [ ] `/rules … all` 的目标是 `__default__` 伪群，现走 `meetsInGroup(__default__, 130)`（实际只有 240 能过），可显式拆成 `meetsGlobal(240)`：纯可读性，运行期无差别。
 
 ## G. 已完成（归档，细节见 CHANGELOG）
 

@@ -56,7 +56,7 @@
 | `/help status` | 群运行状态（含全量消息模式） | 审核员+ |
 | `/help test` | 机器人自检 | 审核员+ |
 | `/help approve`、`/help reject` | 入群审批用法与「先官方后本地」说明 | 群管理员+ |
-| `/help notify` | 入群申请推送：订阅范围、卡片与快捷按钮、官方限制 | 群管理员+ |
+| `/help notify` | 通知中心：话题 / 全局门槛 / 退订按钮与墓碑口径 | 群管理员+ |
 | `/help punish` | 处罚记录、私信卡片与卡片上的调整动作 | 审核员+ |
 | `/help appeal` | 申诉用法、处理流程与隐私约定 | 任何人 |
 | `/help blacklist` | 本群 / 全局黑名单作用与入口 | 审核员+ |
@@ -484,37 +484,64 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 /activity signups #A7K2Q9 [+页码] [full]      # 报名名单（群管理员/发布者；每页 5 人，默认不含学号/学院）
 ```
 
-> 「新活动通知」的订阅已统一到 **`/notify` 菜单**的「活动通知」行（本群 / 全部）；
-> `/activity subscribe|unsubscribe` 仍可用，但写入的是**同一份订阅表**（不再是独立存储）。
+> 「新活动通知」的订阅已统一到 **`/notify` 通知中心**的「活动通知」行（本群 / 全部）；
+> 老入口 `/activity subscribe|unsubscribe` 已删除，写入的是**同一份订阅表**（见「通知中心」一节）。
 
 活动卡片（Markdown + 内嵌按钮，与入群申请共用三级降级）。**成员卡**（发到群里的那张）示例见
 `src/services/activityCards.ts`，字段与按钮在「活动」一节说明。
 
-## 通知订阅（统一菜单 `/notify`）
+## 通知中心（`/notify`）
 
-三个频道共用**一张订阅表**（`notification_subscriptions`，存储键 `频道:范围`）与**一张菜单卡**：
+所有通知话题共用**一张订阅表**（`notification_subscriptions`，存储键 `话题:范围`）与**一张面板卡**：
 
 ```text
-/notify                 # 打开统一订阅菜单
-/notify test [频道]     # 给自己发一张该频道的测试卡片（join / punish / activity）
+/notify                  # 打开通知中心（每页 4 个话题 + 翻页/刷新/帮助）
+/notify test [话题]      # 给自己发一张该话题的测试卡片（join / punish / activity / bot_join …）
 ```
 
-菜单卡（群内）：每个频道一行「本群 / 全部 / 测试」，点一下切换并刷新同一张卡。
+面板卡（群内）：每个话题一行「本群 / 全部 / 测试」，点一下切换并刷新同一张卡；私信里没有「本群」；
+平台类话题（机器人入群/退群、好友变动、新成员、未定义事件）与具体群无关，只给「全部」；
+**超管专属话题只对全局超管显示**。
 
-| 频道 | 推送内容 | 订阅 / 接收资格 |
+| 话题 | 推送内容 | 默认门槛 |
 |---|---|---|
-| 入群申请 | 新的待处理申请（含自动处理结果，受 `notifyAutoApproved` 控制） | 该群**群管理员及以上** |
-| 处罚与申诉 | 关键词处罚、申诉派发与申诉结果 | 该群**审核员及以上** |
-| 活动通知 | 群里有新活动发布 | **不限权限**；订「全部」需已绑定 QQ 号 |
+| 入群申请 | 新的待处理申请（含自动处理结果，受 `notifyAutoApproved` 控制） | 群管理员及以上（130） |
+| 处罚与申诉 | 关键词处罚、申诉派发与申诉结果 | 审核员及以上（120） |
+| 活动通知 | 群里有新活动发布 | **不限**（-1）；订「全部」需已绑定 QQ 号 |
+| 机器人入群 / 退群 | 机器人被拉进新群 / 被移出群 | 全局超管（240） |
+| 好友变动 | 有人添加或删除机器人为好友 | 全局超管（240） |
+| 新成员加入 | 有新成员加入群（迎新，见下一节） | 全局超管（240） |
+| 未定义事件 | 机器人收到未处理的事件类型（**每类型一次**） | 全局超管（240） |
 
-- 「全部」= **所有装了机器人的群**；绑定是全局的（在一个群绑过 QQ 号即可），不是「当前会话的群」；
-- 订阅资格与推送时的收件人判定**共用同一套规则**（`NotificationService.canReceive`），不会出现「订阅成功但永远收不到」；
-- 订阅持久化在 `notification_subscriptions`，重启不丢；投递去重写在 `notification_deliveries`；
-- 同一 (群, 申请, 人) 只推一次，重启后也不会重复；
-- 接收者需要先 `/bind qq <QQ号>` 绑定自己（活动「全部群」同样要求绑定）。
+- 门槛**全局一套**，存 `group_settings` 的 `__default__` 行键 `notifyTopicLevels`；默认值即上表
+  （`-1` = 不限权限、`110..140` 是群内轴、`210..240` 是平台轴），改一次全群生效；
+- 订阅资格与推送时的收件人判定**共用同一份判据**（`meetsNotifyLevel`），不会出现「订阅成功但永远收不到」；
+- **每张私信通知卡底部都有「取消订阅此通知」**：按这张卡的话题 + **实际投递范围**退订
+  （订的是「全部」就退「全部」），回执卡附「重新订阅」防误点；键盘满 5 行时宁可不加这个按钮；
+- 超管专属话题**默认开**：启动时为现有全局超管种订阅行；退订会写一行**墓碑**
+  （`group_settings.__default__.notifyOptOut`），**重启不会被重新种上**，重新订阅即清墓碑；
+- 变动类事件（机器人入/退群、好友增删、新成员）**每次发生都通知**；真正未知的事件类型每类型只通知一次；
+- 订阅持久化在 `notification_subscriptions`，投递去重写在 `notification_deliveries`；
+- 接收者需要先 `/bind qq <QQ号>` 绑定自己（活动「全部群」与平台类话题的「全部」都要求绑定）。
 
 **已删除的老入口（不兼容）**：`/notify on|off`、`/notify all on|off`、`/notify <群> on|off`、
-`/notify punish …`、`/activity subscribe|unsubscribe` —— 订阅只通过菜单按钮完成。
+`/notify punish …`、`/activity subscribe|unsubscribe` —— 订阅只通过面板按钮、或通知卡底部的退订按钮完成。
+
+## 迎新（仅群内，`/rules set welcome`）
+
+新成员加入群时（`GROUP_MEMBER_ADD`），机器人在**群内**发一条 @ 他的纯文本消息、再补一张欢迎卡。
+**不做私信欢迎**；两条通道任一步失败只记日志，不影响其它功能。
+
+```text
+/rules set welcome on|off                         # 开关（默认关）
+/rules set welcomeMessage 欢迎 {成员} 加入本群     # 欢迎语，{成员} 会替换成 @ 该成员
+/rules set welcomeMessage 清空                     # 恢复默认欢迎语
+```
+
+- 面板入口：`/rules` →「更多设置」→「迎新」子卡（开关 / 欢迎语 / 恢复继承）；
+- 只在**开了迎新的那个群**生效（按群存，可用 `/rules set all welcome …` 设全局默认）；
+- 能力边界：真机上纯文本 `content` 与 Markdown 卡片里的 `<@!openid>` 哪个生效与客户端版本有关，
+  所以两条通道都发；降级到纯文本通道时 @ 不保证提醒到人（见「@ 能力」一节）。
 
 入群申请卡片的规则（与重构前一致）：
 
@@ -969,6 +996,8 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 | `notifyAutoApproved` | `通知自动通过`、`autoNotify` | on / off | 机器人自动通过/拒绝的申请是否也推送给审核员（默认 off，只推需要人工处理的） |
 | `export` | `导出` | on / off | 导出开关（当前仅存储展示） |
 | `rawMessageRetentionDays` | `消息保留天数`、`messageRetention` | 天数（`0` = 不保留）；`clear` 归零 | 原始消息保留天数，供审计与申诉回看使用 |
+| `welcomeEnabled` | `迎新`、`welcome` | on / off | 新成员加入时是否在群内 @ 他并发出欢迎卡（默认 off，仅群内） |
+| `welcomeMessage` | `欢迎语`、`welcomeMessage` | 文案；`{成员}` = @ 该成员；`clear` 恢复默认 | 欢迎语（仅群内；清空 = 用内置默认） |
 | `enabled` | `启用` | on / off | 本群机器人总开关 |
 
 作用域写法：
