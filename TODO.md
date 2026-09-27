@@ -293,19 +293,21 @@ Phase 2 → E1、E2、B4、B5、B6；Phase 3 → E3–E5；Phase 4 → D6–D9�
       `canExportData` / `hasAnyGroupRole` / `isSuperAdmin` / `listReviewableGroups` / `listModeratedGroups`）保留但**不再被命令层调用**，
       H7 决定是删除还是标注 `@deprecated`。
 
-### H3 通知话题与门槛配置（全局一套）✅ 已提交（`8d00b20`，未推送）
+### H3 通知话题与门槛配置（全局一套）✅
 
 - [x] 话题枚举：`join / punish / activity / bot_join / bot_leave / friend / member_join / unknown_event`（`src/services/notifyTopics.ts`）；
 - [x] 每个话题一个门槛，存 `group_settings` 的全局行（`__default__` + 键 `notifyTopicLevels`，JSON map）；缺键 / 坏 JSON / 非法值逐项回落默认，**不改 `GroupConfigStore`**（否则会变成每群可覆盖的规则字段）；
 - [x] 默认值：入群 130、处罚与申诉 120、活动 -1（不限）、事件类 240；订阅与推送**共用同一个** `meetsNotifyLevel`（`NotificationService.checkTopicReach` ↔ `canReceive`），禁止两处各写一遍；
-- [x] 超管类话题「默认开」：`runtime.load()` 里给现有全局超管补订阅行（`seedSuperAdminDefaults`，幂等）。
-- [ ] ⚠️ **退订墓碑（H4 必做）**：现在退订=删行，但**下次启动会重新种上**；H4 的「取消订阅此通知」要真正生效，需要一行「已退订」墓碑（否则超管无法退订事件类话题）。
-- [ ] ⚠️ **`/notify` 卡片暂仍只列原有 3 个话题**：卡片上限 5 行，8 个话题放不下，全量展示随 H4 的多选面板一起做（`NOTIFY_CARD_TOPICS`）。
+- [x] 超管类话题「默认开」：`runtime.load()` 里给现有全局超管补订阅行（`seedSuperAdminDefaults`，幂等）；退订墓碑见 H4。
+- [ ] 门槛的**运行期修改入口**还没做：`NotifyTopicLevelStore.setLevel` 已可用（有测试），但 H4 的面板只做订阅开关，没做「改门槛」（需要超管专用子卡 + 数值输入）。要不要做、做成什么形态待定。
 
-### H4 通知中心多选面板 + 退订按钮
+### H4 通知中心多选面板 + 退订按钮 ✅
 
-- [ ] `/notify` 改成**像「违规处理」那样的多选开关卡**（每话题一行开关，标签带当前状态，点一下切换并刷新同一张卡；超管专属话题只对超管显示；每话题一个「测试」）；
-- [ ] **所有通知卡底部加「取消订阅此通知」**：按该卡话题 + 收到范围退订，回确认卡并附「重新订阅」按钮防误点。
+- [x] `/notify` 改成通知中心面板（每话题一行「本群/全部/测试」，点一下切换并刷新同一张卡；平台类话题只给「全部」，超管专属话题只对全局超管显示；**每页 4 个话题 + 一行翻页/刷新/帮助**，`NOTIFY_PAGE_SIZE`）；
+- [x] **所有私信通知卡底部加「取消订阅此通知」**（`NotificationService.withUnsubscribeRow` + `cardTemplate.appendKeyboardRow`）：入群申请卡、处罚/申诉卡、活动发布卡都带上；按该卡话题 + **实际投递范围**退订（订过「全部群」就退「全部群」），回执卡附「重新订阅」按钮防误点；键盘已满 5 行时宁可不加。
+- [x] **退订墓碑入库**（`group_settings.__default__.notifyOptOut`）：默认开的话题退订后**重启不会被重新种上**，重新订阅即清墓碑（否则超管退不掉事件类话题）。
+- [ ] 个人提醒类的活动私信（候补/名额/变更）**没有**退订按钮：那条路径只知道 `activityId`、不知道群号，塞错范围会退错群。要做的话得先让活动通知带上发布群。
+- [ ] 「取消订阅」按钮文案是 4 字，官方按钮上限 10 字；同一张卡只能有一行退订（id 冲突时不追加）。
 
 ### H5 迎新（仅群内）+ `GROUP_MEMBER_ADD`
 
