@@ -1,3 +1,4 @@
+import { PermissionLevel } from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
 import type { Activity } from "../activity.js";
 import {
@@ -1216,7 +1217,9 @@ export function handleActivityCreate(
       text: "用法：群内 /activity create <标题>；私信 /activity create <群号|#群短码> <标题>",
     };
   }
-  if (!ctx.permissions.canApproveJoin(userId, targetGroupId)) {
+  if (
+    !ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.GroupAdmin)
+  ) {
     return { ok: false, text: "权限不足：发布活动需要群管理员或以上权限。" };
   }
   const title = titleParts.join(" ").trim();

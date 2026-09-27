@@ -5,6 +5,7 @@ import {
   AuditStatus,
   KeywordPunish,
   ModerationAction,
+  PermissionLevel,
 } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import type {
@@ -62,7 +63,7 @@ export class MessageGuardService {
     private readonly rules: RuleEngine,
     private readonly configStore: GroupConfigStore,
     auditLog: AuditLog = new AuditLogStore(),
-    /** 注入后：审核员及以上（canReviewContent）的消息豁免关键词判断。 */
+    /** 注入后：审核员及以上（`meetsInGroup(…, Moderator)`）的消息豁免关键词判断。 */
     private readonly permissions?: PermissionService,
     /**
      * 富消息发送器：注入后命中关键词会回一张**「处罚通知」卡片**（@ 当事人 + 处理动作 + 群规则文案；
@@ -114,7 +115,13 @@ export class MessageGuardService {
     }
 
     // 审核员及以上豁免关键词判断：不警告、不撤回、不处罚，也不写审计，只记 debug
-    if (this.permissions?.canReviewContent(message.userId, message.groupId)) {
+    if (
+      this.permissions?.meetsInGroup(
+        message.userId,
+        message.groupId,
+        PermissionLevel.Moderator,
+      )
+    ) {
       log.debug("moderation exempt", {
         groupId: message.groupId,
         userId: message.userId,

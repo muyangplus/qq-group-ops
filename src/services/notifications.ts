@@ -1,5 +1,8 @@
 import type { QQOfficialAPI } from "../adapters/qqOfficial.js";
-import { NotificationDeliveryStatus } from "../core/enums.js";
+import {
+  NotificationDeliveryStatus,
+  PermissionLevel,
+} from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import { utcNow } from "../core/models.js";
 import type {
@@ -329,9 +332,17 @@ export class NotificationService {
   ): boolean {
     switch (channel) {
       case "join":
-        return this.permissions.canApproveJoin(userId, groupId);
+        return this.permissions.meetsInGroup(
+          userId,
+          groupId,
+          PermissionLevel.GroupAdmin,
+        );
       case "punish":
-        return this.permissions.canReviewContent(userId, groupId);
+        return this.permissions.meetsInGroup(
+          userId,
+          groupId,
+          PermissionLevel.Moderator,
+        );
       case "activity":
         return viaAll ? this.isBound(userId) : true;
     }
@@ -498,7 +509,12 @@ export class NotificationService {
     preferredGroupId?: string,
   ): Promise<NotificationTestResult> {
     const groupId =
-      preferredGroupId && this.permissions.canApproveJoin(userId, preferredGroupId)
+      preferredGroupId &&
+      this.permissions.meetsInGroup(
+        userId,
+        preferredGroupId,
+        PermissionLevel.GroupAdmin,
+      )
         ? preferredGroupId
         : this.permissions.listReviewableGroups(userId)[0];
     // 没有可用的群也要能自检：测试的是**私聊推送通道**，不依赖具体群

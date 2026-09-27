@@ -1,4 +1,4 @@
-import { PermissionLevel } from "../../core/enums.js";
+import { PermissionLevel, PlatformLevel } from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
 import { renderCard, type CardButton } from "../cardTemplate.js";
 import {
@@ -196,18 +196,18 @@ function canSubscribe(
   const all = scope === NOTIFY_SCOPE_ALL;
   if (channel === "join") {
     const allowed = all
-      ? ctx.permissions.isSuperAdmin(userId) ||
-        ctx.permissions.hasAnyGroupRole(userId, PermissionLevel.GroupAdmin)
-      : ctx.permissions.canApproveJoin(userId, scope);
+      ? ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin) ||
+        ctx.permissions.meetsAnywhere(userId, PermissionLevel.GroupAdmin)
+      : ctx.permissions.meetsInGroup(userId, scope, PermissionLevel.GroupAdmin);
     return allowed
       ? { ok: true, reason: "" }
       : { ok: false, reason: "权限不足：入群申请推送只发给群管理员及以上。" };
   }
   if (channel === "punish") {
     const allowed = all
-      ? ctx.permissions.isSuperAdmin(userId) ||
-        ctx.permissions.hasAnyGroupRole(userId, PermissionLevel.Moderator)
-      : ctx.permissions.canReviewContent(userId, scope);
+      ? ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin) ||
+        ctx.permissions.meetsAnywhere(userId, PermissionLevel.Moderator)
+      : ctx.permissions.meetsInGroup(userId, scope, PermissionLevel.Moderator);
     return allowed
       ? { ok: true, reason: "" }
       : { ok: false, reason: "权限不足：处罚与申诉推送只发给审核员及以上。" };

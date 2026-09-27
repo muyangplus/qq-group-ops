@@ -1,7 +1,7 @@
 import type { AppealRecord } from "../db/appealRepository.js";
 import type { PunishmentRecord } from "../db/punishmentRepository.js";
 import { getLogger } from "../core/logger.js";
-import { PermissionLevel } from "../core/enums.js";
+import { PermissionLevel, PlatformLevel } from "../core/enums.js";
 import type { RichMessage } from "./richMessages.js";
 import {
   buildAppealDecisionCard,
@@ -293,7 +293,13 @@ export class ModerationNotifier {
     const admins: string[] = [];
     const moderators: string[] = [];
     for (const userId of this.notifications.subscribersFor(groupId, "punish")) {
-      if (this.permissions.hasAtLeast(userId, groupId, PermissionLevel.GroupAdmin)) {
+      if (
+        this.permissions.meetsInGroup(
+          userId,
+          groupId,
+          PermissionLevel.GroupAdmin,
+        )
+      ) {
         admins.push(userId);
       } else {
         moderators.push(userId);
@@ -383,7 +389,10 @@ export class ModerationNotifier {
       createdAt: record.createdAt,
       recipientId,
       withButtons: this.keyboardAvailable,
-      canBlacklistGlobal: this.permissions.isSuperAdmin(recipientId),
+      canBlacklistGlobal: this.permissions.meetsGlobal(
+        recipientId,
+        PlatformLevel.GlobalSuperAdmin,
+      ),
     });
   }
 
@@ -403,7 +412,10 @@ export class ModerationNotifier {
       createdAt: appeal.createdAt,
       recipientId,
       withButtons: this.keyboardAvailable,
-      canBlacklistGlobal: this.permissions.isSuperAdmin(recipientId),
+      canBlacklistGlobal: this.permissions.meetsGlobal(
+        recipientId,
+        PlatformLevel.GlobalSuperAdmin,
+      ),
     });
   }
 

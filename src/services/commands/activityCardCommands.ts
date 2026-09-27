@@ -1,3 +1,4 @@
+import { PermissionLevel } from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
 import type { Activity } from "../activity.js";
 import {
@@ -486,9 +487,12 @@ export function requireActivity(
 
 export function canManageActivity(ctx: AdminCommandContext, userId: string, activity: Activity): boolean {
   return (
-    ctx.permissions.isSuperAdmin(userId) ||
     activity.createdBy === userId ||
-    ctx.permissions.canApproveJoin(userId, activity.groupId)
+    ctx.permissions.meetsInGroup(
+      userId,
+      activity.groupId,
+      PermissionLevel.GroupAdmin,
+    )
   );
 }
 
