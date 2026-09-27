@@ -1,3 +1,4 @@
+import { PlatformLevel, PermissionLevel } from "../../core/enums.js";
 import type { BlacklistScope } from "../../db/blacklistRepository.js";
 import type { CardButton } from "../cardTemplate.js";
 import type { AdminCommandContext } from "./context.js";
@@ -53,9 +54,13 @@ export function blacklistCard(
   }
   const allowed =
     options.scope === "global"
-      ? ctx.permissions.isSuperAdmin(viewerId)
+      ? ctx.permissions.meetsGlobal(viewerId, PlatformLevel.GlobalSuperAdmin)
       : options.groupId.length > 0 &&
-        ctx.permissions.canReviewContent(viewerId, options.groupId);
+        ctx.permissions.meetsInGroup(
+          viewerId,
+          options.groupId,
+          PermissionLevel.Moderator,
+        );
   if (!allowed) {
     const card = cardFromText(
       "黑名单",
@@ -227,13 +232,20 @@ export async function blacklistDeleteCard(
   if (!ctx.blacklist) {
     return cardFromText("黑名单", "黑名单服务未启用。");
   }
-  if (scope === "global" && !ctx.permissions.isSuperAdmin(input.viewerId)) {
+  if (
+    scope === "global" &&
+    !ctx.permissions.meetsGlobal(input.viewerId, PlatformLevel.GlobalSuperAdmin)
+  ) {
     const card = cardFromText("黑名单", "权限不足：全局黑名单仅超级管理员可操作。");
     return { ok: false, text: card.text, rich: card.rich };
   }
   if (
     scope === "group" &&
-    !ctx.permissions.canReviewContent(input.viewerId, input.groupId)
+    !ctx.permissions.meetsInGroup(
+      input.viewerId,
+      input.groupId,
+      PermissionLevel.Moderator,
+    )
   ) {
     const card = cardFromText("黑名单", "权限不足：本群黑名单需要审核员或以上权限。");
     return { ok: false, text: card.text, rich: card.rich };
@@ -316,12 +328,19 @@ export async function handleBlacklist(
     if (!targetUserId) {
       return { ok: false, text: BLACKLIST_USAGE };
     }
-    if (scope === "global" && !ctx.permissions.isSuperAdmin(userId)) {
+    if (
+      scope === "global" &&
+      !ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)
+    ) {
       return { ok: false, text: "权限不足：全局黑名单仅超级管理员可操作。" };
     }
     if (
       scope === "group" &&
-      !ctx.permissions.canReviewContent(userId, targetGroupId)
+      !ctx.permissions.meetsInGroup(
+        userId,
+        targetGroupId,
+        PermissionLevel.Moderator,
+      )
     ) {
       return { ok: false, text: "权限不足：本群黑名单需要审核员或以上权限。" };
     }
@@ -364,12 +383,19 @@ export async function handleBlacklist(
       return { ok: false, text: BLACKLIST_USAGE };
     }
     const targetGroupId = scope === "global" ? "" : (groupId ?? "");
-    if (scope === "global" && !ctx.permissions.isSuperAdmin(userId)) {
+    if (
+      scope === "global" &&
+      !ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)
+    ) {
       return { ok: false, text: "权限不足：全局黑名单仅超级管理员可操作。" };
     }
     if (
       scope === "group" &&
-      !ctx.permissions.canReviewContent(userId, targetGroupId)
+      !ctx.permissions.meetsInGroup(
+        userId,
+        targetGroupId,
+        PermissionLevel.Moderator,
+      )
     ) {
       return { ok: false, text: "权限不足：本群黑名单需要审核员或以上权限。" };
     }

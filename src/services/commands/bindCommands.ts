@@ -1,3 +1,4 @@
+import { PlatformLevel, PermissionLevel } from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
 import type { AdminCommandContext } from "./context.js";
 import {
@@ -62,8 +63,7 @@ export async function handleBind(
       };
     }
     if (
-      !ctx.permissions.canApproveJoin(userId, groupId) &&
-      !ctx.permissions.isSuperAdmin(userId)
+      !ctx.permissions.meetsInGroup(userId, groupId, PermissionLevel.GroupAdmin)
     ) {
       return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
     }
@@ -85,7 +85,7 @@ export async function handleBind(
   }
 
   if (target === "user") {
-    if (!ctx.permissions.isSuperAdmin(userId)) {
+    if (!ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
       return { ok: false, text: "权限不足：仅超级管理员可以绑定任意用户。" };
     }
     const officialId = parts[2]?.trim();
@@ -111,7 +111,7 @@ export async function handleBind(
   }
 
   if (target === "groupid") {
-    if (!ctx.permissions.isSuperAdmin(userId)) {
+    if (!ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
       return { ok: false, text: "权限不足：仅超级管理员可以绑定任意群。" };
     }
     const officialId = parts[2]?.trim();
