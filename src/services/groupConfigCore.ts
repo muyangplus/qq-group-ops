@@ -162,6 +162,10 @@ export interface GroupConfig {
   allowYears?: readonly string[];
   /** 入群黑名单年级（两位）。 */
   denyYears?: readonly string[];
+  /** 迎新：新成员加入群时，是否在**群内** @ 他并发出欢迎卡（默认关；不做私信欢迎）。 */
+  welcomeEnabled?: boolean;
+  /** 欢迎语，支持 `{成员}` 占位（替换成 @ 该成员的 Markdown）。 */
+  welcomeMessage?: string;
 }
 
 export interface EffectiveGroupConfig {
@@ -188,6 +192,9 @@ export interface EffectiveGroupConfig {
   denyColleges: readonly string[];
   allowYears: readonly string[];
   denyYears: readonly string[];
+  /** 迎新开关与欢迎语（仅群内欢迎，不发私信）。 */
+  welcomeEnabled: boolean;
+  welcomeMessage: string;
 }
 
 export type GroupConfigOverride = GroupConfig;
@@ -223,6 +230,8 @@ export const SETTING_FIELDS = [
   "denyColleges",
   "allowYears",
   "denyYears",
+  "welcomeEnabled",
+  "welcomeMessage",
 ] as const satisfies readonly (keyof GroupConfigOverride)[];
 
 export type GroupSettingKey = (typeof SETTING_FIELDS)[number];
@@ -264,6 +273,8 @@ export const DEFAULT_CONFIG: EffectiveGroupConfig = {
   denyColleges: [],
   allowYears: [],
   denyYears: [],
+  welcomeEnabled: false,
+  welcomeMessage: "欢迎 {成员} 加入本群！请先看看群规则，有问题可以问管理员。",
 };
 
 export function normalizeKeywords(keywords: readonly string[]): string[] {
@@ -423,11 +434,19 @@ export function applySettingField(
     case "joinRequireClass":
     case "joinRequireName":
     case "joinReviewOpinion":
-    case "notifyAutoApproved": {
+    case "notifyAutoApproved":
+    case "welcomeEnabled": {
       if (typeof value !== "boolean") {
         return false;
       }
       target[key] = value;
+      return true;
+    }
+    case "welcomeMessage": {
+      if (typeof value !== "string") {
+        return false;
+      }
+      target.welcomeMessage = value;
       return true;
     }
     // 老配置自动换算：老库里的 `keywordRecall` / `keywordPunish` 仍按**原字段**读进来，

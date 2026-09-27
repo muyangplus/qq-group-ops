@@ -17,6 +17,7 @@ import { escapeCardText, renderCard } from "./services/cardTemplate.js";
 import { ActivityReminderService } from "./services/activityReminder.js";
 import { AppealWatcher } from "./services/appealWatcher.js";
 import { RetentionService } from "./services/retention.js";
+import { sendWelcome } from "./services/welcome.js";
 
 /** 启动阶段命中限流时的固定冷却时间。 */
 const RATE_LIMIT_STARTUP_COOLDOWN_MS = 60_000;
@@ -156,7 +157,7 @@ async function main(): Promise<void> {
           createSocket: (url) => new NativeWebSocketFactory(url).create(),
           mapper: new QQOfficialEventMapper({
             onUnhandledEvent: (info) => {
-              void alertUnknownEvent(runtime, info);
+              void handleOfficialEvent(runtime, info);
             },
           }),
           onHello: (heartbeatIntervalMs) => {
@@ -270,12 +271,53 @@ function buildWebhookGateway(
     path: settings.webhookPath,
     mapper: new QQOfficialEventMapper({
       onUnhandledEvent: (info) => {
-        void alertUnknownEvent(runtime, info);
+        void handleOfficialEvent(runtime, info);
       },
     }),
     keyDerivation: settings.webhookKeyDerivation,
     signContent: settings.webhookSignContent,
   });
+}
+
+/**
+ * 官方事件的统一入口（WS 与 Webhook 共用）：
+ *
+ * 1. `GROUP_MEMBER_ADD` → 先尝试**群内迎新**（`/rules set welcome on`，默认关）；
+ * 2. 再按原有口径给全部全局超管出一张告警卡（每类型一次，由 mapper 去重）。
+ */
+async function handleOfficialEvent(
+  runtime: Runtime,
+  info: { eventType: string; payload: unknown },
+): Promise<void> {
+  if (info.eventType === "GROUP_MEMBER_ADD") {
+    await maybeWelcomeMember(runtime, info.payload);
+  }
+  await alertUnknownEvent(runtime, info);
+}
+
+/** `GROUP_MEMBER_ADD` → 群内迎新（成员 openid 缺失或没开迎新时什么都不做）。 */
+async function maybeWelcomeMember(
+  runtime: Runtime,
+  payload: unknown,
+): Promise<void> {
+  const data = isRecordLike(payload) ? payload : undefined;
+  const groupId = data
+    ? firstString(data, "group_openid", "groupopenid")
+    : undefined;
+  const memberId = data
+    ? firstString(data, "member_openid", "memberopenid")
+    : undefined;
+  if (!groupId || !memberId) {
+    return;
+  }
+  const outcome = await sendWelcome(
+    { configStore: runtime.configStore, sender: runtime.richMessages },
+    groupId,
+    memberId,
+  );
+  if (outcome === "sent") {
+    log.info("welcome sent", { groupId });
+  }
 }
 
 /**
@@ -286,7 +328,8 @@ function buildWebhookGateway(
  * - `GROUP_MEMBER_ADD` = **群成员加入**（payload 只有 `group_openid` + `member_openid`，
  *   没有操作人字段）—— **不是**「机器人入群」：机器人自己入群走 `GROUP_ADD_ROBOT`。
  *   ⚠️ 待真机核对：若把机器人拉进测试群时也收到 `GROUP_MEMBER_ADD`（机器人也是成员），
- *   说明它还会因机器人入群触发，届时应只在 `member_openid` 不是机器人时按「成员加入」处理。
+ *   说明它还会因机器人入群触发；payload 里没有任何能识别「机器人自己」的字段，
+ *   届时应由官方文档或实际 openid 对比来决定怎么挡（目前只记日志、不做猜测）。
  */
 const BOT_MEMBERSHIP_EVENTS: Record<
   string,
@@ -380,7 +423,7 @@ async function alertUnknownEvent(
       membership === "added" || membership === "removed"
         ? "如需配置本群规则 / 推送，请在群内发送 /status 或 /rules 查看当前状态。"
         : membership === "member_added"
-          ? "群成员加入事件可用于迎新（欢迎语 / 提示看群规）；需要启用请告知开发者。"
+          ? "迎新已可用：群管理员在群内发 /rules →「更多设置 → 迎新」，或 /rules set welcome on（默认关，仅群内欢迎）。"
           : "该事件类型目前没有被机器人处理；如需支持请告知开发者。",
     ],
   });

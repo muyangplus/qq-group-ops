@@ -216,6 +216,8 @@ export function rulesPanelCard(
       return rulesDecisionPanel(ctx, targetGroupId, userId, notice, normalized);
     case "punish":
       return rulesPunishPanel(ctx, targetGroupId, userId, notice);
+    case "welcome":
+      return rulesWelcomePanel(ctx, targetGroupId, userId, notice);
     case "more":
       return rulesMorePanel(ctx, targetGroupId, userId, notice);
   }
@@ -735,6 +737,54 @@ export function rulesRosterPanel(
   );
 }
 
+/**
+ * 子卡：迎新（§H5，**仅群内**欢迎，不发私信）。
+ *
+ * 单独一张子卡是因为「更多设置」已经占满 5 行（卡片键盘上限），
+ * 再塞两个按钮就发不出去了。
+ */
+export function rulesWelcomePanel(
+  ctx: AdminCommandContext,
+  targetGroupId: string,
+  userId: string,
+  notice?: string,
+): CardResult {
+  const config = ctx.configStore.get(targetGroupId);
+  const rows: CardButton[][] = [
+    [
+      ruleToggleButton(
+        "welcome",
+        "迎新",
+        targetGroupId,
+        "welcomeEnabled",
+        config.welcomeEnabled,
+        "welcome",
+      ),
+      actionButton("welcome-message", "欢迎语", "/rules set welcomeMessage "),
+    ],
+    [
+      ruleRestoreButton(ctx, "welcome", targetGroupId, [
+        "welcomeEnabled",
+        "welcomeMessage",
+      ]),
+      viewButton("back", "返回更多", "rules", "panel", targetGroupId, "more"),
+    ],
+  ];
+  return rulePanelCard(
+    ctx,
+    "群规则 · 迎新",
+    targetGroupId,
+    userId,
+    notice,
+    rows,
+    [
+      `**迎新**：${config.welcomeEnabled ? "开" : "关"}（仅群内欢迎，不发私信）`,
+      `**欢迎语**：${config.welcomeMessage || "（未设置）"}`,
+      "`{成员}` 会替换成 @ 该成员；发送时先走纯文本通道，再补一张欢迎卡（两条都失败只记日志）。",
+    ],
+  );
+}
+
 /** 子卡：更多设置（补齐所有尚未有按钮的字段）。 */
 export function rulesMorePanel(
   ctx: AdminCommandContext,
@@ -755,6 +805,7 @@ export function rulesMorePanel(
     [
       actionButton("warning", "警告文案", "/rules set warning "),
       actionButton("keyword-manual", "关键词", "/rules set keywords "),
+      viewButton("panel-welcome", "迎新", "rules", "panel", targetGroupId, "welcome"),
     ],
     [
       actionButton("mute-custom", "禁言时长", "/rules set muteDuration "),
@@ -789,7 +840,7 @@ export function rulesMorePanel(
           ? `${config.rawMessageRetentionDays} 天`
           : "不保留原始消息"
       }`,
-      "要求班级 / 要求姓名在「入群审核」子卡；关键词在「关键词」子卡。",
+      "要求班级 / 要求姓名在「入群审核」子卡；关键词在「关键词」子卡；迎新在「迎新」子卡。",
     ],
   );
 }

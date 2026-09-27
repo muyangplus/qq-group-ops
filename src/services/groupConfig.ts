@@ -193,6 +193,8 @@ export class GroupConfigStore {
       denyColleges: override.denyColleges ?? this.defaultConfig.denyColleges,
       allowYears: override.allowYears ?? this.defaultConfig.allowYears,
       denyYears: override.denyYears ?? this.defaultConfig.denyYears,
+      welcomeEnabled: override.welcomeEnabled ?? this.defaultConfig.welcomeEnabled,
+      welcomeMessage: override.welcomeMessage ?? this.defaultConfig.welcomeMessage,
     };
   }
 

@@ -451,6 +451,7 @@ describe("rule menu refactor (§C)", async () => {
       ["punish", service.rulesPanelCard("punish", "g1", "admin")],
       ["keyword", service.rulesPanelCard("keyword", "g1", "admin")],
       ["roster", service.rulesPanelCard("roster", "g1", "admin")],
+      ["welcome", service.rulesPanelCard("welcome", "g1", "admin")],
       ["more", service.rulesPanelCard("more", "g1", "admin")],
       ["global", service.rulesCard("g1", "root", ["rules", "all"])],
       ["overrides", service.ruleOverridesCard("root")],
@@ -468,5 +469,38 @@ describe("rule menu refactor (§C)", async () => {
     const all = await service.handle("g1", "root", "/rules set all warning 全局文案");
     expect(all.ok).toBe(true);
     expect(configStore.default.warningMessage).toBe("全局文案");
+  });
+
+  it("H5 迎新：更多设置里能进子卡，开关与欢迎语可用", async () => {
+    // 「更多设置」已经占满 5 行，迎新是**子卡**（不能再挤一行进去）
+    const more = service.rulesPanelCard("more", "g1", "admin");
+    expect(JSON.stringify(more.rich.keyboard)).toContain(
+      "cb:rules:panel:g1:welcome",
+    );
+
+    const panel = service.rulesPanelCard("welcome", "g1", "admin");
+    expect(panel.ok).toBe(true);
+    expect(panel.rich.markdown).toContain("仅群内欢迎");
+    const keyboard = JSON.stringify(panel.rich.keyboard);
+    expect(keyboard).toContain("cb:rules:toggle:g1:welcomeEnabled");
+    expect(keyboard).toContain("cb:rules:panel:g1:more");
+
+    const on = await service.handle("g1", "admin", "/rules set welcome on");
+    expect(on.ok, on.text).toBe(true);
+    expect(configStore.get("g1").welcomeEnabled).toBe(true);
+
+    const message = await service.handle(
+      "g1",
+      "admin",
+      "/rules set welcomeMessage 欢迎 {成员} 进群",
+    );
+    expect(message.ok, message.text).toBe(true);
+    expect(configStore.get("g1").welcomeMessage).toBe("欢迎 {成员} 进群");
+
+    // 清空欢迎语 = 恢复默认
+    await service.handle("g1", "admin", "/rules set welcomeMessage 清空");
+    expect(configStore.get("g1").welcomeMessage).toBe(
+      configStore.default.welcomeMessage,
+    );
   });
 });

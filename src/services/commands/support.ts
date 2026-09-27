@@ -461,6 +461,7 @@ export type RulePanelId =
   | "keyword"
   | "regex"
   | "roster"
+  | "welcome"
   | "more";
 
 export function normalizeRulePanel(panel: string | undefined): RulePanelId {
@@ -485,6 +486,10 @@ export function normalizeRulePanel(panel: string | undefined): RulePanelId {
       return "decision";
     case "punish":
       return "punish";
+    // §H5 迎新（仅群内）
+    case "welcome":
+    case "迎新":
+      return "welcome";
     case "more":
       return "more";
     default:
@@ -509,6 +514,7 @@ export const RULE_PANEL_FIELDS: Record<RulePanelId, readonly (keyof GroupConfigO
     "joinAnswerPattern",
     "rawMessageRetentionDays",
   ],
+  welcome: ["welcomeEnabled", "welcomeMessage"],
 };
 
 /** 关键词子卡每页条数（每行一个关键词 + 删除按钮，受 5 行键盘上限约束）。 */
@@ -545,6 +551,8 @@ export const RULE_FIELD_LABELS: Record<keyof GroupConfigOverride, string> = {
   denyColleges: "禁止学院",
   allowYears: "允许年级",
   denyYears: "禁止年级",
+  welcomeEnabled: "迎新",
+  welcomeMessage: "欢迎语",
 };
 
 /** 覆盖率总览里的短名（一行要塞多个字段）。 */
@@ -574,6 +582,8 @@ export const RULE_FIELD_SHORT_LABELS: Partial<Record<keyof GroupConfigOverride, 
   denyColleges: "学院黑",
   allowYears: "年级白",
   denyYears: "年级黑",
+  welcomeEnabled: "迎新",
+  welcomeMessage: "欢迎语",
 };
 
 export function ruleFieldLabel(field: string): string {
@@ -723,6 +733,8 @@ export const RULE_FIELDS_HELP = [
   "  joinAnswerPattern <正则> / clear      入群答案必须匹配的额外正则",
   "  joinReviewOpinion on|off              人工审核时是否给出审核意见",
   "  notifyAutoApproved on|off             机器人自动通过/拒绝的申请是否也推送给审核员",
+  "  welcome on|off                        新成员加入时是否在群内 @ 他并发出欢迎卡",
+  "  welcomeMessage <文案>                 欢迎语；用 {成员} 代表 @ 该成员（清空 = 恢复默认）",
   "  allowColleges / denyColleges <学院列表>   学院白/黑名单（clear 清空）",
   "  allowYears / denyYears <年级列表>     年级白/黑名单（22/23/…，clear 清空）",
   "  rawMessageRetentionDays <天数>        原始消息保留天数（0 = 不保留，clear 归零）",
@@ -1188,6 +1200,22 @@ export function parseRuleSetting(
     case "通知自动通过":
     case "通知自动处理":
       return { groupId, notifyAutoApproved: parseToggle(field, value) };
+    // §H5 迎新（仅群内）：`{成员}` 占位在发送时替换成 @ 该成员
+    case "welcome":
+    case "welcomeenabled":
+    case "迎新":
+      return { groupId, welcomeEnabled: parseToggle(field, value) };
+    case "welcomemessage":
+    case "welcomewords":
+    case "欢迎语":
+      return {
+        groupId,
+        welcomeMessage: cleared
+          ? groupId === DEFAULT_GROUP_ID
+            ? configStore.builtinDefault.welcomeMessage
+            : configStore.default.welcomeMessage
+          : value,
+      };
     case "allowcolleges":
     case "允许学院":
     case "学院白名单":
