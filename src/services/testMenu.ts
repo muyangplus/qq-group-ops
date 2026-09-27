@@ -1,3 +1,4 @@
+import { PlatformLevel } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import { pageArg, pageCallback, parseCallback, type ParsedCallback } from "./callbackData.js";
 import { renderCard, type CardButton } from "./cardTemplate.js";
@@ -136,7 +137,7 @@ export class TestMenuService {
     if (page === undefined || !userId) {
       return undefined;
     }
-    if (!this.permissions.isSuperAdmin(userId)) {
+    if (!this.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
       log.debug("testmenu callback denied", { userId });
       return renderCard({
         title: "权限不足",

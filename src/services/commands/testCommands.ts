@@ -1,3 +1,4 @@
+import { PlatformLevel, PermissionLevel } from "../../core/enums.js";
 import { renderCard } from "../cardTemplate.js";
 import type { CardButton } from "../cardTemplate.js";
 import { getLogger } from "../../core/logger.js";
@@ -24,7 +25,7 @@ export function handleTestMenu(
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    if (!ctx.permissions.isSuperAdmin(userId)) {
+    if (!ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
       return {
         ok: false,
         text: "权限不足：/testmenu 需要全局超级管理员权限。",
@@ -74,7 +75,7 @@ export async function handleTestAt(
     userId: string,
     parts: readonly string[],
   ): Promise<CommandResult> {
-    if (!ctx.permissions.isSuperAdmin(userId)) {
+    if (!ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
       return {
         ok: false,
         text: "权限不足：/testat 需要全局超级管理员权限。",
@@ -187,7 +188,9 @@ export function testCard(
   groupId: string | undefined,
   userId: string,
 ): CardResult {
-  if (!ctx.permissions.canReviewContent(userId, groupId ?? "")) {
+  if (
+    !ctx.permissions.meetsInGroup(userId, groupId ?? "", PermissionLevel.Moderator)
+  ) {
     log.warn("test permission denied", { groupId, userId });
     const card = renderCard({
       title: "权限不足",

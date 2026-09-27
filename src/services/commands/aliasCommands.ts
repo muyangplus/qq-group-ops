@@ -1,3 +1,4 @@
+import { PlatformLevel } from "../../core/enums.js";
 import { CLASS_ALIAS_KIND_LABELS } from "../classAliases.js";
 import type { AdminCommandContext } from "./context.js";
 import { ALIAS_USAGE, formatError, normalize, type CommandResult } from "./support.js";
@@ -16,7 +17,7 @@ export function aliasCard(
   if (!aliases) {
     return { ok: false, text: "别名表未启用。" };
   }
-  if (!ctx.permissions.isSuperAdmin(userId)) {
+  if (!ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
     return { ok: false, text: "权限不足：仅全局超级管理员可以维护别名表。" };
   }
   const action = normalize(parts[1]);

@@ -1,3 +1,4 @@
+import { PlatformLevel } from "../../core/enums.js";
 import { renderCard } from "../cardTemplate.js";
 import { EXPIRY_ACTOR_ID } from "../joinAudit.js";
 import type { AdminCommandContext } from "./context.js";
@@ -23,7 +24,7 @@ export function handleWhois(
     userId: string,
     parts: readonly string[],
   ): CommandResult {
-    if (!ctx.permissions.isSuperAdmin(userId)) {
+    if (!ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)) {
       return { ok: false, text: "权限不足：仅超级管理员可以查询映射。" };
     }
     if (!ctx.identityMap) {
