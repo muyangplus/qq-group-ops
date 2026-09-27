@@ -13,13 +13,34 @@ import { loadEnvFile } from "./env.js";
 import { attachGateway } from "./gatewayRunner.js";
 import { connectPersistence } from "./persistence.js";
 import { createRuntime, type Runtime } from "./runtime.js";
-import { renderCard } from "./services/cardTemplate.js";
+import { escapeCardText, renderCard } from "./services/cardTemplate.js";
 import { ActivityReminderService } from "./services/activityReminder.js";
 import { AppealWatcher } from "./services/appealWatcher.js";
 import { RetentionService } from "./services/retention.js";
 
 /** 启动阶段命中限流时的固定冷却时间。 */
 const RATE_LIMIT_STARTUP_COOLDOWN_MS = 60_000;
+
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** 取第一个非空字符串字段（官方不同事件的下划线写法不完全一致）。 */
+function firstString(
+  data: Record<string, unknown>,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = data[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+    if (typeof value === "number") {
+      return String(value);
+    }
+  }
+  return undefined;
+}
 
 const log = getLogger("main");
 
@@ -257,23 +278,37 @@ function buildWebhookGateway(
   });
 }
 
+/** 机器人自身的群变动：入群（被拉进去）/ 被移出群 —— 没有域内处理，但要通知超管。 */
+const BOT_MEMBERSHIP_EVENTS: Record<string, "added" | "removed"> = {
+  GROUP_ADD_ROBOT: "added",
+  GROUP_MEMBER_ADD: "added",
+  GROUP_DEL_ROBOT: "removed",
+};
+
 /**
- * 未知事件类型：私信全部**全局超管**（每种类型只通知一次，由 mapper 去重）。
+ * 未处理事件类型：私信全部**全局超管**（每类型一次，由 mapper 去重）。
+ *
+ * 其中「机器人入群 / 被移出群」单独出卡（`GROUP_ADD_ROBOT` / `GROUP_MEMBER_ADD` /
+ * `GROUP_DEL_ROBOT`），标题与正文写清楚是入群还是退群，不再报「未知事件」。
  *
  * 内容含类型、顶层字段名与**截断后的 payload**（用户确认要原文，便于直接判断怎么映射）——
- * 注意 payload 里可能含用户 openid / 发言内容，只发给超管。
+ * 注意 payload 里可能含用户 openid / 发言内容，只发给超管；文本一律过 `escapeCardText`
+ * （真机踩过：JSON 里的成对下划线被 Markdown 当斜体吃掉，`scene_param` 显示成 `sceneparam`）。
  */
 async function alertUnknownEvent(
   runtime: Runtime,
   info: { eventType: string; payload: unknown },
 ): Promise<void> {
   const admins = runtime.permissions.listSuperAdmins();
+  const membership = BOT_MEMBERSHIP_EVENTS[info.eventType];
   if (admins.length === 0) {
-    log.warn("unhandled official event but no super admin to notify", {
+    log.warn("no super admin to notify official event", {
       eventType: info.eventType,
+      membership,
     });
     return;
   }
+  const data = isRecordLike(info.payload) ? info.payload : undefined;
   const payload =
     typeof info.payload === "string"
       ? info.payload
@@ -284,29 +319,61 @@ async function alertUnknownEvent(
             return String(info.payload);
           }
         })();
+  const keys = data ? Object.keys(data).slice(0, 20) : [];
+  const groupId = data
+    ? firstString(data, "group_openid", "groupopenid")
+    : undefined;
+  const operator = data
+    ? firstString(data, "op_member_openid", "member_openid", "openid")
+    : undefined;
+  const payloadLine = escapeCardText(payload, 800);
+
+  const lines = membership
+    ? [
+        `**事件类型**：${info.eventType}`,
+        ...(groupId
+          ? [
+              `**群**：${
+                runtime.identityMap.getGroupNumber(groupId) ?? groupId
+              }`,
+            ]
+          : []),
+        ...(operator ? [`**相关成员**：${operator}`] : []),
+        `**时间**：${formatDisplayTime(new Date())}`,
+        "",
+        `**顶层字段**：${escapeCardText(keys.join("、"))}`,
+        "",
+        "**原始 payload（截断 800 字）**：",
+        payloadLine,
+      ]
+    : [
+        `**事件类型**：${info.eventType}`,
+        `**顶层字段**：${escapeCardText(keys.length > 0 ? keys.join("、") : "（非对象）")}`,
+        `**时间**：${formatDisplayTime(new Date())}`,
+        "",
+        "**原始 payload（截断 800 字）**：",
+        payloadLine,
+      ];
   const card = renderCard({
-    title: "未知事件类型",
-    lines: [
-      `**事件类型**：${info.eventType}`,
-      `**顶层字段**：${
-        info.payload && typeof info.payload === "object"
-          ? Object.keys(info.payload as Record<string, unknown>)
-              .slice(0, 20)
-              .join("、")
-          : "（非对象）"
-      }`,
-      `**时间**：${formatDisplayTime(new Date())}`,
-      "",
-      "**原始 payload（截断 800 字）**：",
-      payload.length > 800 ? `${payload.slice(0, 800)}…` : payload,
+    title:
+      membership === "added"
+        ? "机器人入群"
+        : membership === "removed"
+          ? "机器人被移出群"
+          : "未知事件类型",
+    lines,
+    footer: [
+      membership
+        ? "如需配置本群规则 / 推送，请在群内发送 /status 或 /rules 查看当前状态。"
+        : "该事件类型目前没有被机器人处理；如需支持请告知开发者。",
     ],
-    footer: ["该事件类型目前没有被机器人处理；如需支持请告知开发者。"],
   });
   for (const userId of admins) {
     await runtime.notifications.sendPrivateCard(userId, card);
   }
-  log.info("unhandled official event alerted", {
+  log.info("official event alerted", {
     eventType: info.eventType,
+    membership,
     admins: admins.length,
   });
 }
