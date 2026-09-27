@@ -1,350 +1,106 @@
 # TODO
 
-> **唯一的待办入口**：每项只出现一次，按主题分组；行尾标签给出 `优先级 · 批次 · 阶段`。
-> 已完成的历史变更见 [CHANGELOG.md](./CHANGELOG.md)；阶段目标与范围见 [docs/ROADMAP.md](./docs/ROADMAP.md)（只描述目标，进度以本文件为准）。
+> **唯一的待办入口**：只列**未完成**项，每项给出验收 / 落点 / 阻塞；已完成的历史变更见
+> [CHANGELOG.md](./CHANGELOG.md)，阶段目标与范围见 [docs/ROADMAP.md](./docs/ROADMAP.md)。
 >
-> 标签：`P0` 最急 → `P3` 可延后；`批次N` 为推进批次；`真机` 需要真实 QQ 群环境；`⚠️` 需先澄清；`（记录）` 是已知约束、不一定要动。
+> 标签口径：`P0` 最急 → `P3` 可延后；`⚠️` 需先澄清 / 取证；`真机` 需要真实 QQ 群环境；`（记录）` 是已知约束、不一定动。
+>
+> 当前状态（2026-09-27）：`main` = `cf61e9d`，测试 **103 文件 / 845 用例**全绿；
+> **0.19.0 未发版**（`CHANGELOG` 的 `[Unreleased]` 已写好）。
+> 已完成：A1–A5、B1–B3、B6–B11、C1–C3、C5–C6、C9、D1、D3、D5、D10、F1–F2、H1–H8。
 
-## 0. 待澄清
+## 1. 待办
 
-（暂无。已澄清：申诉通过后的「自动解除处罚」= **按当时实际执行的处罚逐项撤销**——撤回的消息撤回、
-禁言解禁、移出 / 拉黑则按官方能力解除对应状态。见 B8。）
+### P0
 
-## 1. 批次与阶段一览
+- [ ] **D4 真机验收**（批次2 退出条件）
+  - 内容：跑 `docs/ACCEPTANCE.md` 的 J32–J56 + M 组，连带 B / C 节里标了 `真机` 的确认项。
+  - 验收：逐项回填「通过 / 不通过 / 原因」；不通过项转成本文件里的新条目。
 
-| 批次 | 主题 | 包含条目 | 完成后版本 |
-|---|---|---|---|
-| 批次 1（**已发布 0.10.0**） | 小功能 + 内部整洁 | A1 ✅、A3 ✅、C1 ✅、C2 ✅ | 0.10.0 ✅ |
-| 批次 2（进行中） | 验收与交付验证 | D1 ✅、D3 ✅、D2 ⚠️待 Docker、D4、B3 ✅、@全体 跳过待真机复验、A/B/C 节真机确认 | 不发版 |
-| 批次 3（**已发布 0.11.0**） | 中功能 | A4 ✅、B2 ✅、C3 ✅、C5 ✅、C6 ✅ | 0.11.0 ✅ |
-| 批次 3b（**已发布 0.12.0**） | 审核事件订阅 + 申诉 + 黑名单 | A5 ✅、B7 ✅、B8 ✅ | 0.12.0 ✅ |
-| **F 专项** | 交互规范统一 | F1 ✅、F2 ✅ | **0.13.0（MINOR，独立版本）** |
-| 批次 4（**进行中 0.14.0**） | Phase 2 大件 | B1 ✅、B6 ✅、A2、B4、B5、D5、E1、E2 | 0.14.0 |
-| 批次 5 | Phase 3/4 收尾 | D6–D9、E3–E6 | 0.15.0+ |
+### P1
 
-**阶段门槛（退出条件落在具体条目上）**：Phase 1 → D1–D4 + A1/A3/B3/C1/C2；
-Phase 2 → E1、E2、B4、B5、B6；Phase 3 → E3–E5；Phase 4 → D6–D9。
+- [ ] **0.19.0 发版**
+  - 动作：改 `package.json` 版本号 → 把 `CHANGELOG` 的 `[Unreleased]` 转成 `## [0.19.0] - <日期>` →
+    打 tag `v0.19.0` 并推送 → 在 GitHub 建 Release 页面（网页操作）。
+  - 前置：用户确认「现在切」（口径是「H 全做完再推」）。
+- [ ] **B4 文本内容安全 API 接入**（批次4 · Phase 2 · ⚠️ 官方能力未确认）
+  - 阻塞：公开资料只能确认小程序体系有 `msgSecCheck`，未见 QQ 机器人开放平台向普通机器人开放文本审核接口；
+    先在开放平台后台确认权限集，或真机调一次记录错误码（真机清单 R3）。
+  - 验收：拿到官方接口后接入，含误报 / 漏报处理策略；**确认前不写盲接口**。
+- [ ] **B5 图片 / 文件 / 链接审核**（批次4 · Phase 2 · ⚠️ 同 B4：等权限集确认）
+- [ ] **D2 Docker Compose 启停补测**（批次2 · ⚠️ 待 Docker Desktop 引擎启动）
+  - 已完成：`docker compose config --quiet` 通过、`--profile postgres` 服务列表正确、
+    `.dockerignore` 实测少传约 106 MB。
+  - 待补：镜像 build + postgres 启停（用独立项目名 `-p qqops-smoke`，收尾 `down -v`，避免污染真实数据卷）。
+- [ ] **D9 创建 GitHub Release 页面**
+  - 现状：`v0.1.0`–`v0.18.2` 的 tag 已推送，Release 条目未创建（本机无 `gh` / token，需要你在网页点，或提供 token）。
+  - 验收：每个已发布版本都有 Release 页面（至少 0.18.x 与 0.19.0）。
+- [ ] **真机确认：`/whois` 群内完全静默**、私信失败才回一条「请先私聊机器人再试」（批次2）
+- [ ] **真机确认：规则开关标签与恢复继承**——点击后标签变为当前状态，`恢复本页继承 / 恢复全部继承` 生效（批次2）
+- [ ] **真机确认：官方是否有「用户撤回消息」下行事件**（决定处罚订阅能否扩到这一口径）（批次2）
+- [ ] **真机确认：拉机器人进测试群是否也收到 `GROUP_MEMBER_ADD`**
+  - 若会：迎新的判据要排掉「机器人自己」，否则机器人会被自己的欢迎语 @ 一遍；
+    payload 里没有任何能识别机器人自己的字段，届时靠实际 openid 对比或官方文档确认。
+- [ ] **真机确认：迎新走哪条 @ 通道生效**
+  - 现在纯文本 `content` 与卡片 `<@!openid>` **两条都发**；确认哪条在客户端真能提醒到人后，可只留一条。
 
-**优先级口径（2026-09-26 统一划定）**：`A 入群与身份` / `B 群规则与内容审核` / `F 交互与输出规范` = **P1**；
-`C 活动运营` / `D 交付、安全与工程` = **P2**；`E 管理后台与 AI` = **P3**。
-以下条目按依赖性 / 阶段门槛做了微调，其余一律按分区默认：
+### P2
 
-- **上调**：D1（P0，Phase 1 构建门槛）、D2 / D3（P1，批次 2 退出条件）、D4（P0，Phase 1 验收门槛）、
-  D9（P1，Phase 4 退出条件）；批次 2 的「真机确认」条目按所在分区取 P1 / P2。
-- **下调**：A2（P2，需先真机验证官方能力，属 Phase 2 大件）；B6b / C7 / C8（P3，`（记录）`类不阻塞任何阶段，
-  顺手修即可）。
-- **不动**：已完成条目保留当时的历史标签，不回改。
+- [ ] **A2 好友申请 / 群邀请审核**（批次4 · Phase 2 · ⚠️ 官方能力待取证）
+  - 事件已确认存在（`C2C_FRIEND_ADD` / `GROUP_ADD_ROBOT` 现在已按话题订阅通知超管），
+    但**是否有审批 / 回执接口**未验证；取证见真机清单 R18。
+  - 拿到结论后的可能方向：好友添加 → 欢迎语 + 引导 `/bind qq`；机器人入群 → 自动绑定群 + 管理引导卡；
+    若平台没有审批接口，「审核」要改成「事件通知 + 自动引导」，不做防申请策略。
+- [ ] **D6 安全审计与依赖更新策略**（批次5 · Phase 4 退出条件）
+  - `pnpm audit` 周期化 + 依赖升级与回归流程；产出「安全与合规检查清单」。
+    （Dependabot 已配，对应本条前半。）
+- [ ] **D7 个人数据删除能力**（批次5 · Phase 4）
+  - 过期数据清理已有；**按用户删除 / 导出个人数据未做**。
+- [ ] **D8 部署演练 + 备份恢复演练**（批次5 · Phase 4 退出条件）
+- [ ] **真机确认：活动报名 / 取消群内完全静默**、结果只走私信，私信失败只出现不含结果的提示（批次2）
+- [ ] **真机确认：满员广播每群一次**——报名满员后所有绑定群各收到一次「活动已满」卡，重复触发不重复发（批次2）
 
-## A. 入群与身份
+### P3
 
-- [x] **A1 规则的学院 / 年级名单真正参与入群审核判定**（P0 · 批次1 · 已完成（0.10.0））
-  名单是硬约束：命中黑名单或不在白名单内一律拒绝（不会被 `auto_approve` 绕过；`manual` 模式仍交人工）；
-  年级 `2022` 与 `22` 等价；班级库缺失/识别不到时白名单判不通过、仅黑名单不拦 + 配置提示。
-- [ ] **A2 好友申请 / 群邀请审核**（P2 · 批次4 · Phase 2 · 官方事件已确认存在，待真机取证）
-  文档站 api-v2 有[「用户添加好友」](https://bot.qq.com/wiki/develop/api-v2/autogen/event/friend_add.html)与
-  [「机器人加入群聊」](https://bot.q.qq.com/wiki/develop/api-v2/autogen/event/group_add_robot.html)两页
-  → **事件存在**；但**是否有审批 / 回执类接口**仍未验证（机器人侧未见好友审批 API）。
-  取证方式：真机清单 **R18**（加好友 + 把机器人拉进新群，看 `unhandled official event` 日志）。
-  拿到事件后可能的方向（待你定）：好友添加 → 欢迎语 + 引导 `/bind qq`；机器人入群 → 自动绑定群 + 发一张管理引导卡；
-  **注意**：若平台没有「审批 / 拒绝」接口，A2 的「审核」含义要改成「事件通知 + 自动引导」，不建议做防申请的策略。
-- [x] **A5 黑名单（本群 / 全局）+ 入群审批最高优先级拦截**（P1 · 批次3b · 已完成（0.12.0））
-  作用域：**本群**（只影响该群）与**全局**（影响机器人已绑定的所有群，仅全局超管可操作）；
-  **入群审批最高优先级**：命中黑名单的申请人**直接不通过**，先于开关判断、`joinDecision` / 名单筛选 / 班级姓名等一切规则；
-  **已在对应区域内则踢出**：本群黑名单踢该群，全局黑名单踢出所有绑定群；加入时先踢后拉黑（官方接口要求目标不在群中）；
-  实现：`blacklist_entries` 表 + `/blacklist` 卡片管理（本群=审核员及以上、全局=仅超管）+ 审计留痕；
-  本群黑名单同时调官方 `updateMemberBlacklist`，接口失败不影响本地拦截。
-- [x] **A3 `/whois` 群里完全静默**（P1 · 批次1 · 已完成（0.10.0））群内私信成功即 `silent: true`，
-  不再回「已私信发送」；私信失败仍保留群内唯一提示（不含结果）。
-- [x] **A4 `/whois` 查询结果一律走私信（含「未找到映射」）**（P1 · 批次3 · 已完成（0.11.0））
-  群里发 `/whois` / `/whois profile` 时**一切回复**（查询成功 / 未找到映射 / 用法提示 / 权限不足）都只发给操作人本人；
-  私信成功 → 群里完全静默（`silent: true`）；只有私信失败才在群里回唯一一条 `@发起人 + 请先私聊机器人再试` 的提示
-  （不含任何结果与失败原因之外的查询内容）。
-- [ ] 真机确认：`/whois` 群内**完全静默**、私信失败时才回一条「请先私聊机器人再试」（P1 · 真机 · 批次2）
-- [x] 入群审核闭环：指令 / 卡片通过拒绝、官方审批接口、自动通过、`/sync` 官方同步（0.4.0 起）
-- [x] OpenID ↔ QQ号/群号 绑定；全部状态持久化（SQLite 默认 / PostgreSQL 可选）+ 过期数据清理
-- [ ] 真机确认：`/whois` 群内行为符合 A3 改造后的预期（P1 · 真机 · 批次2）
-
-## B. 群规则与内容审核
-
-- [x] **B1 消息侧的「正则 + 白名单」维度**（P1 · 批次4 · Phase 1 完善 · 已完成（0.14.0，待发版））当前消息侧只有关键词命中，
-  已实现：`regexRules` 与关键词**同一条处罚管道**（命中动作=本群 keywordPunish，多个命中取最高动作），`userWhitelist` 与审核员豁免叠加；字段进 `group_settings`（老库免迁移），入口 `/rules set regexRules|userWhitelist`、`/rules add|del regex|whitelist`、违规处理子卡「正则白名单」。
-- [x] **B2 命中广告规则时发完整卡片并 @ 当事人**（P1 · 批次3 · 已完成（0.11.0））命中后被动回复一张卡片：
-  @ 当事人（卡片内 `<@!openid>`）+ 命中规则 + 实际处理动作（含禁言时长）+ 群规则文案；
-  未注入富消息发送器时退化为纯文本警告。**申诉入口按钮已在 0.12.0（B8）接上（只有当事人能点）。**
-- [x] **B3 不响应「@全体成员」消息**（P1 · 批次2 · Phase 1 完善 · **已完成，待真机复验**）群里有人 @全体 时直接跳过：
-  不回复、不送关键词审核、不写审计、不处罚。
-  真机样本（R1，2026-09-26）确认官方表示：`@全体成员` → **`<@all> `**（7 字符、无不可见字符）、
-  `@everyone` → **`@everyone`**；两者剥离提及后都是空内容，之前会被当成「空 @机器人」抢答常用菜单。
-  实现：`qqOfficialEventMapper.stripBotMention` 先无条件剥掉开头的 @全体 标记，
-  再由 `isAtAllBroadcast(raw) && content.length === 0` 判定为群广播 → `mapGroupMessage` 返回 `null`
-  （进 `MessageGuardService` 之前短路）。带正文的 `@全体 xxx` / `<@all> /menu` 不受影响，照常审核 / 执行。
-  日志：命中时 info 级 `mention probe: skipped at-all mention`（可用 `grep "mention probe"` 复核）。
-- [x] **B9 处罚卡隐私口径 + 申诉降级**（P1 · 批次3b 追加 · **已完成，待发版**）用户真机反馈后确认：
-  ① 群内卡片改名「**处罚通知**」、**不写命中的关键词 / 正则、不写触发行、不带消息原文**（只留 @当事人 + 处理 + 群规则文案）；
-  ② 消息原文改为**可选短期落库**（本群 `rawMessageRetentionDays > 0` 时保存单行 ≤200 字，到期只清原文、保留处罚记录），
-  只出现在**私信卡片**（处罚通知 / 我要申诉 / 申诉回执 / 申诉通知），未保留时显示「（未保留原文）」；
-  ③ 申诉相关卡片补按钮：我要申诉 = **回调**「直接提交」（一键无理由建单，被禁言也能点）+ 指令按钮「写理由提交」，
-  申诉已提交 = 「补充理由」；当事人卡片**不放**审核员专属的「查看处罚」；私信卡片按钮开关改看 **user** 键盘可用性；
-  原文渲染为**标题下第一段**的「`原文：` + `> 引用段落`」（引用块后必须空行，否则后续字段会被当成引用延续）；
-  ④ 点申诉私信失败时**自动按无理由建单**并通知审核员，群里只回一条不含内容的提示；
-  ⑤ 真机追加：**被禁言时群里任何按钮都点不动**（客户端拦）→ 群内卡 footer 给出「私聊机器人 `/appeal #短码`」兜底；
-  当事人私信卡片按钮去掉 `permission.specifyUserIds`（客户端会误判「无权限操作」），鉴权全部留在服务端。
-  决策见 [ADR-0046](./docs/DECISIONS.md)，验收 J67。
-- [x] **B10 申诉派发与处理闭环**（P1 · 批次3b 追加 · **已完成，待发版**）真机反馈后确认：
-  ① 派发改为「**管理员（群管理员/本群超管/全局超管）全部通知** + **审核员轮单**」，超时由
-  `AppealWatcher` 转下一位（`APPEAL_HOLD_MINUTES` 默认 15 分钟，`:00` = 不转派）；
-  ② **待处理期间禁止重复提交 / 补充理由**（`/appeal`、群内按钮、私信「直接提交」三条路径都拦）；
-  ③ 通过 / 驳回**私信通知申诉人本人**；处理完把结果**同步给其他订阅者**（处理人除外）；
-  ④ 「写理由提交」「补充理由」改为**只填入输入框**（`CardButton.fillOnly` → 官方 `enter: false`），
-  需要一键提交的走回调。决策见 [ADR-0047](./docs/DECISIONS.md)，验收 J68。
-- [x] **B11 违规处理改为五选多选**（P1 · 批次4 · **已完成（0.16.0）**）用户口径：
-  ① 动作改为**多选**：`警告 / 撤回 / 禁言 / 踢出 / 拉黑`，存 `punishActions`（`group_settings`，老库免迁移）；
-  ② 执行顺序固定「撤回 → 禁言 → 踢出 → 拉黑 → 警告」，动作互相独立、单个失败不影响其它；
-  ③ **拉黑不自动踢人**：只落本地黑名单（入群审批最高优先级拒绝）+ 尝试官方拉黑，失败只记日志；
-  ④ 违规处理子卡 = 5 个开关（点一下切换并回同一张卡）；新指令 `/rules set punish 警告,撤回,禁言`；
-  ⑤ **删除** `/rules set keywordRecall`、`/rules set keywordPunish`，老库两字段启动时**自动换算**。
-  决策见 [ADR-0048](./docs/DECISIONS.md)，验收 J69。
-  决策见 [ADR-0046](./docs/DECISIONS.md)，验收 J67。
-- [ ] **B4 文本内容安全 API 接入**（P1 · 批次4 · Phase 2 · ⚠️ 官方能力未确认）含误报 / 漏报处理策略。
-  侦察（2026-09-26）：公开资料只能确认 QQ/微信**小程序**体系的 `msgSecCheck`，没有可靠证据表明 QQ **机器人**开放平台向普通机器人开放文本内容审核接口；
-  待你在开放平台后台确认权限集，或真机调一次记录错误码（见 [真机清单 R3](./docs/REAL-MACHINE-CHECKLIST.md)）。确认前不实现盲接口。
-- [ ] **B5 图片 / 文件 / 链接审核**（P1 · 批次4 · Phase 2 · ⚠️ 官方能力未确认）以官方能力为准。
-  与 B4 同一次侦察结论：机器人开放平台未见公开的媒体审核接口；等权限集确认后再决定（见真机清单 R3）。
-- [x] **B6 审核日志导出 + 统一脱敏策略**（P1 · 批次4 · Phase 2 · 已完成（0.14.0，待发版））活动 CSV 导出已有；
-  已实现 `/export audit [数量]`：复用 `ExportService.exportAuditRecordsCsv`（权限校验 + `maskIdentifier` 脱敏）、只私信给操作者、群内静默、导出动作写审计。
-- [ ] **B6b 全局规则卡「种子默认」的覆盖展示**（P3 · 记录）重启前后展示存在边界差异，纯展示问题、
-  不影响实际生效值；等下一次动全局规则卡时顺手修。
-- [x] **B7 审核事件订阅（机器人处罚事件推送）**（P1 · 批次3b · 已完成（0.12.0））审核员及以上可订阅本群的**处罚事件**：
-  机器人实际处罚（撤回 / 禁言 / 移出 / 拉黑）时，给订阅者私信一张卡——动作 + 命中规则 + 当事人 + 记录短码；
-  订阅用 `/notify punish`（复用 `notification_subscriptions`，存储 scope 加 `punish:` 前缀，与入群申请推送**相互独立**），
-  投递复用 `PushService` 去重（`punish:<短码>`）。
-  - **卡片动作**：订阅者可**直接在私信卡片上调整处罚**（与申诉一致）：
-    **解除处罚 / 修改禁言时长 / 踢出 / 拉黑（本群或全局，见 A5）**；每次调整都写审计；
-  - 实现：`punishment_records` 表（短码 + 动作 JSON + messageId，**不保存消息原文**）+ `/punish` 指令族 + `cb:punish:*` 回调；
-  - **能力边界（已查证，2026-09-25）**：官方下行事件目前只映射 `GROUP_AT_MESSAGE_CREATE` /
-    `GROUP_MESSAGE_CREATE` / `INTERACTION_CREATE` 等，**没有「用户撤回消息」事件**；出站
-    `recallGroupMessage` 只让机器人撤目标消息。所以「订阅别人撤回的消息」**当前无法实现**，
-    本条目按「**机器人自己的审核动作**」落地；若真机抓到用户撤回事件再扩口径。
-- [ ] 真机确认：官方是否存在「用户撤回消息」的下行事件（决定 B7 能否扩到这一口径）（P1 · 真机 · 批次2）
-- [x] **B8 申诉能力**（P2 · 批次3b · 已完成（0.12.0））
-  - 触发：机器人执行处罚后，群内警告卡上给当事人一个**只有他能点**的「我要申诉」按钮（点击后机器人私信引导卡），
-    同时支持 `/appeal <#处罚短码> [理由]`；**仅违规本人**可发起，群内完全静默、结果只走私信；
-  - 审批：申诉私信推给 B7 的订阅者，管理员在卡上**直接调整处罚**：
-    **解除处罚 / 修改禁言时长 / 踢出 / 拉黑（本群或全局，见 A5）**，也可「通过申诉」/「驳回申诉」；
-    调整处罚会自动把该处罚下待处理申诉标记为已处理；
-  - 解除处罚时**按当时实际执行的处罚逐项撤销**：解除禁言（`muteGroupMember` 秒数 0）、
-    解除拉黑（`updateMemberBlacklist` 移除）；已撤回的消息与已移出的成员无法恢复；
-  - 实现：`appeal_records` 表（同一处罚同一人只保留一条待处理申诉，重复提交只更新理由）+ `cb:appeal:*` 回调。
-- [ ] 真机确认：规则开关点击后标签变为「当前状态」，`恢复本页继承 / 恢复全部继承` 生效（P1 · 真机 · 批次2）
-- [x] 关键词命中动作（撤回 / 警告 / 禁言 / 移出 / 拉黑）+ 审核员及以上豁免（0.5.0 起）
-- [x] 规则菜单与字段级继承：`/rules` 概览卡 + 子卡、`/rules add|del keyword`、`/rules overrides`（0.9.0）
-
-## C. 活动运营
-
-- [x] **C1 关键词子卡分页补文本降级**（P1 · 批次1 · 已完成，待发版）新增
-  `/rules keyword [+页码]`（私信 `/rules keyword <群号|#短码> +页码`），页脚给出可复制的翻页指令。
-- [x] **C2 `/rules set rawMessageRetentionDays` 入口**（P1 · 批次1 · 已完成，待发版）支持
-  `0`/正整数/`clear`，「更多设置」子卡新增「消息保留」按钮 + 现值 + 恢复继承，用法与文档同步。
-- [x] **C3 活动定时提醒**（P1 · 批次3 · 已完成（0.11.0））`/activity set <短码> remindAt MM-DD HH:mm`
-  （`clear` 取消）写进 `activity_settings`；`ActivityReminderService` **周期轮询**（`ACTIVITY_REMIND_INTERVAL_MS`，
-  默认 1 分钟）到点在**所有绑定群**广播一次提醒卡，去重键 `(活动, group:<群ID>, remind)` → **每群一次、重启不重发**；
-  活动已取消 / 关闭 / 过截止时只清提醒不广播；配置卡显示当前提醒时间。
-- ~~**C4 活动签到统计**~~（**已取消**：2026-09-26 用户决定不做——报名名单 + 统计 + CSV 导出已够用，
-  见 [DECISIONS.md §活动签到统计](./docs/DECISIONS.md)；条目从 TODO 与 ROADMAP 移除，不再排期）
-- [x] **C5 满员广播覆盖「事后调小名额」**（P2 · 批次3 · 已完成（0.11.0））名额调小到「已满」时也会广播
-  「活动已满」卡；复用 `(活动, 群, full)` 去重 → 每个绑定群仍只发一次，名额大于已报名数不广播。
-- [x] **C6 活动通知更细的节流**（P3 · 批次3 · 已完成（0.11.0））在 `PushService` 里加可选令牌桶：
-  活动通知默认 5 条/秒（`ACTIVITY_NOTIFY_RATE_PER_SECOND`，`0` = 关闭），桶容量 `ceil(速率)`，
-  桶空时**等待**下一个令牌（不丢通知，等待毫秒数记 debug 日志）；入群申请推送不受影响。
-- [ ] **C7 规则「学院点选每页 4 个」**（P3 · 记录）受卡片标准硬约束（每行按钮 ≤12 字、整盘 ≤5 行），
-  非缺陷；若将来放宽排版再调。
-- [ ] **C8 活动统计图片依赖**（P3 · 记录）`@napi-rs/canvas` 未随包安装时按钮不生成、回调降级为文字统计卡
-  （设计如此，不影响启动与报名）；字体优先系统字体，缺失时从 `ACTIVITY_STATS_FONT_URL` 下载并缓存到 `data/fonts/`。
-- [x] **C9 活动「提醒@全体」能力边界**（P2 · 记录 · 真机已确认 2026-09-26）机器人**无法 @全体**：
-  真机穷举 8 种出站写法——markdown `@everyone` / `<@!all>` / `<@!everyone>` / `<@all>` / 纯文字，
-  纯文本 `<@!all>` / `<@all>` / `@everyone`（后三者含 R1 抓到的**官方入站原文形态**）——**全部提醒不到任何人**。
-  因此 `mentionAll on` 只提示操作者手动 @ 一条，不假装能 @（配置卡与 `/help activity` 已如实写明）；
-  除平台后续放开能力，不再重复验证（真机清单 R17 已标已确认）。
-- [ ] 真机确认：群内点击报名 / 取消后**群里完全静默**、结果只走私信；私信失败时只出现不含结果的提示（P2 · 真机 · 批次2）
-- [ ] 真机确认：报名满员后**所有绑定群各收到一次**「活动已满」卡，重复触发不重复发（P2 · 真机 · 批次2）
-- [x] 活动报名：创建、配置卡、点击报名 / 取消、候补与手动释放、截止时间、多群绑定、满员广播、订阅推送、统计图片与 CSV（0.8.0）
-
-## D. 交付、安全与工程
-
-- [x] **D1 `pnpm build` 通过**（P0 · 批次2 · 已完成（本机验证，待发版））
-  本机沙箱里 `pnpm` 不可用，用等价命令 `node node_modules/typescript/bin/tsc -p tsconfig.json` 验证：退出码 0，
-  `dist/` 产出 390 个文件（`.js` / `.d.ts` / `.js.map`，含 `dist/main.js`），`dist/` 已 gitignore。
-- [ ] **D2 Docker Compose 能启动 bot 与数据库**（P1 · 批次2 · ⚠️ 待 Docker Desktop 运行）
-  已验证：`docker compose -p <临时项目> config --quiet` 通过，`--profile postgres config --services` 正确列出 `bot` + `db`；
-  新增 `.dockerignore`（把 `.env` / `data/` / `logs/` / `dist/` / `node_modules/` / `.git/` / `docs/` / `test/` 排除出构建上下文，
-  实测少传约 106 MB）；**镜像 build 与 postgres 启停待补测**：本机 Docker CLI 28.3.3 / Compose v2.39.2 已装，
-  但 Docker 引擎未运行（`dockerDesktopLinuxEngine` 管道不存在）。补测时用独立 `-p qqops-smoke` 项目名 + `down -v`，避免污染真实数据卷。
-- [x] **D3 README / OPERATIONS 快速开始可复现**（P1 · 批次2 · 已完成（本机验证，待发版））
-  在**不含 `.env` 的临时目录**里跑 `node <repo>/dist/main.js`（fake 模式）：退出码 0，自动建 `data/qq-group-ops.db` 与 `logs/`，
-  日志为 `runtimeMode=fake` + `fake mode: official WebSocket gateway not started`，无未处理异常；
-  据此修正 `docs/OPERATIONS.md`：补「必须在仓库根目录启动（`.env`/`data`/`logs` 都是相对路径）」、
-  「缺 QQ 凭据时进入 fake 模式并直接退出，可作冒烟验证」与「`pnpm start` 需先 `pnpm build`」。
-- [ ] **D4 真机验收 `ACCEPTANCE.md` J32–J56 + M 组**（P0 · 批次2）外加 B/C 节里的具体确认项。
-- [x] **D5 Webhook 模式**（P2 · 批次4 · **已完成（0.17.0）**）新增 `EVENT_MODE=websocket|webhook` 二选一装配：
-  用 Fastify 实现 `WebhookEventGateway`（实现既有 `EventGateway` 接口、复用 `QQOfficialEventMapper` 与 `eventRouter`），
-  `op=13` 回签 URL 校验、`op=0` 按官方 Ed25519 规范验签（`X-Signature-Ed25519` / `X-Signature-Timestamp`，
-  对 `timestamp + rawBody` 验签，失败一律 401），密钥由 `WEBHOOK_SECRET`（缺省回落 `QQ_BOT_CLIENT_SECRET`）派生；
-  先回 ACK 再按序串行处理。配置 5 项：`WEBHOOK_PORT` / `HOST` / `PATH` / `SECRET` + `EVENT_MODE`。
-  决策见 [ADR-0049](./docs/DECISIONS.md)，部署见 [OPERATIONS.md](./docs/OPERATIONS.md)。
-- [x] **D10 CD：打 tag 发 Release 自动发布到 FTP**（P2 · 批次4 · **已完成**）`.github/workflows/cd-ftp.yml`：
-  Release published / 手动 dispatch 触发 → `typecheck + test + build` 门禁 → `production-ftp` Environment（可配人工放行）
-  → 组包**运行产物**（`dist` + `scripts` + `package.json` + `pnpm-lock.yaml` + `.env.example`，删 `*.map`）→ FTPS 上传；
-  配置清单与安全审计见 [docs/CD.md](./docs/CD.md)，不变量由 `test/workflows.test.ts` 守住。
-  配套：`.github/dependabot.yml`（npm + Actions 每周分组升级，对应 D6）。
-- [ ] **D6 安全审计与依赖更新策略**（P2 · 批次5 · Phase 4）`pnpm audit` 周期化 + 依赖升级与回归流程；
-  产出「安全与合规检查清单」（Phase 4 退出条件之一）。
-- [ ] **D7 个人数据删除能力**（P2 · 批次5 · Phase 4）过期数据清理已有；按用户删除 / 导出个人数据未做。
-- [ ] **D8 部署演练 + 备份恢复演练**（P2 · 批次5 · Phase 4 退出条件）
-- [ ] **D9 创建首个 GitHub Release 页面**（P1 · 批次5 · Phase 4 退出条件）标签已推送（v0.1.0–v0.9.1），
-  Release 条目尚未创建（可用 `gh release create`）。
-- [x] 测试与 CI：92 文件 / 737 用例；GitHub Actions（`.github/workflows/ci.yml`）
-- [x] **Phase 1 范围其余项**：配置加载与校验、`QQOfficialClient` REST 封装、WebSocket 网关（重连 / Resume /
-  退避 / 限流冷却）、规则化入群审核（除 A1 的学院年级判定）、消息关键词动作、`/notify` 入群推送、
-  管理员命令族、绑定与全部状态持久化、多群配置、Dockerfile / docker-compose.yml（含 `db:up` profile）
-  —— 逐项描述见 [ROADMAP.md](./docs/ROADMAP.md) 与 [CHANGELOG.md](./CHANGELOG.md)
-- [x] 文档与发布流程：README ≤250 行 + `COMMANDS`/`OPERATIONS`/`DEVELOPMENT`/`CONFIGURATION`/`DECISIONS`/`ARCHITECTURE`；
-  Keep a Changelog + SemVer；`CONTRIBUTING.md` + Issue/PR 模板（0.9.1）
-
-## E. 管理后台与 AI（Phase 2/3 大件）
-
-- [ ] **E1 管理 API**（P3 · 批次4 · Phase 2）Fastify / Node.js + 登录鉴权 + 限流 + 最小权限。
-- [ ] **E2 Vue 3 + TypeScript 管理后台**（P3 · 批次4 · Phase 2）审核队列、规则配置、日志查询、权限管理；
-  验收要求：能在后台完成入群审批、规则配置与活动报名管理。
-- [ ] **E3 AI 判断入群理由**（P3 · 批次5 · Phase 3）只把可疑内容送入模型，控制成本。
-- [ ] **E4 AI 辅助疑难内容审核**（P3 · 批次5 · Phase 3）AI 仅作辅助、保留人工复核入口与误判回滚机制。
-- [ ] **E5 统计报表与自动化策略**（P3 · 批次5 · Phase 3）
-- [ ] **E6 AI 判断后的超管确认与策略更新闭环**（P3 · 批次5 · Phase 3）
-  - 触发：AI 参与判断（入群理由 / 内容审核，依赖 E3、E4）后，自动私信**全局超管**本次判断：
-    样本摘要 + AI 结论与置信度 + 命中的规则 / 策略 + 实际处理动作，并询问「判断是否正确、是否需要更新策略」；
-  - 一键动作（都先给 diff、再写审计；AI 只给建议、不直接落库）：
-    **标记正确** / **标记误判**（回滚或转人工复核）、**修正或扩充内容关键词**、
-    添加班级 / 学院 / 专业映射、微调对应规则字段；
-  - 成本与打扰控制：只对「AI 参与且不确定 / 可疑」的样本推送，可配每日上限；
+- [ ] **E1 管理 API**（批次4 · Phase 2）Fastify / Node.js + 登录鉴权 + 限流 + 最小权限。
+- [ ] **E2 Vue 3 + TypeScript 管理后台**（批次4 · Phase 2）
+  - 审核队列、规则配置、日志查询、权限管理；验收：能在后台完成入群审批、规则配置与活动报名管理。
+- [ ] **E3 AI 判断入群理由**（批次5 · Phase 3）只把可疑内容送模型，控制成本。
+- [ ] **E4 AI 辅助疑难内容审核**（批次5 · Phase 3）AI 仅作辅助，保留人工复核入口与误判回滚机制。
+- [ ] **E5 统计报表与自动化策略**（批次5 · Phase 3）
+- [ ] **E6 AI 判断后的超管确认与策略更新闭环**（批次5 · Phase 3，依赖 E3 / E4）
+  - 触发：AI 参与判断后私信全局超管样本摘要 + 结论与置信度 + 命中规则 + 实际动作，并询问「判断是否正确、是否更新策略」；
+  - 一键动作（都先给 diff、再写审计；AI 只给建议、不直接落库）：标记正确 / 标记误判（回滚或转人工复核）/
+    修正或扩充关键词 / 补班级学院映射 / 微调对应规则字段；
+  - 打扰控制：只对「AI 参与且不确定 / 可疑」的样本推送，可配每日上限；
   - 验收：超管能从私信卡片完成一次策略修正，且改动可追溯（审计 + diff）。
+- [ ] **H8-2 个人提醒类活动私信补退订入口**（前置：先让活动通知带上发布群）
+  - 现状：候补 / 名额 / 变更类私信只有 `activityId`、拿不到群号，退订范围会退错群，所以**没有**退订按钮。
+- [ ] **H8-4 `permissions.ts` 兼容入口去留**
+  - `hasAtLeast` / `meets` / `canApproveJoin` / `canReviewContent` / `canManageRules` / `canExportData` /
+    `hasAnyGroupRole` / `isSuperAdmin` / `listReviewableGroups` / `listModeratedGroups` 已无命令层调用：
+    删除还是标 `@deprecated`。
+- [ ] **H8-5 `/rules … all` 的目标收敛**
+  - 现在走 `meetsInGroup(__default__, 130)`（实际只有 240 能过），可显式拆成 `meetsGlobal(240)`：
+    纯可读性，运行期无差别。
 
-## F. 交互与输出规范（横切）
+## 2. 已知约束（`（记录）` 类，不一定动）
 
-- [x] **F1 群内回复统一 @ 具体发起人**（P1 · F 专项（独立版本 0.13.0） · 横切 · 已完成（0.13.0，待发版））**所有群内回复**——操作确认、菜单、反馈、
-  错误提示，无论纯文本还是卡片——都要在首行 @ **本次操作的发起人**（`<@!userId>`，卡片内 @ 已真机验证有效）；
-  **只在群上下文 @，私聊不 @**；**`test` 模块**（`/test`、`/testmenu`、`/testat`，含回调翻页）按现状豁免。
-  - 边界：保持既有静默约定——`/whois`、活动报名/取消在群内**完全静默**时本来就不发消息，无需 @；
-    静默失败时保留的那条唯一提示要 @ 发起人；
-  - 实现要点：群上下文的「发起人」= 命令发送者 / 回调点击者；回调路径用 `replyGroupId` 判断是否群内；
-    首行加 @ 时注意卡片排版（整盘 ≤5 行、每行按钮文字 ≤12 字）；
-  - 验收：`docs/ACCEPTANCE.md` 增加「群内回复首行 @ 发起人」抽查项（test 模块除外）。
-- [x] **F2 入口菜单默认面向普通成员，管理类入口只在私信暴露**（P1 · F 专项（独立版本 0.13.0） · 横切 · 已完成（0.13.0，待发版））
-  默认触发（`/menu` 无参数、群里空 `@机器人`、私信首次交互、未知指令回复）一律是**常用菜单**：
-  **帮助 / 我的资料 / 我的权限 / 活动 / 申诉**（未绑定 QQ号时改为「绑定账号」）；
-  尽量减少管理类功能与非普通用户功能的暴露。
-  - **群内不出现管理 / 超管入口按钮**（管理菜单只能手动 `/menu 管理`，权限校验不变，越权仍明确提示权限不足）；
-  - **超管菜单只在私信可用**：群里发 `/menu 超管` 提示「请在私信中使用」，不展示任何平台级入口；
-  - **私信默认菜单**对有权者显示「管理菜单」（审核员及以上）/「超管菜单」（全局超管）按钮，群里不显示；
-  - 合并/对齐「系统菜单」层级：现状 `main` 与 `sys` 是两张几乎相同的普通卡，改造后只保留一套
-    （`main` = 常用菜单，`sys` 作为别名或等价卡），避免重复入口；
-  - 未知指令回复、首菜单推送（`menuFirstPush`）也走同一套常用菜单；
-  - 验收：普通成员在群里**永远看不到**管理类入口；管理员需手动 `/menu 管理`；超管菜单只在私信出现；
-    同步 `COMMANDS` / `CARD-STANDARD` / `ACCEPTANCE` 与 `helpTopics` 的菜单说明。
+- **B6b 全局规则卡「种子默认」的覆盖展示**：重启前后展示存在边界差异，纯展示、不影响实际生效值；下次动全局规则卡时顺手修。
+- **B7 能力边界**：官方下行事件没有「用户撤回消息」，处罚订阅只覆盖「机器人自己的审核动作」；真机抓到再扩口径。
+- **C7 学院点选每页 4 个**：受卡片标准硬约束（每行按钮 ≤12 字、整盘 ≤5 行），非缺陷。
+- **C8 活动统计图片依赖**：`@napi-rs/canvas` 未随包安装时按钮不生成、回调降级为文字统计卡（设计如此）；
+  字体优先系统字体，缺失时从 `ACTIVITY_STATS_FONT_URL` 下载并缓存到 `data/fonts/`。
+- **C9 / R17 机器人无法 @全体**：真机穷举 8 种出站写法全部无效，`mentionAll on` 只提示操作者手动 @；
+  平台放开能力前不再重复验证。
+- **H8-3 通知卡退订按钮**：文案 4 字（官方按钮上限 10 字）；同一张卡只有一行退订（id 冲突时不追加）；
+  键盘满 5 行时宁可不加（宁可少按钮，也不能让整张卡发不出去）。
+- **通知话题门槛**：全局一套（`group_settings.__default__.notifyTopicLevels`），改一次全群生效；
+  改入口只有全局超管（`/notify level` 或面板底部「门槛」），卡片键盘打不了数字，所以按钮只做「填入指令」。
 
-> **真机待确认项**：见 [docs/REAL-MACHINE-CHECKLIST.md](./docs/REAL-MACHINE-CHECKLIST.md)（R1–R18，跑完把观察结果贴回来即可收尾）；
-> **一次跑完**：照 [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md)（准备清单 + 执行顺序 + 一键取证命令 + 回填模板）。
+## 3. 真机与验收索引
 
-## H. 权限等级数值化 + 通知中心（0.19.0）✅ 全部完成，待推送
-
-> 用户口径（已确认）：等级数值**留间隙**；`Blacklisted` **只作为门槛档位、不改现有行为**；
-> 话题门槛**全局一套**（超管配）；迎新**仅群内**；超管专属话题**默认开**（可关）；
-> **不加**群级/全局默认层（依然是「谁订阅谁收」）。
-
-### H1 权限等级数值化（地基）✅ 已推送
-
-- [x] `PermissionLevel` 改为**数值即等级**：群内 `-1 拉黑 / 0 未绑定 / 110 群成员 / 120 审核员 / 130 群管理员 / 140 本群超管`，
-      平台 `210 平台用户 / 220 全局审核员 / 230 全局管理员 / 240 全局超管`；`PLATFORM_OFFSET = 100`、`PLATFORM_LEVEL_MIN = 200`。
-- [x] **两轴分离**：群内档 `GroupLevel = -1|0|110|120|130|140`（字面量联合）、平台档 `PlatformLevel`（带品牌，仅 200..299），
-      错档传参**编译不过**；跨轴折算固定 `-100`：群内生效档 = `max(群内档, 平台档 - 100)`，
-      所以平台角色**压不过**本群超管（240 折 140、220 折 120）。
-- [x] 统一入口：`meetsInGroup(userId, groupId, GroupLevel)` / `meetsGlobal(userId, PlatformLevel)`（**不做折算**）/ `meetsAnywhere(userId, level)`；
-      `levelFor()` 只作展示与兼容；`拉黑 -1` 仅作门槛档位，**拦截行为不变**。
-
-### H2 全量权限点梳理 ✅ 已完成（102 处改写，未推送前先本地复核）
-
-| 能力 | 门槛（数值化后） | 主要调用点 |
-|---|---|---|
-| 入群审批 `/approve` `/reject` `/pending` `/sync` | 130 | `reviewCommands`(9)、`bindCommands`、`activityCardCommands`、`activityCommands`、`notifications.sendTestCard` |
-| 规则管理 `/rules …` | 130 | `ruleCommands`(22)、`permCommands` |
-| 内容审核 `/punish` 处罚动作、申诉处理 | 120 | `punishCommands`(4)、`appealCommands`、`blacklistCommands`(5)、`statusCommands`、`testCommands` |
-| 黑名单（本群 120 / 全局 240） | 120 / 240 | `blacklistCommands`(3 处全局特判 → `meetsGlobal`) |
-| 导出 `/export audit` | 130 | `exportCommands`、`export.ts`(2) |
-| 平台级（`/whois`、`/perm`、测试菜单、别名、全局规则、全局黑名单、`/bind groupid`） | 240 | `whoisCommands`、`permCommands`(4)、`testMenu`、`testCommands`(2)、`aliasCommands`、`ruleCommands`(全局分支 6)、`bindCommands`(2)、`menu.ts` |
-| 帮助可见性（按角色摘条目） | 120 / 130 / 240 | `helpTopics`(6)、`helpCommands`(4)、`menu.ts` 的 `access` 计算 |
-| 入群推送订阅 | 130 | `notifications.ts`、`notifyCommands.ts` |
-| 处罚/申诉推送订阅 | 120 | 同上 |
-| 活动通知订阅 | -1（不限权限，全部群需绑定） | `notifications.ts`、`activityNotifications` |
-| 关键词豁免（审核员消息不判） | 120 | `messageGuard.ts` |
-
-- [x] 逐项把上表里的 `isSuperAdmin() || canXxx()` 手写组合**并入数值门槛**（`-1` 档位可用于「谁都能订」）；
-- [x] 复核「黑名单用户」在各入口的表现（**不改行为**，只在 ADR 里记录「-1 是保留档位」）。
-- [ ] 遗留收敛（H7 一起做，纯粹为可读性）：`/rules … all` 的 target 是 `__default__` 伪群，
-      现在走 `meetsInGroup(__default__, 130)`（实际只有 240 能过），可显式拆成 `meetsGlobal(240)`；运行期无差别。
-- [ ] `permissions.ts` 里的兼容入口（`hasAtLeast` / `meets` / `canApproveJoin` / `canReviewContent` / `canManageRules` /
-      `canExportData` / `hasAnyGroupRole` / `isSuperAdmin` / `listReviewableGroups` / `listModeratedGroups`）保留但**不再被命令层调用**，
-      H7 决定是删除还是标注 `@deprecated`。
-
-### H3 通知话题与门槛配置（全局一套）✅
-
-- [x] 话题枚举：`join / punish / activity / bot_join / bot_leave / friend / member_join / unknown_event`（`src/services/notifyTopics.ts`）；
-- [x] 每个话题一个门槛，存 `group_settings` 的全局行（`__default__` + 键 `notifyTopicLevels`，JSON map）；缺键 / 坏 JSON / 非法值逐项回落默认，**不改 `GroupConfigStore`**（否则会变成每群可覆盖的规则字段）；
-- [x] 默认值：入群 130、处罚与申诉 120、活动 -1（不限）、事件类 240；订阅与推送**共用同一个** `meetsNotifyLevel`（`NotificationService.checkTopicReach` ↔ `canReceive`），禁止两处各写一遍；
-- [x] 超管类话题「默认开」：`runtime.load()` 里给现有全局超管补订阅行（`seedSuperAdminDefaults`，幂等）；退订墓碑见 H4。
-- [ ] 门槛的**运行期修改入口**还没做：`NotifyTopicLevelStore.setLevel` 已可用（有测试），但 H4 的面板只做订阅开关，没做「改门槛」（需要超管专用子卡 + 数值输入）。要不要做、做成什么形态待定。
-
-### H4 通知中心多选面板 + 退订按钮 ✅
-
-- [x] `/notify` 改成通知中心面板（每话题一行「本群/全部/测试」，点一下切换并刷新同一张卡；平台类话题只给「全部」，超管专属话题只对全局超管显示；**每页 4 个话题 + 一行翻页/刷新/帮助**，`NOTIFY_PAGE_SIZE`）；
-- [x] **所有私信通知卡底部加「取消订阅此通知」**（`NotificationService.withUnsubscribeRow` + `cardTemplate.appendKeyboardRow`）：入群申请卡、处罚/申诉卡、活动发布卡都带上；按该卡话题 + **实际投递范围**退订（订过「全部群」就退「全部群」），回执卡附「重新订阅」按钮防误点；键盘已满 5 行时宁可不加。
-- [x] **退订墓碑入库**（`group_settings.__default__.notifyOptOut`）：默认开的话题退订后**重启不会被重新种上**，重新订阅即清墓碑（否则超管退不掉事件类话题）。
-- [ ] 个人提醒类的活动私信（候补/名额/变更）**没有**退订按钮：那条路径只知道 `activityId`、不知道群号，塞错范围会退错群。要做的话得先让活动通知带上发布群。
-- [ ] 「取消订阅」按钮文案是 4 字，官方按钮上限 10 字；同一张卡只能有一行退订（id 冲突时不追加）。
-
-### H5 迎新（仅群内）+ `GROUP_MEMBER_ADD` ✅
-
-- [x] 群配置新增 `welcomeEnabled`（默认关）+ `welcomeMessage`（支持 `{成员}` 占位，存 `group_settings`）；**不做私信欢迎**；
-- [x] `GROUP_MEMBER_ADD` 触发时：纯文本通道 @新成员 + 一张欢迎卡（`src/services/welcome.ts`，`main.ts` 接线）；任一步失败只记日志；
-- [x] 面板入口：`/rules` →「更多设置」→「迎新」子卡（更多设置已占满 5 行键盘上限）；指令 `/rules set welcome on|off`、`/rules set welcomeMessage <文案>`；
-- [ ] ⚠️ **待真机核对**：拉机器人进测试群是否也会收到 `GROUP_MEMBER_ADD`（会的话迎新会给机器人发欢迎）。
-      payload 里没有任何能识别「机器人自己」的字段，所以现在**只记日志、不做猜测**；
-- [ ] ⚠️ 能力边界：纯文本 `content` 与 Markdown 卡片 `<@!openid>` 谁生效与客户端版本有关 —— 两条通道都发了，但降级到纯文本时 @ 不保证提醒到人。
-
-### H6 事件类话题接入 ✅
-
-- [x] `GROUP_ADD_ROBOT` / `GROUP_DEL_ROBOT` / `GROUP_MEMBER_ADD` / `FRIEND_ADD` / `FRIEND_DEL`（含真机出现过的 `C2C_FRIEND_*`）/ 未知事件 从「硬编码通知超管」改为**走话题订阅**（默认超管开，可退订）；
-- [x] 未知事件保持「每类型只通知一次」；变动类事件每次变动都通知（`REPEATING_EVENT_TYPES`，mapper 不再按类型去重）；
-- [x] 事件卡底部同样带「取消订阅此通知」。
-
-### H7 文档与验收 ✅ 已提交（未推送）
-
-- [x] ADR-0050（权限数值化 + 两轴 + `-1` 档位）与 ADR-0051（通知中心：话题/全局门槛/退订墓碑/仅群内迎新）写入 `docs/DECISIONS.md`（含目录）；
-- [x] `docs/COMMANDS.md`（通知中心全节重写 + 迎新一节 + `/rules set` 字段表新增两行 + `/help notify` 描述）、`docs/CONFIGURATION.md`（welcome 两行）；
-- [x] `helpTopics`（`/help notify` 正文重写、`/help rules` 补迎新两行、管理菜单文案）、`menu`（「通知订阅」→「通知中心」）；
-- [ ] 发布动作：`CHANGELOG` 已在 `[Unreleased]` 记好；版本号与 tag 待用户确认（H 全做完再推）。
-
-### H8 已知遗留（不阻塞 0.19.0）
-
-- [ ] 话题门槛的**运行期修改入口**没做：`NotifyTopicLevelStore.setLevel` 可用（有测试），但通知中心只做了订阅开关，改门槛需要超管专用子卡 + 数值输入（面板每页已占满 5 行，得再拆一层）；
-- [ ] 个人提醒类活动私信（候补/名额/变更）**没有**退订按钮：那条路径只有 `activityId`、拿不到群号，塞错范围会退错群；
-- [ ] 「取消订阅」按钮是 4 字（官方上限 10 字）；同一张卡只有一行退订（id 冲突时不追加）；
-- [ ] `permissions.ts` 的旧便捷方法（`hasAtLeast` / `meets` / `canApproveJoin` / `canReviewContent` / `canManageRules` / `canExportData` / `hasAnyGroupRole` / `isSuperAdmin` / `listReviewableGroups` / `listModeratedGroups`）已无命令层调用：H2 遗留项，决定删除还是标 `@deprecated`；
-- [ ] `/rules … all` 的目标是 `__default__` 伪群，现走 `meetsInGroup(__default__, 130)`（实际只有 240 能过），可显式拆成 `meetsGlobal(240)`：纯可读性，运行期无差别。
-
-## G. 已完成（归档，细节见 CHANGELOG）
-
-- [x] **0.14.0** 批次 4 前半：B1 消息侧正则 + 用户白名单 · B6 审核日志导出（脱敏 + 只私信）
-
-- [x] **0.12.0** 批次 3b：A5 黑名单（本群/全局）· B7 处罚事件推送 + 卡片改处罚 · B8 申诉（卡片上通过/驳回/调整处罚）
-- [x] **0.11.0** 批次 3：A4 `/whois` 一律走私信 · B2 命中反馈卡（@ 当事人）· C3 活动定时提醒 · C5 名额调小补发已满卡 · C6 活动通知令牌桶
-
-- [x] **0.9.1** 代码与文档整理（R1–R6）：门面 / 测试 / 适配层 / 服务拆分、统一 PushService、文档重写
-- [x] **0.9.0** 规则菜单重构 · **0.8.0** 活动模块重构 · **0.7.0** `/testat` 自检 · **0.6.1** 隐私守卫
+- 真机清单与回填模板：[docs/REAL-MACHINE-CHECKLIST.md](./docs/REAL-MACHINE-CHECKLIST.md)（R1–R18）；
+  一次跑完照 [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md)。
+- 验收用例：[docs/ACCEPTANCE.md](./docs/ACCEPTANCE.md)。
+- 已发布版本的实现细节与决策：[CHANGELOG.md](./CHANGELOG.md)、[docs/DECISIONS.md](./docs/DECISIONS.md)。
