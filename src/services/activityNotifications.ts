@@ -163,7 +163,13 @@ export class ActivityNotificationService {
     for (const userId of recipients) {
       tally(
         result,
-        await this.deliver(input.activityId, userId, "published", input.card),
+        await this.deliver(
+          input.activityId,
+          userId,
+          "published",
+          input.card,
+          input.groupId,
+        ),
       );
     }
     log.info("activity publish push finished", {
@@ -319,12 +325,18 @@ export class ActivityNotificationService {
     userId: string,
     kind: ActivityNotificationKind,
     message: RichMessage,
+    /** 该卡实际投递的订阅范围（群号）；缺省 = 不加退订按钮（个人提醒类） */
+    scope?: string | undefined,
   ): Promise<{ delivered: boolean; skipped: boolean; rateLimited: boolean }> {
+    const card =
+      scope === undefined
+        ? message
+        : this.sender.withUnsubscribeRow(message, "activity", scope, userId);
     const outcome = await this.push.deliver({
       key: notificationKey({ activityId, userId, kind }),
       userId,
       fields: { activityId, kind },
-      send: () => this.sender.sendPrivateCard(userId, message),
+      send: () => this.sender.sendPrivateCard(userId, card),
       entry: (now) => ({ activityId, userId, kind, createdAt: now }),
     });
     return {

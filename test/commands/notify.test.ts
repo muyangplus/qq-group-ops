@@ -118,4 +118,47 @@ describe("AdminCommandService · notify", () => {
     expect(join.ok).toBe(true);
     expect(api.sentPrivateMessages.at(-1)?.markdown).toContain("推送测试");
   });
+
+  it("通知中心分页：超管看到全部 8 个话题", async () => {
+    const first = await service.handle("g1", "root", "/notify");
+    expect(first.rich.markdown).toContain("通知中心（1/2）");
+    expect(first.rich.markdown).toContain("**入群申请**");
+    expect(first.rich.markdown).toContain("**机器人入群**");
+    expect(first.rich.markdown).not.toContain("**未定义事件**");
+    const keyboard = JSON.stringify(first.rich.keyboard);
+    expect(keyboard).toContain("cb:notify:view:2");
+
+    const second = service.notifyCard(undefined, "root", undefined, 2);
+    expect(second.rich.markdown).toContain("通知中心（2/2）");
+    expect(second.rich.markdown).toContain("**机器人退群**");
+    expect(second.rich.markdown).toContain("**未定义事件**");
+    expect(JSON.stringify(second.rich.keyboard)).toContain("cb:notify:view:1");
+  });
+
+  it("超管专属话题不对普通群管理员显示", async () => {
+    const result = await service.handle("g1", "admin", "/notify");
+
+    expect(result.rich.markdown).toContain("通知中心（1/1）");
+    expect(result.rich.markdown).not.toContain("机器人入群");
+    expect(result.rich.markdown).not.toContain("未定义事件");
+    const keyboard = JSON.stringify(result.rich.keyboard);
+    expect(keyboard).toContain("cb:notify:set:join:g1:on");
+    expect(keyboard).toContain("cb:notify:test:activity");
+  });
+
+  it("推送卡上的「取消订阅此通知」：立刻退订并给「重新订阅」防误点", async () => {
+    await service.notifyToggleCard("join", "g1", true, "admin", "g1");
+    expect(notifications.isSubscribed("admin", "g1", "join")).toBe(true);
+
+    const card = service.notifyUnsubscribeCard("join", "g1", "admin", "g1");
+    expect(card.ok).toBe(true);
+    expect(card.rich.markdown).toContain("已取消：入群申请 · 群 654321");
+    expect(notifications.isSubscribed("admin", "g1", "join")).toBe(false);
+    expect(JSON.stringify(card.rich.keyboard)).toContain(
+      "cb:notify:set:join:g1:on",
+    );
+
+    const again = service.notifyUnsubscribeCard("join", "g1", "admin", "g1");
+    expect(again.rich.markdown).toContain("本来就是关闭的");
+  });
 });

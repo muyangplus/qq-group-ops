@@ -46,19 +46,6 @@ export const NOTIFY_CHANNELS: readonly NotifyChannel[] = [
   "unknown_event",
 ];
 
-/**
- * 通知订阅卡**当前**展示的话题。
- *
- * 卡片最多 5 行，8 个话题一次放不下；H4 会把它重做成「多选开关 + 分页」的面板，
- * 那时改为展示全量（`NOTIFY_CHANNELS`）。在那之前，事件类话题只参与门槛判定与
- * 默认开订阅（H6 接事件推送时才会被用到），不上菜单。
- */
-export const NOTIFY_CARD_TOPICS: readonly NotifyChannel[] = [
-  "join",
-  "punish",
-  "activity",
-];
-
 export interface NotifyTopicMeta {
   /** 卡片上的完整名（例如「处罚与申诉」）。 */
   label: string;
@@ -144,6 +131,15 @@ export function defaultNotifyTopicLevels(): Record<NotifyChannel, number> {
 /** 全局门槛在 `group_settings` 里的键（全局行 = `__default__`）。 */
 export const NOTIFY_TOPIC_LEVELS_KEY = "notifyTopicLevels";
 
+/**
+ * 退订墓碑在 `group_settings` 里的键：`["<话题>:<用户>", …]`。
+ *
+ * 超管专属话题是**默认开**（启动时种订阅行），若退订只删行，下次启动又会被种回来，
+ * 等于退订无效。所以退订要留一行墓碑，`seedSuperAdminDefaults` 见到墓碑就跳过；
+ * 重新订阅时把墓碑删掉。
+ */
+export const NOTIFY_OPT_OUT_KEY = "notifyOptOut";
+
 /** 门槛允许的取值范围：`-1`（不限）到最高平台档。 */
 const MIN_TOPIC_LEVEL = PermissionLevel.Blacklisted;
 const MAX_TOPIC_LEVEL = PlatformLevel.GlobalSuperAdmin;
@@ -222,14 +218,40 @@ export function meetsNotifyLevel(
   return permissions.meetsInGroup(userId, scope, required);
 }
 
+/** 墓碑键：`<话题>:<用户 id>`（话题名与 openid 都不含冒号）。 */
+function optOutKey(topic: NotifyChannel, userId: string): string {
+  return `${topic}:${userId}`;
+}
+
+/** 解析墓碑行；坏 JSON / 非数组一律当成「没有墓碑」。 */
+export function parseNotifyOptOut(raw: string | undefined): Set<string> {
+  if (raw === undefined || raw.length === 0) {
+    return new Set();
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    log.warn("invalid notify opt-out json, treating as empty");
+    return new Set();
+  }
+  if (!Array.isArray(parsed)) {
+    return new Set();
+  }
+  return new Set(
+    parsed.filter((item): item is string => typeof item === "string"),
+  );
+}
+
 /**
  * 话题门槛的全局存储（`group_settings` 的 `__default__` 行）。
  *
- * 只存**一个**键 `notifyTopicLevels`（JSON map），改一次全群生效；
+ * 只存**两个**键：`notifyTopicLevels`（JSON map）与 `notifyOptOut`（退订墓碑）；
  * 不走 `GroupConfigStore` 是为了避免把它变成「每群可覆盖」的规则字段。
  */
 export class NotifyTopicLevelStore {
   private levels: Record<NotifyChannel, number> = defaultNotifyTopicLevels();
+  private optOut = new Set<string>();
 
   public constructor(
     private readonly repository?: GroupSettingsRepository | undefined,
@@ -237,17 +259,41 @@ export class NotifyTopicLevelStore {
   ) {}
 
   public async load(): Promise<void> {
-    const rows = await this.repository?.findAll();
-    const row = rows?.find(
-      (setting) =>
-        setting.groupId === DEFAULT_GROUP_ID &&
-        setting.key === NOTIFY_TOPIC_LEVELS_KEY,
-    );
-    this.levels = parseNotifyTopicLevels(row?.value);
+    const rows = (await this.repository?.findAll()) ?? [];
+    const find = (key: string): string | undefined =>
+      rows.find(
+        (setting) =>
+          setting.groupId === DEFAULT_GROUP_ID && setting.key === key,
+      )?.value;
+    this.levels = parseNotifyTopicLevels(find(NOTIFY_TOPIC_LEVELS_KEY));
+    this.optOut = parseNotifyOptOut(find(NOTIFY_OPT_OUT_KEY));
   }
 
   public async flush(): Promise<void> {
     await this.queue?.flush();
+  }
+
+  /** 该用户是否显式退订过这个话题（默认开的话题靠它挡住重新播种）。 */
+  public isOptedOut(topic: NotifyChannel, userId: string): boolean {
+    return this.optOut.has(optOutKey(topic, userId));
+  }
+
+  /** 记一行退订墓碑（幂等）。 */
+  public markOptedOut(topic: NotifyChannel, userId: string): void {
+    const key = optOutKey(topic, userId);
+    if (this.optOut.has(key)) {
+      return;
+    }
+    this.optOut.add(key);
+    this.persistOptOut();
+  }
+
+  /** 重新订阅时清掉墓碑。 */
+  public clearOptOut(topic: NotifyChannel, userId: string): void {
+    if (!this.optOut.delete(optOutKey(topic, userId))) {
+      return;
+    }
+    this.persistOptOut();
   }
 
   /** 话题的当前门槛。 */
@@ -287,6 +333,20 @@ export class NotifyTopicLevelStore {
       this.repository!.save({
         groupId: DEFAULT_GROUP_ID,
         key: NOTIFY_TOPIC_LEVELS_KEY,
+        value,
+      }),
+    );
+  }
+
+  private persistOptOut(): void {
+    if (!this.repository) {
+      return;
+    }
+    const value = JSON.stringify([...this.optOut].sort());
+    this.queue?.enqueue("notify.optOut.save", () =>
+      this.repository!.save({
+        groupId: DEFAULT_GROUP_ID,
+        key: NOTIFY_OPT_OUT_KEY,
         value,
       }),
     );

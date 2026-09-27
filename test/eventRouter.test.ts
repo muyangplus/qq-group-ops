@@ -130,8 +130,15 @@ describe("EventRouter", () => {
     const message = api.sentPrivateMessages[0]!;
     expect(message.markdown).toContain("**处理结果**：已自动通过（按入群规则）");
     expect(message.markdown).toContain("无需操作");
-    // 已自动处理：不给审批按钮
-    expect(message.keyboard).toBeUndefined();
+    // 已自动处理：不给审批按钮；但推送卡统一带一行「取消订阅此通知」
+    const keyboard = message.keyboard as
+      | { content: { rows: ReadonlyArray<{ buttons: ReadonlyArray<{ action: { data: string } }> }> } }
+      | undefined;
+    const rows = keyboard?.content.rows ?? [];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.buttons.map((button) => button.action.data)).toEqual([
+      "cb:notify:unsub:join:g1",
+    ]);
   });
 
   it("handles duplicate join request events without throwing or pushing twice", async () => {

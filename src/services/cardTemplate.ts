@@ -169,6 +169,42 @@ function hasButtons(
   return (rows ?? []).some((row) => row.length > 0);
 }
 
+/**
+ * 在卡片键盘底部追加一行按钮（投递侧用，例如推送卡上的「取消订阅此通知」）。
+ *
+ * 卡片本来没有键盘时会**新建**一个只含这行的键盘 —— 按钮通道不可用时，
+ * `RichMessageSender` 发送前会自动降级成无按钮消息，所以这里不必自己判断。
+ *
+ * 两个「宁可不加」的兜底：键盘已满 5 行、新按钮 id 与已有按钮重复
+ * （官方要求同一键盘内唯一）—— 绝不能因为多一个按钮就让整张卡发不出去。
+ */
+export function appendKeyboardRow(
+  card: RichMessage,
+  row: readonly CardButton[],
+): RichMessage {
+  if (row.length === 0) {
+    return card;
+  }
+  const existing = card.keyboard?.content.rows ?? [];
+  if (existing.length >= CARD_MAX_ROWS) {
+    return card;
+  }
+  const existingIds = new Set(
+    existing.flatMap((line) => line.buttons.map((button) => button.id)),
+  );
+  if (row.some((button) => existingIds.has(button.id))) {
+    return card;
+  }
+  const extra = buildKeyboard([row]);
+  if (!extra) {
+    return card;
+  }
+  return {
+    ...card,
+    keyboard: { content: { rows: [...existing, ...extra.content.rows] } },
+  };
+}
+
 function flattenButtons(
   rows: readonly (readonly CardButton[])[] | undefined,
 ): Array<{ label: string; command: string }> {

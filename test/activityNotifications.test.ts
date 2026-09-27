@@ -18,18 +18,26 @@ import type { RichMessageSender } from "../src/services/richMessages.js";
 const CARD = renderCard({ title: "新活动", lines: ["测试"] });
 
 function createSpySender() {
-  const sent: Array<{ userId: string; markdown: string }> = [];
+  const sent: Array<{ userId: string; markdown: string; keyboard?: unknown }> =
+    [];
   const failures = new Set<string>();
   // 订阅现在由统一的 NotificationService 负责，所以夹具要装配**真**服务，
   // 只在最外层（RichMessageSender）用替身记录投递、注入失败。
   const sender = {
     keyboardAvailable: false,
     keyboardAvailableFor: () => false,
-    sendToUser: async (userId: string, message: { markdown: string }) => {
+    sendToUser: async (
+      userId: string,
+      message: { markdown: string; keyboard?: unknown },
+    ) => {
       if (failures.has(userId)) {
         return { ok: false, detail: "blocked" };
       }
-      sent.push({ userId, markdown: message.markdown });
+      sent.push({
+        userId,
+        markdown: message.markdown,
+        keyboard: message.keyboard,
+      });
       return { ok: true, detail: "" };
     },
     sendToGroup: async () => ({ ok: false, detail: "no group sender" }),
@@ -72,6 +80,10 @@ describe("ActivityNotificationService", () => {
     });
     expect(result).toMatchObject({ sent: 2, recipients: 2, skipped: 0, failed: 0 });
     expect(spy.sent.map((item) => item.userId)).toEqual(["u1", "u2"]);
+    // 活动通知卡也带「取消订阅此通知」，范围=该群
+    expect(JSON.stringify(spy.sent[0]?.keyboard)).toContain(
+      "cb:notify:unsub:activity:g1",
+    );
   });
 
   it("deduplicates the same (activity, user, kind) delivery", async () => {

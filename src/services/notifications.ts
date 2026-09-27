@@ -30,7 +30,8 @@ import {
   type JoinRequestCardInput,
   type JoinRequestDecision,
 } from "./joinRequestCard.js";
-import { renderCard } from "./cardTemplate.js";
+import { appendKeyboardRow, renderCard } from "./cardTemplate.js";
+import { encodeCallback } from "./callbackData.js";
 import { RichMessageSender, type RichMessage } from "./richMessages.js";
 import {
   evaluateConfiguredJoinRules,
@@ -252,6 +253,8 @@ export class NotificationService {
     scope: string,
     channel: NotifyChannel = "join",
   ): void {
+    // 重新订阅 = 撤销之前的退订墓碑（默认开的话题才可能有墓碑）
+    this.topicLevels?.clearOptOut(channel, userId);
     const scopes = this.scopesFor(userId, true);
     const stored = storageScope(channel, scope);
     if (scopes.has(stored)) {
@@ -270,6 +273,11 @@ export class NotificationService {
     scope: string,
     channel: NotifyChannel = "join",
   ): boolean {
+    // 默认开的话题（门槛 >= 平台档下限）必须留退订墓碑：
+    // 否则下次启动 `seedSuperAdminDefaults` 又把它种回来，等于退不掉。
+    if (scope === NOTIFY_SCOPE_ALL && this.topicLevel(channel) >= PLATFORM_LEVEL_MIN) {
+      this.topicLevels?.markOptedOut(channel, userId);
+    }
     const scopes = this.subscriptions.get(userId);
     if (!scopes?.delete(storageScope(channel, scope))) {
       return false;
@@ -397,6 +405,10 @@ export class NotificationService {
         if (this.isSubscribed(userId, NOTIFY_SCOPE_ALL, topic)) {
           continue;
         }
+        // 退订墓碑优先：用户明确关掉过的话题不再种回（否则退订白做）
+        if (this.topicLevels?.isOptedOut(topic, userId) === true) {
+          continue;
+        }
         this.subscribe(userId, NOTIFY_SCOPE_ALL, topic);
         added += 1;
       }
@@ -429,6 +441,39 @@ export class NotificationService {
   }
 
   /**
+   * 这张卡实际是通过哪个范围投给该用户的：订过「全部群」就是「全部群」，
+   * 否则是具体群 —— 卡上的「取消订阅」要退掉真正生效的那一条。
+   */
+  private scopeFor(userId: string, groupId: string, topic: NotifyChannel): string {
+    return this.isSubscribed(userId, NOTIFY_SCOPE_ALL, topic)
+      ? NOTIFY_SCOPE_ALL
+      : groupId;
+  }
+
+  /**
+   * 推送卡底部补一行「取消订阅此通知」（按钮只允许收件人本人点击）。
+   *
+   * 追加不进去（键盘已满 5 行）时原样返回：宁可少一个按钮，也不能让整张通知卡发不出去。
+   * 供本服务与其它投递路径（活动通知）共用，保证「所有通知卡」都有同一个退订入口。
+   */
+  public withUnsubscribeRow(
+    card: RichMessage,
+    topic: NotifyChannel,
+    scope: string,
+    userId: string,
+  ): RichMessage {
+    return appendKeyboardRow(card, [
+      {
+        id: "notifyUnsub",
+        label: "取消订阅",
+        callbackData: encodeCallback("notify", "unsub", topic, scope),
+        permission: { type: 0, specifyUserIds: [userId] },
+        unsupportTips: "当前 QQ 版本不支持按钮，可在 /notify 里取消订阅",
+      },
+    ]);
+  }
+
+  /**
    * 给某个频道的订阅者逐个私信一张卡片（§B7/B8 复用）。
    *
    * - 每人每 key 只投一次（`dedupeId` 写进投递记录的 `request_id` 字段，重启后仍去重）；
@@ -455,6 +500,13 @@ export class NotificationService {
       return summary;
     }
     for (const userId of recipients) {
+      // 每张推送卡底部带「取消订阅此通知」：按该卡话题 + 实际投递范围退订
+      const card = this.withUnsubscribeRow(
+        input.cardFor(userId),
+        input.channel,
+        this.scopeFor(userId, input.groupId, input.channel),
+        userId,
+      );
       const outcome = await this.push.deliver({
         key: `${input.groupId}\u0000${input.dedupeId}\u0000${userId}`,
         userId,
@@ -463,7 +515,7 @@ export class NotificationService {
           channel: input.channel,
           dedupeId: input.dedupeId,
         },
-        send: () => this.sendCard(userId, input.cardFor(userId)),
+        send: () => this.sendCard(userId, card),
         entry: (now, sent) => ({
           groupId: input.groupId,
           requestId: input.dedupeId,
@@ -538,6 +590,12 @@ export class NotificationService {
         recipientId: userId,
         withButtons: this.sender.keyboardAvailable,
       };
+      const card = this.withUnsubscribeRow(
+        buildJoinRequestCard(input),
+        "join",
+        this.scopeFor(userId, push.groupId, "join"),
+        userId,
+      );
       const outcome = await this.push.deliver({
         key: deliveryKey({
           groupId: push.groupId,
@@ -546,7 +604,7 @@ export class NotificationService {
         }),
         userId,
         fields: { groupId: push.groupId, requestId: push.requestId },
-        send: () => this.send(userId, input),
+        send: () => this.sendCard(userId, card),
         entry: (now, sent) => ({
           groupId: push.groupId,
           requestId: push.requestId,

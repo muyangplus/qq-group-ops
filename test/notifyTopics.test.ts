@@ -206,6 +206,7 @@ describe("notifyTopics · 全局存储", () => {
 });
 
 interface Harness {
+  api: FakeQQOfficialAPI;
   notifications: NotificationService;
   store: NotifyTopicLevelStore;
 }
@@ -217,12 +218,31 @@ async function createHarness(): Promise<Harness> {
   await store.load();
   const identityMap = new IdentityMapService();
   identityMap.bindUser("member", "10001");
-  const notifications = new NotificationService(
-    new FakeQQOfficialAPI(),
-    permissionsFixture(),
-    { identityMap, notifyTopics: store, queue },
-  );
-  return { notifications, store };
+  identityMap.bindUser("admin", "10003");
+  const api = new FakeQQOfficialAPI();
+  const notifications = new NotificationService(api, permissionsFixture(), {
+    identityMap,
+    notifyTopics: store,
+    queue,
+  });
+  return { api, notifications, store };
+}
+
+/** 取最后一行按钮的回调 data（推送卡底部的「取消订阅」就在最后一行）。 */
+function lastRowCallback(
+  call: Record<string, unknown> | undefined,
+): string | undefined {
+  const keyboard = call?.keyboard as
+    | {
+        content: {
+          rows: ReadonlyArray<{
+            buttons: ReadonlyArray<{ action: { data: string } }>;
+          }>;
+        };
+      }
+    | undefined;
+  const rows = keyboard?.content.rows ?? [];
+  return rows.at(-1)?.buttons[0]?.action.data;
 }
 
 describe("NotificationService · 订阅与推送同一判据", () => {
@@ -295,5 +315,133 @@ describe("NotificationService · 订阅与推送同一判据", () => {
     store.setLevel("punish", PermissionLevel.GroupAdmin);
     expect(notifications.topicLevel("punish")).toBe(PermissionLevel.GroupAdmin);
     expect(notifications.checkTopicReach("mod", "punish", "g2").ok).toBe(false);
+  });
+});
+
+describe("notifyTopics · 退订墓碑（入库）", () => {
+  it("墓碑落库，重启后仍然生效", async () => {
+    const repository = new FakeGroupSettingsRepository();
+    const queue = new WriteQueue();
+    const first = new NotifyTopicLevelStore(repository, queue);
+    first.markOptedOut("bot_join", "root");
+    await first.flush();
+
+    const restarted = new NotifyTopicLevelStore(repository, new WriteQueue());
+    await restarted.load();
+    expect(restarted.isOptedOut("bot_join", "root")).toBe(true);
+    expect(restarted.isOptedOut("bot_leave", "root")).toBe(false);
+
+    // 清墓碑（重新订阅）后也要落库
+    restarted.clearOptOut("bot_join", "root");
+    await restarted.flush();
+    const third = new NotifyTopicLevelStore(repository, new WriteQueue());
+    await third.load();
+    expect(third.isOptedOut("bot_join", "root")).toBe(false);
+  });
+
+  it("默认开的话题退订后不会被重新种上；重新订阅会清墓碑", async () => {
+    const { notifications, store } = await createHarness();
+    expect(notifications.seedSuperAdminDefaults(["root"])).toBe(5);
+    expect(
+      notifications.isSubscribed("root", NOTIFY_SCOPE_ALL, "bot_join"),
+    ).toBe(true);
+
+    notifications.unsubscribe("root", NOTIFY_SCOPE_ALL, "bot_join");
+    expect(store.isOptedOut("bot_join", "root")).toBe(true);
+    // 「重启」= 再种一次：墓碑挡住，不回来
+    expect(notifications.seedSuperAdminDefaults(["root"])).toBe(0);
+    expect(
+      notifications.isSubscribed("root", NOTIFY_SCOPE_ALL, "bot_join"),
+    ).toBe(false);
+
+    notifications.subscribe("root", NOTIFY_SCOPE_ALL, "bot_join");
+    expect(store.isOptedOut("bot_join", "root")).toBe(false);
+    expect(notifications.seedSuperAdminDefaults(["root"])).toBe(0);
+  });
+
+  it("非默认开的话题退订不写墓碑", async () => {
+    const { notifications, store } = await createHarness();
+    notifications.subscribe("admin", "g1", "join");
+    notifications.unsubscribe("admin", "g1", "join");
+    expect(store.isOptedOut("join", "admin")).toBe(false);
+  });
+});
+
+describe("NotificationService · 卡片底部的「取消订阅此通知」", () => {
+  const card = { markdown: "## 处罚通知", text: "【处罚通知】" };
+
+  it("按具体群订阅推送时，退订回调带群号", async () => {
+    const { api, notifications } = await createHarness();
+    notifications.subscribe("mod", "g2", "punish");
+    await notifications.pushToSubscribers({
+      groupId: "g2",
+      channel: "punish",
+      dedupeId: "punish:#ABC123",
+      cardFor: () => ({ ...card }),
+    });
+
+    expect(lastRowCallback(api.sentPrivateMessages[0])).toBe(
+      "cb:notify:unsub:punish:g2",
+    );
+  });
+
+  it("订阅了「全部群」时，退订回调退回那条实际生效的订阅", async () => {
+    const { api, notifications } = await createHarness();
+    notifications.subscribe("admin", NOTIFY_SCOPE_ALL, "punish");
+    await notifications.pushToSubscribers({
+      groupId: "g1",
+      channel: "punish",
+      dedupeId: "punish:#ABC123",
+      cardFor: () => ({ ...card }),
+    });
+
+    expect(lastRowCallback(api.sentPrivateMessages[0])).toBe(
+      `cb:notify:unsub:punish:${NOTIFY_SCOPE_ALL}`,
+    );
+  });
+
+  it("入群申请推送卡也带退订按钮", async () => {
+    const { api, notifications } = await createHarness();
+    notifications.subscribe("admin", "g1", "join");
+    await notifications.notifyJoinRequest({
+      groupId: "g1",
+      requestId: "r1",
+      userId: "u1",
+      reason: "想加入",
+    });
+
+    expect(lastRowCallback(api.sentPrivateMessages[0])).toBe(
+      "cb:notify:unsub:join:g1",
+    );
+  });
+
+  it("键盘已满 5 行时不追加（宁可少按钮，也不能让卡片发不出去）", async () => {
+    const { api, notifications } = await createHarness();
+    notifications.subscribe("mod", "g2", "punish");
+    const full = {
+      markdown: "## 处罚通知",
+      text: "【处罚通知】",
+      keyboard: {
+        content: {
+          rows: Array.from({ length: 5 }, (_unused, index) => ({
+            buttons: [
+              {
+                id: `slot${index}`,
+                label: "占位",
+                action: { type: 2 as const, data: "/help" },
+              },
+            ],
+          })),
+        },
+      },
+    };
+    await notifications.pushToSubscribers({
+      groupId: "g2",
+      channel: "punish",
+      dedupeId: "punish:#ABC123",
+      cardFor: () => full,
+    });
+
+    expect(lastRowCallback(api.sentPrivateMessages[0])).toBe("/help");
   });
 });

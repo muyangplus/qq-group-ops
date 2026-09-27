@@ -1,7 +1,7 @@
+import { PLATFORM_LEVEL_MIN, PlatformLevel } from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
 import { renderCard, type CardButton } from "../cardTemplate.js";
 import {
-  NOTIFY_CARD_TOPICS,
   NOTIFY_CHANNELS,
   NOTIFY_SCOPE_ALL,
   NOTIFY_TOPIC_META,
@@ -43,20 +43,25 @@ function scopeLabel(ctx: AdminCommandContext, scope: string): string {
     : `群 ${ctx.helpers.groupLabel(scope)}`;
 }
 
+/** 通知中心每页话题数：4 行话题 + 1 行导航 = 卡片 5 行上限。 */
+export const NOTIFY_PAGE_SIZE = 4;
+
 /**
- * 统一订阅菜单。
+ * 通知中心（统一订阅入口）。
  *
- * 群内：每个频道一行「本群 / 全部 / 测试」；私信：只有「全部 / 测试」
- * （要订某个具体群，到那个群里发 `/notify`）。
+ * 每个话题一行：「本群 开/关」「全部 开/关」「测试」；私信里没有「本群」范围，
+ * 平台类话题（门槛 >= 200，与具体群无关）只给「全部 开/关」「测试」。
+ * 超管专属话题只对全局超管显示；每页 4 个话题，底部一行翻页/刷新/帮助。
  */
 export function notifyCard(
   ctx: AdminCommandContext,
   groupId: string | undefined,
   userId: string,
   notice?: string,
-  _channel?: NotifyChannel,
+  page = 1,
 ): CardResult {
-  if (!ctx.notifications) {
+  const notifications = ctx.notifications;
+  if (!notifications) {
     const card = renderCard({
       title: "通知订阅",
       lines: ["推送服务未启用。"],
@@ -65,63 +70,98 @@ export function notifyCard(
     return { ok: false, text: card.text, rich: card };
   }
 
+  const isSuperAdmin = ctx.permissions.meetsGlobal(
+    userId,
+    PlatformLevel.GlobalSuperAdmin,
+  );
+  const visible = NOTIFY_CHANNELS.filter(
+    (topic) =>
+      notifications.topicLevel(topic) < PLATFORM_LEVEL_MIN || isSuperAdmin,
+  );
+  const pageCount = Math.max(1, Math.ceil(visible.length / NOTIFY_PAGE_SIZE));
+  const current = Math.min(Math.max(1, page), pageCount);
+  const topics = visible.slice(
+    (current - 1) * NOTIFY_PAGE_SIZE,
+    current * NOTIFY_PAGE_SIZE,
+  );
+
   const lines = [...ctx.helpers.renderNotice(notice)];
-  for (const channel of NOTIFY_CARD_TOPICS) {
-    const scopes = ctx.notifications.listScopes(userId, channel);
-    const here = groupId !== undefined && scopes.includes(groupId);
+  for (const topic of topics) {
+    const scopes = notifications.listScopes(userId, topic);
     const parts: string[] = [];
     if (groupId !== undefined) {
-      parts.push(`本群 ${here ? "开" : "关"}`);
+      parts.push(`本群 ${scopes.includes(groupId) ? "开" : "关"}`);
     }
     parts.push(`全部 ${scopes.includes(NOTIFY_SCOPE_ALL) ? "开" : "关"}`);
-    lines.push(`**${channelLabel(channel)}**：${parts.join(" · ")}`);
+    lines.push(`**${channelLabel(topic)}**：${parts.join(" · ")}`);
   }
   lines.push(
     "",
     "「全部」= 所有装了机器人的群（绑定是全局的：在一个群绑过 QQ 号即可）。",
-    "入群申请需要群管理员及以上、处罚与申诉需要审核员及以上才会推送给你。",
+    "入群申请需要群管理员及以上、处罚与申诉需要审核员及以上才会推送给你；超管专属话题只有全局超管能看到。",
   );
 
-  const rows: CardButton[][] = [];
-  for (const channel of NOTIFY_CARD_TOPICS) {
-    const meta = NOTIFY_CHANNEL_META[channel];
-    const scopes = ctx.notifications.listScopes(userId, channel);
-    const row: CardButton[] = [];
-    if (groupId !== undefined) {
-      row.push(
-        viewButton(
-          `${channel}ThisGroup`,
-          `${meta.short} 本群`,
-          "notify",
-          "set",
-          channel,
-          groupId,
-          scopes.includes(groupId) ? "off" : "on",
-        ),
-      );
-    }
+  const rows: CardButton[][] = topics.map((topic) =>
+    topicRow(notifications, groupId, userId, topic),
+  );
+  rows.push(navigationRow(current, pageCount));
+
+  return cardFromText(`通知中心（${current}/${pageCount}）`, lines.join("\n"), {
+    rows,
+  });
+}
+
+/** 一个话题一行：群内话题「本群 / 全部 / 测试」，平台类话题「全部 / 测试」。 */
+function topicRow(
+  notifications: NonNullable<AdminCommandContext["notifications"]>,
+  groupId: string | undefined,
+  userId: string,
+  topic: NotifyChannel,
+): CardButton[] {
+  const meta = NOTIFY_CHANNEL_META[topic];
+  const scopes = notifications.listScopes(userId, topic);
+  const platformTopic = notifications.topicLevel(topic) >= PLATFORM_LEVEL_MIN;
+  const row: CardButton[] = [];
+  if (!platformTopic && groupId !== undefined) {
     row.push(
       viewButton(
-        `${channel}AllGroups`,
-        `${meta.short} 全部`,
+        `${topic}ThisGroup`,
+        `${meta.short}本群`,
         "notify",
         "set",
-        channel,
-        NOTIFY_SCOPE_ALL,
-        scopes.includes(NOTIFY_SCOPE_ALL) ? "off" : "on",
+        topic,
+        groupId,
+        scopes.includes(groupId) ? "off" : "on",
       ),
     );
-    row.push(
-      viewButton(`${channel}Test`, "测试", "notify", "test", channel),
-    );
-    rows.push(row);
   }
-  rows.push([
-    viewButton("refresh", "刷新", "notify", "view"),
-    viewButton("help", "指令帮助", "help", "topic", "notify"),
-  ]);
+  row.push(
+    viewButton(
+      `${topic}AllGroups`,
+      `${meta.short}全部`,
+      "notify",
+      "set",
+      topic,
+      NOTIFY_SCOPE_ALL,
+      scopes.includes(NOTIFY_SCOPE_ALL) ? "off" : "on",
+    ),
+  );
+  row.push(viewButton(`${topic}Test`, "测试", "notify", "test", topic));
+  return row;
+}
 
-  return cardFromText("通知订阅", lines.join("\n"), { rows });
+/** 底部导航行：翻页 + 刷新 + 帮助。 */
+function navigationRow(current: number, pageCount: number): CardButton[] {
+  const row: CardButton[] = [];
+  if (current > 1) {
+    row.push(viewButton("prev", "上一页", "notify", "view", current - 1));
+  }
+  if (current < pageCount) {
+    row.push(viewButton("next", "下一页", "notify", "view", current + 1));
+  }
+  row.push(viewButton("refresh", "刷新", "notify", "view", current));
+  row.push(viewButton("help", "指令帮助", "help", "topic", "notify"));
+  return row;
 }
 
 /** 回调：订阅开关（`cb:notify:set:<频道>:<范围>:<on|off>`）。 */
@@ -181,6 +221,42 @@ function canSubscribe(
     return { ok: false, reason: "推送服务未启用。" };
   }
   return ctx.notifications.checkTopicReach(userId, channel, scope);
+}
+
+/**
+ * 回调：`cb:notify:unsub:<话题>:<范围>` —— 推送卡底部的「取消订阅此通知」。
+ *
+ * 退订立刻生效（不再弹二次确认），回执卡附「重新订阅」按钮防误点；
+ * 默认开的话题同时落一行退订墓碑，重启不会被重新种上。
+ */
+export function notifyUnsubscribeCard(
+  ctx: AdminCommandContext,
+  topic: string,
+  scope: string,
+  userId: string,
+  replyGroupId?: string,
+): CardResult {
+  if (!ctx.notifications || !isNotifyChannel(topic) || scope.length === 0) {
+    return notifyCard(ctx, undefined, userId);
+  }
+  const removed = ctx.notifications.unsubscribe(userId, scope, topic);
+  const label = `${channelLabel(topic)} · ${scopeLabel(ctx, scope)}`;
+  const notice = ctx.helpers.mention(replyGroupId, userId);
+  const card = renderCard({
+    title: "取消订阅",
+    lines: [
+      `${notice}${removed ? `已取消：${label}。` : `${label} 本来就是关闭的。`}`,
+      "",
+      "误点了可以点「重新订阅」，或随时用 `/notify` 打开通知中心。",
+    ],
+    rows: [
+      [
+        viewButton("resub", "重新订阅", "notify", "set", topic, scope, "on"),
+        viewButton("back", "通知中心", "notify", "view"),
+      ],
+    ],
+  });
+  return { ok: true, text: card.text, rich: card };
 }
 
 /** `/notify`：打开统一订阅菜单；`/notify test [频道]` 直接自检某个频道。 */

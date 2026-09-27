@@ -680,7 +680,23 @@ export function createRuntime(
           );
           return card.rich;
         }
-        return adminCommands.notifyCard(event.groupId, userId).rich;
+        // 推送卡底部的「取消订阅此通知」：`cb:notify:unsub:<话题>:<范围>`
+        if (parsed.action === "unsub") {
+          const [topic, scope] = parsed.args;
+          if (!topic || !scope) {
+            return undefined;
+          }
+          return adminCommands.notifyUnsubscribeCard(
+            topic,
+            scope,
+            userId,
+            event.groupId,
+          ).rich;
+        }
+        // 其余动作（`view` / 未知）都回到通知中心；`view` 可带页码
+        const page = parsed.action === "view" ? pageArg(parsed.args) : undefined;
+        return adminCommands.notifyCard(event.groupId, userId, undefined, page)
+          .rich;
       },
     ],
     [

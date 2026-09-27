@@ -60,6 +60,7 @@ import {
   notifyCard,
   notifyTestCard,
   notifyToggleCard,
+  notifyUnsubscribeCard,
 } from "./commands/notifyCommands.js";
 import {
   blacklistCard,
@@ -756,9 +757,25 @@ export class AdminCommandService {
     groupId: string | undefined,
     userId: string,
     notice?: string,
-    channel?: NotifyChannel,
+    page?: number,
   ): CardResult {
-    return notifyCard(this.context(), groupId, userId, notice, channel);
+    return notifyCard(this.context(), groupId, userId, notice, page);
+  }
+
+  /** 回调：`cb:notify:unsub:<话题>:<范围>` —— 推送卡底部的「取消订阅」。 */
+  public notifyUnsubscribeCard(
+    topic: string,
+    scope: string,
+    userId: string,
+    replyGroupId?: string,
+  ): CardResult {
+    return notifyUnsubscribeCard(
+      this.context(),
+      topic,
+      scope,
+      userId,
+      replyGroupId,
+    );
   }
 
   /** 回调：`cb:notify:set:<频道>:<范围>:<on|off>`。 */
