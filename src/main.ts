@@ -278,11 +278,23 @@ function buildWebhookGateway(
   });
 }
 
-/** 机器人自身的群变动：入群（被拉进去）/ 被移出群 —— 没有域内处理，但要通知超管。 */
-const BOT_MEMBERSHIP_EVENTS: Record<string, "added" | "removed"> = {
+/**
+ * 机器人/群成员变动：
+ *
+ * - `GROUP_ADD_ROBOT` = **机器人被拉进群**；
+ * - `GROUP_DEL_ROBOT` = **机器人被移出群**（带 `op_member_openid` 操作人）；
+ * - `GROUP_MEMBER_ADD` = **群成员加入**（payload 只有 `group_openid` + `member_openid`，
+ *   没有操作人字段）—— **不是**「机器人入群」：机器人自己入群走 `GROUP_ADD_ROBOT`。
+ *   ⚠️ 待真机核对：若把机器人拉进测试群时也收到 `GROUP_MEMBER_ADD`（机器人也是成员），
+ *   说明它还会因机器人入群触发，届时应只在 `member_openid` 不是机器人时按「成员加入」处理。
+ */
+const BOT_MEMBERSHIP_EVENTS: Record<
+  string,
+  "added" | "removed" | "member_added"
+> = {
   GROUP_ADD_ROBOT: "added",
-  GROUP_MEMBER_ADD: "added",
   GROUP_DEL_ROBOT: "removed",
+  GROUP_MEMBER_ADD: "member_added",
 };
 
 /**
@@ -360,12 +372,16 @@ async function alertUnknownEvent(
         ? "机器人入群"
         : membership === "removed"
           ? "机器人被移出群"
-          : "未知事件类型",
+          : membership === "member_added"
+            ? "群成员加入"
+            : "未知事件类型",
     lines,
     footer: [
-      membership
+      membership === "added" || membership === "removed"
         ? "如需配置本群规则 / 推送，请在群内发送 /status 或 /rules 查看当前状态。"
-        : "该事件类型目前没有被机器人处理；如需支持请告知开发者。",
+        : membership === "member_added"
+          ? "群成员加入事件可用于迎新（欢迎语 / 提示看群规）；需要启用请告知开发者。"
+          : "该事件类型目前没有被机器人处理；如需支持请告知开发者。",
     ],
   });
   for (const userId of admins) {
