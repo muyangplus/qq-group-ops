@@ -253,6 +253,76 @@ Phase 2 → E1、E2、B4、B5、B6；Phase 3 → E3–E5；Phase 4 → D6–D9�
 > **真机待确认项**：见 [docs/REAL-MACHINE-CHECKLIST.md](./docs/REAL-MACHINE-CHECKLIST.md)（R1–R18，跑完把观察结果贴回来即可收尾）；
 > **一次跑完**：照 [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md)（准备清单 + 执行顺序 + 一键取证命令 + 回填模板）。
 
+## H. 权限等级数值化 + 通知中心（0.19.0 计划）
+
+> 用户口径（已确认）：等级数值**留间隙**；`Blacklisted` **只作为门槛档位、不改现有行为**；
+> 话题门槛**全局一套**（超管配）；迎新**仅群内**；超管专属话题**默认开**（可关）；
+> **不加**群级/全局默认层（依然是「谁订阅谁收」）。
+
+### H1 权限等级数值化（地基）✅ 已推送
+
+- [x] `PermissionLevel` 改为**数值即等级**：群内 `-1 拉黑 / 0 未绑定 / 110 群成员 / 120 审核员 / 130 群管理员 / 140 本群超管`，
+      平台 `210 平台用户 / 220 全局审核员 / 230 全局管理员 / 240 全局超管`；`PLATFORM_OFFSET = 100`、`PLATFORM_LEVEL_MIN = 200`。
+- [x] **两轴分离**：群内档 `GroupLevel = -1|0|110|120|130|140`（字面量联合）、平台档 `PlatformLevel`（带品牌，仅 200..299），
+      错档传参**编译不过**；跨轴折算固定 `-100`：群内生效档 = `max(群内档, 平台档 - 100)`，
+      所以平台角色**压不过**本群超管（240 折 140、220 折 120）。
+- [x] 统一入口：`meetsInGroup(userId, groupId, GroupLevel)` / `meetsGlobal(userId, PlatformLevel)`（**不做折算**）/ `meetsAnywhere(userId, level)`；
+      `levelFor()` 只作展示与兼容；`拉黑 -1` 仅作门槛档位，**拦截行为不变**。
+
+### H2 全量权限点梳理 ✅ 已完成（102 处改写，未推送前先本地复核）
+
+| 能力 | 门槛（数值化后） | 主要调用点 |
+|---|---|---|
+| 入群审批 `/approve` `/reject` `/pending` `/sync` | 130 | `reviewCommands`(9)、`bindCommands`、`activityCardCommands`、`activityCommands`、`notifications.sendTestCard` |
+| 规则管理 `/rules …` | 130 | `ruleCommands`(22)、`permCommands` |
+| 内容审核 `/punish` 处罚动作、申诉处理 | 120 | `punishCommands`(4)、`appealCommands`、`blacklistCommands`(5)、`statusCommands`、`testCommands` |
+| 黑名单（本群 120 / 全局 240） | 120 / 240 | `blacklistCommands`(3 处全局特判 → `meetsGlobal`) |
+| 导出 `/export audit` | 130 | `exportCommands`、`export.ts`(2) |
+| 平台级（`/whois`、`/perm`、测试菜单、别名、全局规则、全局黑名单、`/bind groupid`） | 240 | `whoisCommands`、`permCommands`(4)、`testMenu`、`testCommands`(2)、`aliasCommands`、`ruleCommands`(全局分支 6)、`bindCommands`(2)、`menu.ts` |
+| 帮助可见性（按角色摘条目） | 120 / 130 / 240 | `helpTopics`(6)、`helpCommands`(4)、`menu.ts` 的 `access` 计算 |
+| 入群推送订阅 | 130 | `notifications.ts`、`notifyCommands.ts` |
+| 处罚/申诉推送订阅 | 120 | 同上 |
+| 活动通知订阅 | -1（不限权限，全部群需绑定） | `notifications.ts`、`activityNotifications` |
+| 关键词豁免（审核员消息不判） | 120 | `messageGuard.ts` |
+
+- [x] 逐项把上表里的 `isSuperAdmin() || canXxx()` 手写组合**并入数值门槛**（`-1` 档位可用于「谁都能订」）；
+- [x] 复核「黑名单用户」在各入口的表现（**不改行为**，只在 ADR 里记录「-1 是保留档位」）。
+- [ ] 遗留收敛（H7 一起做，纯粹为可读性）：`/rules … all` 的 target 是 `__default__` 伪群，
+      现在走 `meetsInGroup(__default__, 130)`（实际只有 240 能过），可显式拆成 `meetsGlobal(240)`；运行期无差别。
+- [ ] `permissions.ts` 里的兼容入口（`hasAtLeast` / `meets` / `canApproveJoin` / `canReviewContent` / `canManageRules` /
+      `canExportData` / `hasAnyGroupRole` / `isSuperAdmin` / `listReviewableGroups` / `listModeratedGroups`）保留但**不再被命令层调用**，
+      H7 决定是删除还是标注 `@deprecated`。
+
+### H3 通知话题与门槛配置（全局一套）
+
+- [ ] 话题枚举：`join / punish / activity / bot_join / bot_leave / friend / member_join / unknown_event`；
+- [ ] 每个话题一个 `requiredLevel`，存 `group_settings` 的全局行（`__default__` + 键 `notifyTopicLevels`），超管在通知中心改，改一次全群生效；
+- [ ] 默认值 = 现口径：入群 130、处罚与申诉 120、活动 -1（不限）、超管类 240；订阅与推送**各判一次**（同一份判据，禁止两处各写一遍）；
+- [ ] 超管类话题「默认开」：启动时为现有全局超管写入订阅行；退订即删行（新提拔超管重启后生效，不额外加运行期钩子）。
+
+### H4 通知中心多选面板 + 退订按钮
+
+- [ ] `/notify` 改成**像「违规处理」那样的多选开关卡**（每话题一行开关，标签带当前状态，点一下切换并刷新同一张卡；超管专属话题只对超管显示；每话题一个「测试」）；
+- [ ] **所有通知卡底部加「取消订阅此通知」**：按该卡话题 + 收到范围退订，回确认卡并附「重新订阅」按钮防误点。
+
+### H5 迎新（仅群内）+ `GROUP_MEMBER_ADD`
+
+- [ ] 群配置新增 `welcomeEnabled`（默认关）+ `welcomeMessage`（支持 `{成员}` 占位）；**不做私信欢迎**；
+- [ ] `GROUP_MEMBER_ADD` 触发时：纯文本通道 @新成员 + 一张欢迎卡；任一步失败只记日志；
+- [ ] 面板入口「群规则 → 更多设置」；指令 `/rules set welcome on|off`、`/rules set welcomeMessage <文案>`；
+- [ ] ⚠️ 待真机核对：拉机器人进测试群是否也会收到 `GROUP_MEMBER_ADD`；若是，判据加「`member_openid` ≠ 机器人自己」。
+
+### H6 事件类话题接入
+
+- [ ] `GROUP_ADD_ROBOT` / `GROUP_DEL_ROBOT` / `FRIEND_ADD` / `FRIEND_DEL` / `GROUP_MEMBER_ADD` / 未知事件 从「硬编码通知超管」改为**走话题订阅**（默认超管开）；
+- [ ] 未知事件保持「每类型只通知一次」；其余每次变动都通知。
+
+### H7 文档与验收
+
+- [ ] ADR：权限数值化（含 `-1` 档位说明）+ 通知中心（话题/门槛/退订口径）；
+- [ ] `docs/COMMANDS.md`（`/notify` 新形态、迎新指令）、`docs/CONFIGURATION.md`（如需新 env）、`CHANGELOG`；
+- [ ] `helpTopics` / `menu` 的可见性计算改为按数值门槛输出。
+
 ## G. 已完成（归档，细节见 CHANGELOG）
 
 - [x] **0.14.0** 批次 4 前半：B1 消息侧正则 + 用户白名单 · B6 审核日志导出（脱敏 + 只私信）
