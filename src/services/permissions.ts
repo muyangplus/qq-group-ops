@@ -1,4 +1,9 @@
-import { PermissionLevel } from "../core/enums.js";
+import {
+  PermissionLevel,
+  PLATFORM_LEVEL_MIN,
+  PlatformLevel,
+  type GroupLevel,
+} from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import type {
   PermissionGrant,
@@ -123,12 +128,41 @@ export class PermissionService {
   }
 
   /**
-   * 是否达到某等级：**数值即等级**，直接比较（等级定义见 `core/enums.ts`）。
+   * 群内判定：`max(全局档, 本群档)` —— 全局超管（1000）天然覆盖所有群内门槛。
    *
-   * 这是全项目唯一的权限判定入口 —— 新能力一律传自己的「最低等级」，
-   * 不要再写 `isSuperAdmin(userId) || canXxx(...)` 这种手写组合
-   * （超管 40 天然覆盖所有更低门槛）。
+   * 平台级能力**不要**用它，用 `meetsGlobal`。
    */
+  public meetsInGroup(
+    userId: string,
+    groupId: string | undefined,
+    required: GroupLevel,
+  ): boolean {
+    return this.levelFor(userId, groupId) >= required;
+  }
+
+  /** 只取全局档：全局超管 1000，其它 0（不看任何群内角色）。 */
+  public globalLevelOf(userId: string): PlatformLevel | 0 {
+    return this.superAdminIds.has(userId)
+      ? PlatformLevel.GlobalSuperAdmin
+      : 0;
+  }
+
+  /**
+   * 平台级判定（唯一入口）：`/whois`、`/perm`、全局规则 / 黑名单、`/bind groupid` …
+   *
+   * 参数类型是 `PlatformLevel`（100..9999），传入群内档位（10/20/30/40）**编译不过**；
+   * 运行期再挡一层：门槛必须 >= `PLATFORM_LEVEL_MIN`（100），防止有人绕类型硬塞小数值。
+   */
+  public meetsGlobal(userId: string, required: PlatformLevel): boolean {
+    if (required < PLATFORM_LEVEL_MIN) {
+      throw new Error(
+        `平台级门槛必须 >= ${PLATFORM_LEVEL_MIN}（收到 ${required}）；群内档位请用 meetsInGroup`,
+      );
+    }
+    return this.globalLevelOf(userId) >= required;
+  }
+
+  /** 兼容入口（旧调用点用常量数值）：等价于 `meetsInGroup`。 */
   public hasAtLeast(
     userId: string,
     groupId: string | undefined,
@@ -137,7 +171,7 @@ export class PermissionService {
     return this.levelFor(userId, groupId) >= required;
   }
 
-  /** 语义化别名：`meets(user, group, PermissionLevel.Moderator)` 读起来更直白。 */
+  /** 语义化别名：`meets(user, group, PermissionLevel.Moderator)`。 */
   public meets(
     userId: string,
     groupId: string | undefined,

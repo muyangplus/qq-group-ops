@@ -45,13 +45,16 @@ export const JoinRequestStatus = {
 export type JoinRequestStatus = (typeof JoinRequestStatus)[keyof typeof JoinRequestStatus];
 
 /**
- * 权限等级：**数值即等级**，留 10 的间隙便于以后插档（如 15 = 值班审核员），
- * 插入新档不用改动已有数值与历史数据。
+ * 权限等级：**数值即等级**，并分成两段互不重叠的区间 —— 这是「全局 / 群内」区分的硬保障：
  *
- * - 判定统一走 `PermissionService.meets(userId, groupId, level)`（数值比较），
- *   不要再写 `isSuperAdmin() || canXxx()` 这种手写组合；
- * - `Blacklisted`（-10）目前**只作为「门槛」的一个可选档位**，不改变黑名单的拦截行为
- *   （拉黑拦截仍在 BlacklistService / 入群审核里做）。
+ * - **群内档 `1..99`**（`GroupLevel`）：成员 10 / 审核员 20 / 群管理员 30 / 本群超管 40；
+ * - **平台档 `100..9999`**（`PlatformLevel`，**起点 100**）：全局超管取高位 **1000**，
+ *   中间（100…999）留给以后的平台角色（平台审计 110 / 平台运营 120 / 只读平台管理员 …）——
+ *   全局超管是平台档里的**高位**而不是起点，这样新平台角色可以排在它下面。
+ *
+ * 于是：`meetsInGroup`（群内，走「本群 + 全局取最大」）天然容忍全局超管；
+ * `meetsGlobal`（平台级）**永远不可能**被群内档位满足（40 < 100，差一个数量级），
+ * 反之传错类型也会**编译不过**（两个档位是不同的类型）。
  */
 export const PermissionLevel = {
   /** 拉黑档位（-10）：任何带门槛 >= Guest 的能力都过不了。 */
@@ -64,10 +67,30 @@ export const PermissionLevel = {
   Moderator: 20,
   /** 群管理员：入群审批、规则管理、导出。 */
   GroupAdmin: 30,
-  /** **本群**超级管理员：仅在该群内拥有最高权限。 */
+  /** **本群**超级管理员（群内档最高）。 */
   SuperAdmin: 40,
-  /** **全局**超级管理员：平台级能力（与 40 的本群超管区分开）。 */
-  GlobalSuperAdmin: 99,
+  /** **全局**超级管理员（平台档高位，不是起点）。 */
+  GlobalSuperAdmin: 1000,
+} as const;
+
+/** 群内档位取值（1..99，含门槛用的 -10 / 0）。 */
+export type GroupLevel = -10 | 0 | 10 | 20 | 30 | 40;
+
+/** 平台档**起点**：平台角色一律 >= 100，与群内档（<= 40）相隔一个数量级。 */
+export const PLATFORM_LEVEL_MIN = 100;
+
+declare const platformLevelBrand: unique symbol;
+/**
+ * 平台档位取值（100..9999）。
+ *
+ * 用 branded number 而不是字面量联合：平台档是一个**区间**（以后加 110 / 120 … 不用改类型），
+ * 同时保证 `meetsInGroup(user, group, 1000)` 这类笔误**编译不过**。
+ */
+export type PlatformLevel = number & { readonly [platformLevelBrand]: "platform" };
+
+/** 平台档常量（新增平台角色时在这里加一项，并给它一个 100..999 之外的合适值）。 */
+export const PlatformLevel = {
+  GlobalSuperAdmin: 1000 as PlatformLevel,
 } as const;
 /**
  * 权限等级的**类型**直接就是数值：留间隙、可插档（见上面的常量表）。
