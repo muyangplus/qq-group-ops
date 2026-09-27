@@ -366,7 +366,7 @@ function superCard(context: MenuContext): CardSpec {
         cmdButton("alias", "别名表", "/alias"),
       ],
       [
-        cmdButton("notify", "通知订阅", "/notify"),
+        cmdButton("notify", "通知中心", "/notify"),
         cmdButton("notifyTest", "推送自检", "/notify test"),
         cmdButton("testmenu", "翻页测试", "/testmenu"),
       ],
