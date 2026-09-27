@@ -76,6 +76,7 @@ import { MessageGuardService } from "./services/messageGuard.js";
 import { ModerationNotifier } from "./services/moderationNotifier.js";
 import { RuleEngine } from "./services/moderation.js";
 import { NotificationService } from "./services/notifications.js";
+import { NotifyTopicLevelStore } from "./services/notifyTopics.js";
 import { PermissionService } from "./services/permissions.js";
 import { PunishmentService } from "./services/punishments.js";
 import { RichMessageSender } from "./services/richMessages.js";
@@ -101,6 +102,8 @@ export interface Runtime {
   classAliases: ClassAliasService;
   exportService: ExportService;
   notifications: NotificationService;
+  /** 通知话题门槛（全局一套，存 `group_settings.__default__`）。 */
+  notifyTopics: NotifyTopicLevelStore;
   /** §A5 黑名单（本群 / 全局）。 */
   blacklist: BlacklistService;
   /** §B7 处罚记录与卡片动作。 */
@@ -227,6 +230,10 @@ export function createRuntime(
   const exportService = new ExportService(permissions, auditLog);
   const joinRules = new JoinRuleEvaluator();
   const joinSync = new JoinRequestSyncService(api, joinAudit);
+  const notifyTopics = new NotifyTopicLevelStore(
+    repositories.groupSettings,
+    writeQueue,
+  );
   const notifications = new NotificationService(api, permissions, {
     subscriptions: repositories.notificationSubscriptions,
     deliveries: repositories.notificationDeliveries,
@@ -235,6 +242,7 @@ export function createRuntime(
     display,
     configStore,
     joinRules,
+    notifyTopics,
     sender: richMessages,
   });
   // §A5 黑名单：本群踢人 + 官方群拉黑；全局黑名单踢出所有绑定群。
@@ -788,11 +796,14 @@ export function createRuntime(
     await auditLog.load();
     await joinAudit.load();
     await configStore.load();
+    await notifyTopics.load();
     await permissions.load();
     await groupMessageMode.load();
     await activity.load();
     await activityNotifications.load();
     await notifications.load();
+    // 超管专属话题「默认开」：给现有全局超管补订阅行（幂等，不覆盖已有状态）
+    notifications.seedSuperAdminDefaults(permissions.listSuperAdmins());
     await blacklist.load();
     await punishments.load();
     await appeals.load();
@@ -826,6 +837,7 @@ export function createRuntime(
     classAliases,
     exportService,
     notifications,
+    notifyTopics,
     blacklist,
     punishments,
     appeals,
@@ -848,6 +860,7 @@ export function createRuntime(
     load,
     flush: async () => {
       await writeQueue.flush();
+      await notifyTopics.flush();
       await activityNotifications.flush();
     },
   };

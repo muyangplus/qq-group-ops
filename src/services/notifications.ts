@@ -1,6 +1,7 @@
 import type { QQOfficialAPI } from "../adapters/qqOfficial.js";
 import {
   NotificationDeliveryStatus,
+  PLATFORM_LEVEL_MIN,
   PermissionLevel,
 } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
@@ -12,6 +13,14 @@ import type {
   NotificationSubscriptionRepository,
 } from "../db/notificationRepository.js";
 import { WriteQueue } from "../db/writeQueue.js";
+import {
+  meetsNotifyLevel,
+  NOTIFY_CHANNELS,
+  NOTIFY_SCOPE_ALL,
+  NOTIFY_TOPIC_META,
+  type NotifyChannel,
+  type NotifyTopicLevelStore,
+} from "./notifyTopics.js";
 import type { GroupConfigStore } from "./groupConfig.js";
 import type { DisplayNameService } from "./displayNames.js";
 import type { IdentityMapService } from "./identityMap.js";
@@ -37,26 +46,13 @@ import {
 
 const log = getLogger("notifications");
 
-/** 订阅范围：`__all__` 表示「我担任审核员的所有群」，否则是 group_openid。 */
-export const NOTIFY_SCOPE_ALL = "__all__";
-
 /**
- * 推送频道（统一订阅模型的三个频道）：
- * - `join`：入群申请待审批 / 自动处理结果；
- * - `punish`：机器人处罚事件 + 申诉派发与结果；
- * - `activity`：新活动发布（原 `/activity subscribe`，已并入统一菜单）。
- *
- * 三个频道共用 `notification_subscriptions` 一张表，存储键统一为 `频道:范围`
- * （`join:__all__` / `activity:<group_openid>` …），由 `migrate()` 一次性归一化老数据，
- * 业务代码里不再有「无前缀就是 join」这种隐式约定。
+ * 订阅范围（`__all__` / group_openid）与话题枚举统一定义在 `notifyTopics.ts`
+ * （那里还有默认门槛与推送/订阅共用的唯一判据），这里只做转出，
+ * 保持既有 `from "./notifications.js"` 的导入不变。
  */
-export type NotifyChannel = "join" | "punish" | "activity";
-
-export const NOTIFY_CHANNELS: readonly NotifyChannel[] = [
-  "join",
-  "punish",
-  "activity",
-];
+export { NOTIFY_CHANNELS, NOTIFY_SCOPE_ALL } from "./notifyTopics.js";
+export type { NotifyChannel } from "./notifyTopics.js";
 
 const channelPrefix = (channel: NotifyChannel): string => `${channel}:`;
 
@@ -110,6 +106,8 @@ export interface NotificationServiceOptions {
   /** 用于在卡片里附带审核意见。 */
   configStore?: GroupConfigStore | undefined;
   joinRules?: JoinRuleEvaluator | undefined;
+  /** 话题门槛（全局一套，存 `__default__`）；缺省时用内置默认门槛。 */
+  notifyTopics?: NotifyTopicLevelStore | undefined;
   /** 自定义富消息发送器；缺省时用 api 现建一个。 */
   sender?: RichMessageSender | undefined;
   now?: (() => Date) | undefined;
@@ -134,6 +132,8 @@ export class NotificationService {
   private readonly display: DisplayNameService | undefined;
   private readonly configStore: GroupConfigStore | undefined;
   private readonly joinRules: JoinRuleEvaluator | undefined;
+  /** 话题门槛存储（缺省时用内置默认值，推送与订阅仍走同一份判据）。 */
+  private readonly topicLevels: NotifyTopicLevelStore | undefined;
   private readonly now: () => Date;
   /** 富消息发送器（Markdown + 按钮 + 三级降级），与活动卡片共用。 */
   private readonly sender: RichMessageSender;
@@ -155,6 +155,7 @@ export class NotificationService {
     this.display = options.display;
     this.configStore = options.configStore;
     this.joinRules = options.joinRules;
+    this.topicLevels = options.notifyTopics;
     this.now = options.now ?? (() => utcNow());
     this.sender = options.sender ?? new RichMessageSender(api);
     this.push = new PushService({
@@ -293,7 +294,8 @@ export class NotificationService {
   /**
    * 订阅了该群（或「全部群」）且**有收件资格**的人（见 `canReceive`）。
    *
-   * 三个频道共用这张订阅表，资格判定集中在 `canReceive` 一处，避免各频道各写一套。
+   * 所有话题共用这张订阅表，资格判定集中在 `canReceive`（推送）与 `checkTopicReach`
+   * （订阅）两处，但两者走的是同一份门槛判据。
    */
   public subscribersFor(
     groupId: string,
@@ -317,12 +319,11 @@ export class NotificationService {
   }
 
   /**
-   * 收件人资格（订阅之外的第二道门）：
+   * 收件人资格（订阅之外的第二道门）：门槛统一由 `meetsNotifyLevel` 决定，
+   * 与订阅路径（`checkTopicReach`）**共用同一份判据**，避免「订阅成功却永远收不到」。
    *
-   * - `join`：入群审批权限（群管理员或以上）；
-   * - `punish`：内容审核权限（审核员或以上）；
-   * - `activity`：**不限权限**；订阅「全部群」时要求已绑定 QQ 号
-   *   （绑定是全局的：在一个群里绑过，所有机器人所在的群都算，用户确认的口径）。
+   * 推送始终按**具体群**判定（订阅了「全部群」也要在该群有角色，与历史行为一致）；
+   * 平台档话题（>= 200）只看全局角色，不受群上下文影响。
    */
   private canReceive(
     userId: string,
@@ -330,22 +331,93 @@ export class NotificationService {
     channel: NotifyChannel,
     viaAll: boolean,
   ): boolean {
-    switch (channel) {
-      case "join":
-        return this.permissions.meetsInGroup(
-          userId,
-          groupId,
-          PermissionLevel.GroupAdmin,
-        );
-      case "punish":
-        return this.permissions.meetsInGroup(
-          userId,
-          groupId,
-          PermissionLevel.Moderator,
-        );
-      case "activity":
-        return viaAll ? this.isBound(userId) : true;
+    if (!this.meetsTopicLevel(userId, channel, groupId)) {
+      return false;
     }
+    // 历史口径：活动通知订阅「全部群」时要求已绑定 QQ 号
+    if (NOTIFY_TOPIC_META[channel].requiresBindingForAll === true && viaAll) {
+      return this.isBound(userId);
+    }
+    return true;
+  }
+
+  /** 话题当前门槛（全局一套；通知中心展示用）。 */
+  public topicLevel(topic: NotifyChannel): number {
+    return (
+      this.topicLevels?.levelOf(topic) ?? NOTIFY_TOPIC_META[topic].defaultLevel
+    );
+  }
+
+  /**
+   * 订阅资格：与推送资格（`canReceive`）共用同一份门槛判据。
+   *
+   * `scope` 是用户点的范围：具体群按该群折算判定；「全部群」按「全局超管，或至少在
+   * 某个群达到该档」判定 —— 与推送侧「按具体群判定」的范围语义差异是**历史行为**，
+   * 门槛本身两边完全一致。
+   */
+  public checkTopicReach(
+    userId: string,
+    topic: NotifyChannel,
+    scope: string,
+  ): { ok: boolean; reason: string } {
+    const level = this.topicLevel(topic);
+    if (!this.meetsTopicLevel(userId, topic, scope)) {
+      return { ok: false, reason: topicReachReason(topic, scope, level) };
+    }
+    if (
+      NOTIFY_TOPIC_META[topic].requiresBindingForAll === true &&
+      scope === NOTIFY_SCOPE_ALL &&
+      !this.isBound(userId)
+    ) {
+      return {
+        ok: false,
+        reason: "订阅「全部群」的活动通知需要先绑定 QQ 号（/bind）。",
+      };
+    }
+    return { ok: true, reason: "" };
+  }
+
+  /**
+   * 超管专属话题（当前门槛 >= 平台档下限）「默认开」：启动时给现有全局超管补订阅行。
+   *
+   * 幂等：已有行不动（不覆盖用户已有的状态）；退订 = 删行。注意「退订后重启会被重新
+   * 种上」是「默认开 + 不加默认订阅层」的必然结果 —— H4 的「取消订阅此通知」按钮若要
+   * 真正生效，需要一个退订墓碑（本轮不做，已在 TODO 里记录）。
+   */
+  public seedSuperAdminDefaults(userIds: readonly string[]): number {
+    const topics =
+      this.topicLevels?.superAdminTopics() ??
+      NOTIFY_CHANNELS.filter(
+        (topic) =>
+          NOTIFY_TOPIC_META[topic].defaultLevel >= PLATFORM_LEVEL_MIN,
+      );
+    let added = 0;
+    for (const topic of topics) {
+      for (const userId of userIds) {
+        if (this.isSubscribed(userId, NOTIFY_SCOPE_ALL, topic)) {
+          continue;
+        }
+        this.subscribe(userId, NOTIFY_SCOPE_ALL, topic);
+        added += 1;
+      }
+    }
+    if (added > 0) {
+      log.info("seeded super admin notification defaults", { added });
+    }
+    return added;
+  }
+
+  private meetsTopicLevel(
+    userId: string,
+    topic: NotifyChannel,
+    scope: string,
+  ): boolean {
+    return meetsNotifyLevel(
+      this.permissions,
+      userId,
+      this.topicLevel(topic),
+      scope,
+    );
   }
 
   /** 是否已绑定 QQ 号（没有身份库时按「已绑定」处理，保持测试与单机用法可用）。 */
@@ -661,4 +733,25 @@ function deliveryKey(input: {
   userId: string;
 }): string {
   return `${input.groupId}\u0000${input.requestId}\u0000${input.userId}`;
+}
+
+/** 订阅被拒时给人看的原因（门槛本身由 `meetsNotifyLevel` 判定）。 */
+function topicReachReason(
+  topic: NotifyChannel,
+  scope: string,
+  level: number,
+): string {
+  if (topic === "join") {
+    return "权限不足：入群申请推送只发给群管理员及以上。";
+  }
+  if (topic === "punish") {
+    return "权限不足：处罚与申诉推送只发给审核员及以上。";
+  }
+  if (level >= PLATFORM_LEVEL_MIN) {
+    return "权限不足：该通知只发给全局超级管理员。";
+  }
+  if (scope === NOTIFY_SCOPE_ALL) {
+    return "权限不足：订阅「全部群」需要你是全局超管，或至少在某个群达到该档位。";
+  }
+  return "权限不足：你在此群的权限不够接收该通知。";
 }

@@ -1,11 +1,12 @@
-import { PermissionLevel, PlatformLevel } from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
 import { renderCard, type CardButton } from "../cardTemplate.js";
 import {
+  NOTIFY_CARD_TOPICS,
   NOTIFY_CHANNELS,
   NOTIFY_SCOPE_ALL,
+  NOTIFY_TOPIC_META,
   type NotifyChannel,
-} from "../notifications.js";
+} from "../notifyTopics.js";
 import type { AdminCommandContext } from "./context.js";
 import {
   cardFromText,
@@ -19,30 +20,13 @@ const log = getLogger("notify-commands");
 /**
  * 统一通知订阅菜单（重构后唯一入口）。
  *
- * 三个频道共用一张 `notification_subscriptions` 表（存储键 `频道:范围`），
+ * 所有话题共用一张 `notification_subscriptions` 表（存储键 `话题:范围`），
  * 订阅只通过**这张卡的按钮**完成：老的 `/notify on|off|all|<群>|punish` 与
  * `/activity subscribe|unsubscribe` 已删除，不做兼容。
+ *
+ * 话题元数据（标签 / 默认门槛 / 附加要求）统一在 `notifyTopics.ts`，这里只是转出。
  */
-export const NOTIFY_CHANNEL_META: Record<
-  NotifyChannel,
-  { label: string; short: string; hint: string }
-> = {
-  join: {
-    label: "入群申请",
-    short: "入群",
-    hint: "有新的待处理入群申请（或自动处理结果）时私信你",
-  },
-  punish: {
-    label: "处罚与申诉",
-    short: "处罚",
-    hint: "关键词处罚、申诉派发与申诉结果私信你",
-  },
-  activity: {
-    label: "活动通知",
-    short: "活动",
-    hint: "群里有新活动发布时私信你",
-  },
-};
+export const NOTIFY_CHANNEL_META = NOTIFY_TOPIC_META;
 
 export function isNotifyChannel(value: string | undefined): value is NotifyChannel {
   return (NOTIFY_CHANNELS as readonly string[]).includes(value ?? "");
@@ -82,7 +66,7 @@ export function notifyCard(
   }
 
   const lines = [...ctx.helpers.renderNotice(notice)];
-  for (const channel of NOTIFY_CHANNELS) {
+  for (const channel of NOTIFY_CARD_TOPICS) {
     const scopes = ctx.notifications.listScopes(userId, channel);
     const here = groupId !== undefined && scopes.includes(groupId);
     const parts: string[] = [];
@@ -99,7 +83,7 @@ export function notifyCard(
   );
 
   const rows: CardButton[][] = [];
-  for (const channel of NOTIFY_CHANNELS) {
+  for (const channel of NOTIFY_CARD_TOPICS) {
     const meta = NOTIFY_CHANNEL_META[channel];
     const scopes = ctx.notifications.listScopes(userId, channel);
     const row: CardButton[] = [];
@@ -184,8 +168,8 @@ export function notifyToggleCard(
 }
 
 /**
- * 订阅资格：与推送时的收件人判定（`NotificationService.canReceive`）保持一致，
- * 免得「订阅成功但永远收不到」。
+ * 订阅资格：与推送时的收件人判定（`NotificationService.canReceive`）走**同一份**
+ * 话题门槛判据（`NotificationService.checkTopicReach`），免得「订阅成功但永远收不到」。
  */
 function canSubscribe(
   ctx: AdminCommandContext,
@@ -193,33 +177,10 @@ function canSubscribe(
   channel: NotifyChannel,
   scope: string,
 ): { ok: boolean; reason: string } {
-  const all = scope === NOTIFY_SCOPE_ALL;
-  if (channel === "join") {
-    const allowed = all
-      ? ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin) ||
-        ctx.permissions.meetsAnywhere(userId, PermissionLevel.GroupAdmin)
-      : ctx.permissions.meetsInGroup(userId, scope, PermissionLevel.GroupAdmin);
-    return allowed
-      ? { ok: true, reason: "" }
-      : { ok: false, reason: "权限不足：入群申请推送只发给群管理员及以上。" };
+  if (!ctx.notifications) {
+    return { ok: false, reason: "推送服务未启用。" };
   }
-  if (channel === "punish") {
-    const allowed = all
-      ? ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin) ||
-        ctx.permissions.meetsAnywhere(userId, PermissionLevel.Moderator)
-      : ctx.permissions.meetsInGroup(userId, scope, PermissionLevel.Moderator);
-    return allowed
-      ? { ok: true, reason: "" }
-      : { ok: false, reason: "权限不足：处罚与申诉推送只发给审核员及以上。" };
-  }
-  // 活动通知不限权限；但「全部群」必须是已绑定 QQ 号的用户（绑定是全局的）
-  if (all && ctx.identityMap?.getQq(userId) === undefined) {
-    return {
-      ok: false,
-      reason: "订阅「全部群」的活动通知需要先绑定 QQ 号（/bind）。",
-    };
-  }
-  return { ok: true, reason: "" };
+  return ctx.notifications.checkTopicReach(userId, channel, scope);
 }
 
 /** `/notify`：打开统一订阅菜单；`/notify test [频道]` 直接自检某个频道。 */
