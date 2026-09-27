@@ -38,9 +38,11 @@
   - 验收：① 三个服务不再持有定时器；② 一个 tick 内**串行**跑所有到期任务，单任务抛错不影响其它；
     ③ 上一轮没跑完不叠加下一轮（overrun 保护）；④ 假时钟测试覆盖「未到点 / 到点 / 抛错 / stop」；
     ⑤ `.env.example` 与 `docs/CONFIGURATION.md` 补 `SCAN_INTERVAL_MS`；⑥ 行为保持：保留清理仍按 24h、
-    提醒与申诉轮转仍按各自配置频率，只是改由统一 tick 驱动。
-  - 顺带（需你确认）：把「待审批申请 TTL 过期」从 24h 的 retention 里拆出来、改成每 tick 检查 ——
-    现在最坏情况下要等 24h 才会从 `/pending` 消失。
+    提醒与申诉轮转仍按各自配置频率，只是改由统一 tick 驱动；
+    ⑦ **待审批申请 TTL 过期拆出来、每 tick 检查**（已定，见下）。
+  - 已定（2026-09-27，用户确认）：把「待审批申请 TTL 过期」从 24h 的 retention 里**拆出来**，改成每 tick 检查 ——
+    现在最坏情况下要等 24h 才会从 `/pending` 消失；拆出后它是一个纯内存的轻量检查（`expireStalePending`），
+    retention 只保留数据库清理。注意 `RetentionRunResult.joinRequestsExpired` 与其测试要跟着调整。
 - [ ] **真机确认：`/restart` 在真实部署里确实能拉起新进程**
   - 触发一次 `/restart`，确认：回执卡先到、进程确实退出、几秒内重新起来、并且收到「机器人已重启」的私信回执；
     收不到就查 `data/restart-failed.json` 与启动日志（自我重启助手是脱离会话启动的，SSH 会话断开不影响它）。
