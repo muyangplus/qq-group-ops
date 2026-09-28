@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { PermissionLevel } from "../src/core/enums.js";
+import { PermissionLevel, PlatformLevel } from "../src/core/enums.js";
 import {
   PermissionDeniedError,
   PermissionService,
@@ -17,20 +17,30 @@ describe("PermissionService", () => {
     // 全局超管 240 → 群内折算 140（本群超管档）；平台档单独看 globalLevelOf
     expect(service.levelFor("root", "g1")).toBe(PermissionLevel.SuperAdmin);
     expect(service.globalLevelOf("root")).toBe(240);
-    expect(service.meetsGlobal("root", 240 as PlatformLevel)).toBe(true);
-    expect(service.canExportData("root", "g1")).toBe(true);
+    expect(service.meetsGlobal("root", PlatformLevel.GlobalSuperAdmin)).toBe(true);
+    expect(
+      service.meetsInGroup("root", "g1", PermissionLevel.GroupAdmin),
+    ).toBe(true);
   });
 
   it("scopes group admins to their group", () => {
     expect(service.levelFor("ga1", "g1")).toBe(PermissionLevel.GroupAdmin);
     expect(service.levelFor("ga1", "g2")).toBe(PermissionLevel.Member);
-    expect(service.canApproveJoin("ga1", "g1")).toBe(true);
-    expect(service.canApproveJoin("ga1", "g2")).toBe(false);
+    expect(
+      service.meetsInGroup("ga1", "g1", PermissionLevel.GroupAdmin),
+    ).toBe(true);
+    expect(
+      service.meetsInGroup("ga1", "g2", PermissionLevel.GroupAdmin),
+    ).toBe(false);
   });
 
   it("allows moderators to review but not approve", () => {
-    expect(service.canReviewContent("mod1", "g1")).toBe(true);
-    expect(service.canApproveJoin("mod1", "g1")).toBe(false);
+    expect(
+      service.meetsInGroup("mod1", "g1", PermissionLevel.Moderator),
+    ).toBe(true);
+    expect(
+      service.meetsInGroup("mod1", "g1", PermissionLevel.GroupAdmin),
+    ).toBe(false);
   });
 
   it("lists only groups where the user can approve join requests", () => {
@@ -41,9 +51,35 @@ describe("PermissionService", () => {
     expect(service.listReviewableGroups("root")).toEqual(["g1"]);
   });
 
+  it("lists only groups where the user can review content", () => {
+    expect(service.listModeratedGroups("mod1")).toEqual(["g1"]);
+    expect(service.listModeratedGroups("ga1")).toEqual(["g1"]);
+    expect(service.listModeratedGroups("member")).toEqual([]);
+  });
+
   it("denies management to members", () => {
-    expect(service.canManageRules("member", "g1")).toBe(false);
-    expect(service.canExportData("member", "g1")).toBe(false);
+    expect(
+      service.meetsInGroup("member", "g1", PermissionLevel.GroupAdmin),
+    ).toBe(false);
+    expect(
+      service.meetsInGroup("member", "g1", PermissionLevel.Moderator),
+    ).toBe(false);
+  });
+
+  it("answers 'in any group' only for groups where the user has the role", () => {
+    expect(service.meetsAnywhere("mod1", PermissionLevel.Moderator)).toBe(true);
+    // 群管理员在群内档位上覆盖审核员
+    expect(service.meetsAnywhere("ga1", PermissionLevel.Moderator)).toBe(true);
+    expect(service.meetsAnywhere("mod1", PermissionLevel.GroupAdmin)).toBe(
+      false,
+    );
+    expect(service.meetsAnywhere("outsider", PermissionLevel.Moderator)).toBe(
+      false,
+    );
+    // 全局超管在群内折算 140，因此「任意群的最高档」也成立
+    expect(service.meetsAnywhere("root", PermissionLevel.SuperAdmin)).toBe(
+      true,
+    );
   });
 
   it("treats private context as guest", () => {
@@ -75,15 +111,23 @@ describe("PermissionService", () => {
     const mutable = new PermissionService();
     mutable.grantGroupAdmin("g1", "u1");
     mutable.grantModerator("g1", "u2");
-    expect(mutable.canApproveJoin("u1", "g1")).toBe(true);
-    expect(mutable.canReviewContent("u2", "g1")).toBe(true);
+    expect(
+      mutable.meetsInGroup("u1", "g1", PermissionLevel.GroupAdmin),
+    ).toBe(true);
+    expect(
+      mutable.meetsInGroup("u2", "g1", PermissionLevel.Moderator),
+    ).toBe(true);
     expect(mutable.listGroupAdmins("g1")).toEqual(["u1"]);
     expect(mutable.listModerators("g1")).toEqual(["u2"]);
 
     mutable.revokeGroupAdmin("g1", "u1");
     mutable.revokeModerator("g1", "u2");
-    expect(mutable.canApproveJoin("u1", "g1")).toBe(false);
-    expect(mutable.canReviewContent("u2", "g1")).toBe(false);
+    expect(
+      mutable.meetsInGroup("u1", "g1", PermissionLevel.GroupAdmin),
+    ).toBe(false);
+    expect(
+      mutable.meetsInGroup("u2", "g1", PermissionLevel.Moderator),
+    ).toBe(false);
   });
 
   it("scopes group super admins to their own group only", () => {
@@ -93,8 +137,9 @@ describe("PermissionService", () => {
 
     // 本群内是最高权限
     expect(mutable.levelFor("owner1", "g1")).toBe(PermissionLevel.SuperAdmin);
-    expect(mutable.canApproveJoin("owner1", "g1")).toBe(true);
-    expect(mutable.canManageRules("owner1", "g1")).toBe(true);
+    expect(
+      mutable.meetsInGroup("owner1", "g1", PermissionLevel.GroupAdmin),
+    ).toBe(true);
     expect(mutable.isGroupSuperAdmin("owner1", "g1")).toBe(true);
 
     // 其他群、私信、平台级判断都不受影响
@@ -110,7 +155,7 @@ describe("PermissionService", () => {
     mutable.grantGroupSuperAdmin("g1", "u1");
     expect(mutable.isGroupSuperAdmin("u1", "g1")).toBe(true);
     expect(mutable.listGroupSuperAdmins("g1")).toEqual(["u1"]);
-    expect(mutable.hasAnyGroupRole("u1", PermissionLevel.GroupAdmin)).toBe(true);
+    expect(mutable.meetsAnywhere("u1", PermissionLevel.GroupAdmin)).toBe(true);
 
     mutable.revokeGroupSuperAdmin("g1", "u1");
     expect(mutable.isGroupSuperAdmin("u1", "g1")).toBe(false);

@@ -62,6 +62,11 @@ import {
   deployCancelCard,
   deployRestartNowCard,
 } from "./commands/deployCommands.js";
+import {
+  migrateCard,
+  migrateRefreshCard,
+  migrateRunCard,
+} from "./commands/migrateCommands.js";
 import { handleExport } from "./commands/exportCommands.js";
 import {
   handleNotify,
@@ -99,6 +104,7 @@ import type { BlacklistService } from "./blacklist.js";
 import type { DisplayNameService } from "./displayNames.js";
 import type { ExportService } from "./export.js";
 import type { MemberRoster } from "./memberRoster.js";
+import type { DataMigrationService } from "./dataMigration.js";
 import type { ModerationNotifier } from "./moderationNotifier.js";
 import type { PunishmentService } from "./punishments.js";
 import type { GroupConfigStore } from "./groupConfig.js";
@@ -191,6 +197,9 @@ export interface AdminCommandServiceOptions {
 
   /** 部署监测的控制面（新版本卡上的「取消 / 立即重启」按钮）。 */
   deploy?: DeployControl | undefined;
+
+  /** 一次性数据迁移（`/migrate`）；缺省时该指令拒绝执行。 */
+  migrate?: DataMigrationService | undefined;
 }
 
 export class AdminCommandService {
@@ -251,6 +260,8 @@ export class AdminCommandService {
 
   private readonly deploy: DeployControl | undefined;
 
+  private readonly migrate: DataMigrationService | undefined;
+
   /** 班级库（活动学院/年级按钮）；runtime.load() 里拿到后注入。 */
   private activityRoster: MemberRoster | undefined;
 
@@ -290,6 +301,7 @@ export class AdminCommandService {
     this.diagnostics = options.diagnostics;
     this.restart = options.restart;
     this.deploy = options.deploy;
+    this.migrate = options.migrate;
   }
 
   /** 班级库在 `runtime.load()` 里才加载完成，因此构造后再注入（与 UserProfileService 同套路）。 */
@@ -529,6 +541,7 @@ export class AdminCommandService {
       diagnostics: this.diagnostics,
       restart: this.restart,
       deploy: this.deploy,
+      migrate: this.migrate,
       permissions: this.permissions,
       joinAudit: this.joinAudit,
       configStore: this.configStore,
@@ -666,6 +679,9 @@ export class AdminCommandService {
       case "restart":
       case "重启":
         return restartCard(this.context(), userId);
+      case "migrate":
+      case "迁移":
+        return migrateCard(this.context(), userId, groupId);
       case "test":
       case "测试":
         return handleTest(this.context(), groupId, userId);
@@ -752,6 +768,30 @@ export class AdminCommandService {
   /** 回调：`cb:deploy:now` —— 立即重启加载新版本。 */
   public deployRestartNowCard(userId: string, replyGroupId?: string): CardResult {
     return deployRestartNowCard(this.context(), userId, replyGroupId);
+  }
+
+  /** `/migrate`：一次性数据迁移的只读预览（仅全局超管、只私信）。 */
+  public migrateCard(
+    userId: string,
+    groupId: string | undefined,
+  ): Promise<CardResult> {
+    return migrateCard(this.context(), userId, groupId);
+  }
+
+  /** 回调：`cb:migrate:run` —— 执行迁移并回执。 */
+  public migrateRunCard(
+    userId: string,
+    replyGroupId: string | undefined,
+  ): Promise<CardResult> {
+    return migrateRunCard(this.context(), userId, replyGroupId);
+  }
+
+  /** 回调：`cb:migrate:preview` —— 迁移后重新扫描。 */
+  public migrateRefreshCard(
+    userId: string,
+    replyGroupId: string | undefined,
+  ): Promise<CardResult> {
+    return migrateRefreshCard(this.context(), userId, replyGroupId);
   }
 
   public pendingCard(

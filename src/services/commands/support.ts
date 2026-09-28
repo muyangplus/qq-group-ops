@@ -18,7 +18,6 @@ import {
 } from "../cardTemplate.js";
 import {
   JoinDecisionMode,
-  KeywordPunish,
   type JoinDecisionMode as JoinDecisionModeType,
 } from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
@@ -307,7 +306,7 @@ export const COMMAND_CARD_TITLES: Record<string, string> = {
   pending: "待审批入群申请",
   status: "运行状态",
   help: "指令帮助",
-  menu: "系统菜单",
+  menu: "常用菜单",
   testmenu: "测试菜单",
 };
 
@@ -543,10 +542,6 @@ export const RULE_FIELD_LABELS: Record<keyof GroupConfigOverride, string> = {
   muteDurationSeconds: "禁言时长",
   warningMessage: "警告文案",
   punishActions: "违规处理动作",
-  /** @deprecated 老字段：只用于显示旧数据，不再可设置（见 `punishActions`）。 */
-  keywordRecall: "命中撤回（旧）",
-  /** @deprecated 老字段，见 `punishActions`。 */
-  keywordPunish: "命中处罚（旧）",
   joinDecision: "入群决策",
   joinRequireClass: "要求班级",
   joinRequireName: "要求姓名",
@@ -574,10 +569,6 @@ export const RULE_FIELD_SHORT_LABELS: Partial<Record<keyof GroupConfigOverride, 
   muteDurationSeconds: "禁言",
   warningMessage: "警告",
   punishActions: "处罚动作",
-  /** @deprecated 老字段，见 `punishActions`。 */
-  keywordRecall: "撤回（旧）",
-  /** @deprecated 老字段，见 `punishActions`。 */
-  keywordPunish: "处罚（旧）",
   joinDecision: "决策",
   joinRequireClass: "班级",
   joinRequireName: "姓名",

@@ -120,13 +120,14 @@ export class ActivityService {
     }
     for (const activity of activities) {
       this.activities.set(activity.activityId, activity);
-      // 重启后把已有活动短码灌回全局码池，避免新码与历史码跨类型重码
-      seedGlobalCode(activity.activityId);
     }
     for (const detail of details) {
       const activity = this.activities.get(detail.activityId);
       if (activity) {
-        this.activities.set(detail.activityId, applyDetails(activity, detail));
+        const updated = applyDetails(activity, detail);
+        this.activities.set(detail.activityId, updated);
+        // 重启后把已有活动短码灌回全局码池，避免新码与历史码跨类型重码
+        seedGlobalCode(updated.code);
       }
     }
     for (const registration of registrations) {
@@ -147,25 +148,6 @@ export class ActivityService {
       if (activity) {
         this.activities.set(activityId, applySettings(activity, bucket));
       }
-    }
-    this.regenerateLegacyCodes();
-  }
-
-  /**
-   * 历史活动短码可能含小写字母；启动时换成「数字 + 大写字母」并写回数据库。
-   * 旧短码（已发到群里的卡片/链接）会失效，需重新从活动列表获取（用户确认的选择）。
-   */
-  private regenerateLegacyCodes(): void {
-    for (const activity of [...this.activities.values()]) {
-      if (activity.code === activity.code.toUpperCase()) {
-        continue;
-      }
-      const updated: Activity = { ...activity, code: this.nextCode() };
-      this.activities.set(updated.activityId, updated);
-      this.persist(updated);
-      log.info("activity code regenerated to uppercase", {
-        activityId: updated.activityId,
-      });
     }
   }
 
@@ -431,19 +413,15 @@ export class ActivityService {
     const studentId = profile.studentId;
     const year = studentYear(studentId);
     const college = profile.college;
-    // 年级统一用两位（22）；为兼容历史配置，仍接受四位写法（2022）
-    const yearLabel = `20${year}`;
 
-    if (activity.denyYears.includes(year) || activity.denyYears.includes(yearLabel)) {
+    if (activity.denyYears.includes(year)) {
       throw new ActivityRuleError(`本活动不接受 ${year} 级报名`);
     }
     if (activity.denyColleges.length > 0 && college.length > 0 && matchesCollege(activity.denyColleges, college)) {
       throw new ActivityRuleError(`本活动不接受「${college}」的同学报名`);
     }
     if (activity.allowYears.length > 0) {
-      const allowed = activity.allowYears.some(
-        (value) => value === year || value === yearLabel,
-      );
+      const allowed = activity.allowYears.includes(year);
       if (!allowed) {
         throw new ActivityRuleError(
           `本活动仅限 ${activity.allowYears.join(" / ")} 级报名（你的年级：${year}）`,

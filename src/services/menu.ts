@@ -8,7 +8,7 @@ import type { RichMessage } from "./richMessages.js";
  * QQ 端系统交互菜单。
  *
  * 三级结构（按你的确认）：
- *   主菜单 `/menu` → 系统菜单 / 管理菜单 / 超管菜单 → 各功能子菜单
+ *   主菜单 `/menu` → 管理菜单 / 超管菜单 → 各功能子菜单
  *
  * 按钮全部是**指令按钮**（`action.type = 2`）：点击等价于发送对应指令，因此不需要
  * 新增任何事件类型，权限校验、审计与降级逻辑与手输指令完全一致。需要参数的指令
@@ -19,7 +19,6 @@ import type { RichMessage } from "./richMessages.js";
  */
 export type MenuSection =
   | "main"
-  | "sys"
   | "activity"
   | "admin"
   | "review"
@@ -28,7 +27,6 @@ export type MenuSection =
 
 export const MENU_SECTIONS: readonly MenuSection[] = [
   "main",
-  "sys",
   "activity",
   "admin",
   "review",
@@ -44,10 +42,6 @@ const SECTION_ALIASES: Record<string, MenuSection> = {
   home: "main",
   常用: "main",
   常用菜单: "main",
-  sys: "sys",
-  system: "sys",
-  系统: "sys",
-  系统菜单: "sys",
   admin: "admin",
   manage: "admin",
   管理: "admin",
@@ -173,14 +167,12 @@ function buildSpec(
   context: MenuContext,
   access: MenuAccess,
 ): SpecResult {
-  if (!context.bound && section !== "main" && section !== "sys") {
+  if (!context.bound && section !== "main") {
     return denial("请先绑定 QQ 号：/bind qq <QQ号>");
   }
   switch (section) {
     case "main":
       return { ok: true, card: mainCard(context, access) };
-    case "sys":
-      return { ok: true, card: systemCard(context, access) };
     case "activity":
       return { ok: true, card: activityCard(context) };
     case "admin":
@@ -275,14 +267,6 @@ function mainCard(context: MenuContext, access: MenuAccess): CardSpec {
     rows,
     // 空串 = 不渲染引导行
   };
-}
-
-/**
- * 「系统菜单」层级与常用菜单等价（§F2 合并）：
- * 保留 `sys` 只是为了兼容已发出的旧卡片按钮（`cb:menu:open:sys`），避免出现两张重复的普通卡。
- */
-function systemCard(context: MenuContext, access: MenuAccess): CardSpec {
-  return mainCard(context, access);
 }
 
 function activityCard(context: MenuContext): CardSpec {

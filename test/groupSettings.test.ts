@@ -8,8 +8,8 @@ import {
 } from "./helpers/fakeGroupConfigRepositories.js";
 
 /**
- * §B2 多选重构：`punishActions` 走 `group_settings` 键值表（免迁移），
- * 老库里的 `keywordPunish` + `keywordRecall` 读取时自动换算。
+ * `punishActions` 等扩展字段走 `group_settings` 键值表（免迁移）：
+ * 值一律是 JSON 编码，老格式由 `/migrate` 一次性转换。
  */
 const RECALL_ONLY = {
   warn: true,
@@ -129,51 +129,38 @@ describe("GroupConfigStore extended settings", () => {
     expect(store.get("g1").punishActions.recall).toBe(false);
   });
 
-  it("converts legacy punish settings and ignores malformed values", async () => {
+  it("ignores unknown keys and non-JSON values", async () => {
     const sql = new FakeGroupConfigRepository();
     const settings = new FakeGroupSettingsRepository();
     await settings.save({ groupId: "g1", key: "unknownKey", value: JSON.stringify(1) });
-    // 非法枚举被忽略，合法的 keywordRecall 仍然换算成 punishActions.recall
+    // 非法枚举被忽略 → 保持默认动作
     await settings.save({
       groupId: "g2",
-      key: "keywordPunish",
-      value: JSON.stringify("not-a-punish"),
+      key: "punishActions",
+      value: JSON.stringify({ warn: "yes" }),
     });
-    await settings.save({
-      groupId: "g2",
-      key: "keywordRecall",
-      value: JSON.stringify(true),
-    });
-    // 老库完整写法：kick_blacklist + 撤回 → 踢出 + 拉黑 + 撤回（警告默认开）
+    // 早期版本直接写入裸字符串：不是合法 JSON，读取时跳过（改由 /migrate 转换）
     await settings.save({
       groupId: "g3",
-      key: "keywordPunish",
-      value: JSON.stringify("kick_blacklist"),
-    });
-    await settings.save({
-      groupId: "g3",
-      key: "keywordRecall",
-      value: JSON.stringify(true),
+      key: "welcomeMessage",
+      value: "同学们好",
     });
 
     const store = new GroupConfigStore({ groupId: DEFAULT_GROUP_ID }, sql, undefined, settings);
     await store.load();
 
-    // 未知键被忽略 → 还是默认值（只警告）
-    expect(store.get("g1").punishActions).toEqual({
+    const fallback = {
       warn: true,
       recall: false,
       mute: false,
       kick: false,
       blacklist: false,
-    });
-    expect(store.get("g2").punishActions).toEqual(RECALL_ONLY);
-    expect(store.get("g3").punishActions).toEqual({
-      warn: true,
-      recall: true,
-      mute: false,
-      kick: true,
-      blacklist: true,
-    });
+    };
+    expect(store.get("g1").punishActions).toEqual(fallback);
+    expect(store.get("g2").punishActions).toEqual(fallback);
+    // 裸字符串被跳过 → 欢迎语停在默认值
+    expect(store.get("g3").welcomeMessage).toBe(
+      store.builtinDefault.welcomeMessage,
+    );
   });
 });

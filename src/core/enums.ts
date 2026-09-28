@@ -145,18 +145,6 @@ export function describeLevel(level: PermissionLevel): string {
   }
 }
 
-/** 关键词命中后的处罚动作。 */
-export const KeywordPunish = {
-  None: "none",
-  /** 禁言 muteDurationSeconds 秒。 */
-  Mute: "mute",
-  /** 移出群。 */
-  Kick: "kick",
-  /** 移出群并加入黑名单（官方一次调用完成，需白名单）。 */
-  KickBlacklist: "kick_blacklist",
-} as const;
-export type KeywordPunish = (typeof KeywordPunish)[keyof typeof KeywordPunish];
-
 /** 入群申请推送的投递状态。 */
 export const NotificationDeliveryStatus = {
   Sent: "sent",

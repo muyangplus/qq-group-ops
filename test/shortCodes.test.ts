@@ -136,39 +136,6 @@ describe("ShortCodeService", () => {
     expect(restarted.resolve("#a1b2c3")?.targetId).toBe("group-openid");
   });
 
-  it("regenerates legacy lowercase codes to uppercase on load", async () => {
-    const repository = new FakeShortCodeRepository();
-    repository.rows.push({
-      code: "Ab12Cd",
-      kind: "group",
-      targetId: "group-openid",
-      createdAt: new Date("2026-01-01T00:00:00.000Z"),
-    });
-    const service = new ShortCodeService(repository, undefined, {
-      randomInt: randomFromCodes(["Z9Y8X7"]),
-    });
-
-    await service.load();
-    await service.flush();
-
-    // 同一个 target 换成纯大写短码，并写回数据库
-    expect(service.resolve("#Z9Y8X7")).toEqual({
-      code: "Z9Y8X7",
-      kind: "group",
-      targetId: "group-openid",
-    });
-    expect(repository.rows).toEqual([
-      {
-        code: "Z9Y8X7",
-        kind: "group",
-        targetId: "group-openid",
-        createdAt: expect.any(Date),
-      },
-    ]);
-    // 旧短码立即失效
-    expect(service.resolve("#Ab12Cd")).toBeUndefined();
-  });
-
   it("keeps generating codes without exhausting the space", () => {
     const service = new ShortCodeService();
     const codes = new Set<string>();

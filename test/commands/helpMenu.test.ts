@@ -230,6 +230,8 @@ describe("AdminCommandService · helpMenu", () => {
       "sync",
       "audit",
       "status",
+      "restart",
+      "migrate",
       "test",
     ]) {
       const result = await service.handle(undefined, "root", `/help ${topic}`);
@@ -252,9 +254,9 @@ describe("AdminCommandService · helpMenu", () => {
       (row) => row.buttons,
     );
     // 标准：导航 / 查看类按钮用回调
-    expect(buttons.find((button) => button.id === "sys")?.action).toMatchObject({
+    expect(buttons.find((button) => button.id === "menu")?.action).toMatchObject({
       type: 1,
-      data: "cb:menu:open:sys",
+      data: "cb:menu:open:main",
     });
     expect(buttons.find((button) => button.id === "all")?.action).toMatchObject({
       type: 1,

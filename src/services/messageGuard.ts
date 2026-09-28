@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import type { QQOfficialAPI } from "../adapters/qqOfficial.js";
 import {
   AuditStatus,
-  KeywordPunish,
   ModerationAction,
   PermissionLevel,
 } from "../core/enums.js";

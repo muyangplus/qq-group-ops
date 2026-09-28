@@ -1,8 +1,6 @@
 import {
   JoinDecisionMode,
-  KeywordPunish,
   JoinDecisionMode as JoinDecisionModeType,
-  KeywordPunish as KeywordPunishType,
 } from "../core/enums.js";
 
 /**
@@ -67,40 +65,6 @@ export function normalizePunishActions(value: unknown): PunishActions | undefine
   return seen ? result : undefined;
 }
 
-/**
- * 老配置自动换算：`keywordPunish` 枚举 + `keywordRecall` 布尔 → 五动作集合。
- *
- * - `none` → 只警告（默认开）
- * - `mute` → 禁言（+警告）
- * - `kick` → 踢出（+警告）
- * - `kick_blacklist` → 踢出 + 拉黑（+警告）
- * - `keywordRecall` → 撤回
- */
-export function punishActionsFromLegacy(
-  punish: unknown,
-  recall: unknown,
-): PunishActions {
-  const actions: PunishActions = { ...DEFAULT_PUNISH_ACTIONS };
-  if (recall === true) {
-    actions.recall = true;
-  }
-  switch (punish) {
-    case KeywordPunish.Mute:
-      actions.mute = true;
-      break;
-    case KeywordPunish.Kick:
-      actions.kick = true;
-      break;
-    case KeywordPunish.KickBlacklist:
-      actions.kick = true;
-      actions.blacklist = true;
-      break;
-    default:
-      break;
-  }
-  return actions;
-}
-
 /** 五动作的中文描述（卡片与审计复用）：`警告 + 撤回 + 禁言` / `仅警告` / `不处理`。 */
 export function describePunishActions(actions: PunishActions): string {
   const labels = PUNISH_ACTION_KEYS.filter((key) => actions[key]).map(
@@ -138,10 +102,6 @@ export interface GroupConfig {
    * 覆盖时是**整组替换**（不是逐位合并），避免"只改一个开关"把别的动作带偏。
    */
   punishActions?: PunishActions;
-  /** @deprecated 老字段（`keywordRecall` + `keywordPunish`），只在读取旧库时换算成 `punishActions`。 */
-  keywordRecall?: boolean;
-  /** @deprecated 老字段，见 `punishActionsFromLegacy`。 */
-  keywordPunish?: KeywordPunishType;
   /** 入群申请的决策模式。 */
   joinDecision?: JoinDecisionModeType;
   /** 入群答案是否必须包含班级库中的班级。 */
@@ -345,7 +305,6 @@ export function fieldsFromConfig(
 ): GroupConfigOverride {
   const result: GroupConfigOverride = { groupId: DEFAULT_GROUP_ID };
   for (const field of fields) {
-    // 老字段（keywordRecall / keywordPunish）不在生效配置里，跳过即可
     if (field in config) {
       (result as unknown as Record<string, unknown>)[field] = (
         config as unknown as Record<string, unknown>
@@ -407,12 +366,17 @@ export function hasAnyField(
   return fields.some((field) => override[field] !== undefined);
 }
 
+/**
+ * 读 `group_settings` 的一行值：**只接受 JSON 编码**。
+ *
+ * 不是合法 JSON 时返回 `undefined`，由调用方跳过该行（早期版本直接写入裸字符串，
+ * 必须先用一次性迁移转成 JSON 才会生效）。
+ */
 export function parseSettingValue(raw: string): unknown {
   try {
     return JSON.parse(raw) as unknown;
   } catch {
-    // 兼容早期直接写入的裸字符串
-    return raw;
+    return undefined;
   }
 }
 
@@ -449,23 +413,6 @@ export function applySettingField(
       target.welcomeMessage = value;
       return true;
     }
-    // 老配置自动换算：老库里的 `keywordRecall` / `keywordPunish` 仍按**原字段**读进来，
-    // 由 `GroupConfigStore.get()` 在合并完成后一次性折算成 `punishActions`
-    // （逐行折算会丢信息：两条老记录是分开的两行，先后覆盖会互相清掉）。
-    case "keywordRecall": {
-      if (typeof value !== "boolean") {
-        return false;
-      }
-      target.keywordRecall = value;
-      return true;
-    }
-    case "keywordPunish": {
-      if (!isKeywordPunish(value)) {
-        return false;
-      }
-      target.keywordPunish = value;
-      return true;
-    }
     case "joinDecision": {
       if (!isJoinDecisionMode(value)) {
         return false;
@@ -499,10 +446,6 @@ export function applySettingField(
 
 export function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
-export function isKeywordPunish(value: unknown): value is KeywordPunishType {
-  return (Object.values(KeywordPunish) as unknown[]).includes(value);
 }
 
 export function isJoinDecisionMode(value: unknown): value is JoinDecisionModeType {

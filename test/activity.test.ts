@@ -324,7 +324,7 @@ describe("ActivityService", () => {
     expect(() => service.checkEligibility(activity, profile)).not.toThrow();
   });
 
-  it("regenerates legacy lowercase activity codes on load", async () => {
+  it("keeps stored activity codes as-is on load", async () => {
     const activities = new FakeActivityRepository();
     const details = new FakeActivityDetailsRepository();
     const first = new ActivityService(activities, undefined, details);
@@ -336,21 +336,42 @@ describe("ActivityService", () => {
       code: "Ab12Cd",
     });
     await first.flush();
-    expect(details.rows[0]?.code).toBe("Ab12Cd");
 
-    // 重启：含小写的短码换成数字 + 大写，并写回数据库
+    // 短码大小写由一次性迁移改写，业务代码读取时不再动它
     const restarted = new ActivityService(activities, undefined, details, {
       generateCode: () => "Z9Y8X7",
     });
     await restarted.load();
     await restarted.flush();
 
-    expect(restarted.findByCode("#Z9Y8X7")?.activityId).toBe("a1");
-    expect(restarted.findByCode("#Ab12Cd")).toBeUndefined();
-    expect(details.rows[0]?.code).toBe("Z9Y8X7");
+    expect(restarted.findByCode("#Ab12Cd")?.activityId).toBe("a1");
+    expect(details.rows[0]?.code).toBe("Ab12Cd");
   });
 
-  it("treats four-digit allowed years as legacy values", () => {
+  it("matches allowed years by the two-digit form", () => {
+    const activity = service.createActivity({
+      groupId: "g1",
+      title: "活动",
+      createdBy: "admin",
+      activityId: "a1",
+      allowYears: ["23"],
+    });
+    const profile = {
+      userId: "u1",
+      name: "小明",
+      studentId: "23123456789",
+      className: "材化2211",
+      college: "化学与生命科学学院",
+      year: "23",
+    };
+    expect(() => service.checkEligibility(activity, profile)).not.toThrow();
+
+    const wrong = { ...profile, studentId: "22123456789", year: "22" };
+    expect(() => service.checkEligibility(activity, wrong)).toThrow(/仅限/u);
+  });
+
+  it("no longer matches four-digit year entries", () => {
+    // 老库里可能留着 `2023` 这种写法：迁移前不生效，跑 /migrate 收敛成 `23`
     const activity = service.createActivity({
       groupId: "g1",
       title: "活动",
@@ -366,11 +387,7 @@ describe("ActivityService", () => {
       college: "化学与生命科学学院",
       year: "23",
     };
-    // 历史配置写成四位时仍然能命中两位数年级
-    expect(() => service.checkEligibility(activity, profile)).not.toThrow();
-
-    const wrong = { ...profile, studentId: "22123456789", year: "22" };
-    expect(() => service.checkEligibility(activity, wrong)).toThrow(/仅限/u);
+    expect(() => service.checkEligibility(activity, profile)).toThrow(/仅限/u);
   });
 
   it("defaults to manual release: cancelling does not promote a waitlisted user", () => {

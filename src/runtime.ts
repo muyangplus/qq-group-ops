@@ -82,7 +82,12 @@ import type { DeployControl } from "./services/deployWatcher.js";
 import { PermissionService } from "./services/permissions.js";
 import { PunishmentService } from "./services/punishments.js";
 import { RichMessageSender } from "./services/richMessages.js";
-import { ShortCodeService } from "./services/shortCodes.js";
+import { DataMigrationService } from "./services/dataMigration.js";
+import {
+  reserveGlobalCode,
+  SHORT_CODE_LENGTH,
+  ShortCodeService,
+} from "./services/shortCodes.js";
 import { TestMenuService } from "./services/testMenu.js";
 import { UserProfileService } from "./services/userProfiles.js";
 import { ClassAliasService } from "./services/classAliases.js";
@@ -340,6 +345,22 @@ export function createRuntime(
     stats: activityStats,
     exportService: activityExport,
   });
+  // 一次性数据迁移（`/migrate`）：只做存储层改写，改完把内存态整个重载
+  const dataMigration = new DataMigrationService({
+    settings: repositories.groupSettings,
+    profiles: repositories.userProfiles,
+    activityDetails: repositories.activityDetails,
+    shortCodes: repositories.shortCodes,
+    generateCode: () => reserveGlobalCode(SHORT_CODE_LENGTH),
+    reload: async () => {
+      await Promise.all([
+        configStore.load(),
+        userProfiles.load(),
+        shortCodes.load(),
+        activity.load(),
+      ]);
+    },
+  });
   const adminCommands = new AdminCommandService({
     permissions,
     joinAudit,
@@ -367,6 +388,7 @@ export function createRuntime(
     diagnostics: { settings, writeQueue },
     restart,
     deploy: dependencies.deploy,
+    migrate: dataMigration,
   });
   const menuState = createFirstMenuPushState(
     settings,
@@ -429,6 +451,27 @@ export function createRuntime(
           return undefined;
         }
         return adminCommands.restartNowCard(userId, event.groupId).rich;
+      },
+    ],
+    [
+      "migrate",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        if (parsed.action === "run") {
+          const card = await adminCommands.migrateRunCard(userId, event.groupId);
+          return card.rich;
+        }
+        if (parsed.action === "preview") {
+          const card = await adminCommands.migrateRefreshCard(
+            userId,
+            event.groupId,
+          );
+          return card.rich;
+        }
+        return undefined;
       },
     ],
     [

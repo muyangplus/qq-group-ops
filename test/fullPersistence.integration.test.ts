@@ -155,8 +155,20 @@ for (const driver of TEST_DATABASES) {
         expect(restarted.identityMap.getGroupNumber("g1")).toBe("654321");
         expect(restarted.permissions.isSuperAdmin("root")).toBe(true);
         expect(restarted.permissions.isSuperAdmin("second-root")).toBe(true);
-        expect(restarted.permissions.canApproveJoin("admin", "g1")).toBe(true);
-        expect(restarted.permissions.canReviewContent("mod", "g1")).toBe(true);
+        expect(
+          restarted.permissions.meetsInGroup(
+            "admin",
+            "g1",
+            PermissionLevel.GroupAdmin,
+          ),
+        ).toBe(true);
+        expect(
+          restarted.permissions.meetsInGroup(
+            "mod",
+            "g1",
+            PermissionLevel.Moderator,
+          ),
+        ).toBe(true);
         expect(restarted.joinAudit.get("r1").status).toBe(
           JoinRequestStatus.Approved,
         );

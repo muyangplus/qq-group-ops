@@ -113,15 +113,7 @@ export class UserProfileService {
     const profiles = await this.repository.findAll();
     this.profiles.clear();
     for (const profile of profiles) {
-      // 兼容历史数据：早期版本把年份存成四位（2022），统一收敛成两位（22）
-      const year = toShortYear(profile.year);
-      const normalized: UserProfile = { ...profile, year };
-      this.profiles.set(normalized.userId, normalized);
-      if (year !== profile.year) {
-        this.queue?.enqueue("user-profile.save", () =>
-          this.repository!.save(normalized),
-        );
-      }
+      this.profiles.set(profile.userId, { ...profile });
     }
   }
 

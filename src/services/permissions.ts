@@ -174,58 +174,20 @@ export class PermissionService {
     return this.globalLevelOf(userId) >= required;
   }
 
-  /** 兼容入口（旧调用点用常量数值）：等价于 `meetsInGroup`。 */
-  public hasAtLeast(
-    userId: string,
-    groupId: string | undefined,
-    required: PermissionLevel,
-  ): boolean {
-    return this.levelFor(userId, groupId) >= required;
-  }
-
-  /** 语义化别名：`meets(user, group, PermissionLevel.Moderator)`。 */
-  public meets(
-    userId: string,
-    groupId: string | undefined,
-    required: PermissionLevel,
-  ): boolean {
-    return this.hasAtLeast(userId, groupId, required);
-  }
-
-  public canApproveJoin(userId: string, groupId: string): boolean {
-    return this.hasAtLeast(userId, groupId, PermissionLevel.GroupAdmin);
-  }
-
-  public canManageRules(userId: string, groupId: string): boolean {
-    return this.hasAtLeast(userId, groupId, PermissionLevel.GroupAdmin);
-  }
-
-  public canReviewContent(userId: string, groupId: string): boolean {
-    return this.hasAtLeast(userId, groupId, PermissionLevel.Moderator);
-  }
-
-  public canExportData(userId: string, groupId: string): boolean {
-    return this.hasAtLeast(userId, groupId, PermissionLevel.GroupAdmin);
-  }
-
-  public hasAnyGroupRole(userId: string, required: PermissionLevel): boolean {
-    return this.meetsAnywhere(userId, required);
-  }
-
   /**
-   * 「在**任意**群里达到某等级」——`hasAnyGroupRole` 的数值化版本。
+   * 「在**任意**群里达到某等级」。
    *
    * 用于「全部群」语义（例如通知订阅选「全部群」时要求「我至少在某个群有这个角色」），
-   * 与 `meets(user, group, level)`（某一个群）区分开。
+   * 与 `meetsInGroup(user, group, level)`（某一个群）区分开。
    */
-  public meetsAnywhere(userId: string, required: PermissionLevel): boolean {
+  public meetsAnywhere(userId: string, required: GroupLevel): boolean {
     const groupIds = new Set([
       ...this.groupSuperAdminIds.keys(),
       ...this.groupAdminIds.keys(),
       ...this.moderatorIds.keys(),
     ]);
     for (const groupId of groupIds) {
-      if (this.hasAtLeast(userId, groupId, required)) {
+      if (this.meetsInGroup(userId, groupId, required)) {
         return true;
       }
     }
@@ -240,7 +202,9 @@ export class PermissionService {
       ...this.moderatorIds.keys(),
     ]);
     return [...groupIds]
-      .filter((groupId) => this.canApproveJoin(userId, groupId))
+      .filter((groupId) =>
+        this.meetsInGroup(userId, groupId, PermissionLevel.GroupAdmin),
+      )
       .sort();
   }
 
@@ -252,7 +216,9 @@ export class PermissionService {
       ...this.moderatorIds.keys(),
     ]);
     return [...groupIds]
-      .filter((groupId) => this.canReviewContent(userId, groupId))
+      .filter((groupId) =>
+        this.meetsInGroup(userId, groupId, PermissionLevel.Moderator),
+      )
       .sort();
   }
 

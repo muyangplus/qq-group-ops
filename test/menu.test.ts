@@ -45,8 +45,6 @@ describe("menu", () => {
     );
     expect(member).not.toContain("admin");
     expect(member).not.toContain("super");
-    // 旧「系统菜单」入口不再出现在默认卡上
-    expect(member).not.toContain("sys");
   });
 
   it("never exposes management entries inside a group, even to admins", () => {
@@ -69,13 +67,6 @@ describe("menu", () => {
     );
     expect(member).not.toContain("admin");
     expect(member).not.toContain("super");
-  });
-
-  it("keeps the system section equivalent to the common menu", () => {
-    const main = buildMenu("main", context("member"));
-    const sys = buildMenu("sys", context("member"));
-    expect(sys.ok).toBe(true);
-    expect(sys.message.markdown).toBe(main.message.markdown);
   });
 
   it("hides personal commands for unbound users", () => {
@@ -166,5 +157,7 @@ describe("menu", () => {
     expect(findMenuSection("活动")).toBe("activity");
     expect(findMenuSection("nope")).toBeUndefined();
     expect(findMenuSection(undefined)).toBeUndefined();
+    // 旧「系统菜单」层级已删除（与常用菜单重复）
+    expect(findMenuSection("sys")).toBeUndefined();
   });
 });

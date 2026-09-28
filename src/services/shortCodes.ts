@@ -136,31 +136,6 @@ export class ShortCodeService {
       }
       this.register({ ...entry });
     }
-    this.regenerateLegacyCodes();
-  }
-
-  /**
-   * 历史短码可能含小写字母；启动时统一换成「数字 + 大写字母」并写回数据库。
-   * 已发出的旧短码会失效，需要重新从卡片/列表获取（用户确认的选择）。
-   */
-  private regenerateLegacyCodes(): void {
-    const stale = [...this.byCode.values()].filter(
-      (entry) => entry.code !== entry.code.toUpperCase(),
-    );
-    for (const entry of stale) {
-      const next: ShortCodeEntry = { ...entry, code: this.generate() };
-      this.byCode.delete(entry.code.toLowerCase());
-      this.register(next);
-      const repository = this.repository;
-      if (repository) {
-        this.queue?.enqueue("short-code.replace", () =>
-          repository.replaceCode(entry.code, next),
-        );
-      }
-    }
-    if (stale.length > 0) {
-      log.info("short codes regenerated to uppercase", { count: stale.length });
-    }
   }
 
   public async flush(): Promise<void> {

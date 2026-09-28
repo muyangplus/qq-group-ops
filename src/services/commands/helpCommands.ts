@@ -47,7 +47,7 @@ export function helpCard(
     }
     // 伞形卡：只给分类入口，完整列表在 `/help all`（避免一张卡 30 行）
     const menuRow: CardButton[] = [
-      viewButton("sys", "系统菜单", "menu", "open", "sys"),
+      viewButton("menu", "常用菜单", "menu", "open", "main"),
     ];
     if (access.canModerate) {
       menuRow.push(viewButton("admin", "管理菜单", "menu", "open", "admin"));
@@ -168,7 +168,7 @@ function buildHelp(
     "可用指令：",
     "/help - 显示帮助",
     "/help <指令> - 查看某个指令的详细用法，例如 /help rules、/help bind、/help perm",
-    "/menu - 打开系统菜单（系统 / 管理 / 超管），按钮点击即执行",
+    "/menu - 打开菜单（常用 / 管理 / 超管），按钮点击即执行",
     "/bind qq <QQ号> - 绑定自己的 QQ 号",
   ];
   const isSuper = ctx.permissions.meetsGlobal(
@@ -258,6 +258,7 @@ function buildHelp(
     lines.push("/perm revoke mod [#群短码|群号] <userId|QQ号> - 撤销审核员");
     lines.push("/rules all - 查看全局默认规则");
     lines.push("/rules set all <字段> <值> - 修改全局默认规则");
+    lines.push("/migrate - 一次性数据迁移（私信中使用）");
   }
   if (!canModerate && !canAdmin && !isSuper) {
     lines.push("当前没有更多可执行的管理指令。");
