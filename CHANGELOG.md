@@ -7,7 +7,17 @@
 
 ## [Unreleased]
 
-（暂无未发布改动）
+### 变更
+
+- **配置瘦身（不保留旧内容）**：删除 `WEBHOOK_KEY_DERIVATION` 与 `WEBHOOK_SIGN_CONTENT` 两个逃生舱 ——
+  webhook 一律按官方算法（Bot Secret repeat 翻倍到 ≥32 字节取前 32 字节；`op=13` 握手对
+  `event_ts + plain_token` 签名）；删除已被统一扫描周期取代的
+  `ACTIVITY_REMIND_INTERVAL_MS` / `APPEAL_FORWARD_INTERVAL_MS`；删除旧名别名 `ADMIN_QQ_IDS`
+  （只认 `ADMIN_USER_IDS`）与 `TIMEZONE`（只认标准 `TZ`）。
+- **数据保留支持 `-1` = 永久保留**：`RAW_MESSAGE_RETENTION_DAYS` / `AUDIT_LOG_RETENTION_DAYS` /
+  `JOIN_REQUEST_TTL_DAYS`，以及 `/rules set rawMessageRetentionDays -1`（落库且永不清理）。
+- **卡片文案去掉自证式声明**：超管专属卡、部署监测卡不再写「只有全局超管能看到这张卡」
+  「已连续 3 次检测到，说明上传完成」这类冗余/机器话。
 
 
 ## [0.21.0] - 2026-09-27

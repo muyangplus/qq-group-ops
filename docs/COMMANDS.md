@@ -587,8 +587,8 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 
 **统一计时**：全项目只跑一个定时器，周期由 `SCAN_INTERVAL_MS` 决定（默认 60 秒；`0` = 关闭所有周期任务）。
 保留清理（24 小时）、活动提醒、申诉超时轮转、待审批申请 TTL（**每轮**检查，过期申请立刻从 `/pending` 消失）、
-部署监测都注册到这个节拍上；各任务自己的间隔（`ACTIVITY_REMIND_INTERVAL_MS` 等）表示「最小间隔」，
-未到点就跳过。一轮内**串行**执行，单个任务抛错不影响其它任务；上一轮没跑完时这一轮跳过（不叠加）。
+部署监测都注册到这个节拍上；活动提醒与申诉轮转每轮都检查（精度即扫描周期），保留清理按 24 小时节拍。
+一轮内**串行**执行，单个任务抛错不影响其它任务；上一轮没跑完时这一轮跳过（不叠加）。
 
 **部署监测（默认开；`AUTO_RESTART_ON_DEPLOY=0` 关）**：CD 用 FTP 逐文件上传，没有「传完」信号，
 所以用「磁盘 `package.json` 的版本 ≠ 进程启动时固化的版本」当信号，并要求**连续 3 轮稳定**：
@@ -1048,7 +1048,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 | `joinReviewOpinion` | `审核意见` | on / off | `/pending` 是否展示自动审核意见 |
 | `notifyAutoApproved` | `通知自动通过`、`autoNotify` | on / off | 机器人自动通过/拒绝的申请是否也推送给审核员（默认 off，只推需要人工处理的） |
 | `export` | `导出` | on / off | 导出开关（当前仅存储展示） |
-| `rawMessageRetentionDays` | `消息保留天数`、`messageRetention` | 天数（`0` = 不保留）；`clear` 归零 | 原始消息保留天数，供审计与申诉回看使用 |
+| `rawMessageRetentionDays` | `消息保留天数`、`messageRetention` | `-1` = 永久保留；`0` = 不保存；正整数 = 天数；`clear` 归零 | 原始消息保留天数，供审计与申诉回看使用 |
 | `welcomeEnabled` | `迎新`、`welcome` | on / off | 新成员加入时是否在群内 @ 他并发出欢迎卡（默认 off，仅群内） |
 | `welcomeMessage` | `欢迎语`、`welcomeMessage` | 文案；`{成员}` = @ 该成员；`clear` 恢复默认 | 欢迎语（仅群内；清空 = 用内置默认） |
 | `enabled` | `启用` | on / off | 本群机器人总开关 |

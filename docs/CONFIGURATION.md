@@ -44,8 +44,6 @@ cp .env.example .env
 | `WEBHOOK_HOST` | 否 | 仅 webhook 模式：监听地址，默认 `127.0.0.1`（只让本机反代访问）；确需直接暴露才用 `0.0.0.0` |
 | `WEBHOOK_PATH` | 否 | 仅 webhook 模式：回调路径，默认 `/webhook/qq`，**必须与开放平台后台填写的一致** |
 | `WEBHOOK_SECRET` | 否 | 仅 webhook 模式：回调签名密钥（派生 Ed25519 密钥对）；**留空或写 `WEBHOOK_SECRET=` 都会回落到 `QQ_BOT_CLIENT_SECRET`**（空字符串不会「卡住」回落） |
-| `WEBHOOK_KEY_DERIVATION` | 否 | 仅 webhook 模式：密钥派生策略，默认 `auto` = 官方《安全和授权》算法（密钥 repeat 翻倍到 ≥32 字节后取前 32 字节，日志 `seed-repeat`）。逃生舱：`hex`（十六进制解码后取前 32 字节，不足则右侧补零记 `hex-pad`）/ `sha256`（平台侧额外哈希时才对）。**平台报「签名校验不通过」时才需要动它**（改完重启再点保存），日志里的 `seedSource` 会告诉你实际用的哪种 |
-| `WEBHOOK_SIGN_CONTENT` | 否 | 仅 webhook 模式：`op=13` 校验握手的签名内容，默认 `ts_token` = `event_ts + plain_token`；备选 `token_ts`（反过来拼） |
 
 ## 限流与重连
 
@@ -782,16 +780,14 @@ pnpm db:up     # docker compose --profile postgres up -d db
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `RAW_MESSAGE_RETENTION_DAYS` | 否 | 消息原文保留天数；`0` 表示不保存（见下方说明） |
-| `AUDIT_LOG_RETENTION_DAYS` | 否 | 审计记录保留天数，默认 `180`；`0` 表示不清理 |
-| `JOIN_REQUEST_TTL_DAYS` | 否 | 待审批入群申请有效期（天），默认 `7`；超过即标记 `expired`（不删数据，`/whois` 可追溯），`0` 表示不自动过期 |
+| `RAW_MESSAGE_RETENTION_DAYS` | 否 | 消息原文保留天数：`-1` = 永久保留、`0` = 不保存、正整数 = 天数（见下方说明） |
+| `AUDIT_LOG_RETENTION_DAYS` | 否 | 审计记录保留天数，默认 `180`；`-1` = 永久保留、`0` = 不清理（同义，推荐用 -1） |
+| `JOIN_REQUEST_TTL_DAYS` | 否 | 待审批入群申请有效期（天），默认 `7`；超过即标记 `expired`（不删数据，`/whois` 可追溯）；`0` / `-1` = 不自动过期 |
 | `ACTIVITY_NOTIFY_DAILY_LIMIT` | 否 | **活动通知**每人每日上限，默认 `3`；非负整数，`0` = 不限制 |
 | `ACTIVITY_NOTIFY_RATE_PER_SECOND` | 否 | **活动通知**令牌桶速率（条/秒），默认 `5`；正整数，`0` = 不限制。桶容量按速率向上取整，桶空时**排队等待**下一个令牌（不丢通知） |
-| `ACTIVITY_REMIND_INTERVAL_MS` | 否 | **活动定时提醒**的轮询间隔（毫秒），默认 `60000`（1 分钟）；`0` = 关闭扫描。提醒由 `/activity set <短码> remindAt MM-DD HH:mm` 设置，到点在所有绑定群广播一次 |
 | `ACTIVITY_STATS_FONT_URL` | 否 | 统计图片的中文字体下载地址（系统字体都没有时才用）；默认 Noto Sans SC 官方发布地址，留空表示只用系统字体 |
 | `APPEAL_HOLD_MINUTES` | 否 | **申诉值班**单人持有时间（分钟），默认 `15`；`0` = 不自动转派。申诉默认通知**所有管理员**（群管理员 / 本群超管 / 全局超管），**审核员之间轮单**（一次只通知一位），超时未处理转给下一位 |
-| `APPEAL_FORWARD_INTERVAL_MS` | 否 | 申诉值班超时扫描间隔（毫秒），默认 `60000`；`0` = 关闭扫描（等价于不自动转派） |
-| `SCAN_INTERVAL_MS` | 否 | **统一扫描周期**（毫秒），默认 `60000`。全项目只跑一个定时器：保留清理 / 活动提醒 / 申诉轮转 / 待审批 TTL / 部署监测都由它驱动；各任务自己的间隔（`ACTIVITY_REMIND_INTERVAL_MS` 等）变成「最小间隔」用于跳过未到点的轮次。`0` = **关闭所有周期任务**（统一总开关） |
+| `SCAN_INTERVAL_MS` | 否 | **统一扫描周期**（毫秒），默认 `60000`。全项目只跑一个定时器：保留清理 / 活动提醒 / 申诉轮转 / 待审批 TTL / 部署监测都由它驱动；保留清理仍按 24 小时节拍。`0` = **关闭所有周期任务**（统一总开关） |
 | `AUTO_RESTART_ON_DEPLOY` | 否 | **部署监测**：检测到服务器上的版本变化后是否自动重启，默认开（`0` = 关）。连续 3 轮扫描到同一新版本才认定「上传完成」→ 私信全部全局超管「计划 N 小时后自动重启」+「取消自动重启 / 立即重启」按钮 |
 | `DEPLOY_RESTART_DELAY_MINUTES` | 否 | 部署监测的宽限期（分钟），默认 `60`；`0` = 检测到就重启（仍会先发通知卡） |
 | `DEPLOY_CHECK_INTERVAL_MS` | 否 | 部署监测的扫描间隔（毫秒），默认 `60000`；`0` = 关闭监测。**要求机器人的工作目录 = FTP 上传目标目录**，否则读不到新版本 |
@@ -822,7 +818,7 @@ pnpm db:up     # docker compose --profile postgres up -d db
 - 查询 `/pending` 时还会做一次懒清理，保证卡片里不出现过期项。
 - 清理同时作用于内存缓存与数据库，避免启动全量载入导致内存无限增长。
 
-`RAW_MESSAGE_RETENTION_DAYS` 控制**触发处罚的那条消息原文**的保留期：默认 `0` 表示不落库
+`RAW_MESSAGE_RETENTION_DAYS` 控制**触发处罚的那条消息原文**的保留期：`-1` = 永久保留、默认 `0` 表示不落库
 （隐私优先，只保存审核结果与规则命中信息）；设为 `3–7` 后，关键词 / 正则命中的消息会以**单行 + 截断 ≤200 字**
 存进 `punishment_records.message_excerpt`，只用于审核员与当事人本人的**私信卡片**（群里那张「处罚通知」不带原文、
 也不写命中的具体规则）。到期由 `RetentionService` **只清原文**，处罚记录本身仍按 `AUDIT_LOG_RETENTION_DAYS` 保留。

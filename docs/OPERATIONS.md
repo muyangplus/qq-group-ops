@@ -131,7 +131,6 @@ rand := strings.NewReader(seed[:ed25519.SeedSize])    // 取前 32 字节
 仍不通过时，才动下面这两个**不用改代码**的逃生舱：每次都是「改 `.env` → 重启 → 回后台再点一次保存」，
 并对照启动日志的 `seedSource` / `signContent`：
 
-| 顺序 | `WEBHOOK_KEY_DERIVATION` | `WEBHOOK_SIGN_CONTENT` | 适用情况 |
 |---|---|---|---|
 | 1（默认） | `auto`（官方算法，日志 `seed-repeat`） | `ts_token` | 应当直接成功；失败先查上面三条 |
 | 2 | `hex` | `ts_token` | 密钥是十六进制（32 位 → 解码 16 字节右侧补零，日志 `hex-pad`；64 位 → `hex`） |
