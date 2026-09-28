@@ -1,7 +1,7 @@
 # CD：打 tag 发 Release 自动发布到 FTP
 
 > 工作流文件：[`.github/workflows/cd-ftp.yml`](../.github/workflows/cd-ftp.yml)
-> 相关：[`docs/OPERATIONS.md`](./OPERATIONS.md)（部署与运行）、[`docs/CD.md`](./CD.md)（本文件）、
+> 相关：[`docs/OPERATIONS.md`](./OPERATIONS.md)（部署与运行）、
 > [`.github/dependabot.yml`](../.github/dependabot.yml)（依赖与 Action 的安全更新）
 
 ## 1. 它什么时候跑

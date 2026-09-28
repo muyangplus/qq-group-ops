@@ -4,7 +4,7 @@
 > 我据此收尾对应 TODO 条目。执行前先 `pnpm build`，并按 [OPERATIONS.md](./OPERATIONS.md) 在仓库根目录启动。
 >
 > **想一次跑完**：直接照 [REAL-MACHINE-RUN.md](./REAL-MACHINE-RUN.md)（跑批手册：准备清单、执行顺序、
-> 一键取证命令、回填模板）做，比逐项翻本文件快得多；本文件负责解释每项的背景与判定标准。
+> 一键取证命令、回填模板）做，比逐项手工核对快得多。
 >
 > 相关：`docs/ACCEPTANCE.md`（J1–J66 完整验收）、`TODO.md`（条目状态）。
 
