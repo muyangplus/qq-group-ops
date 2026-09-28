@@ -13,6 +13,22 @@
 
 ### P0
 
+- [ ] **一次性迁移命令 + 删除主体兼容代码**（用户口径：不保留旧内容，但老库要能一把转干净）
+  - 形态：新增 `/migrate`（**仅全局超管**，只私信回执；每步打印「改了几行 / 无变化」，跑完写审计）；
+    **幂等**，跑第二次应全部「无变化」；跑之前提醒先备份 `data/qq-group-ops.db`。
+  - 迁移内容（逐项）：
+    1. `group_settings` 老键 `keywordRecall` / `keywordPunish` → 合并成 `punishActions`（复用 `punishActionsFromLegacy`），并删除这两行；
+    2. `group_settings` 里**非 JSON 的裸字符串**值 → 重新按 JSON 写回（替代老代码的 `parseSettingValue` 回落）；
+    3. `group_configs.allowYears` / `denyYears` 与 `user_profiles` 的**四位年份**（`2022`）→ 两位（`22`）；
+    4. 短码：`short_codes` 与活动短码里的小写字母 → 重新生成为「数字 + 大写」
+       （等价于现在启动期的 `regenerateLegacyCodes`；老短码会失效，用户已知晓）。
+  - **删除清单**（迁移命令落地后一并删）：
+    `groupConfig.get()` 的 `punishActionsFromLegacy` 分支、`parseSettingValue` 的裸字符串回落、
+    四位年份接受分支（`normalizeYear` / `yearFromStudentId`）、`shortCodes` 与 `activity` 的启动期 `regenerateLegacyCodes`、
+    `permissions.ts` 的 7 个旧便捷方法（`hasAtLeast` / `meets` / `canApproveJoin` / `canManageRules` /
+    `canReviewContent` / `canExportData` / `hasAnyGroupRole`，已无命令层调用）、`menu.ts` 的 `sys` 别名与 `helpTopics` 对应行。
+  - 验收：① 迁移命令幂等；② 迁移后 `/rules` 的违规处理动作与迁移前一致；③ 老库短码迁移后 `/whois`、
+    `/punish` 等按新短码可查；④ 全量测试绿；⑤ 文档写清「升级后先跑一次 `/migrate`」。
 - [ ] **D4 真机验收**（批次2 退出条件）
   - 内容：跑 `docs/ACCEPTANCE.md` 的 J32–J56 + M 组，连带 B / C 节里标了 `真机` 的确认项。
   - 验收：逐项回填「通过 / 不通过 / 原因」；不通过项转成本文件里的新条目。
