@@ -34,7 +34,6 @@ describe("qqWebhookSignature", () => {
     // 官方 Demo：secret 28 字节 → repeat 翻倍后取前 32 字节 = 原串 + 前 4 个字符
     expect(officialWebhookSeed(OFFICIAL_DEMO_SECRET).toString("utf8")).toBe(OFFICIAL_DEMO_SEED);
     const pair = deriveWebhookKeyPair(OFFICIAL_DEMO_SECRET);
-    expect(pair.seedSource).toBe("seed-repeat");
     // 官方 Demo 输出的公钥（32 字节）—— 逐字节比对，算法改错这里一定红
     expect(rawPublicKey(pair.publicKey)).toEqual(OFFICIAL_DEMO_PUBLIC_KEY);
     // 官方 Demo 输出的私钥 = seed(32) + 公钥(32)；PKCS#8 的末 32 字节就是 seed
@@ -46,7 +45,6 @@ describe("qqWebhookSignature", () => {
   it("uses the secret as the seed directly when it is already 32 bytes", () => {
     // 官方 Go 示例：`for len(seed) < 32` 循环不执行，直接 `seed[:32]`
     const pair = deriveWebhookKeyPair(SECRET);
-    expect(pair.seedSource).toBe("seed-repeat");
     expect(officialWebhookSeed(SECRET).toString("utf8")).toBe(SECRET);
 
     // 自签自验通过
@@ -68,7 +66,6 @@ describe("qqWebhookSignature", () => {
   it("truncates a secret longer than 32 bytes (官方取前 32 字节)", () => {
     const long = "abcdefghij".repeat(5); // 50 字节
     expect(officialWebhookSeed(long).toString("utf8")).toBe(long.slice(0, 32));
-    expect(deriveWebhookKeyPair(long).seedSource).toBe("seed-repeat");
   });
 
   it("repeats the secret when it is shorter than 32 bytes", () => {
@@ -189,45 +186,6 @@ describe("qqWebhookSignature", () => {
         Buffer.from(signature, "hex"),
       ),
     ).toBe(true);
-  });
-
-  it("keeps hex / sha256 as on-site escape hatches", () => {
-    // hex：32 位十六进制解码成 16 字节 → 右侧补零；64 位 → 直接取前 32 字节
-    expect(deriveWebhookKeyPair("ab".repeat(16), "hex").seedSource).toBe("hex-pad");
-    expect(deriveWebhookKeyPair("ab".repeat(32), "hex").seedSource).toBe("hex");
-    expect(() => deriveWebhookKeyPair("not-hex", "hex")).toThrow("十六进制");
-
-    // sha256：平台侧额外做了哈希时才对
-    expect(deriveWebhookKeyPair(SECRET, "sha256").seedSource).toBe("sha256");
-    // 默认（auto）绝对不是 sha256
-    expect(deriveWebhookKeyPair(SECRET).seedSource).toBe("seed-repeat");
-  });
-
-  it("supports the alternative signature content order", () => {
-    const { publicKey, privateKey } = deriveWebhookKeyPair(SECRET);
-    const signature = signWebhookValidation({
-      privateKey,
-      eventTs: TIMESTAMP,
-      plainToken: "Arq0m5Yx",
-      content: "token_ts",
-    });
-    // token_ts = plain_token + event_ts
-    expect(
-      verifyRaw(
-        null,
-        Buffer.from(`Arq0m5Yx${TIMESTAMP}`, "utf8"),
-        publicKey,
-        Buffer.from(signature, "hex"),
-      ),
-    ).toBe(true);
-    // 与默认顺序不同
-    expect(signature).not.toBe(
-      signWebhookValidation({
-        privateKey,
-        eventTs: TIMESTAMP,
-        plainToken: "Arq0m5Yx",
-      }),
-    );
   });
 
   it("rejects an empty secret", () => {

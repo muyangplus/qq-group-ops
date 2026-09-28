@@ -7,9 +7,7 @@ import {
   deriveWebhookKeyPair,
   signWebhookValidation,
   verifyWebhookSignature,
-  type WebhookKeyDerivation,
   type WebhookKeyPair,
-  type WebhookSignContent,
 } from "./qqWebhookSignature.js";
 
 const log = getLogger("webhook-gateway");
@@ -36,10 +34,6 @@ export interface WebhookGatewayOptions {
   mapper: OfficialEventMapper;
   /** 注入密钥对（测试用；缺省时由 secret 派生）。 */
   keyPair?: WebhookKeyPair | undefined;
-  /** 密钥派生策略（`WEBHOOK_KEY_DERIVATION`，默认 `auto`）。 */
-  keyDerivation?: WebhookKeyDerivation | undefined;
-  /** 校验握手签名内容（`WEBHOOK_SIGN_CONTENT`，默认 `ts_token`）。 */
-  signContent?: WebhookSignContent | undefined;
 }
 
 /**
@@ -62,7 +56,6 @@ export class WebhookEventGateway implements EventGateway {
   private readonly host: string;
   private readonly path: string;
   private readonly mapper: OfficialEventMapper;
-  private readonly signContent: WebhookSignContent;
   private server: FastifyInstance | undefined;
   private handler: EventHandler | undefined;
   /** 事件处理串行队列（先回 ACK，再按序处理）。 */
@@ -70,14 +63,11 @@ export class WebhookEventGateway implements EventGateway {
   private queued = 0;
 
   public constructor(options: WebhookGatewayOptions) {
-    this.keyPair =
-      options.keyPair ??
-      deriveWebhookKeyPair(options.secret, options.keyDerivation ?? "auto");
+    this.keyPair = options.keyPair ?? deriveWebhookKeyPair(options.secret);
     this.port = options.port;
     this.host = options.host ?? "127.0.0.1";
     this.path = options.path ?? "/webhook/qq";
     this.mapper = options.mapper;
-    this.signContent = options.signContent ?? "ts_token";
   }
 
   public get isRunning(): boolean {
@@ -151,12 +141,8 @@ export class WebhookEventGateway implements EventGateway {
           privateKey: this.keyPair.privateKey,
           eventTs,
           plainToken,
-          content: this.signContent,
         });
-        log.info("webhook url validation answered", {
-          seedSource: this.keyPair.seedSource,
-          signContent: this.signContent,
-        });
+        log.info("webhook url validation answered");
         return reply.code(200).send({ plain_token: plainToken, signature });
       }
 
@@ -204,8 +190,6 @@ export class WebhookEventGateway implements EventGateway {
       host: this.host,
       port: this.port,
       path: this.path,
-      seedSource: this.keyPair.seedSource,
-      signContent: this.signContent,
     });
   }
 

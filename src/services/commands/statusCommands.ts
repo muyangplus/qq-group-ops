@@ -243,8 +243,15 @@ function formatDurationLabel(seconds: number): string {
     : `${hours} 小时 ${restMinutes} 分`;
 }
 
-/** 「全量消息模式」的中文解释（用户最常需要确认的一项）。 */
-function messageModeLabel(mode: string | undefined): string {
+/** 保留天数的中文写法：`-1` = 永久保留；`0` = 关闭（各字段语义不同，用 zeroLabel 区分）。 */
+function retentionLabel(days: number, zeroLabel: string): string {
+  if (days < 0) {
+    return "永久保留";
+  }
+  return days === 0 ? zeroLabel : `${days} 天`;
+}
+
+/** 「全量消息模式」的中文解释（用户最常需要确认的一项）。 */function messageModeLabel(mode: string | undefined): string {
   if (mode === "all") {
     return "已开启（非 @ 指令也能识别）";
   }
@@ -297,9 +304,10 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
     }`,
     `**日志与保留**：日志 ${settings.logLevel} · 时区 ${
       settings.displayTimezone
-    } · 原文 ${settings.rawMessageRetentionDays} 天 · 审计 ${
-      settings.auditLogRetentionDays
-    } 天`,
+    } · 原文 ${retentionLabel(settings.rawMessageRetentionDays, "不保存")} · 审计 ${retentionLabel(
+      settings.auditLogRetentionDays,
+      "不清理",
+    )}`,
     `**管理员**：${settings.adminUserIds.length} 人 · 首次菜单 ${settings.menuFirstPush}`,
   );
   return lines;
@@ -327,7 +335,6 @@ export function processCard(
         viewButton("help", "指令帮助", "help", "topic", "status"),
       ],
     ],
-    footer: ["只有全局超管能看到这张卡。"],
   });
 }
 

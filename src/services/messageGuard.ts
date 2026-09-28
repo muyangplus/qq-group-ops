@@ -166,7 +166,8 @@ export class MessageGuardService {
             ruleReason: matches[0]?.reason ?? "",
             messageId: message.messageId,
             // §B7：只有本群开启了消息保留才落库原文（默认不保存，隐私优先）。
-            ...(config.rawMessageRetentionDays > 0
+            // `-1` = 永久保留（也要落库），`0` = 不保存，`> 0` = N 天后清原文。
+            ...(config.rawMessageRetentionDays !== 0
               ? { messageExcerpt: rawMessageExcerpt(message.content) }
               : {}),
             actions: {

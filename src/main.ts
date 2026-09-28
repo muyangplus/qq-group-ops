@@ -199,14 +199,12 @@ async function main(): Promise<void> {
   });
   scheduler.register({
     name: "activity-reminder",
-    minIntervalMs: settings.activityRemindIntervalMs,
     run: async () => {
       await activityReminder.runOnce();
     },
   });
   scheduler.register({
     name: "appeal-watcher",
-    minIntervalMs: settings.appealForwardIntervalMs,
     // 启动时不扫（与旧行为一致：首次派发在 notifyAppeal 里完成）
     runOnStart: false,
     run: async () => {
@@ -467,8 +465,6 @@ function buildWebhookGateway(
         void handleOfficialEvent(runtime, info);
       },
     }),
-    keyDerivation: settings.webhookKeyDerivation,
-    signContent: settings.webhookSignContent,
   });
 }
 

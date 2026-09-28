@@ -1075,12 +1075,15 @@ export function parsePositiveInt(field: string, value: string): number {
   return parsed;
 }
 
-/** 原始消息保留天数：`0` 表示不保留，其余必须是非负整数。 */
+/** 原始消息保留天数：`-1` = 永久保留，`0` = 不保存，其余必须是非负整数。 */
 export function parseRetentionDays(field: string, value: string): number {
   const trimmed = value.trim();
+  if (trimmed === "-1") {
+    return -1;
+  }
   const parsed = Number.parseInt(trimmed, 10);
   if (!/^\d+$/u.test(trimmed) || !Number.isFinite(parsed)) {
-    throw new Error(`${field} 需要 0 或正整数（天）`);
+    throw new Error(`${field} 需要 -1（永久保留）、0（不保存）或正整数（天）`);
   }
   return parsed;
 }

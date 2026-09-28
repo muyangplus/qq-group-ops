@@ -75,7 +75,6 @@ export function restartCard(
           viewButton("help", "指令帮助", "help", "topic", "restart"),
         ],
       ],
-      footer: ["只有全局超管能执行；群内结果会 @ 发起人。"],
     },
   );
 }

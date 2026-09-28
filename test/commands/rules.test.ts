@@ -274,12 +274,16 @@ describe("AdminCommandService · rules", () => {
     await service.handle("g1", "admin", "/rules set rawMessageRetentionDays clear");
     expect(configStore.get("g1").rawMessageRetentionDays).toBe(0);
 
-    // 非法值：负数 / 非数字都拒绝，且不改配置
+    // -1 = 永久保留（落库且永不清理）
+    await service.handle("g1", "admin", "/rules set rawMessageRetentionDays -1");
+    expect(configStore.get("g1").rawMessageRetentionDays).toBe(-1);
+
+    // 非法值：其它负数 / 非数字都拒绝，且不改配置
     await service.handle("g1", "admin", "/rules set rawMessageRetentionDays 7");
-    for (const bad of ["-1", "abc", "1.5"]) {
+    for (const bad of ["-2", "abc", "1.5"]) {
       const invalid = await service.handle("g1", "admin", `/rules set rawMessageRetentionDays ${bad}`);
       expect(invalid.ok, bad).toBe(false);
-      expect(invalid.text, bad).toContain("需要 0 或正整数");
+      expect(invalid.text, bad).toContain("需要 -1（永久保留）");
       expect(configStore.get("g1").rawMessageRetentionDays, bad).toBe(7);
     }
     // 用法里也列出了这个字段

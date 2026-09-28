@@ -7,8 +7,6 @@ import {
   resolveDatabaseTarget,
   resolveEventMode,
   resolveMenuFirstPushMode,
-  resolveWebhookKeyDerivation,
-  resolveWebhookSignContent,
 } from "../src/config.js";
 
 describe("loadSettings", () => {
@@ -81,18 +79,6 @@ describe("loadSettings", () => {
     expect(
       loadSettings({ WEBHOOK_SECRET: "", QQ_BOT_CLIENT_SECRET: "" }).webhookSecret,
     ).toBe("");
-
-    // 密钥派生 / 拼接顺序：默认即官方算法，显式值可切换
-    expect(defaults.webhookKeyDerivation).toBe("auto");
-    expect(defaults.webhookSignContent).toBe("ts_token");
-    expect(resolveWebhookKeyDerivation(undefined)).toBe("auto");
-    expect(resolveWebhookKeyDerivation("   ")).toBe("auto");
-    expect(resolveWebhookKeyDerivation("HEX")).toBe("hex");
-    expect(resolveWebhookKeyDerivation("sha256")).toBe("sha256");
-    expect(() => resolveWebhookKeyDerivation("raw")).toThrow("WEBHOOK_KEY_DERIVATION");
-    expect(resolveWebhookSignContent(undefined)).toBe("ts_token");
-    expect(resolveWebhookSignContent("TOKEN_TS")).toBe("token_ts");
-    expect(() => resolveWebhookSignContent("body_ts")).toThrow("WEBHOOK_SIGN_CONTENT");
   });
 
   it("loads environment values", () => {
@@ -115,9 +101,9 @@ describe("loadSettings", () => {
     expect(settings.logColor).toBe("never");
   });
 
-  it("supports the legacy ADMIN_QQ_IDS alias", () => {
-    const settings = loadSettings({ ADMIN_QQ_IDS: "legacy" });
-    expect(settings.adminUserIds).toEqual(["legacy"]);
+  it("不再认旧名 ADMIN_QQ_IDS（只认 ADMIN_USER_IDS）", () => {
+    const settings = loadSettings({ ADMIN_QQ_IDS: "legacy" } as NodeJS.ProcessEnv);
+    expect(settings.adminUserIds).toEqual([]);
   });
 });
 

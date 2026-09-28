@@ -1,9 +1,3 @@
-import {
-  WEBHOOK_KEY_DERIVATIONS,
-  WEBHOOK_SIGN_CONTENTS,
-  type WebhookKeyDerivation,
-  type WebhookSignContent,
-} from "./adapters/qqWebhookSignature.js";
 import { DEFAULT_DISPLAY_TIME_ZONE } from "./core/timeFormat.js";
 
 export const DEFAULT_SQLITE_PATH = "data/qq-group-ops.db";
@@ -36,10 +30,6 @@ export interface Settings {
   webhookPath: string;
   /** webhook 回调密钥（`WEBHOOK_SECRET`）；缺省回落到机器人密钥。 */
   webhookSecret: string;
-  /** webhook 密钥派生策略（`WEBHOOK_KEY_DERIVATION`，默认 `auto`）。 */
-  webhookKeyDerivation: WebhookKeyDerivation;
-  /** webhook 校验握手签名内容（`WEBHOOK_SIGN_CONTENT`，默认 `ts_token`）。 */
-  webhookSignContent: WebhookSignContent;
   qqBotToken: string;
   qqBotSandbox: boolean;
   /** access token / 网关地址缓存文件；空字符串表示只用内存缓存。 */
@@ -78,12 +68,6 @@ export interface Settings {
    */
   activityNotifyRatePerSecond: number;
   /**
-   * 活动定时提醒的轮询间隔（`ACTIVITY_REMIND_INTERVAL_MS`，默认 60000）。
-   *
-   * `0` = 关闭定时提醒扫描；精度即轮询间隔。
-   */
-  activityRemindIntervalMs: number;
-  /**
    * 申诉「值班」单人持有时间（分钟，`APPEAL_HOLD_MINUTES`，默认 15）。
    *
    * 申诉默认通知**所有管理员**，审核员之间**轮单**（一次只通知一位）；
@@ -91,16 +75,9 @@ export interface Settings {
    */
   appealHoldMinutes: number;
   /**
-   * 申诉值班超时扫描间隔（`APPEAL_FORWARD_INTERVAL_MS`，默认 60000）。
-   *
-   * `0` = 关闭扫描（等价于不自动转派）；精度即轮询间隔。
-   */
-  appealForwardIntervalMs: number;
-  /**
    * **统一扫描周期**（`SCAN_INTERVAL_MS`，默认 60000）。
    *
-   * 全项目只跑一个定时器：保留清理 / 活动提醒 / 申诉轮转 / 部署监测都由它驱动，
-   * 各任务自己的节拍（`ACTIVITY_REMIND_INTERVAL_MS` 等）变成「最小间隔」用于跳过未到点的轮次。
+   * 全项目只跑一个定时器：保留清理 / 活动提醒 / 申诉轮转 / 待审批 TTL / 部署监测都由它驱动。
    * `0` = 关闭**所有**周期任务（统一总开关）。
    */
   scanIntervalMs: number;
@@ -165,45 +142,6 @@ export function resolveEventMode(value: string | undefined): EventMode {
     return "webhook";
   }
   throw new Error(`EVENT_MODE 只支持 websocket / webhook，收到：${value}`);
-}
-
-/**
- * 解析 webhook 密钥派生策略（`WEBHOOK_KEY_DERIVATION`）。
- *
- * 默认 `auto` 就是官方《安全和授权》的算法（密钥 repeat 翻倍 → 取前 32 字节作 Ed25519 种子）。
- * `hex` / `sha256` 是排障用的逃生舱：平台只回「签名校验不通过」，改 `.env` + 重启即可逐个试。
- */
-export function resolveWebhookKeyDerivation(
-  value: string | undefined,
-): WebhookKeyDerivation {
-  const raw = value?.trim().toLowerCase() ?? "";
-  if (raw.length === 0) {
-    return "auto";
-  }
-  const found = WEBHOOK_KEY_DERIVATIONS.find((item) => item === raw);
-  if (!found) {
-    throw new Error(
-      `WEBHOOK_KEY_DERIVATION 只支持 ${WEBHOOK_KEY_DERIVATIONS.join(" / ")}，收到：${value}`,
-    );
-  }
-  return found;
-}
-
-/** 解析校验握手的签名内容（`WEBHOOK_SIGN_CONTENT`，默认 `event_ts + plain_token`）。 */
-export function resolveWebhookSignContent(
-  value: string | undefined,
-): WebhookSignContent {
-  const raw = value?.trim().toLowerCase() ?? "";
-  if (raw.length === 0) {
-    return "ts_token";
-  }
-  const found = WEBHOOK_SIGN_CONTENTS.find((item) => item === raw);
-  if (!found) {
-    throw new Error(
-      `WEBHOOK_SIGN_CONTENT 只支持 ${WEBHOOK_SIGN_CONTENTS.join(" / ")}，收到：${value}`,
-    );
-  }
-  return found;
 }
 
 function asBool(value: string | undefined, fallback = false): boolean {
@@ -318,24 +256,20 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     webhookPath: asText(env.WEBHOOK_PATH, "/webhook/qq"),
     // 留空（`WEBHOOK_SECRET=`）视为没填，回落到机器人密钥：`??` 认不出空字符串
     webhookSecret: firstNonBlank(env.WEBHOOK_SECRET, env.QQ_BOT_CLIENT_SECRET),
-    webhookKeyDerivation: resolveWebhookKeyDerivation(
-      env.WEBHOOK_KEY_DERIVATION,
-    ),
-    webhookSignContent: resolveWebhookSignContent(env.WEBHOOK_SIGN_CONTENT),
     qqBotToken: env.QQ_BOT_TOKEN ?? "",
     qqBotSandbox: asBool(env.QQ_BOT_SANDBOX),
     qqBotCacheFile: env.QQ_BOT_CACHE_FILE ?? DEFAULT_BOT_CACHE_FILE,
     classIndexFile: env.CLASS_INDEX_FILE ?? DEFAULT_CLASS_INDEX_FILE,
     databaseUrl,
     databaseTarget: resolveDatabaseTarget(env.DATABASE_URL, env.SQLITE_PATH),
-    adminUserIds: splitCsv(env.ADMIN_USER_IDS ?? env.ADMIN_QQ_IDS),
+    adminUserIds: splitCsv(env.ADMIN_USER_IDS),
     logLevel: (env.LOG_LEVEL ?? "info").toUpperCase(),
     logFile: env.LOG_FILE ?? "logs/qq-group-ops.log",
     logConsole: asBool(env.LOG_CONSOLE, true),
     logColor: env.LOG_COLOR ?? "auto",
     rawMessageRetentionDays: asInt(env.RAW_MESSAGE_RETENTION_DAYS, 0),
-    // 展示时区：默认 UTC+8，`TZ` / `TIMEZONE` 可覆盖（非法值由 setDisplayTimeZone 回落）
-    displayTimezone: asText(env.TZ ?? env.TIMEZONE, DEFAULT_DISPLAY_TIME_ZONE),
+    // 展示时区：默认 UTC+8，`TZ` 可覆盖（非法值由 setDisplayTimeZone 回落）
+    displayTimezone: asText(env.TZ, DEFAULT_DISPLAY_TIME_ZONE),
     auditLogRetentionDays: asInt(env.AUDIT_LOG_RETENTION_DAYS, 180),
     menuFirstPush: resolveMenuFirstPushMode(env.MENU_FIRST_PUSH),
     joinRequestTtlDays: asInt(env.JOIN_REQUEST_TTL_DAYS, 7),
@@ -347,10 +281,6 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
       env.ACTIVITY_NOTIFY_RATE_PER_SECOND,
       5,
     ),
-    activityRemindIntervalMs: asNonNegativeInt(
-      env.ACTIVITY_REMIND_INTERVAL_MS,
-      60_000,
-    ),
     appealHoldMinutes: asNonNegativeInt(env.APPEAL_HOLD_MINUTES, 15),
     scanIntervalMs: asNonNegativeInt(env.SCAN_INTERVAL_MS, 60_000),
     autoRestartOnDeploy: asBool(env.AUTO_RESTART_ON_DEPLOY, true),
@@ -360,10 +290,6 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     ),
     deployCheckIntervalMs: asNonNegativeInt(
       env.DEPLOY_CHECK_INTERVAL_MS,
-      60_000,
-    ),
-    appealForwardIntervalMs: asNonNegativeInt(
-      env.APPEAL_FORWARD_INTERVAL_MS,
       60_000,
     ),
     activityStatsFontUrl: asText(

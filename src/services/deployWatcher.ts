@@ -229,7 +229,7 @@ export class DeployWatcher implements DeployControl {
     return renderCard({
       title: "发现新版本",
       lines: [
-        `**服务器上**：v${pending.targetVersion}（已连续 ${this.streak} 次检测到，说明上传完成）`,
+        `**服务器上**：v${pending.targetVersion}（已就绪）`,
         `**当前运行**：v${pending.currentVersion}`,
         `**自动重启**：${formatDisplayTime(new Date(pending.deadlineAt))}`,
         "",
