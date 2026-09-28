@@ -5,29 +5,14 @@
 >
 > 标签口径：`P0` 最急 → `P3` 可延后；`⚠️` 需先澄清 / 取证；`真机` 需要真实 QQ 群环境；`（记录）` 是已知约束、不一定动。
 >
-> 当前状态（2026-09-27）：`main` = 0.20.0 发版提交，测试 **107 文件 / 864 用例**全绿；
-> **0.20.0 已发版**：tag `v0.20.0` + GitHub Release（含 `/status proc` 与 `/restart` 自我重启）。
+> 当前状态（2026-09-27）：测试 **110 文件 / 885 用例**全绿；0.20.0 已发版，`[Unreleased]` 里是
+> 「统一计时任务 + 部署监测自动重启 + 状态/重启卡文案改人话」（**待切 0.21.0**）。
 > 已完成：A1–A5、B1–B3、B6–B11、C1–C3、C5–C6、C9、D1、D3、D5、D10、F1–F2、H1–H8、D9（0.19.0 起）。
 
 ## 1. 待办
 
 ### P0
 
-- [ ] **部署监测：检测到新版本已推送 → 通知超管「1 小时后自动重启」（可取消 / 可立即重启）**
-  - 信号（已定）：每轮读一次**磁盘**上的 `package.json` 版本，与**进程启动时固化的版本**比较
-    （`appVersion()` 读磁盘会随部署变化，所以必须在启动时 `captureRunningVersion()` 固化，否则永远不会触发）；
-    连续 `N=3` 轮读到同一新版本才认定「上传完成」（压掉 FTP 逐文件上传的中间态）。
-  - 流程：检测到 → 私信**全部全局超管**一张卡：「当前 v0.20.0 → 磁盘 v0.21.0，计划 1 小时后自动重启」+
-    两个按钮「**取消自动重启**」「**立即重启**」（外加「进程状态」入口）；到期没人取消 → 走既有自我重启路径
-    （`runtime.restart.request({ reason: "deploy", targetVersion })`）；重启完成后按「因新版本自动重启」回执超管。
-  - 配置：`AUTO_RESTART_ON_DEPLOY`（默认开，`0` 关闭）、`DEPLOY_RESTART_DELAY_MINUTES`（默认 `60`）、
-    `DEPLOY_CHECK_INTERVAL_MS`（默认 `60000`，`0` 关闭监测）；**先用独立定时器** ——
-    将来并入统一计时任务（见 P1 那条）时只换驱动方式。
-  - 边界：① 要求**工作目录 = FTP 目标目录**，否则读不到新版；② 取消后**同一目标版本不再提醒**，
-    版本再变才重新提醒（避免每小时骚扰）；③ 磁盘版本回落（撤回部署）→ 清除待重启状态；
-    ④ 新版本起不来时自我重启助手会写 `data/restart-failed.json`；⑤ 重启期间离线几秒。
-  - 验收：假时钟单测覆盖「未稳定不通知 / 稳定后通知 / 取消（同版本不再提醒）/ 立即重启 / 到期自动重启 /
-    版本回退清除」；真机跑一次 CD 部署（FTP 传完后 3 分钟内应收到通知卡）。
 - [ ] **D4 真机验收**（批次2 退出条件）
   - 内容：跑 `docs/ACCEPTANCE.md` 的 J32–J56 + M 组，连带 B / C 节里标了 `真机` 的确认项。
   - 验收：逐项回填「通过 / 不通过 / 原因」；不通过项转成本文件里的新条目。
@@ -43,21 +28,6 @@
   - 已完成：`docker compose config --quiet` 通过、`--profile postgres` 服务列表正确、
     `.dockerignore` 实测少传约 106 MB。
   - 待补：镜像 build + postgres 启停（用独立项目名 `-p qqops-smoke`，收尾 `down -v`，避免污染真实数据卷）。
-- [ ] **计时任务统一管理：一个扫描周期配置驱动所有周期检查**（P1）
-  - 现状：三个周期任务各自持有 `setTimeout` 链，启动 / 停止 / 错误处理是三份重复代码 ——
-    `RetentionService`（默认 24h）、`ActivityReminderService`（`ACTIVITY_REMIND_INTERVAL_MS`）、
-    `AppealWatcher`（`APPEAL_FORWARD_INTERVAL_MS`）。
-  - 目标：新增 `TickScheduler`（`src/services/tickScheduler.ts`），全项目**只跑一个定时器**；
-    三个服务改成「注册到 tick」的纯 runner（只留 `runOnce()`），各自声明 `minIntervalMs`（自己的节拍），
-    由统一 tick 判断是否到点；新增配置 `SCAN_INTERVAL_MS`（默认 60s，`0` = 关闭所有周期任务）。
-  - 验收：① 三个服务不再持有定时器；② 一个 tick 内**串行**跑所有到期任务，单任务抛错不影响其它；
-    ③ 上一轮没跑完不叠加下一轮（overrun 保护）；④ 假时钟测试覆盖「未到点 / 到点 / 抛错 / stop」；
-    ⑤ `.env.example` 与 `docs/CONFIGURATION.md` 补 `SCAN_INTERVAL_MS`；⑥ 行为保持：保留清理仍按 24h、
-    提醒与申诉轮转仍按各自配置频率，只是改由统一 tick 驱动；
-    ⑦ **待审批申请 TTL 过期拆出来、每 tick 检查**（已定，见下）。
-  - 已定（2026-09-27，用户确认）：把「待审批申请 TTL 过期」从 24h 的 retention 里**拆出来**，改成每 tick 检查 ——
-    现在最坏情况下要等 24h 才会从 `/pending` 消失；拆出后它是一个纯内存的轻量检查（`expireStalePending`），
-    retention 只保留数据库清理。注意 `RetentionRunResult.joinRequestsExpired` 与其测试要跟着调整。
 - [ ] **真机确认：`/restart` 在真实部署里确实能拉起新进程**
   - 触发一次 `/restart`，确认：回执卡先到、进程确实退出、几秒内重新起来、并且收到「机器人已重启」的私信回执；
     收不到就查 `data/restart-failed.json` 与启动日志（自我重启助手是脱离会话启动的，SSH 会话断开不影响它）。

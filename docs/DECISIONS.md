@@ -59,6 +59,7 @@
 - ADR-0049：Webhook 事件通道（`EVENT_MODE`，Fastify + Ed25519 验签）（§D5）
 - ADR-0050：权限等级数值化，并拆成「群内 / 平台」两轴（§H1 / §H2）
 - ADR-0051：通知中心——话题订阅、全局门槛、退订墓碑、仅群内迎新（§H3–§H6）
+- ADR-0052：统一计时任务（一个扫描周期）+ 发现新版本自动重启
 
 ---
 
@@ -1071,3 +1072,39 @@
   `test/activityNotifications.test.ts`。
   **能力边界**：真机上纯文本 `content` 与 Markdown 卡片的 `<@!openid>` 谁生效与客户端版本有关，所以迎新两条通道都发；
   个人提醒类活动私信（候补/名额/变更）没有退订按钮（那条路径拿不到群号，塞范围会退错群）。
+
+## ADR-0052：统一计时任务（一个扫描周期）+ 发现新版本自动重启
+
+- 状态：已采纳（未发布，随 0.21.0）
+- 背景：① 三个周期任务（保留清理、活动提醒、申诉超时轮转）各自持有 `setTimeout` 链，
+  `start/stop/错误处理` 是三份重复代码，新增周期检查还要再抄一份；
+  ② 待审批申请的 TTL 过期挂在 24 小时的保留清理里，最坏情况下僵尸申请要在 `/pending` 里挂一天；
+  ③ CD 是 FTP 逐文件上传，**部署完成后进程不会自动重启**，每次都要人工登服务器操作。
+- 决策：
+  1. 新增 `TickScheduler`：**全项目只跑一个定时器**，周期由 `SCAN_INTERVAL_MS` 决定
+     （默认 60 秒；`0` = 关闭所有周期任务，作为统一总开关）；
+  2. 周期任务改成「注册到 tick」的纯 runner（只保留 `runOnce()`），各自声明 `minIntervalMs`
+     （自己的节拍：保留清理 24h、提醒与申诉轮转按各自配置），是否到点由调度器判断；
+  3. 一轮内**串行**执行（避免同时打数据库）；单任务抛错只记日志、不影响其它任务；
+     **上一轮没跑完时这一轮跳过**（overrun 保护，不排队、不叠加）；
+  4. 「待审批申请 TTL 过期」拆出来，注册成**每轮都跑**的轻量任务（纯内存 `expireStalePending`），
+     retention 只负责数据库清理；
+  5. **部署监测**：以「磁盘 `package.json` 版本 ≠ 进程启动时固化的版本」为信号
+     （`appVersion()` 读磁盘会随部署变化，所以启动时必须 `captureRunningVersion()` 固化），
+     并要求**连续 3 轮稳定**才认定上传完成；随后私信全部全局超管一张卡：
+     当前 → 新版本、计划重启时间，以及「**取消自动重启** / **立即重启**」两个按钮；
+  6. 宽限期默认 60 分钟（`DEPLOY_RESTART_DELAY_MINUTES`），到点走 `/restart` 的**同一套自我重启**；
+     取消后**同一目标版本不再提醒**（版本再变才重新提醒）；磁盘版本回落 → 清除待重启状态；
+     自动重启未被受理 → 保留状态、延后 5 分钟重试并私信超管；
+  7. 重启回执区分原因：`manual` 发给发起人，`deploy` 发给**全部全局超管**（写明旧版本 → 新版本）。
+- 理由：把「什么时候该跑」收敛成一份调度逻辑 + 一个配置，新增周期检查只是再 `register` 一项；
+  部署信号必须用「启动时固化 + 稳定滑窗」，否则「磁盘版本」会在部署瞬间追平运行版本而永远不触发，
+  或者在上传中途就当成新版；宽限期 + 取消按钮让自动重启可被人工拦下。
+- 影响：新增 `src/services/tickScheduler.ts`、`src/services/deployWatcher.ts`、`src/services/commands/deployCommands.ts`；
+  改动 `retention.ts` / `activityReminder.ts` / `appealWatcher.ts`（去掉各自的定时器）、`config.ts`
+  （`SCAN_INTERVAL_MS` / `AUTO_RESTART_ON_DEPLOY` / `DEPLOY_RESTART_DELAY_MINUTES` / `DEPLOY_CHECK_INTERVAL_MS`）、
+  `runtime.ts`（`deploy` 控制面 + `restart.request` 带 `reason`/`targetVersion`）、`main.ts`（注册所有任务 + 部署监测接线）、
+  `restartNotice.ts`（部署回执）。测试：`test/tickScheduler.test.ts`、`test/deployWatcher.test.ts`、
+  `test/commands/deploy.test.ts`。
+  **能力边界**：部署监测要求**工作目录 = FTP 上传目标目录**；自我重启不解决「服务器重启后自恢复」，
+  长期部署仍建议 docker compose（`restart: unless-stopped`）或 systemd（`Restart=always`）。
