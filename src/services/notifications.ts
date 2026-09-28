@@ -503,7 +503,11 @@ export class NotificationService {
   }
 
   /**
-   * 推送卡底部补一行「取消订阅此通知」（按钮只允许收件人本人点击）。
+   * 推送卡底部补一行「取消订阅此通知」。
+   *
+   * ⚠️ **不写** `permission.specifyUserIds`：1:1 私信卡片上客户端会把它误判成
+   * 「无权限操作」（真机：全局超管点自己收到的卡也一样）。退订本身只作用于点击者自己
+   * （回调里用事件里的 `userId`），不存在越权可能，所以客户端不需要做可见性限制。
    *
    * 追加不进去（键盘已满 5 行）时原样返回：宁可少一个按钮，也不能让整张通知卡发不出去。
    * 供本服务与其它投递路径（活动通知）共用，保证「所有通知卡」都有同一个退订入口。
@@ -512,14 +516,14 @@ export class NotificationService {
     card: RichMessage,
     topic: NotifyChannel,
     scope: string,
-    userId: string,
+    /** 接收者：退订只作用于点击者自己，所以这里**不用**它做客户端可见性限制（见上）。 */
+    _userId: string,
   ): RichMessage {
     return appendKeyboardRow(card, [
       {
         id: "notifyUnsub",
         label: "取消订阅",
         callbackData: encodeCallback("notify", "unsub", topic, scope),
-        permission: { type: 0, specifyUserIds: [userId] },
         unsupportTips: "当前 QQ 版本不支持按钮，可在 /notify 里取消订阅",
       },
     ]);
@@ -530,7 +534,8 @@ export class NotificationService {
    *
    * - 每人每 key 只投一次（`dedupeId` 写进投递记录的 `request_id` 字段，重启后仍去重）；
    * - 失败也记录，避免反复重试刷屏；
-   * - `cardFor(recipientId)` 让每张卡片能带**只允许该接收者点击**的按钮。
+   * - `cardFor(recipientId)` 让每张卡片能按接收者定制内容（例如只给超管的「拉黑全局」按钮）；
+   *   卡片按钮**不做客户端可见性限制**（私信上会被误判「无权限操作」），权限在服务端校验。
    */
   public async pushToSubscribers(input: {
     groupId: string;
@@ -738,10 +743,7 @@ export class NotificationService {
                   label: "查看待审批",
                   style: 1 as const,
                   command: pendingCommand,
-                  permission: {
-                    type: 0 as const,
-                    specifyUserIds: [userId],
-                  },
+                  // 私信卡片不写 specifyUserIds（客户端会误判「无权限操作」）
                   unsupportTips: "当前 QQ 版本不支持按钮",
                 },
               ],

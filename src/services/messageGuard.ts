@@ -386,6 +386,8 @@ export class MessageGuardService {
                     "new",
                     input.punishmentCode,
                   ),
+                  // 这是**群内**卡片：指定只有当事人能点（真机在群里生效）。
+                  // 注意别把这条经验照搬到私信卡片——私信上指定用户会被客户端误判「无权限操作」。
                   permission: {
                     type: 0 as const,
                     specifyUserIds: [message.userId],

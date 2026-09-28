@@ -203,6 +203,48 @@ describe("PunishmentService", () => {
     expect(String(fallback.markdown)).toContain(`/appeal #${kept.recordId}`);
   });
 
+  it("私信卡片的按钮不带 specifyUserIds（客户端会把它误判成「无权限操作」）", async () => {
+    const { api, appeals, notifier, punishments } = setup();
+    const record = await punishments.create({
+      groupId: "g1",
+      userId: "u1",
+      ruleReason: "广告",
+      messageExcerpt: "",
+      actions: {
+        recalled: false,
+        muted: false,
+        muteDurationSeconds: 0,
+        kicked: false,
+        blacklist: "",
+      },
+    });
+    await punishments.markExecuted(record.recordId, "warn");
+
+    // 处罚通知卡同时推给全局超管 root 与审核员 mod —— 真机上超管点自己的卡也会报「无权限操作」
+    expect(api.sentPrivateMessages.map((item) => item.userOpenid)).toEqual(
+      expect.arrayContaining(["root", "mod"]),
+    );
+    for (const message of api.sentPrivateMessages) {
+      expect(JSON.stringify(message.keyboard ?? {}), String(message.userOpenid)).not.toContain(
+        "specifyUserIds",
+      );
+    }
+
+    // 申诉通知卡（同一条私信通道）也一样；权限仍在服务端判定
+    const submitted = await appeals.submit({
+      punishment: record,
+      userId: "u1",
+      reason: "误判",
+    });
+    const forAdmin = notifier.appealCard(submitted.appeal, record, "root");
+    const forMod = notifier.appealCard(submitted.appeal, record, "mod");
+    expect(JSON.stringify(forAdmin.keyboard ?? {})).not.toContain("specifyUserIds");
+    expect(JSON.stringify(forMod.keyboard ?? {})).not.toContain("specifyUserIds");
+    // 「拉黑全局」只出现在全局超管的卡上（可见性靠**服务端**渲染，不靠客户端 permission）
+    expect(JSON.stringify(forAdmin.keyboard ?? {})).toContain("blacklist-global");
+    expect(JSON.stringify(forMod.keyboard ?? {})).not.toContain("blacklist-global");
+  });
+
   it("notifies every admin but only one moderator, then rotates on timeout", async () => {
     let clock = 1_000;
     let appealSeed = 0;

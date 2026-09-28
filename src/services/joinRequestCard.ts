@@ -161,7 +161,7 @@ function buildJoinRequestSpec(input: JoinRequestCardInput): CardSpec {
           visitedLabel: "已同意",
           style: STYLE_PRIMARY,
           command: approveCommand,
-          permission: { type: 0, specifyUserIds: [input.recipientId] },
+          // 1:1 私信卡片**不写** specifyUserIds（客户端会误判「无权限操作」）；权限在服务端校验
           unsupportTips: "当前 QQ 版本不支持按钮，请直接发送 /approve 指令",
           modal: {
             content: "确认通过该入群申请？",
@@ -197,7 +197,7 @@ function rejectButton(
     visitedLabel: "已拒绝",
     style: STYLE_DANGER,
     command: rejectCommandFor(reason),
-    permission: { type: 0, specifyUserIds: [input.recipientId] },
+    // 同上：私信卡片不做客户端可见性限制
     unsupportTips: "当前 QQ 版本不支持按钮，请直接发送 /reject 指令",
     modal: {
       content: "确认拒绝该入群申请？",

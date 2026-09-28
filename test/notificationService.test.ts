@@ -133,10 +133,8 @@ describe("NotificationService", () => {
     ).content.rows[0]!.buttons;
     expect(buttons[0]!.action.data).toBe("/approve r1");
     expect(buttons[1]!.action.data).toBe("/reject r1 审核未通过");
-    expect(buttons[0]!.action.permission).toEqual({
-      type: 0,
-      specifyUserIds: ["admin"],
-    });
+    // 私信卡片不做客户端可见性限制（真机：specifyUserIds 会被误判「无权限操作」）
+    expect(buttons[0]!.action.permission).toBeUndefined();
     expect(deliveries.rows.size).toBe(1);
     expect([...deliveries.rows.values()][0]?.status).toBe(
       NotificationDeliveryStatus.Sent,

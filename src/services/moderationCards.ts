@@ -15,8 +15,12 @@ import type { RichMessage } from "./richMessages.js";
  * 处罚 / 申诉卡片（§B7 / §B8）。
  *
  * 全部是**私信**卡片：正文是 Markdown，按钮是回调（固定动作）或指令按钮。
- * 每个按钮都带 `permission.specifyUserIds = [接收者]`，所以同一张卡推给多个审核员时，
- * 只有各自能点自己那份（也用于「拉黑全局」只出现在全局超管的卡上）。
+ *
+ * ⚠️ 真机踩过两次的坑：**1:1 私信卡片的按钮一律不写 `permission.specifyUserIds`** ——
+ * 客户端会把「指定用户」误判成「无权限操作」（**全局超管点自己收到的卡也一样**），
+ * 而群里那张卡带 `specifyUserIds` 是正常的（关键词命中卡的「我要申诉」）。
+ * 所以私信卡片的权限**只在服务端校验**（`requireReviewer` = 审核员及以上、
+ * 全局拉黑额外要求全局超管），客户端不再做可见性限制。
  *
  * §卡片规范 v2：正文只写业务信息（谁 / 什么规则 / 什么动作 / 记录号）；
  * 回调按钮覆盖不了的动作（如「自定义禁言时长」）才在 footer 保留一行等价指令。
@@ -543,14 +547,18 @@ function callbackButton(
   id: string,
   label: string,
   callbackData: string,
-  recipientId: string,
+  /**
+   * 接收者。**故意不用它做按钮可见性**：真机上 1:1 私信卡片的
+   * `permission.specifyUserIds` 会被客户端误判成「无权限操作」（全局超管点自己的卡也一样），
+   * 所以私信卡片一律不做客户端限制，权限校验全部放在服务端（`requireReviewer` / 全局超管检查）。
+   */
+  _recipientId: string,
   options: { style?: CardButtonStyle; modal?: KeyboardModal } = {},
 ): CardButton {
   return {
     id,
     label,
     callbackData,
-    permission: { type: 0, specifyUserIds: [recipientId] },
     ...(options.style !== undefined ? { style: options.style } : {}),
     ...(options.modal !== undefined ? { modal: options.modal } : {}),
   };

@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { NotificationDeliveryStatus } from "../src/core/enums.js";
 import {
@@ -43,13 +43,12 @@ describe("join request card", () => {
     const approve = rows[0]!.buttons[0]!;
     // 指令里的群参数用展示名（这里是已绑定群号），申请单号用传入的短码/ID
     expect(approve.action.data).toBe("/approve r1");
-    // 指令按钮：点击即发送指令，并限制只有接收者能点
+    // 指令按钮：点击即发送指令
     expect(approve.action.type).toBe(2);
     expect(approve.action.enter).toBe(true);
-    expect(approve.action.permission).toEqual({
-      type: 0,
-      specifyUserIds: ["admin"],
-    });
+    // ⚠️ 真机：1:1 私信卡片上 permission.specifyUserIds 会被客户端误判「无权限操作」
+    // （全局超管点自己收到的卡也一样），所以私信卡一律不做客户端可见性限制，权限在服务端校验
+    expect(approve.action.permission).toBeUndefined();
     expect(approve.action.modal?.content).toContain("确认");
   });
 
