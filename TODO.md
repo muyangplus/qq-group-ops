@@ -5,44 +5,30 @@
 >
 > 标签口径：`P0` 最急 → `P3` 可延后；`⚠️` 需先澄清 / 取证；`真机` 需要真实 QQ 群环境；`（记录）` 是已知约束、不一定动。
 >
-> 当前状态（2026-09-27）：测试 **111 文件 / 887 用例**全绿；**0.21.0 已发版**（tag + GitHub Release，
-> 含统一计时任务、部署监测自动重启、状态/重启卡文案改人话、私信卡片权限修复），`[Unreleased]` 已清空。
+> 当前状态（2026-09-27）：测试 **113 文件 / 903 用例**全绿；**0.21.0 已发版**（tag + GitHub Release，
+> 含统一计时任务、部署监测自动重启、状态/重启卡文案改人话、私信卡片权限修复）。
+> `[Unreleased]` 现有：一次性数据迁移 `/migrate` + 主体代码不再兼容老格式、配置瘦身、`-1` 永久保留、卡片文案去自证式声明。
 > 已完成：A1–A5、B1–B3、B6–B11、C1–C3、C5–C6、C9、D1、D3、D5、D10、F1–F2、H1–H8、D9（0.19.0 起）。
 
 ## 1. 待办
 
 ### P0
 
-- [ ] **自证式声明全仓清扫（代码 / 文档 / 提交）**
-  - 口径已写进 `CONTRIBUTING.md`：能看到的角色不需要被告知「只有你能看到」；内部判定过程不写进给用户的文案；
-    不复述代码、不复述文件名；提交信息只写「改了什么、为什么」。
-  - 已清：超管专属卡 / 通知中心 / 部署监测卡 / 重启回执、`docs/CD.md`「（本文件）」、
-    `CARD-STANDARD.md` 的版本自证声明、`REAL-MACHINE-CHECKLIST.md` 的「本文件负责…」。
-  - 待扫：`helpTopics` 各主题的「说明：」段（判断是信息还是同义反复）、`ROADMAP.md` / `DECISIONS.md` / 
-`DEVELOPMENT.md` 的自指句、以及历史提交信息不动（历史只读）——新提交按新规矩写。
-
-- [ ] **一次性迁移命令 + 删除主体兼容代码**（用户口径：不保留旧内容，但老库要能一把转干净）
-  - 形态：新增 `/migrate`（**仅全局超管**，只私信回执；每步打印「改了几行 / 无变化」，跑完写审计）；
-    **幂等**，跑第二次应全部「无变化」；跑之前提醒先备份 `data/qq-group-ops.db`。
-  - 迁移内容（逐项）：
-    1. `group_settings` 老键 `keywordRecall` / `keywordPunish` → 合并成 `punishActions`（复用 `punishActionsFromLegacy`），并删除这两行；
-    2. `group_settings` 里**非 JSON 的裸字符串**值 → 重新按 JSON 写回（替代老代码的 `parseSettingValue` 回落）；
-    3. `group_configs.allowYears` / `denyYears` 与 `user_profiles` 的**四位年份**（`2022`）→ 两位（`22`）；
-    4. 短码：`short_codes` 与活动短码里的小写字母 → 重新生成为「数字 + 大写」
-       （等价于现在启动期的 `regenerateLegacyCodes`；老短码会失效，用户已知晓）。
-  - **删除清单**（迁移命令落地后一并删）：
-    `groupConfig.get()` 的 `punishActionsFromLegacy` 分支、`parseSettingValue` 的裸字符串回落、
-    四位年份接受分支（`normalizeYear` / `yearFromStudentId`）、`shortCodes` 与 `activity` 的启动期 `regenerateLegacyCodes`、
-    `permissions.ts` 的 7 个旧便捷方法（`hasAtLeast` / `meets` / `canApproveJoin` / `canManageRules` /
-    `canReviewContent` / `canExportData` / `hasAnyGroupRole`，已无命令层调用）、`menu.ts` 的 `sys` 别名与 `helpTopics` 对应行。
-  - 验收：① 迁移命令幂等；② 迁移后 `/rules` 的违规处理动作与迁移前一致；③ 老库短码迁移后 `/whois`、
-    `/punish` 等按新短码可查；④ 全量测试绿；⑤ 文档写清「升级后先跑一次 `/migrate`」。
 - [ ] **D4 真机验收**（批次2 退出条件）
   - 内容：跑 `docs/ACCEPTANCE.md` 的 J32–J56 + M 组，连带 B / C 节里标了 `真机` 的确认项。
   - 验收：逐项回填「通过 / 不通过 / 原因」；不通过项转成本文件里的新条目。
 
 ### P1
 
+- [ ] **处罚原文按群清理（保留口径不一致，⚠️ 待定方案）**
+  - 现状：**是否存原文**看本群 `rawMessageRetentionDays`（`0` 不存 / `-1` 永久 / `N` 存），
+    而**清理**看环境变量 `RAW_MESSAGE_RETENTION_DAYS`（默认 `0` = 不清理）。
+    于是某群执行 `/rules set rawMessageRetentionDays 7`、环境变量仍是默认值时，
+    原文会**永久留在库里**（隐私 + 无上限增长）。
+  - 方案（待定）：清理改成按群策略（该群 `> 0` 时按自己的天数清 `message_excerpt`，`-1` / `0` 不动）；
+    此时环境变量只剩「全局总开关」这一个语义 —— 是直接删掉 `RAW_MESSAGE_RETENTION_DAYS`
+    （配置瘦身，保留口径完全交给 `/rules`），还是保留成「全局上限」？
+  - 落点：`RetentionService` 注入 `configStore`；`PunishmentService` 增加「列出有原文的群」与「按群清空原文」。
 - [ ] **B4 文本内容安全 API 接入**（批次4 · Phase 2 · ⚠️ 官方能力未确认）
   - 阻塞：公开资料只能确认小程序体系有 `msgSecCheck`，未见 QQ 机器人开放平台向普通机器人开放文本审核接口；
     先在开放平台后台确认权限集，或真机调一次记录错误码（真机清单 R3）。
@@ -52,6 +38,9 @@
   - 已完成：`docker compose config --quiet` 通过、`--profile postgres` 服务列表正确、
     `.dockerignore` 实测少传约 106 MB。
   - 待补：镜像 build + postgres 启停（用独立项目名 `-p qqops-smoke`，收尾 `down -v`，避免污染真实数据卷）。
+- [ ] **真机确认：`/migrate` 在真实库上跑通**（P0 已实现，等一次真实执行）
+  - 触发前先备份数据库；确认：预览条数与实际老数据对得上、确认后改写成功、**再跑一次全是 0**、
+    `/rules` 的违规处理动作迁移前后一致、老短码失效而新短码可查（`/whois`、`/punish`）、审计里有一条 `data_migrate`。
 - [ ] **真机确认：`/restart` 在真实部署里确实能拉起新进程**
   - 触发一次 `/restart`，确认：回执卡先到、进程确实退出、几秒内重新起来、并且收到「机器人已重启」的私信回执；
     收不到就查 `data/restart-failed.json` 与启动日志（自我重启助手是脱离会话启动的，SSH 会话断开不影响它）。
@@ -98,10 +87,6 @@
   - 验收：超管能从私信卡片完成一次策略修正，且改动可追溯（审计 + diff）。
 - [ ] **H8-2 个人提醒类活动私信补退订入口**（前置：先让活动通知带上发布群）
   - 现状：候补 / 名额 / 变更类私信只有 `activityId`、拿不到群号，退订范围会退错群，所以**没有**退订按钮。
-- [ ] **H8-4 `permissions.ts` 兼容入口去留**
-  - `hasAtLeast` / `meets` / `canApproveJoin` / `canReviewContent` / `canManageRules` / `canExportData` /
-    `hasAnyGroupRole` / `isSuperAdmin` / `listReviewableGroups` / `listModeratedGroups` 已无命令层调用：
-    删除还是标 `@deprecated`。
 - [ ] **H8-5 `/rules … all` 的目标收敛**
   - 现在走 `meetsInGroup(__default__, 130)`（实际只有 240 能过），可显式拆成 `meetsGlobal(240)`：
     纯可读性，运行期无差别。

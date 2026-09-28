@@ -540,9 +540,9 @@
 - 背景：真机试用后用户提出四条要求：① 文档里不要出现真实 QQ号；② 短码不要出现小写字母；③ `/whois` 结果可能涉及隐私，只在私信里给，群里可用 @ 指定查谁；④ 个人资料年级只允许两位，不接受四位完整年份。
 - 决策：
   1. **短码字符表去掉小写**：`ALPHABET_62` → `ALPHABET_36`（`0-9A-Z`），`randomBase62` → `randomCode`；`short_codes` 与活动短码（`activity_details.code`）共用同一生成器；
-     **启动时重生成历史遗留的含小写短码**（`ShortCodeRepository.replaceCode` / `ActivityService.load` 内的迁移），旧短码随之失效；解析仍大小写不敏感，方便手输；
+     历史遗留的含小写短码由一次性迁移重生成（见 ADR-0053）；解析仍大小写不敏感，方便手输；
   2. **`/whois` 只走私信**：新增 `NotificationService.sendPrivateCard`（包装 `RichMessageSender.sendToUser`）复用 `/notify` 的私信通道；群内发指令时结果私信给操作人，群里只回一张不含内容的提示卡；私信失败只提示「先私聊机器人再试」，**禁止降级到群里**；权限不足/用法/未找到映射等不含隐私的提示仍在原处回；目标解析新增官方 at 段（`<@!openid>`），`@昵称` 反查不了时明确提示替代写法；
-  3. **年级统一两位**：`yearFromStudentId` / `normalizeYear` 都返回两位，四位输入直接报错；班级库里的四位年份写入 profile 时用 `toShortYear` 转换；`UserProfileService.load()` 把历史四位值收敛成两位并写回；活动 `allowYears` 输入只接受两位，历史四位配置在 `checkEligibility` 里仍然匹配；
+  3. **年级统一两位**：`yearFromStudentId` / `normalizeYear` 都返回两位，四位输入直接报错；班级库里的四位年份写入 profile 时用 `toShortYear` 转换；活动 `allowYears` 只接受两位（库里的历史四位值由一次性迁移收敛，见 ADR-0053）；
   4. **仓库隐私守卫**：README/文档示例里的真实 QQ号、群号、openid 全部替换为明显占位的假值（`10001` / `654321` / `123456789` / `0123456789ABCDEF0123456789ABCDEF`），并新增 `test/privacyGuard.test.ts` 扫描 `src`/`test`/`scripts`/`docs`/README/CHANGELOG：
      形状规则是「9-12 位未登记数字」「32 位十六进制串」「6-8 位十六进制 + `...`」，命中不在占位符白名单就失败。
      **守卫测试自身绝不保存真实值（连片段都不保存）**——把真实值写进守卫等于换个地方泄露；需要按精确值兜底时用本地环境变量 `PRIVACY_GUARD_IDS`（逗号分隔），真实值只留在本地环境。
@@ -550,7 +550,7 @@
 - 影响：
   - 新方法 `NotificationService.sendPrivateCard`；`ShortCodeRepository` 新增 `replaceCode`；
   - `/whois` 的群内输出语义改变（提示卡），私聊输出不变；相关测试改为断言私信内容；
-  - `user_profiles.year` 历史数据自动收敛（启动时写回），活动 `allowYears` 输入格式收紧；
+  - `user_profiles.year` 历史数据由一次性迁移收敛，活动 `allowYears` 输入格式收紧；
   - 新增守卫测试 `test/privacyGuard.test.ts`，示例值统一为 `10001` / `654321` / `0123456789ABCDEF0123456789ABCDEF`。
 
 ## ADR-0040：活动卡片改回调驱动 + 按群订阅推送（§B2）
@@ -1016,7 +1016,7 @@
 
 ## ADR-0050：权限等级数值化，并拆成「群内 / 平台」两轴（§H1 / §H2）
 
-- 状态：已采纳（未发布，随 0.19.0）
+- 状态：已发布（0.19.0）
 - 背景：等级原先是**一张按名次排序的表**（`LEVEL_RANK` + 布尔便捷方法），而且两个轴混在一起
   （全局超管与本群超管共用同一串数字）。做通知中心时暴露出三类问题：
   ① 「全局角色不该压过本群超管」这类语义，混轴的模型解释不了；
@@ -1042,7 +1042,7 @@
 
 ## ADR-0051：通知中心——话题订阅、全局门槛、退订墓碑、仅群内迎新（§H3–§H6）
 
-- 状态：已采纳（未发布，随 0.19.0）
+- 状态：已发布（0.19.0）
 - 背景：原先只有三个**频道**（join / punish / activity），订阅存 `notification_subscriptions`（键 `频道:范围`），
   「谁能收」的判定写在推送与订阅两处（容易漂移）；同时机器人入群/退群、好友变动、新成员、未处理事件
   是**硬编码私信全部超管** —— 不能退订、也不能只收其中一类。
@@ -1075,7 +1075,7 @@
 
 ## ADR-0052：统一计时任务（一个扫描周期）+ 发现新版本自动重启
 
-- 状态：已采纳（未发布，随 0.21.0）
+- 状态：已发布（0.21.0）
 - 背景：① 三个周期任务（保留清理、活动提醒、申诉超时轮转）各自持有 `setTimeout` 链，
   `start/stop/错误处理` 是三份重复代码，新增周期检查还要再抄一份；
   ② 待审批申请的 TTL 过期挂在 24 小时的保留清理里，最坏情况下僵尸申请要在 `/pending` 里挂一天；
@@ -1108,3 +1108,33 @@
   `test/commands/deploy.test.ts`。
   **能力边界**：部署监测要求**工作目录 = FTP 上传目标目录**；自我重启不解决「服务器重启后自恢复」，
   长期部署仍建议 docker compose（`restart: unless-stopped`）或 systemd（`Restart=always`）。
+
+## ADR-0053：老格式数据用一次性 `/migrate` 转换，主体代码不再兼容
+
+- 状态：已采纳（未发布）
+- 背景：库里散布着四类老格式数据：`group_settings` 的裸字符串值、`keywordPunish` + `keywordRecall`
+  老处罚字段、四位年份（`2022`）、含小写字母的短码与活动码。兼容分支写在**业务读取路径**上
+  （`GroupConfigStore.get()` 折算老处罚字段、`parseSettingValue` 回落裸字符串、`checkEligibility`
+  匹配四位年级、`load()` 里重生成短码），每次读取都要执行一遍，而且「库里到底是什么格式」永远说不清。
+- 决策：
+  1. 新增一次性迁移命令 `/migrate`（**仅全局超管、只在私信执行**）：先出**只读预览卡**列出各项待改写条数，
+     点「开始迁移」并过 modal 二次确认才改写；结果写审计（平台级动作，`groupId = ""`）；
+  2. 迁移四类目标：裸字符串值补 JSON 编码、老处罚字段折算成 `punishActions` 并删掉老键、
+     四位年份收敛成两位（群规则年级名单 / 个人资料 / 活动报名限制）、含小写的短码与活动码重新生成；
+  3. **幂等**：改写后再次扫描即为 0 条，重复执行不会重复改写；
+  4. 迁移完成后立刻重载内存态（配置 / 个人资料 / 短码 / 活动），旧值不会残留在内存里；
+  5. 同时删掉读取路径上的全部兼容分支，`load()` 不再自动改写数据（ADR-0039 第 1、3 条的启动期收敛由本 ADR 取代）；
+  6. 顺带删除同一批旧写法：`permissions.ts` 的 7 个语义别名（`hasAtLeast` / `meets` / `canApproveJoin` / `canManageRules` /
+     `canReviewContent` / `canExportData` / `hasAnyGroupRole`）、`menu.ts` 的 `sys` 层级（与常用菜单重复）、
+     `KeywordPunish` 枚举与规则字段表里的旧字段标签。
+- 理由：老格式只存在于升级前的库里，一次性转换比「每次读取都折算」更简单、更容易验证，
+  也让后续代码只面对一种数据格式；预览 + 确认 + 审计让不可逆的数据改写可被复核；
+  换码会让已发出的旧短码 / 活动码失效，这一点写在预览卡与 `/help migrate` 里。
+- 影响：新增 `src/services/dataMigration.ts`、`src/services/commands/migrateCommands.ts`（`runtime.ts` 接线 + 重载内存态）；
+  改动 `groupConfigCore.ts`（删老字段、折算函数与裸字符串回落）、`groupConfig.ts`、`userProfiles.ts`、`activity.ts`、
+  `shortCodes.ts`、`permissions.ts`、`menu.ts`、`enums.ts`、`commands/support.ts`、`helpTopics.ts`。
+  测试：`test/dataMigration.test.ts`、`test/commands/migrate.test.ts`；
+  `test/groupSettings.test.ts`、`test/activity.test.ts`、`test/shortCodes.test.ts`、`test/menu.test.ts`、
+  `test/permissions.test.ts`、`test/fullPersistence.integration.test.ts` 改为断言新口径。
+  **能力边界**：迁移必须先于业务读取（升级到本版本后先跑一次 `/migrate`，否则老格式数据会被跳过、不生效）；
+  换码后旧短码立即失效，用户需重新从卡片或列表获取。

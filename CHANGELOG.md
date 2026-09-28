@@ -7,8 +7,21 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **一次性数据迁移 `/migrate`**（仅全局超管、只在私信）：先出**只读预览卡**列出各项待改写条数，
+  点确认并过二次确认后才改写，结果写审计。转换四类老格式数据：`group_settings` 的裸字符串值补 JSON 编码、
+  `keywordPunish` + `keywordRecall` 折算成 `punishActions`（老键删除）、四位年份（`2022`）收敛成两位
+  （群规则年级名单 / 个人资料 / 活动报名限制）、含小写字母的短码与活动码重新生成为「数字 + 大写字母」。
+  迁移幂等、完成后自动重载内存态；换码会让旧短码失效，需要重新获取。
+
 ### 变更
 
+- **主体代码不再兼容老格式**：删掉读取路径上的全部兼容分支 —— 老处罚字段的即时折算、
+  `group_settings` 裸字符串回落、四位年份匹配（活动报名限制与启动时收敛）、启动时重生成小写短码。
+  老格式数据必须先跑 `/migrate`，否则不会被读取。同时删除 7 个权限语义别名
+  （`hasAtLeast` / `meets` / `canApproveJoin` / `canManageRules` / `canReviewContent` / `canExportData` /
+  `hasAnyGroupRole`）、与常用菜单重复的 `sys` 菜单层级、`KeywordPunish` 枚举与规则字段表里的旧字段标签。
 - **配置瘦身（不保留旧内容）**：删除 `WEBHOOK_KEY_DERIVATION` 与 `WEBHOOK_SIGN_CONTENT` 两个逃生舱 ——
   webhook 一律按官方算法（Bot Secret repeat 翻倍到 ≥32 字节取前 32 字节；`op=13` 握手对
   `event_ts + plain_token` 签名）；删除已被统一扫描周期取代的
@@ -18,6 +31,10 @@
   `JOIN_REQUEST_TTL_DAYS`，以及 `/rules set rawMessageRetentionDays -1`（落库且永不清理）。
 - **卡片文案去掉自证式声明**：超管专属卡、部署监测卡不再写「只有全局超管能看到这张卡」
   「已连续 3 次检测到，说明上传完成」这类冗余/机器话。
+
+### 修复
+
+- 活动短码回灌全局码池时用的是活动 id 而不是短码，导致跨类型重码保护对活动码失效（现在按短码回灌）。
 
 
 ## [0.21.0] - 2026-09-27
