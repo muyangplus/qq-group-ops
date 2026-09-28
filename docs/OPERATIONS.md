@@ -128,19 +128,9 @@ rand := strings.NewReader(seed[:ed25519.SeedSize])    // 取前 32 字节
 2. 反向代理有没有改写请求头或请求体 —— `X-Signature-*` 与**原始 body** 必须原样透传；
 3. 后台填的回调地址与本服务 `WEBHOOK_PATH` 是否完全一致（含路径与结尾斜杠）。
 
-仍不通过时，才动下面这两个**不用改代码**的逃生舱：每次都是「改 `.env` → 重启 → 回后台再点一次保存」，
-并对照启动日志的 `seedSource` / `signContent`：
-
-|---|---|---|---|
-| 1（默认） | `auto`（官方算法，日志 `seed-repeat`） | `ts_token` | 应当直接成功；失败先查上面三条 |
-| 2 | `hex` | `ts_token` | 密钥是十六进制（32 位 → 解码 16 字节右侧补零，日志 `hex-pad`；64 位 → `hex`） |
-| 3 | `sha256` | `ts_token` | 平台侧额外做过哈希（少见） |
-| 4 | 上面任一 | `token_ts` | 试反过来的顺序：`plain_token + event_ts` |
-
-> 重启后日志会打印实际用的策略，例如
-> `webhook gateway listening {"seedSource":"seed-repeat","signContent":"ts_token"}`；
-> 握手成功/失败各记一条（`webhook url validation answered`）。
-> 四种组合都失败时，把「后台密钥字段的原文形态（多少位、是否含非十六进制字符）」+ 这两行日志发我。
+三条都确认过仍不通过时，把「后台密钥字段的原文形态（多少位、是否含非十六进制字符）」与启动日志里的
+`webhook url validation answered` / `webhook request rejected: bad signature` 一起发出来 ——
+派生算法与握手签名内容都固定按官方实现（`WEBHOOK_KEY_DERIVATION` / `WEBHOOK_SIGN_CONTENT` 两个逃生舱已删除）。
 
 ## 迎新晚会
 材料学院迎新联欢，欢迎参加。
