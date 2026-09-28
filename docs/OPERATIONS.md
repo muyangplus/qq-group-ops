@@ -95,7 +95,7 @@ WEBHOOK_SECRET=            # 留空则复用 QQ_BOT_CLIENT_SECRET
    **不要**改写请求头与请求体（`X-Signature-Ed25519` / `X-Signature-Timestamp` 与原始 body 都要原样透传）；
 2. 在开放平台后台把回调地址填成同一个 URL，保存时平台会发一次 `op=13` 校验请求 ——
    日志出现 `webhook url validation answered` 即校验通过；
-3. 启动后日志应出现 `webhook gateway listening`（含 `seedSource`）与 `event gateway started {mode:"webhook"}`；
+3. 启动后日志应出现 `webhook gateway listening` 与 `event gateway started {mode:"webhook"}`；
 4. **不要再开 WebSocket 通道**（`EVENT_MODE` 二选一），否则同一事件会被处理两次。
 
 排查：
