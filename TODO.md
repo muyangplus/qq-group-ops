@@ -20,6 +20,28 @@
 
 ### P1
 
+- [ ] **非核心 `.env` 配置项改为超管热修改（`/config`）**
+  - 口径：`.env` 只留**启动就必需 / 安全相关**的项，其余全部改成**全局超管在运行时改、立即生效**（不重启）。
+  - 留在 `.env`（核心）：`QQ_BOT_APP_ID` / `QQ_BOT_CLIENT_SECRET` / `QQ_BOT_TOKEN` / `EVENT_MODE` /
+    `WEBHOOK_PORT|HOST|PATH|SECRET`、`DATABASE_URL` / `DATABASE_TARGET`（热配置本身存在这个库里）、
+    `LOG_*`（日志在配置之前就要建）、`CLASS_INDEX_FILE`（启动时读文件）、`ADMIN_USER_IDS`（超管种子）。
+  - 改热修改（按现在的 `.env.example` 小节）：数据保留三项（`RAW_MESSAGE_RETENTION_DAYS` /
+    `AUDIT_LOG_RETENTION_DAYS` / `JOIN_REQUEST_TTL_DAYS`）、`MENU_FIRST_PUSH`、活动通知三项
+    （`ACTIVITY_NOTIFY_DAILY_LIMIT` / `ACTIVITY_NOTIFY_RATE_PER_SECOND` / `APPEAL_HOLD_MINUTES`）、
+    统一计时与部署四项（`SCAN_INTERVAL_MS` / `AUTO_RESTART_ON_DEPLOY` / `DEPLOY_RESTART_DELAY_MINUTES` /
+    `DEPLOY_CHECK_INTERVAL_MS`）、`ACTIVITY_STATS_FONT_URL`、`TZ`。
+  - 存储：新增 `platform_settings` 键值表（`CREATE TABLE IF NOT EXISTS`，与 `group_settings` 同思路，免 ALTER），
+    启动时载入；**优先级 = DB 覆盖 > `.env` 默认值**，`/config clear <项>` 回落到 `.env`。
+  - 热生效：`settings` 收敛成**可变的单一来源**，服务在**用的时候**读当前值而不是构造时固化 ——
+    例如 `TickScheduler` 每轮读 `SCAN_INTERVAL_MS`、`RetentionService` 每次运行读保留期、
+    `DeployWatcher` 每次检查读宽限期；需要重建连接/文件句柄的项不进这份清单。
+  - 命令：`/config`（**仅全局超管、只在私信**）列出每项「当前值 + 来源（`.env` / 已覆盖）」；
+    改值用「填入指令」按钮（卡片键盘打不了自由文本），`/config set <项> <值>`、`/config clear <项>`，
+    每次改动写审计（平台级动作，`groupId=""`）。
+  - 验收：① 改完**立即生效、不重启**（`SCAN_INTERVAL_MS`、`AUDIT_LOG_RETENTION_DAYS` 各验一次）；
+    ② `clear` 回落到 `.env`；③ 非法值被拒绝且不改库；④ 非全局超管 / 群里不可用；
+    ⑤ 每次改动都能在 `/audit` 查到；⑥ `.env.example`、`docs/CONFIGURATION.md` 与 `/help config` 标注哪些是热量项。
+  - 关联：与下面「处罚原文按群清理」一起定 `RAW_MESSAGE_RETENTION_DAYS` 的去留（本条落地后它从 `.env` 挪进 `/config`）。
 - [ ] **处罚原文按群清理（保留口径不一致，⚠️ 待定方案）**
   - 现状：**是否存原文**看本群 `rawMessageRetentionDays`（`0` 不存 / `-1` 永久 / `N` 存），
     而**清理**看环境变量 `RAW_MESSAGE_RETENTION_DAYS`（默认 `0` = 不清理）。
