@@ -130,7 +130,6 @@ describe("RetentionService", () => {
       punishmentsRemoved: 0,
       messageExcerptsCleared: 0,
       appealsRemoved: 0,
-      joinRequestsExpired: 0,
     });
     expect(auditLog.all()).toHaveLength(1);
   });
@@ -193,7 +192,7 @@ describe("RetentionService", () => {
     expect(punishments.get(oldRecord.recordId)?.recordId).toBe(oldRecord.recordId);
   });
 
-  it("expires pending join requests past the TTL", async () => {
+  it("不再负责 TTL 过期（改由统一扫描的 join-pending-ttl 任务每轮检查）", async () => {
     const auditLog = new AuditLogStore();
     const joinAudit = new JoinAuditService(auditLog);
     joinAudit.submit("g1", "u1", "待审批", "pending");
@@ -202,31 +201,19 @@ describe("RetentionService", () => {
     const service = new RetentionService(auditLog, joinAudit, {
       auditLogRetentionDays: 180,
       joinRequestRetentionDays: 180,
-      joinRequestTtlDays: 7,
       clock: () => utcNow().getTime() + 8 * DAY_MS,
     });
 
     const result = await service.runOnce();
 
-    expect(result.joinRequestsExpired).toBe(1);
+    // 保留清理不碰 TTL：申请还在，状态仍是待审批
+    expect(result).not.toHaveProperty("joinRequestsExpired");
+    expect(joinAudit.pending("g1")).toHaveLength(1);
+    expect(joinAudit.get("pending").status).toBe(JoinRequestStatus.Pending);
+
+    // 真正让它过期的是那个每轮扫描的 TTL 任务
+    expect(joinAudit.expireStalePending(utcNow().getTime() + 8 * DAY_MS)).toBe(1);
     expect(joinAudit.pending("g1")).toEqual([]);
     expect(joinAudit.get("pending").status).toBe(JoinRequestStatus.Expired);
-  });
-
-  it("schedules periodic runs and stops cleanly", async () => {
-    const scheduler = new FakeScheduler();
-    const auditLog = new AuditLogStore();
-    const service = new RetentionService(auditLog, new JoinAuditService(), {
-      auditLogRetentionDays: 180,
-      joinRequestRetentionDays: 180,
-      intervalMs: 1_000,
-      scheduler,
-    });
-
-    service.start();
-    expect(scheduler.callbacks[0]?.delayMs).toBe(1_000);
-
-    service.stop();
-    expect(scheduler.callbacks).toHaveLength(0);
   });
 });

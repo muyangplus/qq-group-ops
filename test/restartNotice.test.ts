@@ -67,13 +67,31 @@ describe("restartNotice", () => {
         userId: "root",
         requestedAt: new Date(Date.now() - 5_000).toISOString(),
         version: "0.18.2",
+        reason: "manual",
       },
       appVersion(),
     );
     expect(card.markdown).toContain("机器人已重启");
     expect(card.markdown).toContain(`v${appVersion()}`);
-    expect(card.markdown).toContain("请求时 v0.18.2");
+    expect(card.markdown).toContain("重启前 v0.18.2");
     expect(card.markdown).toContain("请求到启动");
+  });
+
+  it("部署自动重启的回执：说清新旧版本", () => {
+    const card = restartDoneCard(
+      {
+        userId: "deploy-watcher",
+        requestedAt: new Date(Date.now() - 3_000).toISOString(),
+        version: "0.20.0",
+        targetVersion: "0.21.0",
+        reason: "deploy",
+        mode: "respawn",
+      },
+      "0.21.0",
+    );
+    expect(card.markdown).toContain("新版本已上线");
+    expect(card.markdown).toContain("v0.20.0 → **v0.21.0**");
+    expect(card.markdown).toContain("自我重启");
   });
 
   it("请求时间不可解析时也不崩（只是不显示耗时）", () => {

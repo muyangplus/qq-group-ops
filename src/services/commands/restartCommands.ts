@@ -56,15 +56,12 @@ export function restartCard(
   return cardFromText(
     "重启机器人",
     [
-      `**版本**：v${appVersion()} · **已运行**：${formatUptime(
+      `**当前版本**：v${appVersion()} · 已运行 ${formatUptime(
         process.uptime() * 1000,
       )}`,
       "",
-      "重启流程：脱离会话拉起自我重启助手（`scripts/respawn.mjs`）→ 落盘排队写入 → 关闭网关与数据库 → 进程退出；",
-      "助手等旧进程退出、端口与句柄释放后，再用同样的命令启动新进程（约几秒）。",
-      "",
-      "**兜底**：助手没起来时旧进程**不会退出**（会私信你「重启已取消」），不会把机器人搞没。",
-      "重启完成后会给**发起人**私信一条回执（版本 / 启动时间 / 请求到启动的耗时）。",
+      "重启会先保存数据、优雅关闭，再由自我重启助手拉起新进程；期间大约 5 秒不能响应。",
+      "点「确认重启」后还会弹出一次确认；助手没起来时**不会**关掉机器人。",
     ].join("\n"),
     {
       rows: [
@@ -96,7 +93,7 @@ export function restartNowCard(
   if (!hook?.available) {
     return denied("重启不可用", "当前进程没有装配重启钩子，无法重启。");
   }
-  const accepted = hook.request({ requestedBy: userId });
+  const accepted = hook.request({ requestedBy: userId, reason: "manual" });
   if (!accepted) {
     return denied("重启失败", "重启钩子拒绝了本次请求，请查看启动日志。");
   }
@@ -104,11 +101,16 @@ export function restartNowCard(
   const card = renderCard({
     title: "正在重启",
     lines: [
-      `${notice}已安排重启：几秒后机器人会离线，随后由自我重启助手拉起。`,
+      `${notice}正在重启：几秒内机器人会短暂离线，随后自动回来。`,
       "",
-      "重启完成后会私信你一条回执；如果一直没收到，说明新进程没起来，请查看 `data/restart-failed.json` 与启动日志。",
+      "完成后会私信你一条回执（版本 + 耗时）。若一直没收到，说明新进程没起来 —— 服务器上的 `data/restart-failed.json` 有原因。",
     ],
-    rows: [[viewButton("refresh", "再看状态", "status", "proc")]],
+    rows: [
+      [
+        viewButton("refresh", "重启后看进程", "status", "proc"),
+        viewButton("help", "指令帮助", "help", "topic", "restart"),
+      ],
+    ],
   });
   return { ok: true, text: card.text, rich: card };
 }

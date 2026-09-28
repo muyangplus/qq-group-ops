@@ -218,15 +218,49 @@ function runtimeModeLabel(settings: DiagnosticsSettings): string {
   return `${mode} · 事件通道 ${settings.eventMode}`;
 }
 
-/** 群状态卡底部那行精简进程信息。 */
-export function processSummaryLine(ctx: AdminCommandContext): string {
-  const uptime = formatUptime(process.uptime() * 1000);
-  const memory = formatBytes(process.memoryUsage().rss);
-  const parts = [`v${appVersion()}`, `已运行 ${uptime}`, `内存 ${memory}`];
-  if (ctx.diagnostics) {
-    parts.push(runtimeModeLabel(ctx.diagnostics.settings));
-    parts.push(databaseLabel(ctx.diagnostics.settings, false));
+/** 布尔状态的中文写法（用户口径：卡片正文里不要出现 true / false）。 */
+function onOff(value: boolean): string {
+  return value ? "开启" : "关闭";
+}
+
+/** 禁言时长的人话写法：600 秒 → 「10 分钟」。 */
+function formatDurationLabel(seconds: number): string {
+  if (seconds <= 0) {
+    return "未设置";
   }
+  if (seconds < 60) {
+    return `${seconds} 秒`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    const rest = seconds % 60;
+    return rest === 0 ? `${minutes} 分钟` : `${minutes} 分 ${rest} 秒`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  return restMinutes === 0
+    ? `${hours} 小时`
+    : `${hours} 小时 ${restMinutes} 分`;
+}
+
+/** 「全量消息模式」的中文解释（用户最常需要确认的一项）。 */
+function messageModeLabel(mode: string | undefined): string {
+  if (mode === "all") {
+    return "已开启（非 @ 指令也能识别）";
+  }
+  if (mode === "at_only") {
+    return "未开启（只收 @ 消息）";
+  }
+  return "未知（还没收到开启 / 关闭事件）";
+}
+
+/** 群状态卡底部那行精简进程信息（细节进 `/status proc`）。 */
+export function processSummaryLine(ctx: AdminCommandContext): string {
+  const parts = [
+    `v${appVersion()}`,
+    `已运行 ${formatUptime(process.uptime() * 1000)}`,
+    `内存 ${formatBytes(process.memoryUsage().rss)}`,
+  ];
   return `**进程**：${parts.join(" · ")}`;
 }
 
@@ -234,19 +268,17 @@ export function processSummaryLine(ctx: AdminCommandContext): string {
 function processDetailLines(ctx: AdminCommandContext): string[] {
   const mem = process.memoryUsage();
   const lines = [
-    `**版本**：v${appVersion()}`,
-    `**启动**：${formatDisplayTime(processStartedAt())}（已运行 ${formatUptime(
-      process.uptime() * 1000,
-    )}）`,
-    `**运行时**：Node ${process.version} · PID ${process.pid} · ${process.platform}/${process.arch}`,
-    `**内存**：RSS ${formatBytes(mem.rss)} · 堆 ${formatBytes(
+    `**版本**：v${appVersion()} · 已运行 ${formatUptime(process.uptime() * 1000)}`,
+    `**启动时间**：${formatDisplayTime(processStartedAt())}`,
+    `**运行环境**：Node ${process.version} · ${process.platform}/${process.arch} · 进程号 ${process.pid}`,
+    `**内存占用**：${formatBytes(mem.rss)}（堆 ${formatBytes(
       mem.heapUsed,
-    )} / ${formatBytes(mem.heapTotal)} · 外部 ${formatBytes(mem.external)}`,
-    `**待审批**：${ctx.joinAudit.pendingCount()} 条（全局）`,
+    )} / ${formatBytes(mem.heapTotal)}）`,
+    `**待审批申请**：${ctx.joinAudit.pendingCount()} 条`,
   ];
   const diagnostics = ctx.diagnostics;
   if (!diagnostics) {
-    lines.push("**运行配置**：（未装配诊断依赖，只有进程自身信息）");
+    lines.push("**运行配置**：（未装配诊断依赖，只显示进程自身信息）");
     return lines;
   }
   const settings = diagnostics.settings;
@@ -255,19 +287,20 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
   lines.push(
     `**运行模式**：${runtimeModeLabel(settings)}`,
     `**数据库**：${databaseLabel(settings, true)}`,
-    `**写队列**：待写 ${queue.pending} · 失败 ${queue.failures} · 最近错误 ${
-      queue.lastError ?? "（无）"
+    `**待写数据库**：${queue.pending} 条待写 · ${queue.failures} 条失败${
+      queue.lastError ? ` · 最近错误：${queue.lastError}` : ""
     }`,
-    `**通知**：订阅 ${notify ? notify.subscribers : "未知"} 人 · 投递记录 ${
-      notify ? notify.deliveries : "未知"
-    } 条`,
-    `**日志**：级别 ${settings.logLevel} · 控制台 ${
-      settings.logConsole ? "开" : "关"
-    } · 时区 ${settings.displayTimezone}`,
-    `**保留**：原文 ${settings.rawMessageRetentionDays} 天 · 审计 ${
+    `**通知订阅**：${
+      notify
+        ? `${notify.subscribers} 人 · 投递记录 ${notify.deliveries} 条`
+        : "未启用"
+    }`,
+    `**日志与保留**：日志 ${settings.logLevel} · 时区 ${
+      settings.displayTimezone
+    } · 原文 ${settings.rawMessageRetentionDays} 天 · 审计 ${
       settings.auditLogRetentionDays
-    } 天 · 待审批有效期 ${settings.joinRequestTtlDays} 天`,
-    `**菜单**：首次推送 ${settings.menuFirstPush} · 管理员 ${settings.adminUserIds.length} 人`,
+    } 天`,
+    `**管理员**：${settings.adminUserIds.length} 人 · 首次菜单 ${settings.menuFirstPush}`,
   );
   return lines;
 }
@@ -283,7 +316,7 @@ export function processCard(
     const card = renderCard({
       title: "权限不足",
       lines: ["进程详情只有全局超管可以查看。"],
-      rows: [[viewButton("help", "指令帮助", "help", "home")]],
+      rows: [[viewButton("help", "指令帮助", "help", "topic", "status")]],
     });
     return { ok: false, text: card.text, rich: card };
   }
@@ -291,10 +324,10 @@ export function processCard(
     rows: [
       [
         viewButton("refresh", "刷新", "status", "proc"),
-        viewButton("help", "指令帮助", "help", "home"),
+        viewButton("help", "指令帮助", "help", "topic", "status"),
       ],
     ],
-    footer: ["仅全局超管可见；群维度的配置看 /status。"],
+    footer: ["只有全局超管能看到这张卡。"],
   });
 }
 
@@ -308,11 +341,8 @@ export function statusCard(
     if (!targetGroupId) {
       const card = renderCard({
         title: "运行状态",
-        lines: [
-          "该指令需要在群内使用，或在私信中提供群号 / #群短码。",
-          "用法：/status <群号|#群短码>",
-        ],
-        rows: [[viewButton("help", "指令帮助", "help", "home")]],
+        lines: ["需要先指定一个群：在群里直接发，或在私信里带上群号 / #群短码。"],
+        rows: [[viewButton("help", "指令帮助", "help", "topic", "status")]],
       });
       return { ok: false, text: card.text, rich: card };
     }
@@ -328,13 +358,15 @@ export function statusCard(
     }
     const config = ctx.configStore.get(targetGroupId);
     const text = [
-      `群 ${ctx.helpers.displayGroup(targetGroupId)} 状态：`,
-      `机器人启用：${config.enabled}`,
-      `消息过滤：${config.wordFilterEnabled}`,
-      `全量消息模式：${ctx.groupMessageMode?.get(targetGroupId) ?? "unknown"}`,
-      `入群审核：${config.joinAuditEnabled}`,
-      `导出功能：${config.exportEnabled}`,
-      `禁言时长：${config.muteDurationSeconds} 秒`,
+      `**机器人**：${onOff(config.enabled)} · **消息过滤**：${onOff(
+        config.wordFilterEnabled,
+      )} · **入群审核**：${onOff(config.joinAuditEnabled)}`,
+      `**导出功能**：${onOff(config.exportEnabled)} · **禁言时长**：${formatDurationLabel(
+        config.muteDurationSeconds,
+      )}`,
+      `**全量消息模式**：${messageModeLabel(
+        ctx.groupMessageMode?.get(targetGroupId),
+      )}`,
       "",
       processSummaryLine(ctx),
     ].join("\n");

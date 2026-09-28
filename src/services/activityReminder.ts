@@ -1,9 +1,5 @@
 import { ActivityStatus } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
-import {
-  SystemScheduler,
-  type Scheduler,
-} from "../adapters/reconnectingWebSocketGateway.js";
 import type { Activity } from "./activity.js";
 import { ActivityService } from "./activity.js";
 import type { ActivityNotificationService } from "./activityNotifications.js";
@@ -28,23 +24,15 @@ export class ActivityReminderService {
   private readonly activity: ActivityService;
   private readonly notifications: ActivityNotificationService | undefined;
   private readonly now: () => Date;
-  private readonly intervalMs: number;
-  private readonly scheduler: Scheduler;
-  private timer: unknown;
-  private running = false;
 
   public constructor(options: {
     activity: ActivityService;
     notifications?: ActivityNotificationService | undefined;
     now?: () => Date;
-    intervalMs?: number;
-    scheduler?: Scheduler;
   }) {
     this.activity = options.activity;
     this.notifications = options.notifications;
     this.now = options.now ?? (() => new Date());
-    this.intervalMs = options.intervalMs ?? DEFAULT_ACTIVITY_REMIND_INTERVAL_MS;
-    this.scheduler = options.scheduler ?? new SystemScheduler();
   }
 
   /** 扫一轮：到点且在报名的活动 → 广播提醒并清掉提醒时间。 */
@@ -108,40 +96,6 @@ export class ActivityReminderService {
       markdown: `## 活动提醒\n${lines.join("\n")}`,
       text: `活动提醒\n${lines.join("\n")}`,
     };
-  }
-
-  public start(): void {
-    if (this.running || this.intervalMs <= 0) {
-      return;
-    }
-    this.running = true;
-    this.scheduleNext();
-    log.info("activity reminder scheduled", { intervalMs: this.intervalMs });
-  }
-
-  public stop(): void {
-    this.running = false;
-    if (this.timer !== undefined) {
-      this.scheduler.clearTimeout(this.timer);
-      this.timer = undefined;
-    }
-  }
-
-  private scheduleNext(): void {
-    this.timer = this.scheduler.setTimeout(() => {
-      this.timer = undefined;
-      void this.runOnce()
-        .catch((error: unknown) => {
-          log.error("activity reminder run failed", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        })
-        .finally(() => {
-          if (this.running) {
-            this.scheduleNext();
-          }
-        });
-    }, this.intervalMs);
   }
 }
 

@@ -8,6 +8,7 @@ import type { ActivityNotificationService } from "../activityNotifications.js";
 import type { AppealService } from "../appeals.js";
 import type { BlacklistService } from "../blacklist.js";
 import type { ClassAliasService } from "../classAliases.js";
+import type { DeployControl } from "../deployWatcher.js";
 import type { DisplayNameService } from "../displayNames.js";
 import type { ExportService } from "../export.js";
 import type { GroupConfigStore } from "../groupConfig.js";
@@ -116,5 +117,7 @@ export interface AdminCommandContext {
   readonly moderationNotifier: ModerationNotifier | undefined;
   /** `/restart` 的重启钩子；未装配时该指令拒绝执行。 */
   readonly restart: RestartHook | undefined;
+  /** 部署监测（新版本自动重启）的控制面；未装配时没有待重启状态。 */
+  readonly deploy: DeployControl | undefined;
   readonly richMessages: RichMessageSender | undefined;
 }

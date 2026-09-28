@@ -50,17 +50,16 @@ describe("AdminCommandService · /status 进程信息", () => {
     const text = card.rich.markdown;
     for (const field of [
       "**版本**：v",
-      "**启动**：",
-      "**运行时**：Node",
-      "**内存**：RSS",
+      "**启动时间**：",
+      "**运行环境**：Node",
+      "**内存占用**：",
       "**运行模式**：",
       "**数据库**：",
-      "**写队列**：待写",
-      "**通知**：订阅",
-      "**待审批**：",
-      "**日志**：级别",
-      "**保留**：",
-      "**菜单**：",
+      "**待写数据库**：",
+      "**通知订阅**：",
+      "**待审批申请**：",
+      "**日志与保留**：",
+      "**管理员**：",
     ]) {
       expect(text, field).toContain(field);
     }
@@ -74,7 +73,7 @@ describe("AdminCommandService · /status 进程信息", () => {
 
     const bySys = await service.handle(undefined, "root", "/status sys");
     expect(bySys.ok).toBe(true);
-    expect(bySys.rich.markdown).toContain("**写队列**：待写");
+    expect(bySys.rich.markdown).toContain("**待写数据库**：");
   });
 
   it("postgres 只显示 host/db，绝不把 URL 里的口令打出来", () => {

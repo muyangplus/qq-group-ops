@@ -17,13 +17,18 @@ import { escapeCardText, renderCard } from "./services/cardTemplate.js";
 import { ActivityReminderService } from "./services/activityReminder.js";
 import { AppealWatcher } from "./services/appealWatcher.js";
 import { RetentionService } from "./services/retention.js";
+import { DEFAULT_RETENTION_INTERVAL_MS } from "./services/retention.js";
+import { TickScheduler } from "./services/tickScheduler.js";
+import { DeployWatcher } from "./services/deployWatcher.js";
 import { NOTIFY_SCOPE_ALL, topicOfOfficialEvent } from "./services/notifyTopics.js";
 import {
   restartDoneCard,
   takeRestartNotice,
   writeRestartNotice,
 } from "./services/restartNotice.js";
-import { appVersion } from "./core/buildInfo.js";
+import type { RestartRequestHandler } from "./services/restart.js";
+import { appVersion, captureRunningVersion, onDiskVersion, runningVersionOf } from "./core/buildInfo.js";
+import { encodeCallback } from "./services/callbackData.js";
 import { spawnRespawnHelper } from "./services/respawn.js";
 import { sendWelcome } from "./services/welcome.js";
 
@@ -59,6 +64,9 @@ const log = getLogger("main");
 async function main(): Promise<void> {
   loadEnvFile();
   const settings = loadSettings();
+  // 先把「本进程运行的版本」固化下来：部署监测要拿它和磁盘版本比
+  // （`appVersion()` 读磁盘，部署后会变成新版本，不固化就永远不会触发自动重启）。
+  captureRunningVersion();
   configureLogging({
     level: settings.logLevel,
     file: settings.logFile,
@@ -72,13 +80,29 @@ async function main(): Promise<void> {
    * `/restart` 的落点（在 `shutdown` 定义好之前先占位）：
    * 命令层只调用 `runtime.restart.request(...)`，真正退出由这里的优雅关闭负责。
    */
-  let restartHandler:
-    | ((info: { requestedBy: string }) => void)
-    | undefined;
+  let restartHandler: RestartRequestHandler | undefined;
+  /**
+   * 部署监测（P0）：检测到「磁盘版本 ≠ 运行版本」并稳定若干轮后，
+   * 通知全部全局超管并计划自动重启。这里的闭包引用后面才创建的 `runtime`，
+   * 但真正执行都在启动之后，所以是安全的。
+   */
+  const deployWatcher = new DeployWatcher({
+    enabled: settings.autoRestartOnDeploy,
+    checkIntervalMs: settings.deployCheckIntervalMs,
+    delayMs: settings.deployRestartDelayMinutes * 60_000,
+    runningVersion: runningVersionOf,
+    onDiskVersion,
+    recipients: () => runtime.permissions.listSuperAdmins(),
+    notify: async (userId, card) => {
+      await runtime.notifications.sendPrivateCard(userId, card);
+    },
+    requestRestart: (info) => runtime.restart.request(info),
+  });
   const runtime = createRuntime(
     settings,
     {
       onRestartRequested: (info) => restartHandler?.(info),
+      deploy: deployWatcher,
       ...(persistence
         ? {
             repositories: {
@@ -123,7 +147,6 @@ async function main(): Promise<void> {
       auditLogRetentionDays: settings.auditLogRetentionDays,
       joinRequestRetentionDays: settings.auditLogRetentionDays,
       rawMessageRetentionDays: settings.rawMessageRetentionDays,
-      joinRequestTtlDays: settings.joinRequestTtlDays,
     },
     runtime.notifications,
     runtime.activityNotifications,
@@ -131,11 +154,10 @@ async function main(): Promise<void> {
     runtime.appeals,
   );
 
-  // C3 活动定时提醒：周期扫描 `activity_settings.remindAt`，到点在所有绑定群广播一次
+  // C3 活动定时提醒：每轮扫描 `activity_settings.remindAt`，到点在所有绑定群广播一次
   const activityReminder = new ActivityReminderService({
     activity: runtime.activity,
     notifications: runtime.activityNotifications,
-    intervalMs: settings.activityRemindIntervalMs,
   });
 
   // §B8 申诉值班轮转：超时未处理的申诉转给下一位审核员（管理员本来就全通知）
@@ -143,7 +165,6 @@ async function main(): Promise<void> {
     runtime.moderationNotifier,
     runtime.appeals,
     runtime.punishments,
-    { intervalMs: settings.appealForwardIntervalMs },
   );
 
   log.info("qq-group-ops Node.js runtime");
@@ -166,11 +187,48 @@ async function main(): Promise<void> {
     return;
   }
 
-  await retention.runOnce();
-  retention.start();
-  await activityReminder.runOnce();
-  activityReminder.start();
-  appealWatcher.start();
+  // 统一计时：全项目只跑一个定时器（`SCAN_INTERVAL_MS`，0 = 关闭所有周期任务）；
+  // 各任务只声明自己的最小间隔，是否到点由调度器判断。
+  const scheduler = new TickScheduler({ intervalMs: settings.scanIntervalMs });
+  scheduler.register({
+    name: "retention",
+    minIntervalMs: DEFAULT_RETENTION_INTERVAL_MS,
+    run: async () => {
+      await retention.runOnce();
+    },
+  });
+  scheduler.register({
+    name: "activity-reminder",
+    minIntervalMs: settings.activityRemindIntervalMs,
+    run: async () => {
+      await activityReminder.runOnce();
+    },
+  });
+  scheduler.register({
+    name: "appeal-watcher",
+    minIntervalMs: settings.appealForwardIntervalMs,
+    // 启动时不扫（与旧行为一致：首次派发在 notifyAppeal 里完成）
+    runOnStart: false,
+    run: async () => {
+      await appealWatcher.runOnce();
+    },
+  });
+  // 待审批申请 TTL：纯内存检查，每轮都跑（过期申请立刻从 /pending 消失）
+  scheduler.register({
+    name: "join-pending-ttl",
+    run: () => {
+      runtime.joinAudit.expireStalePending();
+    },
+  });
+  scheduler.register({
+    name: "deploy-watcher",
+    minIntervalMs: settings.deployCheckIntervalMs,
+    run: async () => {
+      await deployWatcher.runOnce();
+    },
+  });
+  await scheduler.runOnce();
+  scheduler.start();
 
   const gateway: EventGateway = instrumentEventGateway(
     settings.eventMode === "webhook"
@@ -247,7 +305,8 @@ async function main(): Promise<void> {
   log.info("event gateway started", { mode: settings.eventMode });
 
   const shutdown = async (): Promise<void> => {
-    retention.stop();
+    scheduler.stop();
+    deployWatcher.stop();
     await gateway.stop();
     await runtime.flush();
     await persistence?.close();
@@ -275,9 +334,14 @@ async function main(): Promise<void> {
       requestedAt: new Date().toISOString(),
       version: appVersion(),
       mode: "respawn",
+      reason: info.reason ?? "manual",
+      ...(info.targetVersion !== undefined
+        ? { targetVersion: info.targetVersion }
+        : {}),
     });
     log.warn("restart requested: respawn helper armed", {
       requestedBy: info.requestedBy,
+      reason: info.reason ?? "manual",
       delayMs: RESTART_EXIT_DELAY_MS,
     });
     setTimeout(() => {
@@ -309,10 +373,19 @@ async function notifyRestartAborted(
   const card = renderCard({
     title: "重启已取消",
     lines: [
-      "重启助手没能正常启动，**机器人仍在运行**（本次没有重启）。",
+      "重启助手没能启动，**机器人仍在运行**（这次没有重启）。",
       `**原因**：${detail.length > 0 ? detail : "未知（详见启动日志）"}`,
       "",
-      "可以改用 docker compose / systemd / pm2 的守护方式再试；或先发一张「进程状态」自检（/status proc）。",
+      "可以稍后再试一次「确认重启」；如果一直这样，建议改用 docker compose / systemd / pm2 之类的守护方式。",
+    ],
+    rows: [
+      [
+        {
+          id: "proc",
+          label: "看看进程状态",
+          callbackData: encodeCallback("status", "proc"),
+        },
+      ],
     ],
   });
   const result = await runtime.notifications.sendPrivateCard(userId, card);
@@ -325,8 +398,11 @@ async function notifyRestartAborted(
 }
 
 /**
- * 启动时的「重启回执」：`/restart` 退出前会写一行文件，新进程起来后读走它，
- * 给发起人私信一条「已重启」（含版本 / 启动时间 / 请求到启动的耗时），证明进程管理器真的拉回来了。
+ * 启动时的「重启回执」：重启前会写一行文件，新进程起来后读走它并私信结果。
+ *
+ * - `manual`（指令点的）→ 发给发起人；
+ * - `deploy`（部署监测自动重启）→ 发给**全部全局超管**，重点说清新旧版本。
+ *
  * 投递失败只记日志：这只是一种自证手段，不能影响启动。
  */
 async function announceRestartIfAny(runtime: Runtime): Promise<void> {
@@ -334,15 +410,25 @@ async function announceRestartIfAny(runtime: Runtime): Promise<void> {
   if (!notice) {
     return;
   }
-  const result = await runtime.notifications.sendPrivateCard(
-    notice.userId,
-    restartDoneCard(notice, appVersion()),
-  );
-  if (!result.ok) {
-    getLogger("main").warn("restart notice not delivered", {
-      userId: notice.userId,
-      detail: result.detail,
+  const card = restartDoneCard(notice, appVersion());
+  const recipients =
+    notice.reason === "deploy"
+      ? runtime.permissions.listSuperAdmins()
+      : [notice.userId];
+  if (recipients.length === 0) {
+    getLogger("main").warn("no recipient for restart notice", {
+      reason: notice.reason ?? "manual",
     });
+    return;
+  }
+  for (const userId of recipients) {
+    const result = await runtime.notifications.sendPrivateCard(userId, card);
+    if (!result.ok) {
+      getLogger("main").warn("restart notice not delivered", {
+        userId,
+        detail: result.detail,
+      });
+    }
   }
 }
 

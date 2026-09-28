@@ -13,26 +13,45 @@ const log = getLogger("build-info");
  */
 let cachedVersion: string | undefined;
 
-export function appVersion(): string {
-  if (cachedVersion !== undefined) {
-    return cachedVersion;
-  }
+/** 每次重新读**磁盘**上的版本（部署监测用：磁盘会被 CD 覆盖成新版本）。 */
+export function onDiskVersion(): string {
   try {
     const raw = readFileSync(
       new URL("../../package.json", import.meta.url),
       "utf8",
     );
     const parsed = JSON.parse(raw) as { version?: unknown };
-    cachedVersion =
-      typeof parsed.version === "string" && parsed.version.length > 0
-        ? parsed.version
-        : "unknown";
+    return typeof parsed.version === "string" && parsed.version.length > 0
+      ? parsed.version
+      : "unknown";
   } catch (error) {
-    log.debug("package.json unreadable, version falls back to unknown", {
-      error: String(error),
-    });
-    cachedVersion = "unknown";
+    log.debug("package.json unreadable", { error: String(error) });
+    return "unknown";
   }
+}
+
+/**
+ * **本进程正在运行的版本**（进程启动时固化）。
+ *
+ * 关键：`appVersion()` 读的是磁盘版本，部署之后它会变成新版本，但当前进程跑的还是旧代码 ——
+ * 部署监测拿「磁盘版本 ≠ 固化版本」当信号，不在启动时固化就永远触发不了。
+ */
+let capturedVersion: string | undefined;
+
+export function captureRunningVersion(version: string = appVersion()): string {
+  capturedVersion ??= version;
+  return capturedVersion;
+}
+
+export function runningVersionOf(): string {
+  return capturedVersion ?? appVersion();
+}
+
+export function appVersion(): string {
+  if (cachedVersion !== undefined) {
+    return cachedVersion;
+  }
+  cachedVersion = onDiskVersion();
   return cachedVersion;
 }
 

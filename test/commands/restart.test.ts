@@ -26,8 +26,9 @@ describe("AdminCommandService · /restart", () => {
     const card = await service.handle("g1", "root", "/restart");
     expect(card.ok).toBe(true);
     expect(card.rich.markdown).toContain("重启机器人");
-    expect(card.rich.markdown).toContain("自我重启助手");
-    expect(card.rich.markdown).toContain("助手没起来时旧进程**不会退出**");
+    expect(card.rich.markdown).toContain("当前版本");
+    expect(card.rich.markdown).toContain("大约 5 秒不能响应");
+    expect(card.rich.markdown).toContain("**不会**关掉机器人");
     const keyboard = JSON.stringify(card.rich.keyboard);
     expect(keyboard).toContain("cb:restart:go");
     expect(keyboard).toContain("确认重启");
@@ -40,10 +41,12 @@ describe("AdminCommandService · /restart", () => {
   it("回调 `cb:restart:go` 才真正请求重启，并把发起人记下来", async () => {
     const card = service.restartNowCard("root", "g1");
     expect(card.ok).toBe(true);
-    expect(restartRequests).toEqual([{ requestedBy: "root" }]);
+    expect(restartRequests).toEqual([
+      { requestedBy: "root", reason: "manual" },
+    ]);
     // 群内结果 @ 发起人
     expect(card.rich.markdown).toContain("<@!root>");
-    expect(card.rich.markdown).toContain("已安排重启");
+    expect(card.rich.markdown).toContain("正在重启");
   });
 
   it("没装配重启钩子时明确拒绝（纯测试 / 直接 import 服务层）", () => {

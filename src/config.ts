@@ -97,6 +97,25 @@ export interface Settings {
    */
   appealForwardIntervalMs: number;
   /**
+   * **统一扫描周期**（`SCAN_INTERVAL_MS`，默认 60000）。
+   *
+   * 全项目只跑一个定时器：保留清理 / 活动提醒 / 申诉轮转 / 部署监测都由它驱动，
+   * 各任务自己的节拍（`ACTIVITY_REMIND_INTERVAL_MS` 等）变成「最小间隔」用于跳过未到点的轮次。
+   * `0` = 关闭**所有**周期任务（统一总开关）。
+   */
+  scanIntervalMs: number;
+  /**
+   * 部署监测：检测到磁盘上的版本变化后，是否自动重启（`AUTO_RESTART_ON_DEPLOY`，默认开）。
+   *
+   * 流程：连续 3 轮扫描到同一新版本 → 私信全部全局超管「计划 1 小时后自动重启」+
+   * 「取消自动重启 / 立即重启」按钮；到期没人取消就走自我重启。
+   */
+  autoRestartOnDeploy: boolean;
+  /** 部署监测的宽限期（`DEPLOY_RESTART_DELAY_MINUTES`，默认 60 分钟；`0` = 立即重启）。 */
+  deployRestartDelayMinutes: number;
+  /** 部署监测的扫描间隔（`DEPLOY_CHECK_INTERVAL_MS`，默认 60000；`0` = 关闭监测）。 */
+  deployCheckIntervalMs: number;
+  /**
    * 活动统计图片的字体下载地址（`ACTIVITY_STATS_FONT_URL`）。
    *
    * 系统已有中文字体（Windows 雅黑 / Linux Noto CJK 等）时不会用到；
@@ -333,6 +352,16 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
       60_000,
     ),
     appealHoldMinutes: asNonNegativeInt(env.APPEAL_HOLD_MINUTES, 15),
+    scanIntervalMs: asNonNegativeInt(env.SCAN_INTERVAL_MS, 60_000),
+    autoRestartOnDeploy: asBool(env.AUTO_RESTART_ON_DEPLOY, true),
+    deployRestartDelayMinutes: asNonNegativeInt(
+      env.DEPLOY_RESTART_DELAY_MINUTES,
+      60,
+    ),
+    deployCheckIntervalMs: asNonNegativeInt(
+      env.DEPLOY_CHECK_INTERVAL_MS,
+      60_000,
+    ),
     appealForwardIntervalMs: asNonNegativeInt(
       env.APPEAL_FORWARD_INTERVAL_MS,
       60_000,

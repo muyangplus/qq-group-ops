@@ -225,7 +225,8 @@ describe("AdminCommandService · misc", () => {
       `/status ${groupCode}`,
     );
     expect(status.ok).toBe(true);
-    expect(status.text).toContain("群 777777 状态：");
+    // 群短码解析成功：页脚显示该群绑定的群号
+    expect(status.text).toContain("本群：777777");
   });
 
   it("parses a one-shot /profile set in any order and separator", async () => {

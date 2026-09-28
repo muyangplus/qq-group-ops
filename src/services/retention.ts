@@ -1,8 +1,4 @@
 import { getLogger } from "../core/logger.js";
-import {
-  SystemScheduler,
-  type Scheduler,
-} from "../adapters/reconnectingWebSocketGateway.js";
 import type { AuditLogStore } from "./audit.js";
 import type { JoinAuditService } from "./joinAudit.js";
 import type { ActivityNotificationService } from "./activityNotifications.js";
@@ -26,15 +22,8 @@ export interface RetentionOptions {
    * 与审计保留期独立：到期只清原文，处罚记录本身仍按 `auditLogRetentionDays` 保留。
    */
   rawMessageRetentionDays?: number;
-  /**
-   * 待审批入群申请的有效期（天）；超过即标记为 `expired`（不删除，仍可 /whois 追溯）。
-   * `<= 0` 表示不自动过期。
-   */
-  joinRequestTtlDays?: number;
-  /** 清理周期，默认 24 小时。 */
-  intervalMs?: number;
+  /** 时钟（测试注入）。 */
   clock?: () => number;
-  scheduler?: Scheduler;
 }
 
 export interface RetentionRunResult {
@@ -49,14 +38,13 @@ export interface RetentionRunResult {
   messageExcerptsCleared: number;
   /** 本次被清理的已处理申诉数（§B8；待处理申诉永不自动清理）。 */
   appealsRemoved: number;
-  /** 本次被标记为过期的待审批申请数。 */
-  joinRequestsExpired: number;
 }
 
 /**
- * 数据保留清理。
+ * 数据保留清理（只做**数据库清理**，不含 TTL 过期）。
  *
- * 启动时执行一次，之后按周期执行；只清理「已过期」的数据：
+ * 由统一扫描周期驱动（`TickScheduler`，注册时声明 24h 的 `minIntervalMs`），启动时先跑一次；
+ * 只清理「已过期」的数据：
  * - 审计记录早于 `AUDIT_LOG_RETENTION_DAYS`；
  * - 已审批的入群申请早于 `AUDIT_LOG_RETENTION_DAYS`（待审批的永不清理）；
  * - 入群申请推送的投递记录早于 `AUDIT_LOG_RETENTION_DAYS`（只用于去重与排查）；
@@ -64,13 +52,12 @@ export interface RetentionRunResult {
  *
  * 注意：处罚**消息原文**默认不落库；只有本群 `rawMessageRetentionDays > 0` 时才写入，
  * 并按 `RAW_MESSAGE_RETENTION_DAYS` 单独清空（只清原文，处罚记录本身照旧保留）。
+ *
+ * 「待审批申请 TTL 过期」不在这里：它改成每轮扫描检查（`join-pending-ttl` 任务），
+ * 免得 `/pending` 里的僵尸申请最坏要等 24 小时才消失。
  */
 export class RetentionService {
-  private readonly intervalMs: number;
   private readonly clock: () => number;
-  private readonly scheduler: Scheduler;
-  private timer: unknown;
-  private running = false;
 
   public constructor(
     private readonly auditLog: AuditLogStore,
@@ -81,9 +68,7 @@ export class RetentionService {
     private readonly punishments?: PunishmentService,
     private readonly appeals?: AppealService,
   ) {
-    this.intervalMs = options.intervalMs ?? DEFAULT_RETENTION_INTERVAL_MS;
     this.clock = options.clock ?? Date.now;
-    this.scheduler = options.scheduler ?? new SystemScheduler();
   }
 
   public async runOnce(): Promise<RetentionRunResult> {
@@ -96,13 +81,8 @@ export class RetentionService {
       punishmentsRemoved: 0,
       messageExcerptsCleared: 0,
       appealsRemoved: 0,
-      joinRequestsExpired: 0,
     };
 
-    // 先收敛过期申请：过期的待审批申请不再出现在 /pending、推送与统计里
-    if ((this.options.joinRequestTtlDays ?? 0) > 0) {
-      result.joinRequestsExpired = this.joinAudit.expireStalePending(now);
-    }
     if (this.options.auditLogRetentionDays > 0) {
       const cutoff = new Date(
         now - this.options.auditLogRetentionDays * DAY_MS,
@@ -141,47 +121,12 @@ export class RetentionService {
       result.activityNotificationsRemoved > 0 ||
       result.punishmentsRemoved > 0 ||
       result.messageExcerptsCleared > 0 ||
-      result.appealsRemoved > 0 ||
-      result.joinRequestsExpired > 0
+      result.appealsRemoved > 0
     ) {
       log.info("retention cleanup finished", { ...result });
     } else {
       log.debug("retention cleanup finished", { ...result });
     }
     return result;
-  }
-
-  public start(): void {
-    if (this.running || this.intervalMs <= 0) {
-      return;
-    }
-    this.running = true;
-    this.scheduleNext();
-    log.info("retention scheduled", { intervalMs: this.intervalMs });
-  }
-
-  public stop(): void {
-    this.running = false;
-    if (this.timer !== undefined) {
-      this.scheduler.clearTimeout(this.timer);
-      this.timer = undefined;
-    }
-  }
-
-  private scheduleNext(): void {
-    this.timer = this.scheduler.setTimeout(() => {
-      this.timer = undefined;
-      void this.runOnce()
-        .catch((error: unknown) => {
-          log.error("retention cleanup failed", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        })
-        .finally(() => {
-          if (this.running) {
-            this.scheduleNext();
-          }
-        });
-    }, this.intervalMs);
   }
 }

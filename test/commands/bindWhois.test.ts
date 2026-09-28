@@ -52,8 +52,8 @@ describe("AdminCommandService · bindWhois", () => {
 
     const status = await service.handle(undefined, "root", "/status 654321");
     expect(status.ok).toBe(true);
-    // 群号已绑定：标题只显示群号，不再显示 group_openid
-    expect(status.text).toContain("群 654321 状态：");
+    // 群号已绑定：正文/页脚只显示群号，不再显示 group_openid
+    expect(status.text).toContain("本群：654321");
     expect(status.text).not.toContain("g1");
   });
 

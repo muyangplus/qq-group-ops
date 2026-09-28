@@ -77,7 +77,8 @@ import { ModerationNotifier } from "./services/moderationNotifier.js";
 import { RuleEngine } from "./services/moderation.js";
 import { NotificationService } from "./services/notifications.js";
 import { NotifyTopicLevelStore } from "./services/notifyTopics.js";
-import { createRestartHook, type RestartHook } from "./services/restart.js";
+import { createRestartHook, type RestartHook, type RestartRequestHandler } from "./services/restart.js";
+import type { DeployControl } from "./services/deployWatcher.js";
 import { PermissionService } from "./services/permissions.js";
 import { PunishmentService } from "./services/punishments.js";
 import { RichMessageSender } from "./services/richMessages.js";
@@ -107,6 +108,8 @@ export interface Runtime {
   notifyTopics: NotifyTopicLevelStore;
   /** `/restart` 的重启钩子（未装配时该指令拒绝执行）。 */
   restart: RestartHook;
+  /** 部署监测（新版本自动重启）的控制面；未装配时没有待重启状态。 */
+  deploy: DeployControl | undefined;
   /** §A5 黑名单（本群 / 全局）。 */
   blacklist: BlacklistService;
   /** §B7 处罚记录与卡片动作。 */
@@ -170,7 +173,9 @@ export interface RuntimeDependencies {
    * 缺省（纯单测 / 没有进程管理器）时 `runtime.restart.available === false`，
    * `/restart` 会明确拒绝而不是把进程杀掉。
    */
-  onRestartRequested?: ((info: { requestedBy: string }) => void) | undefined;
+  onRestartRequested?: RestartRequestHandler | undefined;
+  /** 部署监测（新版本自动重启）的控制面；由 `main.ts` 构造后注入。 */
+  deploy?: DeployControl | undefined;
 }
 
 export function createRuntime(
@@ -361,6 +366,7 @@ export function createRuntime(
     cardSender: richMessages,
     diagnostics: { settings, writeQueue },
     restart,
+    deploy: dependencies.deploy,
   });
   const menuState = createFirstMenuPushState(
     settings,
@@ -397,6 +403,22 @@ export function createRuntime(
               ? "all"
               : undefined;
         return adminCommands.helpCard(event.groupId, userId, topic).rich;
+      },
+    ],
+    [
+      "deploy",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        if (parsed.action === "cancel") {
+          return adminCommands.deployCancelCard(userId).rich;
+        }
+        if (parsed.action === "now") {
+          return adminCommands.deployRestartNowCard(userId, event.groupId).rich;
+        }
+        return undefined;
       },
     ],
     [
@@ -888,6 +910,7 @@ export function createRuntime(
     notifications,
     notifyTopics,
     restart,
+    deploy: dependencies.deploy,
     blacklist,
     punishments,
     appeals,

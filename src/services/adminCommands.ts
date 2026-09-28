@@ -58,6 +58,10 @@ import {
   restartCard,
   restartNowCard,
 } from "./commands/restartCommands.js";
+import {
+  deployCancelCard,
+  deployRestartNowCard,
+} from "./commands/deployCommands.js";
 import { handleExport } from "./commands/exportCommands.js";
 import {
   handleNotify,
@@ -82,6 +86,7 @@ import type {
   DiagnosticsDeps,
 } from "./commands/context.js";
 import type { RestartHook } from "./restart.js";
+import type { DeployControl } from "./deployWatcher.js";
 import type { CardButton } from "./cardTemplate.js";
 import { getLogger } from "../core/logger.js";
 import type { AuditLog } from "./audit.js";
@@ -183,6 +188,9 @@ export interface AdminCommandServiceOptions {
 
   /** `/restart` 的重启钩子（`main.ts` 注入）；缺省时该指令拒绝执行。 */
   restart?: RestartHook | undefined;
+
+  /** 部署监测的控制面（新版本卡上的「取消 / 立即重启」按钮）。 */
+  deploy?: DeployControl | undefined;
 }
 
 export class AdminCommandService {
@@ -241,6 +249,8 @@ export class AdminCommandService {
 
   private readonly restart: RestartHook | undefined;
 
+  private readonly deploy: DeployControl | undefined;
+
   /** 班级库（活动学院/年级按钮）；runtime.load() 里拿到后注入。 */
   private activityRoster: MemberRoster | undefined;
 
@@ -279,6 +289,7 @@ export class AdminCommandService {
     this.explicitCardSender = options.cardSender;
     this.diagnostics = options.diagnostics;
     this.restart = options.restart;
+    this.deploy = options.deploy;
   }
 
   /** 班级库在 `runtime.load()` 里才加载完成，因此构造后再注入（与 UserProfileService 同套路）。 */
@@ -517,6 +528,7 @@ export class AdminCommandService {
       helpers,
       diagnostics: this.diagnostics,
       restart: this.restart,
+      deploy: this.deploy,
       permissions: this.permissions,
       joinAudit: this.joinAudit,
       configStore: this.configStore,
@@ -730,6 +742,16 @@ export class AdminCommandService {
   /** 回调：`cb:restart:go` —— 安排重启并回执。 */
   public restartNowCard(userId: string, replyGroupId?: string): CardResult {
     return restartNowCard(this.context(), userId, replyGroupId);
+  }
+
+  /** 回调：`cb:deploy:cancel` —— 取消因新版本的自动重启。 */
+  public deployCancelCard(userId: string): CardResult {
+    return deployCancelCard(this.context(), userId);
+  }
+
+  /** 回调：`cb:deploy:now` —— 立即重启加载新版本。 */
+  public deployRestartNowCard(userId: string, replyGroupId?: string): CardResult {
+    return deployRestartNowCard(this.context(), userId, replyGroupId);
   }
 
   public pendingCard(
