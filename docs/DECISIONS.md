@@ -60,6 +60,8 @@
 - ADR-0050：权限等级数值化，并拆成「群内 / 平台」两轴（§H1 / §H2）
 - ADR-0051：通知中心——话题订阅、全局门槛、退订墓碑、仅群内迎新（§H3–§H6）
 - ADR-0052：统一计时任务（一个扫描周期）+ 发现新版本自动重启
+- ADR-0053：老格式数据用一次性 `/migrate` 转换，主体代码不再兼容
+- ADR-0054：官方字段上限由 `cardTemplate` 统一裁剪兜底（整条 payload 会被判非法）
 
 ---
 
@@ -1143,3 +1145,28 @@
   `test/permissions.test.ts`、`test/fullPersistence.integration.test.ts` 改为断言新口径。
   **能力边界**：迁移必须先于业务读取（升级到本版本后先跑一次 `/migrate`，否则老格式数据会被跳过、不生效）；
   换码后旧短码立即失效，用户需重新从卡片或列表获取。
+
+## ADR-0054：官方字段上限由 `cardTemplate` 统一裁剪兜底（整条 payload 会被判非法）
+
+- 状态：已实现（未发版，见 CHANGELOG `[Unreleased]`）
+- 背景：真机反馈「`/migrate` 预览卡一个按钮都没有，其它卡的按钮都正常」。最初误判为
+  「客户端不支持官方 `action.modal`，不认这个字段就把整块键盘丢掉」；逐条量过仓库里全部 12 处弹窗
+  文案后否定了这个推断——**只有** `/migrate` 那一条是 49 字，超过官方 `action.modal.content`
+  的 **40 字上限**，其余 11 处都在 7–35 字之间、全部合规。官方对整条消息做校验，**单个字段超限
+  就整条拒收**，表现就是卡片正文照发、**整块键盘（含「指令帮助」）消失**——这正好解释了
+  「为什么只有这张卡异常」。
+- 决策：
+  1. 官方字段上限集中在 `cardTemplate` 兜底：新增 `clampModal`，按 `CARD_MODAL_CONTENT_MAX = 40`、
+     `CARD_MODAL_ACTION_MAX = 4` 截短（截断处补 `…`），并在裁剪时打 warn；
+  2. `/migrate` 不再使用弹窗，改成两步确认卡（修订 ADR-0053 第 1 条的「过 modal 二次确认」），
+     那个超限的弹窗函数直接删除，文本兜底 `/migrate run` / `/migrate check` 保留；
+  3. 上限常量与官方字段说明保持同一处来源（`src/adapters/qqOfficialTypes.ts` 的 `KeyboardModal`）。
+- 理由：卡片渲染是**一次性提交**的 payload，宁可降级（弹窗文案变短）也不能整体失败；
+  裁剪时打 warn，让「文案写长」在日志里可见，而不是静默丢按钮。此前把「弹窗」当成风险源、
+  急于泛化成「modal 一律丢键盘」，方向就错了——真凶是长度，不是字段本身。
+- 影响：`src/services/cardTemplate.ts`（`clampModal` + 两个上限常量 + warn）、
+  `src/services/commands/migrateCommands.ts`（删掉 `confirmMigrateModal`）；
+  测试 `test/cardTemplate.test.ts` 新增回归：49 字正文 → 截到 40 字且键盘按钮完好，
+  确认 / 取消超 4 字同样裁剪。
+  **能力边界**：裁剪只保证「不整条失败」，不保证截断后的语义完整——文案仍应写在限额内。
+  同一条经验对其它官方字段同样成立：payload 是整体校验的，任何单字段超限都可能让整块键盘消失。
