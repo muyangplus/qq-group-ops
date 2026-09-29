@@ -1,0 +1,94 @@
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import {
+  ROLLBACK_NOTICE_FILE,
+  snapshotDist,
+  takeRollbackNotice,
+  writeRollbackNotice,
+} from "../src/services/distSnapshot.js";
+
+/**
+ * 层 4B：把「上一次启动成功」的构建快照下来，供新版自检不过时回滚。
+ */
+describe("distSnapshot", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "qqops-snap-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("快照 dist 与元文件，并写 manifest", () => {
+    mkdirSync(join(dir, "dist", "services"), { recursive: true });
+    writeFileSync(join(dir, "dist", "main.js"), "main", "utf8");
+    writeFileSync(join(dir, "dist", "services", "a.js"), "a", "utf8");
+    writeFileSync(join(dir, "package.json"), "{}", "utf8");
+
+    const result = snapshotDist(
+      join(dir, "dist"),
+      join(dir, "data", "dist-backup"),
+      ["package.json", "pnpm-lock.yaml"],
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.files).toBe(3);
+    const backup = join(dir, "data", "dist-backup");
+    expect(existsSync(join(backup, "dist", "main.js"))).toBe(true);
+    expect(existsSync(join(backup, "dist", "services", "a.js"))).toBe(true);
+    expect(existsSync(join(backup, "package.json"))).toBe(true);
+    // 不存在的元文件跳过，不算失败
+    expect(existsSync(join(backup, "pnpm-lock.yaml"))).toBe(false);
+    expect(existsSync(join(backup, "manifest.json"))).toBe(true);
+  });
+
+  it("再快照一次就覆盖旧的（只保留上一次能起来的版本）", () => {
+    mkdirSync(join(dir, "dist"), { recursive: true });
+    writeFileSync(join(dir, "dist", "main.js"), "old", "utf8");
+    const backup = join(dir, "data", "dist-backup");
+    snapshotDist(join(dir, "dist"), backup, []);
+
+    writeFileSync(join(dir, "dist", "main.js"), "new", "utf8");
+    snapshotDist(join(dir, "dist"), backup, []);
+
+    expect(
+      existsSync(join(backup, "dist", "main.js")),
+    ).toBe(true);
+    // 覆盖后不应残留旧文件之外的垃圾（rm 后再拷）
+    expect(existsSync(join(backup, "dist"))).toBe(true);
+  });
+
+  it("dist 不存在时报告失败但不抛错", () => {
+    const result = snapshotDist(
+      join(dir, "nope"),
+      join(dir, "data", "dist-backup"),
+      [],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("不存在");
+  });
+
+  it("回滚回执读走即删（避免重复私信）", () => {
+    const file = join(dir, "rollback-notice.json");
+    writeRollbackNotice(
+      { at: "2026-09-29T00:00:00.000Z", reason: "rolled back", check: { ok: false } },
+      file,
+    );
+    expect(takeRollbackNotice(file)).toMatchObject({ reason: "rolled back" });
+    expect(takeRollbackNotice(file)).toBeUndefined();
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("坏回执不抛错，也不留下（返回 undefined）", () => {
+    const file = join(dir, "broken.json");
+    writeFileSync(file, "{不是 JSON", "utf8");
+    expect(takeRollbackNotice(file)).toBeUndefined();
+    expect(ROLLBACK_NOTICE_FILE).toBe("data/rollback-notice.json");
+  });
+});

@@ -1,4 +1,5 @@
 import { NativeWebSocketFactory } from "./adapters/nativeWebSocketFactory.js";
+import { snapshotDist, takeRollbackNotice } from "./services/distSnapshot.js";
 import {
   isStartupCheck,
   writeStartupCheckFile,
@@ -183,6 +184,10 @@ async function main(): Promise<void> {
   }
   // 层 1 / 层 3 的可见性：模块降级、迁移失败都私信超管（通知模块没起来就只留日志）
   await announceStartupReport(runtime, persistence?.migration);
+  // 层 4B：本构建已经初始化成功 → 留一份「上一次能起来」的快照，供下次自检失败时回滚
+  snapshotDist();
+  // 助手刚回滚过的话，告诉超管「现在跑的是上一版、新版本为什么没起来」
+  await announceRollbackIfAny(runtime);
   // 上次 `/restart` 留下的回执：给发起人私信一条「已重启」（说明进程管理器真的拉回来了）
   await announceRestartIfAny(runtime);
 
@@ -527,6 +532,52 @@ async function announceStartupReport(
     const result = await runtime.notifications.sendPrivateCard(userId, card);
     if (!result.ok) {
       getLogger("main").warn("startup report not delivered", {
+        userId,
+        detail: result.detail,
+      });
+    }
+  }
+}
+
+/**
+ * 助手的回滚回执（层 4B）：新版本自检不过 → 助手换回上一版构建再启动，
+ * 这里把「现在跑的是哪一版、为什么回滚」告诉超管。
+ */
+async function announceRollbackIfAny(runtime: Runtime): Promise<void> {
+  const notice = takeRollbackNotice();
+  if (!notice) {
+    return;
+  }
+  getLogger("main").warn("started after dist rollback", {
+    reason: notice.reason,
+    at: notice.at,
+  });
+  if (!runtime.health.isAllAvailable(["notify", "permissions"])) {
+    getLogger("main").warn("rollback notice not delivered: notify unavailable");
+    return;
+  }
+  const card = renderCard({
+    title: "已回滚到上一版",
+    lines: [
+      `${notice.reason}`,
+      "",
+      `当前版本：v${appVersion()} · 回滚时间 ${formatDisplayTime(new Date(notice.at))}`,
+      "修好新版本后可重新部署；期间机器人按上一版继续工作。",
+    ],
+    rows: [
+      [
+        {
+          id: "status",
+          label: "查看状态",
+          callbackData: encodeCallback("status", "proc"),
+        },
+      ],
+    ],
+  });
+  for (const userId of runtime.permissions.listSuperAdmins()) {
+    const result = await runtime.notifications.sendPrivateCard(userId, card);
+    if (!result.ok) {
+      getLogger("main").warn("rollback notice not delivered", {
         userId,
         detail: result.detail,
       });

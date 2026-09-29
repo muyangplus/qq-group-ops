@@ -16,8 +16,8 @@
  * 的部署仍然「退出靠守护拉起」更稳。脚本用纯 JS 写、随 `scripts/` 一起发布，不需要编译。
  */
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 const WAIT_DEADLINE_MS = 60_000;
 const SETTLE_MS = 300;
@@ -26,6 +26,13 @@ const WATCH_MS = 3_000;
 const CHECK_TIMEOUT_MS = 90_000;
 const FAILURE_FILE = resolve("data", "restart-failed.json");
 const CHECK_FILE = resolve("data", "startup-check.json");
+/** 上一次「启动成功」的构建快照（`snapshotDist()` 维护）与回滚回执。 */
+const BACKUP_DIR = resolve("data", "dist-backup");
+const BROKEN_DIR = resolve("data", "dist-broken");
+const ROLLBACK_FILE = resolve("data", "rollback-notice.json");
+const DIST_DIR = "dist";
+/** 与 dist 一起回滚的元文件（版本号 / 依赖锁定）。 */
+const BACKUP_FILES = ["package.json", "pnpm-lock.yaml"];
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
@@ -101,17 +108,88 @@ async function main() {
 
   const check = runStartupCheck(execPath, args);
   if (!check.ok) {
+    // 层 4B：新构建起不来 → 换回上一次启动成功的快照，再自检一次；成功就照常拉起
+    const rollback = rollbackDist();
+    if (rollback.ok) {
+      const recheck = runStartupCheck(execPath, args);
+      if (recheck.ok) {
+        recordRollback({
+          reason: "startup check failed: rolled back to the previous dist",
+          failedCheck: check.summary,
+          exitCode: check.exitCode,
+        });
+        // 回滚后按同一套命令继续启动
+        await spawnAndWatch(execPath, args);
+        return;
+      }
+      recordFailure({
+        reason: "startup check failed and the rolled-back build failed too",
+        exitCode: check.exitCode,
+        check: check.summary,
+        recheck: recheck.summary,
+        rollback: rollback.detail,
+        at: new Date().toISOString(),
+      });
+      process.exitCode = 1;
+      return;
+    }
     recordFailure({
       reason: "startup check failed: not spawning the new process",
       exitCode: check.exitCode,
       signal: check.signal,
       check: check.summary,
+      rollback: rollback.detail,
       at: new Date().toISOString(),
     });
     process.exitCode = 1;
     return;
   }
 
+  await spawnAndWatch(execPath, args);
+}
+
+/**
+ * 回滚 `dist/`（+ `package.json` / `pnpm-lock.yaml`）到快照。
+ *
+ * 现场保留在 `data/dist-broken/` 里供人工比对；`node_modules` 不参与回滚
+ * （回执里会说明这一点）。
+ */
+function rollbackDist() {
+  if (!existsSync(join(BACKUP_DIR, DIST_DIR))) {
+    return { ok: false, detail: "no dist snapshot to roll back to" };
+  }
+  try {
+    rmSync(BROKEN_DIR, { recursive: true, force: true });
+    mkdirSync(dirname(BROKEN_DIR), { recursive: true });
+    cpSync(DIST_DIR, join(BROKEN_DIR, DIST_DIR), { recursive: true });
+    rmSync(DIST_DIR, { recursive: true, force: true });
+    cpSync(join(BACKUP_DIR, DIST_DIR), DIST_DIR, { recursive: true });
+    for (const file of BACKUP_FILES) {
+      if (existsSync(join(BACKUP_DIR, file))) {
+        cpSync(join(BACKUP_DIR, file), file);
+      }
+    }
+    return { ok: true, detail: `restored ${DIST_DIR} from ${BACKUP_DIR}` };
+  } catch (error) {
+    return { ok: false, detail: `rollback failed: ${String(error)}` };
+  }
+}
+
+function recordRollback(payload) {
+  try {
+    mkdirSync(dirname(ROLLBACK_FILE), { recursive: true });
+    writeFileSync(
+      ROLLBACK_FILE,
+      JSON.stringify({ at: new Date().toISOString(), ...payload }),
+      "utf8",
+    );
+  } catch {
+    // 尽力而为：机器人那边收不到回执也仍然在旧版本上跑着
+  }
+}
+
+/** 拉起新进程并盯 3 秒：立刻挂掉就写失败证据。 */
+async function spawnAndWatch(execPath, args) {
   const child = spawn(execPath, args, {
     detached: true,
     stdio: "ignore",

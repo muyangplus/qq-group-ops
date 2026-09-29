@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -154,6 +154,64 @@ describe("respawn", () => {
       runHelper(dir, [app]);
 
       expect(existsSync(join(dir, "started.txt"))).toBe(true);
+    }, 40_000);
+
+    /**
+     * 层 4B：新构建自检不过 → 用 `data/dist-backup/` 换回上一版 → 再自检 → 拉起。
+     * 这里让「新构建」在 dist 里带一个 `dist-bad.txt`，而快照里没有。
+     */
+    it("自检不过 + 有快照 → 回滚到上一版并启动，留回滚回执", () => {
+      const dir = mkdtempSync(join(tmpdir(), "qqops-rollback-"));
+      const appCode = [
+        'import { mkdirSync, writeFileSync } from "node:fs";',
+        'const bad = process.argv[1].replace(/app\\.mjs$/u, "dist-bad.txt");',
+        'const isCheck = process.argv.includes("--check");',
+        'mkdirSync("data", { recursive: true });',
+        "if (isCheck) {",
+        '  const ok = !(await import("node:fs")).existsSync(bad);',
+        '  writeFileSync("data/startup-check.json", JSON.stringify({ ok }));',
+        "  process.exit(ok ? 0 : 1);",
+        "}",
+        'writeFileSync(process.argv[2] ?? "started.txt", "ok");',
+      ].join("\n");
+      // 新构建（含 dist-bad.txt → 自检会失败）
+      mkdirSync(join(dir, "dist"), { recursive: true });
+      writeFileSync(join(dir, "dist", "app.mjs"), appCode, "utf8");
+      writeFileSync(join(dir, "dist", "dist-bad.txt"), "bad", "utf8");
+      // 上一次启动成功的快照（没有 dist-bad.txt → 自检通过）
+      mkdirSync(join(dir, "data", "dist-backup", "dist"), { recursive: true });
+      writeFileSync(
+        join(dir, "data", "dist-backup", "dist", "app.mjs"),
+        appCode,
+        "utf8",
+      );
+
+      const result = runHelper(dir, [
+        join("dist", "app.mjs"),
+        join(dir, "started-restored.txt"),
+      ]);
+
+      expect(existsSync(join(dir, "started-restored.txt"))).toBe(true);
+      // 坏构建被留证
+      expect(existsSync(join(dir, "data", "dist-broken", "dist", "dist-bad.txt"))).toBe(true);
+      // 回滚回执写好了（机器人启动时会读走并私信超管）
+      const noticeFile = join(dir, "data", "rollback-notice.json");
+      expect(existsSync(noticeFile)).toBe(true);
+      expect(String(JSON.parse(readFileSync(noticeFile, "utf8")).reason)).toContain(
+        "rolled back",
+      );
+      expect(result.status).toBe(0);
+    }, 40_000);
+
+    it("自检不过 + 没有快照 → 不拉起，并把两次失败都记下来", () => {
+      const dir = mkdtempSync(join(tmpdir(), "qqops-norollback-"));
+      const app = fakeApp(dir, join(dir, "started.txt"));
+
+      const result = runHelper(dir, [app, "fail-check"]);
+
+      expect(result.status).not.toBe(0);
+      expect(existsSync(join(dir, "started.txt"))).toBe(false);
+      expect(String(result.failure?.rollback)).toContain("no dist snapshot");
     }, 40_000);
   });
 });
