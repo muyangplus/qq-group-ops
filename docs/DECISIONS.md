@@ -1116,7 +1116,7 @@
 
 ## ADR-0053：老格式数据用一次性 `/migrate` 转换，主体代码不再兼容
 
-- 状态：已采纳（未发布）
+- 状态：已发布（0.22.0）
 - 背景：库里散布着四类老格式数据：`group_settings` 的裸字符串值、`keywordPunish` + `keywordRecall`
   老处罚字段、四位年份（`2022`）、含小写字母的短码与活动码。兼容分支写在**业务读取路径**上
   （`GroupConfigStore.get()` 折算老处罚字段、`parseSettingValue` 回落裸字符串、`checkEligibility`
