@@ -53,6 +53,10 @@ import {
   type GroupSettingsRepository,
 } from "./db/groupSettingsRepository.js";
 import {
+  SqlPlatformSettingsRepository,
+  type PlatformSettingsRepository,
+} from "./db/platformSettingsRepository.js";
+import {
   SqlGroupMessageModeRepository,
   type GroupMessageModeRepository,
 } from "./db/groupMessageModeRepository.js";
@@ -111,6 +115,7 @@ export interface Persistence {
   joinRequests: JoinRequestRepository;
   groupConfigs: GroupConfigRepository;
   groupSettings: GroupSettingsRepository;
+  platformSettings: PlatformSettingsRepository;
   identityBindings: IdentityBindingRepository;
   groupMessageModes: GroupMessageModeRepository;
   permissions: PermissionRepository;
@@ -227,6 +232,7 @@ interface RepositorySet {
   joinRequests: JoinRequestRepository;
   groupConfigs: GroupConfigRepository;
   groupSettings: GroupSettingsRepository;
+  platformSettings: PlatformSettingsRepository;
   identityBindings: IdentityBindingRepository;
   groupMessageModes: GroupMessageModeRepository;
   permissions: PermissionRepository;
@@ -258,6 +264,7 @@ function createRepositories(db: Queryable): RepositorySet {
     joinRequests: new SqlJoinRequestRepository(db),
     groupConfigs: new SqlGroupConfigRepository(db),
     groupSettings: new SqlGroupSettingsRepository(db),
+    platformSettings: new SqlPlatformSettingsRepository(db),
     identityBindings: new SqlIdentityBindingRepository(db),
     groupMessageModes: new SqlGroupMessageModeRepository(db),
     permissions: new SqlPermissionRepository(db),

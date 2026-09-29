@@ -54,6 +54,13 @@ CREATE TABLE IF NOT EXISTS group_settings (
   PRIMARY KEY (group_id, setting_key)
 );
 
+-- 平台级热配置（全局超管可在运行时改）：覆盖 .env 的默认值，改完立即生效。
+CREATE TABLE IF NOT EXISTS platform_settings (
+  setting_key TEXT PRIMARY KEY,
+  setting_value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS identity_bindings (
   kind TEXT NOT NULL CHECK (kind IN ('user', 'group')),
   official_id TEXT NOT NULL,
