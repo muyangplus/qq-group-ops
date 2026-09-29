@@ -791,6 +791,27 @@ pnpm db:up     # docker compose --profile postgres up -d db
 | `DEPLOY_RESTART_DELAY_MINUTES` | 否 | 部署监测的宽限期（分钟），默认 `60`；`0` = 检测到就重启（仍会先发通知卡） |
 | `DEPLOY_CHECK_INTERVAL_MS` | 否 | 部署监测的扫描间隔（毫秒），默认 `60000`；`0` = 关闭监测。**要求机器人的工作目录 = FTP 上传目标目录**，否则读不到新版本 |
 
+### 平台配置热改（`/config`）
+
+上表里大部分项**不用改 `.env` 重启**：全局超管在私信发 `/config` 就能改，改完**立即生效**
+（覆盖值存库，优先级高于 `.env`；`/config clear <项>` 回落到 `.env` 默认）。
+
+```text
+/config                    面板：每项「当前值 + 来源（.env 默认 / 已覆盖）」，每项一个「填入指令」按钮
+/config set <项> <值>       改一项（非法值会被拒绝，不改库也不改内存）
+/config clear <项>          回落 .env 默认
+```
+
+- **可热改**：`auditLogRetentionDays` / `rawMessageRetentionDays` / `joinRequestTtlDays` /
+  `menuFirstPush` / `activityNotifyDailyLimit` / `activityNotifyRatePerSecond` / `appealHoldMinutes` /
+  `scanIntervalMs` / `autoRestartOnDeploy` / `deployRestartDelayMinutes` / `deployCheckIntervalMs` /
+  `activityStatsFontUrl` / `displayTimezone`（`TZ`）；
+- **只能改 `.env` 并重启（核心项）**：QQ 凭据 / `EVENT_MODE` / `WEBHOOK_*` / `DATABASE_URL` /
+  `DATABASE_TARGET` / `LOG_*` / `CLASS_INDEX_FILE` / `ADMIN_USER_IDS`；
+- 权限：**仅全局超管、只在私信**；每次改动写审计（平台级动作，不挂在任何群上）；
+- 覆盖面：库里的覆盖值读不出来（手改坏 / 老版本写坏）时**只退回 `.env` 默认**，并在面板上列出来 ——
+  配置读不出来不该拦住启动。
+
 > **申诉派发口径**：管理员全部通知是为了"必须有人知道"；审核员轮单是为了不打扰所有人。
 > 处理完成后，`ModerationNotifier.notifyAppealHandled` 会把结果同步给其余订阅者（脚本同步卡），
 > 并且申诉人本人会收到通过 / 驳回的结果私信。值班记录是内存态：进程重启后会从第一位审核员重新开始，

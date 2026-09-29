@@ -259,6 +259,7 @@ function buildHelp(
     lines.push("/rules all - 查看全局默认规则");
     lines.push("/rules set all <字段> <值> - 修改全局默认规则");
     lines.push("/migrate - 一次性数据迁移（私信中使用）");
+    lines.push("/config - 平台配置热改：保留期 / 计时 / 部署监测等（私信中使用）");
   }
   if (!canModerate && !canAdmin && !isSuper) {
     lines.push("当前没有更多可执行的管理指令。");
