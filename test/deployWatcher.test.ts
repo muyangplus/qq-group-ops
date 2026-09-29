@@ -84,14 +84,11 @@ describe("DeployWatcher", () => {
     expect(h.notices).toHaveLength(0);
   });
 
-  it("连续 3 轮稳定才通知超管，并给出 1 小时后的重启时间", async () => {
+  it("检测到新版本就通知超管（不等连续几轮），并给出 1 小时后的重启时间", async () => {
     const h = createHarness();
     h.setDisk("0.21.0");
 
-    await h.watcher.runOnce();
-    await h.watcher.runOnce();
-    expect(h.notices).toHaveLength(0); // 还没稳定
-
+    // 默认 stableChecks = 1：第一轮就提醒（宽限期才是缓冲，不靠连续几轮猜上传完没完）
     await h.watcher.runOnce();
     expect(h.notices.map((item) => item.userId)).toEqual(["root", "root2"]);
     const pending = h.watcher.pending();
@@ -173,16 +170,26 @@ describe("DeployWatcher", () => {
     expect(h.restarts).toHaveLength(0);
   });
 
+  it("显式要求连续多轮时仍然等够轮数（stableChecks 选项）", async () => {
+    const h = createHarness({ stableChecks: 3 });
+    h.setDisk("0.21.0");
+
+    await h.watcher.runOnce();
+    await h.watcher.runOnce();
+    expect(h.notices).toHaveLength(0);
+
+    await h.watcher.runOnce();
+    expect(h.notices).toHaveLength(2);
+  });
+
   it("自动重启没受理时保留状态、延后 5 分钟并通知超管", async () => {
     const h = createHarness({ delayMs: 0 });
     h.setAccept(false);
     h.setDisk("0.21.0");
-    for (let i = 0; i < 3; i += 1) {
-      await h.watcher.runOnce();
-    }
+    await h.watcher.runOnce(); // 建 pending，deadline 就是「现在」
     const created = h.watcher.pending()!.deadlineAt;
 
-    await h.watcher.runOnce(); // 既定 deadline 是「现在」，触发但被拒
+    await h.watcher.runOnce(); // 到点触发但被拒
     expect(h.restarts).toHaveLength(0);
     const pending = h.watcher.pending();
     expect(pending?.targetVersion).toBe("0.21.0");

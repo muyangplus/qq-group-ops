@@ -14,8 +14,14 @@ const log = getLogger("deploy-watcher");
 /** 自动重启时写进重启回执的「发起人」占位（不是真实用户）。 */
 export const DEPLOY_RESTART_ACTOR = "deploy-watcher";
 
-/** 连续多少轮读到同一新版本才认定「上传完成」（默认 3 轮 × 扫描间隔）。 */
-export const DEFAULT_DEPLOY_STABLE_CHECKS = 3;
+/**
+ * 连续多少轮读到同一新版本才算「新版本」。
+ *
+ * **默认 1 = 检测到就提醒**：FTP 逐文件上传没有「传完」信号，但通知之后还有宽限期
+ * （`DEPLOY_RESTART_DELAY_MINUTES`，默认 60 分钟）兜着 —— 上传还没完就点「取消自动重启」即可，
+ * 没必要靠连续几轮来猜（那只是把提醒往后拖）。
+ */
+export const DEFAULT_DEPLOY_STABLE_CHECKS = 1;
 
 export interface DeployPending {
   /** 磁盘上的新版本（部署目标）。 */
@@ -159,12 +165,16 @@ export class DeployWatcher implements DeployControl {
       return;
     }
 
+    // 目标版本变了：重新计数；`stableChecks <= 1` 时**本轮就提醒**（不再等下一轮）
     if (target !== this.streakVersion) {
       this.streakVersion = target;
       this.streak = 1;
-      return;
+      if (this.stableChecks > 1) {
+        return;
+      }
+    } else {
+      this.streak += 1;
     }
-    this.streak += 1;
 
     if (this.pendingState?.targetVersion === target) {
       if (this.clock() >= Date.parse(this.pendingState.deadlineAt)) {
