@@ -508,10 +508,20 @@ export function createRuntime(
       "restart",
       async (parsed, event) => {
         const userId = event.userId;
-        if (!userId || parsed.action !== "go") {
+        if (!userId) {
           return undefined;
         }
-        return adminCommands.restartNowCard(userId, event.groupId).rich;
+        if (parsed.action === "go") {
+          return adminCommands.restartNowCard(userId, event.groupId).rich;
+        }
+        // 自检失败卡上的两个出口：跳过自检 / 只再检查一次
+        if (parsed.action === "force") {
+          return adminCommands.restartNowCard(userId, event.groupId, true).rich;
+        }
+        if (parsed.action === "again") {
+          return adminCommands.restartCheckCard(userId).rich;
+        }
+        return undefined;
       },
     ],
     [

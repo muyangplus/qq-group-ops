@@ -92,6 +92,54 @@ export interface RollbackNotice {
   check?: unknown;
 }
 
+export interface RestoreResult {
+  ok: boolean;
+  detail: string;
+}
+
+/**
+ * 用快照**换回上一版**（自检不过时该做的兜底）。
+ *
+ * 现场（现役 `dist/`）挪到 `data/dist-broken/` 留证，再从 `data/dist-backup/` 还原
+ * `dist/` 与元文件。返回失败原因时调用方只记日志 —— 换不回来也不该影响当前进程继续跑。
+ */
+export function restoreDistFromBackup(
+  dist: string = DIST_DIR,
+  backup: string = DIST_BACKUP_DIR,
+  broken = "data/dist-broken",
+  extras: readonly string[] = DIST_BACKUP_FILES,
+): RestoreResult {
+  const source = join(backup, basename(dist));
+  if (!existsSync(source)) {
+    return {
+      ok: false,
+      detail: "没有可回滚的构建快照（data/dist-backup 不存在）",
+    };
+  }
+  try {
+    rmSync(broken, { recursive: true, force: true });
+    mkdirSync(dirname(broken), { recursive: true });
+    cpSync(dist, join(broken, basename(dist)), { recursive: true });
+    rmSync(dist, { recursive: true, force: true });
+    cpSync(source, dist, { recursive: true });
+    for (const extra of extras) {
+      const from = join(backup, extra);
+      if (existsSync(from)) {
+        cpSync(from, join(dirname(dist), extra));
+      }
+    }
+    log.warn("dist restored from backup", { dist, backup, broken });
+    return {
+      ok: true,
+      detail: `坏构建已挪到 ${broken}，并从快照还原 ${dist}`,
+    };
+  } catch (error) {
+    const detail = describeError(error);
+    log.error("dist restore failed", { dist, backup, error: detail });
+    return { ok: false, detail };
+  }
+}
+
 /** 读走回滚回执（读后删除，避免重复私信）。 */
 export function takeRollbackNotice(
   file: string = ROLLBACK_NOTICE_FILE,

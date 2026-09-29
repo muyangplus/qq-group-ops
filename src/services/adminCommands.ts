@@ -56,6 +56,7 @@ import {
 import { handleStatus, processCard, statusCard } from "./commands/statusCommands.js";
 import {
   restartCard,
+  restartCheckCard,
   restartNowCard,
 } from "./commands/restartCommands.js";
 import {
@@ -798,9 +799,18 @@ export class AdminCommandService {
     return restartCard(this.context(), userId);
   }
 
-  /** 回调：`cb:restart:go` —— 安排重启并回执。 */
-  public restartNowCard(userId: string, replyGroupId?: string): CardResult {
-    return restartNowCard(this.context(), userId, replyGroupId);
+  /** 回调：`cb:restart:go` —— 安排重启并回执（`force` = 跳过退出前自检）。 */
+  public restartNowCard(
+    userId: string,
+    replyGroupId?: string,
+    force = false,
+  ): CardResult {
+    return restartNowCard(this.context(), userId, replyGroupId, { force });
+  }
+
+  /** 回调：`cb:restart:again` —— 只跑一次退出前自检，不重启。 */
+  public restartCheckCard(userId: string): CardResult {
+    return restartCheckCard(this.context(), userId);
   }
 
   /** 回调：`cb:deploy:cancel` —— 取消因新版本的自动重启。 */

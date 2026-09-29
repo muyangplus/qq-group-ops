@@ -1,5 +1,13 @@
 import { NativeWebSocketFactory } from "./adapters/nativeWebSocketFactory.js";
-import { snapshotDist, takeRollbackNotice } from "./services/distSnapshot.js";
+import {
+  restoreDistFromBackup,
+  snapshotDist,
+  takeRollbackNotice,
+} from "./services/distSnapshot.js";
+import {
+  FailedVersionGuard,
+  runRestartPreflight,
+} from "./services/restartPreflight.js";
 import {
   isStartupCheck,
   writeStartupCheckFile,
@@ -34,7 +42,10 @@ import {
   takeRestartNotice,
   writeRestartNotice,
 } from "./services/restartNotice.js";
-import type { RestartRequestHandler } from "./services/restart.js";
+import type {
+  RestartRequestHandler,
+  RestartRequestInfo,
+} from "./services/restart.js";
 import { appVersion, captureRunningVersion, onDiskVersion, runningVersionOf } from "./core/buildInfo.js";
 import { encodeCallback } from "./services/callbackData.js";
 import { spawnRespawnHelper } from "./services/respawn.js";
@@ -385,14 +396,53 @@ async function main(): Promise<void> {
     await closeLogging();
     process.exit(0);
   };
+  /** 自检不过的构建（进程内记忆）：部署监测不再对同一版本反复尝试。 */
+  const failedVersions = new FailedVersionGuard();
+
   /**
-   * `/restart` 的落点（**自我重启模式**）：先脱离会话拉起 `scripts/respawn.mjs`
-   * （等旧 PID 消失 → 释放端口/句柄 → 启动新进程），确认助手已起来后写重启回执，
-   * 再走与 SIGTERM 完全相同的优雅关闭并退出。
+   * `/restart` 的落点（**自我重启模式**）：**先自检**，通过才拉起 `scripts/respawn.mjs`
+   * （等旧 PID 消失 → 释放端口/句柄 → 启动新进程），确认助手起来后写重启回执，
+   * 再走与 SIGTERM 相同的优雅关闭并退出。
    *
-   * 助手没起来就**不退出**：否则机器人就真的没了（命令层会收到 `false` 并回「重启失败」）。
+   * 自检放在**退出之前**是关键：跑不过就**不退出** —— 最坏情况只是「这次重启没生效」，
+   * 而不是「旧进程已经退出、新进程又起不来 → 机器人没了」。失败时顺手把坏构建换回上一版
+   * （现役 `dist/` 挪进 `data/dist-broken/`），私信带「强制重启 / 再次检查」的取消卡，
+   * 并让部署监测别再重试同一个目标版本。
+   *
+   * 手动再发 `/restart` 会**再检查一次**；「强制重启」按钮（`force`）才跳过自检。
    */
   restartHandler = (info) => {
+    void runRestartFlow(info);
+  };
+
+  async function runRestartFlow(info: RestartRequestInfo): Promise<void> {
+    const targetVersion = info.targetVersion ?? onDiskVersion();
+    if (!info.force) {
+      // 先排空写队列：尽量别和自检里的迁移抢 SQLite 写锁（busy_timeout 兜底）
+      await runtime.flush();
+      const preflight = runRestartPreflight({
+        execPath: process.execPath,
+        args: process.argv.slice(1),
+      });
+      if (!preflight.ok) {
+        const reason = preflight.reason ?? "自检未通过";
+        log.error("restart aborted: startup check failed", {
+          targetVersion,
+          reason,
+          requestedBy: info.requestedBy,
+        });
+        const restore = restoreDistFromBackup();
+        failedVersions.markFailed(targetVersion, reason, info.reason ?? "manual");
+        deployWatcher.blockVersion(targetVersion, reason);
+        await notifyPreflightFailed(runtime, info, reason, restore);
+        return;
+      }
+      // 自检通过：这个构建没问题，清掉旧的失败记录
+      failedVersions.forget(targetVersion);
+    } else {
+      log.warn("restart forced: preflight skipped", { targetVersion });
+    }
+
     const respawn = spawnRespawnHelper({
       pid: process.pid,
       execPath: process.execPath,
@@ -425,13 +475,72 @@ async function main(): Promise<void> {
       }
       void shutdown();
     }, RESTART_EXIT_DELAY_MS);
-  };
+  }
   process.once("SIGINT", () => {
     void shutdown();
   });
   process.once("SIGTERM", () => {
     void shutdown();
   });
+}
+
+/**
+ * 自检不过时的「重启已取消」卡：机器人**没有退出**，坏构建已换回上一版，
+ * 卡上给「强制重启」和「再次检查」两个出口。
+ */
+async function notifyPreflightFailed(
+  runtime: Runtime,
+  info: RestartRequestInfo,
+  reason: string,
+  restore: { ok: boolean; detail: string },
+): Promise<void> {
+  const lines = [
+    "**机器人仍在运行上一版**（这次没有重启）。",
+    `**新版本**：v${info.targetVersion ?? onDiskVersion()}`,
+    `**原因**：${reason}`,
+    restore.ok
+      ? `已把坏构建换回上一版：${restore.detail}`
+      : `换回上一版没成功：${restore.detail}`,
+    "",
+    "修好新版本后重新部署（版本一变就会重新检查）；也可以点下面两个按钮：",
+    "「再次检查」只跑自检、不重启；「强制重启」跳过自检直接换版本（确认要看新版本行为时用）。",
+  ];
+  const rows = [
+    [
+      {
+        id: "force",
+        label: "强制重启",
+        callbackData: encodeCallback("restart", "force"),
+      },
+      {
+        id: "again",
+        label: "再次检查",
+        callbackData: encodeCallback("restart", "again"),
+      },
+    ],
+    [
+      {
+        id: "proc",
+        label: "看看进程状态",
+        callbackData: encodeCallback("status", "proc"),
+      },
+    ],
+  ];
+  const card = renderCard({ title: "重启已取消", lines, rows });
+  // 自动重启（部署监测）发给全部全局超管；手动重启发给发起人
+  const recipients =
+    info.reason === "deploy"
+      ? runtime.permissions.listSuperAdmins()
+      : [info.requestedBy];
+  for (const userId of recipients) {
+    const result = await runtime.notifications.sendPrivateCard(userId, card);
+    if (!result.ok) {
+      getLogger("main").warn("restart abort notice not delivered", {
+        userId,
+        detail: result.detail,
+      });
+    }
+  }
 }
 
 /**

@@ -124,6 +124,23 @@ export class DeployWatcher implements DeployControl {
     return this.pendingState;
   }
 
+  /**
+   * 把某个目标版本按「已取消」处理（自检不过时用）。
+   *
+   * 与用户点「取消自动重启」同一套语义：**同一目标版本不再提醒、不再自动重启**
+   * （版本再变才重新给机会）。旧进程没退出，所以这份记忆一直有效。
+   */
+  public blockVersion(targetVersion: string, reason: string): void {
+    this.cancelledVersion = targetVersion;
+    if (this.pendingState?.targetVersion === targetVersion) {
+      this.pendingState = undefined;
+    }
+    log.warn("deploy target blocked after failed preflight", {
+      targetVersion,
+      reason,
+    });
+  }
+
   public cancel(): boolean {
     if (!this.pendingState) {
       return false;

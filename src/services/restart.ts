@@ -1,4 +1,5 @@
 import { getLogger } from "../core/logger.js";
+import type { PreflightResult } from "./restartPreflight.js";
 
 /**
  * `/restart` 的重启钩子。
@@ -18,19 +19,27 @@ export interface RestartRequestInfo {
   reason?: "manual" | "deploy" | undefined;
   /** 部署自动重启时带上的目标版本。 */
   targetVersion?: string | undefined;
+  /** 强制重启：跳过退出前自检（失败卡上的「强制重启」按钮）。 */
+  force?: boolean | undefined;
 }
 
 export type RestartRequestHandler = (info: RestartRequestInfo) => void;
+
+/** 只跑一次退出前自检（「再次检查」按钮）；未装配时返回 `undefined`。 */
+export type RestartPreflightRunner = () => PreflightResult | undefined;
 
 export interface RestartHook {
   /** 是否装配了可用的重启钩子。 */
   readonly available: boolean;
   /** 安排一次重启；返回是否受理。 */
   request(info: RestartRequestInfo): boolean;
+  /** 只跑自检、不重启（「再次检查」按钮）。 */
+  preflight(): PreflightResult | undefined;
 }
 
 export function createRestartHook(
   handler?: RestartRequestHandler | undefined,
+  preflight?: RestartPreflightRunner | undefined,
 ): RestartHook {
   return {
     get available(): boolean {
@@ -50,6 +59,19 @@ export function createRestartHook(
           error: error instanceof Error ? error.message : String(error),
         });
         return false;
+      }
+    },
+    preflight(): PreflightResult | undefined {
+      if (!preflight) {
+        return undefined;
+      }
+      try {
+        return preflight();
+      } catch (error) {
+        getLogger("restart").error("restart preflight failed to run", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return undefined;
       }
     },
   };
