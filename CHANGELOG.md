@@ -34,6 +34,12 @@
 
 ### 修复
 
+- **启动期订阅迁移会撞主键、把机器人搞成起不来**（0.19.0 引入）：归一化把「没有 `join:` / `punish:` /
+  `activity:` 前缀」的 scope 一律当成老格式补 `join:`，于是新话题（`bot_join` / `bot_leave` / `friend` /
+  `member_join` / `unknown_event`）被写成 `join:bot_join:all`。这些话题每次启动会补种，下一次启动再迁移时
+  `UNIQUE constraint failed: notification_subscriptions.user_id, notification_subscriptions.scope`
+  —— 用满 3 次重启后进程直接起不来。现在只把「不带冒号」的裸 scope 当老格式，坏行改回真名
+  （已有正确行时删掉重复行），改名/补前缀前先删会被覆盖的行。
 - 活动短码回灌全局码池时用的是活动 id 而不是短码，导致跨类型重码保护对活动码失效（现在按短码回灌）。
 
 
