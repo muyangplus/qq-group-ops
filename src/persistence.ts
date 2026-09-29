@@ -68,7 +68,7 @@ import {
   SqlMenuDeliveryRepository,
   type MenuDeliveryRepository,
 } from "./db/menuDeliveryRepository.js";
-import { migrate } from "./db/migrate.js";
+import { migrate, type MigrationResult } from "./db/migrate.js";
 import {
   SqlNotificationDeliveryRepository,
   SqlNotificationSubscriptionRepository,
@@ -95,6 +95,8 @@ import {
 } from "./db/classAliasRepository.js";
 import { openSqliteDatabase } from "./db/sqliteDatabase.js";
 import { SqliteQueryable } from "./db/sqliteQueryable.js";
+
+const log = getLogger("persistence");
 
 export interface PersistencePool extends PgPoolLike {
   end(): Promise<void>;
@@ -151,7 +153,6 @@ export async function connectPersistence(
   settings: Settings,
   options: PersistenceOptions = {},
 ): Promise<Persistence | undefined> {
-  const log = getLogger("persistence");
   const target = settings.databaseTarget;
 
   if (target.driver === "memory") {
@@ -166,14 +167,16 @@ export async function connectPersistence(
       );
     });
     const queryable = new SqliteQueryable(db);
+    let migration: MigrationResult;
     try {
-      await migrate(queryable);
+      migration = await migrate(queryable);
     } catch (error) {
       db.close();
       throw new Error(
         `无法初始化 SQLite schema（${target.path}）：${formatError(error)}`,
       );
     }
+    logMigrationIssues(migration, target.path);
     log.info("sqlite database ready", { path: target.path });
     return {
       driver: "sqlite",
@@ -191,8 +194,9 @@ export async function connectPersistence(
   });
 
   const db = new PgQueryable(pool);
+  let migration: MigrationResult;
   try {
-    await migrate(db);
+    migration = await migrate(db);
   } catch (error) {
     await pool.end().catch(() => undefined);
     throw new Error(
@@ -202,6 +206,7 @@ export async function connectPersistence(
         "或在 .env 中清空 DATABASE_URL 以使用默认的 SQLite。",
     );
   }
+  logMigrationIssues(migration, "postgres");
 
   log.info("postgres database ready");
   return {
@@ -291,3 +296,19 @@ async function createPgPool(connectionString: string): Promise<PersistencePool> 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+/**
+ * 迁移里的非致命问题：记日志、不拦启动（业务侧会跳过读不出来的数据）。
+ *
+ * 这里只保证「不静默」；给超管的可见性（启动报告卡 / `/status proc`）由运行时那侧负责。
+ */
+function logMigrationIssues(result: MigrationResult, target: string): void {
+  for (const issue of result.issues) {
+    log.error("database migration step failed", {
+      target,
+      step: issue.step,
+      error: issue.error,
+    });
+  }
+}
+

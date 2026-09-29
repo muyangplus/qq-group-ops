@@ -63,13 +63,13 @@ describe("migrate", () => {
     );
   });
 
-  it("ignores the duplicate-column error but rethrows anything else", async () => {
+  it("ignores the duplicate-column error and records anything else", async () => {
     const duplicate = new FakeQueryable();
     duplicate.failWith = (text) =>
       text.startsWith("ALTER TABLE")
         ? new Error("duplicate column name: message_excerpt")
         : undefined;
-    await expect(migrate(duplicate)).resolves.toBeUndefined();
+    expect((await migrate(duplicate)).issues).toEqual([]);
 
     // PostgreSQL 的措辞
     const pgStyle = new FakeQueryable();
@@ -77,12 +77,32 @@ describe("migrate", () => {
       text.startsWith("ALTER TABLE")
         ? new Error('column "message_excerpt" of relation "punishment_records" already exists')
         : undefined;
-    await expect(migrate(pgStyle)).resolves.toBeUndefined();
+    expect((await migrate(pgStyle)).issues).toEqual([]);
 
+    // 其它失败只记进 issues：表已经建好，缺一列不该拦住整个进程启动
     const other = new FakeQueryable();
     other.failWith = (text) =>
       text.startsWith("ALTER TABLE") ? new Error("disk I/O error") : undefined;
-    await expect(migrate(other)).rejects.toThrow("disk I/O error");
+    const result = await migrate(other);
+    expect(result.issues).toEqual([
+      { step: "column:punishment_records.message_excerpt", error: "disk I/O error" },
+    ]);
+  });
+
+  it("keeps going when a data migration step fails", async () => {
+    const db = new FakeQueryable();
+    db.failWith = (text) =>
+      text.includes("SELECT user_id, scope") ? new Error("disk I/O error") : undefined;
+
+    const issues = await runDataMigrations(db);
+
+    // 失败的那一步被记下来，后面的步骤照跑（活动订阅搬运仍然执行了）
+    expect(issues).toEqual([
+      { step: "subscription-scopes", error: "disk I/O error" },
+    ]);
+    expect(
+      db.calls.some((call) => call.text.includes("FROM activity_subscriptions")),
+    ).toBe(true);
   });
 });
 
@@ -207,7 +227,9 @@ describe("migrate on a database that already has corrupted scopes [sqlite]", () 
 
       // 重启：带上坏行的库必须能正常初始化
       db = await openSqliteDatabase(path);
-      await expect(migrate(new SqliteQueryable(db))).resolves.toBeUndefined();
+      await expect(migrate(new SqliteQueryable(db))).resolves.toEqual({
+        issues: [],
+      });
       const result = db
         .prepare(
           "SELECT scope FROM notification_subscriptions WHERE user_id = 'u1'",
