@@ -19,14 +19,14 @@
     同时防止「`/restart` / 自动部署之后新版本起不来」。范围 = 全做（层 1–4）、粒度 = **按功能域**、
     降级告知 = **新增超管话题「启动报告」**。
   - 现状失败点（一处抛错整个进程就死）：① `loadSettings()`（核心 env，**保持快速失败**）；
-    ② `openPersistence()` → `migrate()`（**层 3 已完成**：数据步骤失败只记 issues）；
-    ③ `createRuntime()` 构造期；④ `runtime.load()` 里 17 个 service 顺序 `await`；
+    ② `openPersistence()` → `migrate()`（**已修**：数据步骤失败只记 issues）；
+    ③ `createRuntime()` 构造期（下一步用「重启前预检」拦住）；
+    ④ `runtime.load()` 里 17 个 service 顺序 `await`（**已修**：模块隔离加载）；
     ⑤ 网关连接（已是「失败重试、不阻塞」，是要推广的正例）。
-  - **层 1 模块注册表**：`runtime.load()` 的 17 个 `await` 换成 `{ key, label, load, features, critical? }`
-    清单 + 逐项 try/catch；失败标 `degraded` 并继续；提供「重试加载」（修好数据不用重启）。
-  - **层 2 功能闸门**：`Availability` 单一事实来源（模块降级 → 它声明的 feature 全部不可用）；
-    挂点四处：指令入口（按「指令 → feature」表拦）、回调 renderer、`eventRouter`、tick 任务 `enabled`；
-    命中一律回「该功能当前不可用：X 模块初始化失败（原因）」，**不执行任何业务**；`/help` 与菜单隐藏入口。
+  - **层 1 模块注册表**：已完成。
+  - **层 2 功能闸门**：已完成（指令入口按「指令 → 模块」表、回调按「回调命名空间 → 模块」表、
+    `eventRouter` 与 tick 任务按依赖模块判断；命中回「功能不可用 + 原因」；`/help` 与菜单入口保留，
+    诊断 / 恢复入口不受闸门影响；`/status proc` 有模块状态段 + 「重试加载」）。
   - **层 4A 重启前预检**：`node dist/main.js --check` 只读自检（settings + DB 连接 + schema + 各模块 load），
     由 `respawn.mjs` 在**旧进程退出后、拉起新进程前**跑；失败就不拉起 + 写 `data/restart-failed.json` +
     私信超管。`/restart` 与部署自动重启共用同一套。
