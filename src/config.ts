@@ -84,11 +84,11 @@ export interface Settings {
   /**
    * 部署监测：检测到磁盘上的版本变化后，是否自动重启（`AUTO_RESTART_ON_DEPLOY`，默认开）。
    *
-   * 流程：检测到磁盘版本变化 → 私信全部全局超管「计划 1 小时后自动重启」+
+   * 流程：检测到磁盘版本变化 → 私信全部全局超管「计划 N 分钟后自动重启」+
    * 「取消自动重启 / 立即重启」按钮；到期没人取消就走自我重启。
    */
   autoRestartOnDeploy: boolean;
-  /** 部署监测的宽限期（`DEPLOY_RESTART_DELAY_MINUTES`，默认 60 分钟；`0` = 立即重启）。 */
+  /** 部署监测的宽限期（`DEPLOY_RESTART_DELAY_MINUTES`，默认 10 分钟；`0` = 立即重启）。 */
   deployRestartDelayMinutes: number;
   /** 部署监测的扫描间隔（`DEPLOY_CHECK_INTERVAL_MS`，默认 60000；`0` = 关闭监测）。 */
   deployCheckIntervalMs: number;
@@ -286,7 +286,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     autoRestartOnDeploy: asBool(env.AUTO_RESTART_ON_DEPLOY, true),
     deployRestartDelayMinutes: asNonNegativeInt(
       env.DEPLOY_RESTART_DELAY_MINUTES,
-      60,
+      10,
     ),
     deployCheckIntervalMs: asNonNegativeInt(
       env.DEPLOY_CHECK_INTERVAL_MS,

@@ -18,7 +18,7 @@ export const DEPLOY_RESTART_ACTOR = "deploy-watcher";
  * 连续多少轮读到同一新版本才算「新版本」。
  *
  * **默认 1 = 检测到就提醒**：FTP 逐文件上传没有「传完」信号，但通知之后还有宽限期
- * （`DEPLOY_RESTART_DELAY_MINUTES`，默认 60 分钟）兜着 —— 上传还没完就点「取消自动重启」即可，
+ * （`DEPLOY_RESTART_DELAY_MINUTES`，默认 10 分钟）兜着 —— 上传还没完就点「取消自动重启」即可，
  * 没必要靠连续几轮来猜（那只是把提醒往后拖）。
  */
 export const DEFAULT_DEPLOY_STABLE_CHECKS = 1;
