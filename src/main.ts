@@ -1,4 +1,8 @@
 import { NativeWebSocketFactory } from "./adapters/nativeWebSocketFactory.js";
+import {
+  isStartupCheck,
+  writeStartupCheckFile,
+} from "./startupCheck.js";
 import type { EventGateway } from "./adapters/eventGateway.js";
 import { QQOfficialEventMapper } from "./adapters/qqOfficialEventMapper.js";
 import { QQOfficialGateway } from "./adapters/qqOfficialGateway.js";
@@ -11,7 +15,7 @@ import { formatDisplayTime } from "./core/timeFormat.js";
 import { retryWithBackoff } from "./core/retry.js";
 import { loadEnvFile } from "./env.js";
 import { attachGateway } from "./gatewayRunner.js";
-import { connectPersistence } from "./persistence.js";
+import { connectPersistence, type Persistence } from "./persistence.js";
 import { createRuntime, type Runtime } from "./runtime.js";
 import { escapeCardText, renderCard } from "./services/cardTemplate.js";
 import { startupReportText } from "./services/commands/healthCommands.js";
@@ -62,6 +66,37 @@ function firstString(
 }
 
 const log = getLogger("main");
+
+/**
+ * 自检成功（层 4A）：**硬失败**（settings / 数据库 / 建表 / 装配期抛错）由异常表达，
+ * 走到这里就说明进程能起来；降级模块与迁移问题只作为信息输出，交给助手带原因去报告
+ * （它们已经由层 1/2 兜住，不该拦住升级）。
+ */
+export async function finishStartupCheck(
+  runtime: Runtime,
+  persistence: Persistence | undefined,
+): Promise<void> {
+  const degraded = runtime.health.degraded.map((status) => ({
+    module: status.key,
+    error: status.error ?? "",
+  }));
+  const migrationIssues = persistence?.migration.issues ?? [];
+  writeStartupCheckFile({
+    ok: true,
+    mode: runtime.mode,
+    database: persistence?.driver ?? "memory",
+    degraded,
+    migrationIssues,
+  });
+  log.info("startup check ok", {
+    degraded: degraded.map((item) => item.module),
+    migrationSteps: migrationIssues.map((issue) => issue.step),
+  });
+  await runtime.flush();
+  await persistence?.close();
+  await closeLogging();
+  process.exitCode = 0;
+}
 
 async function main(): Promise<void> {
   loadEnvFile();
@@ -139,6 +174,12 @@ async function main(): Promise<void> {
   );
   if (persistence) {
     await runtime.load();
+  }
+  // 自检模式（层 4A）：只跑到「加载完成」，不接网关、不起定时器、不发重启回执，
+  // 用退出码告诉调用方（`scripts/respawn.mjs`）这个版本到底能不能起来。
+  if (isStartupCheck()) {
+    await finishStartupCheck(runtime, persistence);
+    return;
   }
   // 层 1 / 层 3 的可见性：模块降级、迁移失败都私信超管（通知模块没起来就只留日志）
   await announceStartupReport(runtime, persistence?.migration);
@@ -494,7 +535,12 @@ async function announceStartupReport(
 }
 
 void main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  const message = formatError(error);
+  console.error(message);
+  // 自检模式下的硬失败要留证据：助手读到 `ok:false` 就不会拉起新进程
+  if (isStartupCheck()) {
+    writeStartupCheckFile({ ok: false, error: message });
+  }
   process.exitCode = 1;
 });
 

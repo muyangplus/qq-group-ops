@@ -7,20 +7,25 @@
  *
  * 1. 轮询旧 PID，直到它消失（最多等 60 秒）；
  * 2. 再等 300ms 让端口 / 文件句柄彻底释放；
- * 3. 用同样的可执行文件 + 参数 + 工作目录拉起新进程（`detached` + `unref`）；
- * 4. 盯 3 秒：新进程立刻挂掉的话，写 `data/restart-failed.json` 留证据（尽力而为）。
+ * 3. **自检**：用同样的命令跑一次 `--check`（层 4A），退出码非 0 就**不拉起新进程**，
+ *    把结果写进 `data/restart-failed.json` —— 新版本起不来的话，宁可留在旧版本；
+ * 4. 用同样的可执行文件 + 参数 + 工作目录拉起新进程（`detached` + `unref`）；
+ * 5. 盯 3 秒：新进程立刻挂掉的话，写 `data/restart-failed.json` 留证据（尽力而为）。
  *
  * 这是**没有进程管理器**（直接 `node dist/main.js`）时的兜底方案；有 docker / systemd / pm2
  * 的部署仍然「退出靠守护拉起」更稳。脚本用纯 JS 写、随 `scripts/` 一起发布，不需要编译。
  */
-import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 const WAIT_DEADLINE_MS = 60_000;
 const SETTLE_MS = 300;
 const WATCH_MS = 3_000;
+/** 自检超时：卡住也算失败（宁可留在旧版本，也不要拉起一个半死不活的新进程）。 */
+const CHECK_TIMEOUT_MS = 90_000;
 const FAILURE_FILE = resolve("data", "restart-failed.json");
+const CHECK_FILE = resolve("data", "startup-check.json");
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
@@ -40,6 +45,30 @@ function recordFailure(payload) {
   } catch {
     // 留证据是尽力而为：写不了就算了，别把新进程拖下水
   }
+}
+
+/**
+ * 重启前自检（层 4A）：用同一套可执行文件 + 参数跑一次 `--check`。
+ *
+ * 新进程必须等旧进程退出后才自检（数据库 / 端口的独占），所以这里直接用同步调用：
+ * 目录已经清理干净，单实例不会有并发。**不捕获它的输出**（受限环境开不了管道），
+ * 只看退出码 + 它写的 `data/startup-check.json`。
+ */
+function runStartupCheck(execPath, args) {
+  const result = spawnSync(execPath, [...args, "--check"], {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: "ignore",
+    timeout: CHECK_TIMEOUT_MS,
+  });
+  let summary;
+  try {
+    summary = JSON.parse(readFileSync(CHECK_FILE, "utf8"));
+  } catch {
+    summary = undefined;
+  }
+  const ok = result.status === 0 && summary?.ok !== false;
+  return { ok, exitCode: result.status, signal: result.signal, summary };
 }
 
 async function main() {
@@ -66,6 +95,19 @@ async function main() {
 
   if (!execPath) {
     recordFailure({ reason: "missing execPath", at: new Date().toISOString() });
+    process.exitCode = 1;
+    return;
+  }
+
+  const check = runStartupCheck(execPath, args);
+  if (!check.ok) {
+    recordFailure({
+      reason: "startup check failed: not spawning the new process",
+      exitCode: check.exitCode,
+      signal: check.signal,
+      check: check.summary,
+      at: new Date().toISOString(),
+    });
     process.exitCode = 1;
     return;
   }

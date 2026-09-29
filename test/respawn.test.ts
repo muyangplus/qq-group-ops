@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +13,33 @@ import {
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((done) => setTimeout(done, ms));
+
+/**
+ * 假「机器人入口」：`--check` 时按参数决定自检成败（并写结果文件），正常启动时写下 marker。
+ * 真实入口 `dist/main.js` 也是这个契约（`src/startupCheck.ts`）。
+ */
+function fakeApp(dir: string, marker: string): string {
+  const file = join(dir, "fake-app.mjs");
+  writeFileSync(
+    file,
+    [
+      'import { mkdirSync, writeFileSync } from "node:fs";',
+      'const isCheck = process.argv.includes("--check");',
+      'mkdirSync("data", { recursive: true });',
+      'if (isCheck && process.argv.includes("fail-check")) {',
+      '  writeFileSync("data/startup-check.json", JSON.stringify({ ok: false, error: "schema boom" }));',
+      "  process.exit(1);",
+      "}",
+      'if (isCheck) {',
+      '  writeFileSync("data/startup-check.json", JSON.stringify({ ok: true, degraded: [] }));',
+      "  process.exit(0);",
+      "}",
+      `writeFileSync(${JSON.stringify(marker)}, "ok");`,
+    ].join("\n"),
+    "utf8",
+  );
+  return file;
+}
 
 /**
  * 自我重启（`/restart` 在 `node dist/main.js` 场景下的兜底）：
@@ -42,10 +69,11 @@ describe("respawn", () => {
   });
 
   it(
-    "真进程 e2e：旧 PID 已消失 → 助手启动新进程（并在 cwd 下留失败证据）",
+    "真进程 e2e：旧 PID 已消失 → 自检通过 → 助手启动新进程（并在 cwd 下留失败证据）",
     async () => {
       const dir = mkdtempSync(join(tmpdir(), "qqops-respawn-"));
       const marker = join(dir, "marker.txt");
+      const app = fakeApp(dir, marker);
       // 一个「刚退出」的旧进程：助手应当立刻放行，不等 60 秒
       const dead = spawnSync(process.execPath, ["-e", ""]);
       expect(typeof dead.pid).toBe("number");
@@ -54,8 +82,7 @@ describe("respawn", () => {
         respawnHelperPath(),
         String(dead.pid),
         process.execPath,
-        "-e",
-        `require("fs").writeFileSync(${JSON.stringify(marker)}, "ok")`,
+        app,
       ], { cwd: dir, stdio: "ignore" });
       helper.unref();
 
@@ -64,7 +91,7 @@ describe("respawn", () => {
         await sleep(150);
       }
       expect(existsSync(marker)).toBe(true);
-      // 新进程秒退（就是上面那个 -e 脚本）→ 助手应把失败证据写进 cwd
+      // 新进程写完 marker 就退出 → 助手应把失败证据写进 cwd
       const failureFile = join(dir, "data", "restart-failed.json");
       const failDeadline = Date.now() + 8_000;
       while (!existsSync(failureFile) && Date.now() < failDeadline) {
@@ -74,4 +101,59 @@ describe("respawn", () => {
     },
     25_000,
   );
+
+  /**
+   * 层 4A：助手在拉起新进程**之前**跑一次 `--check`；自检不过就不拉起，
+   * 把结果写进 `restart-failed.json`（宁可留在旧版本，也不要换个起不来的版本）。
+   */
+  describe("启动前自检（layer 4A）", () => {
+    function runHelper(
+      dir: string,
+      appArgs: readonly string[],
+    ): { status: number | null; failure?: Record<string, unknown> } {
+      const dead = spawnSync(process.execPath, ["-e", ""]);
+      const helper = spawnSync(
+        process.execPath,
+        [
+          respawnHelperPath(),
+          String(dead.pid),
+          process.execPath,
+          ...appArgs,
+        ],
+        { cwd: dir, stdio: "ignore", timeout: 30_000 },
+      );
+      const failureFile = join(dir, "data", "restart-failed.json");
+      return {
+        status: helper.status,
+        ...(existsSync(failureFile)
+          ? {
+              failure: JSON.parse(
+                readFileSync(failureFile, "utf8"),
+              ) as Record<string, unknown>,
+            }
+          : {}),
+      };
+    }
+
+    it("自检不过 → 不拉起新进程，并留下原因", () => {
+      const dir = mkdtempSync(join(tmpdir(), "qqops-preflight-"));
+      const app = fakeApp(dir, join(dir, "started.txt"));
+
+      const result = runHelper(dir, [app, "fail-check"]);
+
+      expect(result.status).not.toBe(0);
+      expect(existsSync(join(dir, "started.txt"))).toBe(false);
+      expect(String(result.failure?.reason)).toContain("startup check failed");
+      expect(result.failure?.check).toMatchObject({ ok: false, error: "schema boom" });
+    }, 40_000);
+
+    it("自检通过 → 照常拉起新进程", () => {
+      const dir = mkdtempSync(join(tmpdir(), "qqops-preflight-"));
+      const app = fakeApp(dir, join(dir, "started.txt"));
+
+      runHelper(dir, [app]);
+
+      expect(existsSync(join(dir, "started.txt"))).toBe(true);
+    }, 40_000);
+  });
 });
