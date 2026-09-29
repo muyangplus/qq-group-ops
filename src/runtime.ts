@@ -14,6 +14,7 @@ import {
   instrumentTransport,
 } from "./core/instrumentation.js";
 import { getLogger } from "./core/logger.js";
+import type { MigrationResult } from "./db/migrate.js";
 import type { ActivityRepository } from "./db/activityRepository.js";
 import type { ActivityDetailsRepository } from "./db/activityDetailsRepository.js";
 import type { ActivityWaitlistRepository } from "./db/activityWaitlistRepository.js";
@@ -40,11 +41,13 @@ import type { ShortCodeRepository } from "./db/shortCodeRepository.js";
 import type { UserProfileRepository } from "./db/userProfileRepository.js";
 import type { ClassAliasRepository } from "./db/classAliasRepository.js";
 import { WriteQueue } from "./db/writeQueue.js";
-import { pageArg, pageTargets } from "./services/callbackData.js";
+import { pageArg, pageTargets, type ParsedCallback } from "./services/callbackData.js";
 import {
   CallbackRouter,
   type CallbackRenderer,
 } from "./services/callbackRouter.js";
+import { moduleForCallback } from "./services/commands/healthCommands.js";
+import type { InteractionEvent } from "./services/eventRouter.js";
 import { ActivityService } from "./services/activity.js";
 import { ActivityCardService } from "./services/activityCards.js";
 import { ActivityExportService } from "./services/activityExport.js";
@@ -83,6 +86,7 @@ import { PermissionService } from "./services/permissions.js";
 import { PunishmentService } from "./services/punishments.js";
 import { RichMessageSender } from "./services/richMessages.js";
 import { DataMigrationService } from "./services/dataMigration.js";
+import { HealthRegistry } from "./services/health.js";
 import {
   reserveGlobalCode,
   SHORT_CODE_LENGTH,
@@ -95,6 +99,8 @@ import { ClassAliasService } from "./services/classAliases.js";
 export interface Runtime {
   mode: "official" | "fake";
   api: QQOfficialAPI;
+  /** 模块健康与功能闸门（层 1 隔离加载 / 层 2 拒绝执行）。 */
+  health: HealthRegistry;
   auditLog: AuditLogStore;
   joinAudit: JoinAuditService;
   configStore: GroupConfigStore;
@@ -181,7 +187,11 @@ export interface RuntimeDependencies {
   onRestartRequested?: RestartRequestHandler | undefined;
   /** 部署监测（新版本自动重启）的控制面；由 `main.ts` 构造后注入。 */
   deploy?: DeployControl | undefined;
+  /** 启动期迁移的非致命问题（`main.ts` 从 persistence 透传，供 `/status proc` 展示）。 */
+  migration?: MigrationResult | undefined;
 }
+
+const log = getLogger("runtime");
 
 export function createRuntime(
   settings: Settings = loadSettings(),
@@ -361,6 +371,46 @@ export function createRuntime(
       ]);
     },
   });
+  // 模块健康：单个模块加载失败只降级它自己（层 1），它的功能域由闸门拦住（层 2）
+  const menuState = createFirstMenuPushState(
+    settings,
+    repositories.menuDeliveries,
+    writeQueue,
+  );
+  const health = new HealthRegistry([
+    { key: "identity", load: () => identityMap.reload() },
+    { key: "audit", load: () => auditLog.load() },
+    { key: "join", load: () => joinAudit.load() },
+    { key: "config", load: () => configStore.load() },
+    {
+      key: "notify",
+      load: async () => {
+        await notifyTopics.load();
+        await notifications.load();
+      },
+    },
+    { key: "permissions", load: () => permissions.load() },
+    { key: "groupmessage", load: () => groupMessageMode.load() },
+    {
+      key: "activity",
+      load: async () => {
+        await activity.load();
+        await activityNotifications.load();
+      },
+    },
+    {
+      key: "sanction",
+      load: async () => {
+        await punishments.load();
+        await appeals.load();
+      },
+    },
+    { key: "blacklist", load: () => blacklist.load() },
+    { key: "shortcode", load: () => shortCodes.load() },
+    { key: "profile", load: () => userProfiles.load() },
+    { key: "alias", load: () => classAliases.load() },
+    { key: "menu", load: () => menuState.load() },
+  ]);
   const adminCommands = new AdminCommandService({
     permissions,
     joinAudit,
@@ -385,16 +435,12 @@ export function createRuntime(
     moderationNotifier,
     richMessages,
     cardSender: richMessages,
-    diagnostics: { settings, writeQueue },
+    diagnostics: { settings, writeQueue, migration: dependencies.migration },
     restart,
     deploy: dependencies.deploy,
     migrate: dataMigration,
+    health,
   });
-  const menuState = createFirstMenuPushState(
-    settings,
-    repositories.menuDeliveries,
-    writeQueue,
-  );
   // 回调 renderer 表：导航/查看类按钮点击后由此渲染新卡片（见 docs/CARD-STANDARD.md）
   const callbackRenderers = new Map<string, CallbackRenderer>([
     [
@@ -784,9 +830,13 @@ export function createRuntime(
             event.groupId,
           ).rich;
         }
-        // 话题门槛子卡（仅全局超管）：查看 / 恢复默认
+        // 话题门槛子卡（仅全局超管）：查看 / 翻页 / 恢复默认
         if (parsed.action === "level") {
-          return adminCommands.notifyLevelPanel(userId).rich;
+          return adminCommands.notifyLevelPanel(
+            userId,
+            undefined,
+            pageArg(parsed.args) ?? 1,
+          ).rich;
         }
         if (parsed.action === "levelReset") {
           return adminCommands.notifyResetLevelsCard(userId, event.groupId).rich;
@@ -899,32 +949,51 @@ export function createRuntime(
       },
     ],
     ["testmenu", (parsed, event) => testMenu.render(parsed, event)],
+    [
+      "health",
+      async (parsed, event) => {
+        const userId = event.userId;
+        const key = parsed.args[0];
+        if (!userId || parsed.action !== "retry" || !key) {
+          return undefined;
+        }
+        const card = await adminCommands.moduleRetryCard(userId, key);
+        return card.rich;
+      },
+    ],
   ]);
+  // 层 2 闸门（回调）：模块降级时对应命名空间的按钮一律拒绝执行
+  const guardedRenderers = new Map<string, CallbackRenderer>(
+    [...callbackRenderers].map(([namespace, renderer]) => [
+      namespace,
+      async (parsed: ParsedCallback, event: InteractionEvent) => {
+        const module = moduleForCallback(namespace);
+        const userId = event.userId;
+        if (module === undefined || !userId || health.isAvailable(module)) {
+          return renderer(parsed, event);
+        }
+        log.warn("callback blocked: module unavailable", { namespace, module });
+        return adminCommands.moduleUnavailableMessage(userId, module);
+      },
+    ]),
+  );
   const interactionHandler = new CallbackRouter({
     api,
     sender: richMessages,
-    renderers: callbackRenderers,
+    renderers: guardedRenderers,
   });
   const load = async (): Promise<void> => {
-    await identityMap.reload();
-    await auditLog.load();
-    await joinAudit.load();
-    await configStore.load();
-    await notifyTopics.load();
-    await permissions.load();
-    await groupMessageMode.load();
-    await activity.load();
-    await activityNotifications.load();
-    await notifications.load();
-    // 超管专属话题「默认开」：给现有全局超管补订阅行（幂等，不覆盖已有状态）
-    notifications.seedSuperAdminDefaults(permissions.listSuperAdmins());
-    await blacklist.load();
-    await punishments.load();
-    await appeals.load();
-    await shortCodes.load();
-    await userProfiles.load();
-    await classAliases.load();
-    await menuState.load();
+    // 层 1：逐个模块隔离加载，失败的只标记降级、不中断启动
+    const report = await health.loadAll();
+    if (report.degraded.length > 0) {
+      log.warn("modules degraded at startup", {
+        modules: report.degraded.map((status) => status.key),
+      });
+    }
+    // 超管专属话题「默认开」：给现有全局超管补订阅行（权限/通知模块没起来时跳过，不拦启动）
+    if (health.isAllAvailable(["permissions", "notify"])) {
+      notifications.seedSuperAdminDefaults(permissions.listSuperAdmins());
+    }
     // 班级库缺失时不抛错：班级类规则会自动退化为人工审核
     const roster = await MemberRoster.load(settings.classIndexFile);
     joinRules.setRoster(roster);
@@ -938,6 +1007,7 @@ export function createRuntime(
   return {
     mode: settings.qqBotAppId && settings.qqBotClientSecret ? "official" : "fake",
     api,
+    health,
     auditLog,
     joinAudit,
     configStore,

@@ -8,6 +8,7 @@
 
 import { ActivityStatus, PermissionLevel } from "../../core/enums.js";
 import type { KeyboardModal } from "../../adapters/qqOfficial.js";
+import type { ModuleKey } from "../health.js";
 import { encodeCallback, extractPageToken, pageCallback } from "../callbackData.js";
 import {
   escapeCardText,
@@ -309,6 +310,59 @@ export const COMMAND_CARD_TITLES: Record<string, string> = {
   menu: "常用菜单",
   testmenu: "测试菜单",
 };
+
+/**
+ * 指令 → 功能域（模块）：模块降级时这些指令一律拒绝执行（层 2 闸门）。
+ *
+ * 别名也要列进来（闸门在「指令名归一化之后、dispatch 之前」判断）。
+ * **诊断与恢复入口**（`help` / `menu` / `status` / `test*` / `restart` / `migrate`）刻意不在表里：
+ * 模块全挂了也得能靠它们看到状态、重试加载、重启。
+ */
+export const COMMAND_MODULES: Readonly<Record<string, ModuleKey>> = {
+  bind: "identity",
+  绑定: "identity",
+  whois: "identity",
+  查询: "identity",
+  profile: "profile",
+  资料: "profile",
+  alias: "alias",
+  别名: "alias",
+  activity: "activity",
+  活动: "activity",
+  rules: "config",
+  规则: "config",
+  notify: "notify",
+  push: "notify",
+  推送: "notify",
+  订阅: "notify",
+  pending: "join",
+  待审批: "join",
+  approve: "join",
+  通过: "join",
+  reject: "join",
+  拒绝: "join",
+  sync: "join",
+  同步: "join",
+  audit: "audit",
+  日志: "audit",
+  export: "audit",
+  导出: "audit",
+  punish: "sanction",
+  处罚: "sanction",
+  appeal: "sanction",
+  申诉: "sanction",
+  blacklist: "blacklist",
+  black: "blacklist",
+  黑名单: "blacklist",
+  perm: "permissions",
+  权限: "permissions",
+  myperm: "permissions",
+  我的权限: "permissions",
+};
+
+export function moduleForCommand(command: string): ModuleKey | undefined {
+  return COMMAND_MODULES[command];
+}
 
 /**
  * 全量卡片兜底（卡片标准的不变量）：任何还没做定制卡的指令结果都包成卡片，

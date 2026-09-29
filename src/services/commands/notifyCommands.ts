@@ -4,7 +4,7 @@ import {
   PlatformLevel,
 } from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
-import { renderCard, type CardButton } from "../cardTemplate.js";
+import { CARD_MAX_ROWS, renderCard, type CardButton } from "../cardTemplate.js";
 import {
   NOTIFY_CHANNELS,
   NOTIFY_SCOPE_ALL,
@@ -186,19 +186,28 @@ function notifyLevelLabel(level: number): string {
  *
  * 卡片键盘打不了数字，所以每个话题的按钮只「把指令填进输入框」（`fillOnly`），
  * 数值由超管自己敲；另给一个「恢复默认」按钮，改砸了能一键回退。
- * 每行两个话题（8 个话题 = 4 行）+ 1 行底部 = 卡片 5 行上限。
+ * 每行两个话题 + 1 行底部，**话题超过一页能放下的数量时分页**（卡片键盘上限 5 行）。
  */
 export function notifyLevelPanel(
   ctx: AdminCommandContext,
   userId: string,
   notice?: string,
+  page = 1,
 ): CardResult {
   const notifications = ctx.notifications;
   if (!notifications) {
     return notifyCard(ctx, undefined, userId, notice);
   }
+  // 每行 2 个话题；留 1 行「恢复默认 / 返回」+ 1 行翻页（键盘上限 5 行）
+  const topicsPerPage = (CARD_MAX_ROWS - 2) * 2;
+  const pageCount = Math.max(1, Math.ceil(NOTIFY_CHANNELS.length / topicsPerPage));
+  const current = Math.min(Math.max(1, page), pageCount);
+  const visible = NOTIFY_CHANNELS.slice(
+    (current - 1) * topicsPerPage,
+    current * topicsPerPage,
+  );
   const lines = [...ctx.helpers.renderNotice(notice)];
-  for (const topic of NOTIFY_CHANNELS) {
+  for (const topic of visible) {
     lines.push(
       `- **${channelLabel(topic)}**：${notifyLevelLabel(notifications.topicLevel(topic))}`,
     );
@@ -211,9 +220,9 @@ export function notifyLevelPanel(
   );
 
   const rows: CardButton[][] = [];
-  for (let index = 0; index < NOTIFY_CHANNELS.length; index += 2) {
+  for (let index = 0; index < visible.length; index += 2) {
     rows.push(
-      NOTIFY_CHANNELS.slice(index, index + 2).map((topic) =>
+      visible.slice(index, index + 2).map((topic) =>
         actionButton(
           `${topic}Level`,
           `${NOTIFY_TOPIC_META[topic].short}改`,
@@ -223,11 +232,27 @@ export function notifyLevelPanel(
       ),
     );
   }
+  const nav: CardButton[] = [];
+  if (current > 1) {
+    nav.push(viewButton("prev", "上一页", "notify", "level", current - 1));
+  }
+  if (current < pageCount) {
+    nav.push(viewButton("next", "下一页", "notify", "level", current + 1));
+  }
   rows.push([
     viewButton("levelReset", "恢复默认", "notify", "levelReset"),
     viewButton("back", "返回通知中心", "notify", "view"),
   ]);
-  return cardFromText("通知中心 · 话题门槛", lines.join("\n"), { rows });
+  if (nav.length > 0) {
+    rows.push(nav);
+  }
+  return cardFromText(
+    pageCount > 1
+      ? `通知中心 · 话题门槛（${current}/${pageCount}）`
+      : "通知中心 · 话题门槛",
+    lines.join("\n"),
+    { rows },
+  );
 }
 
 /** 回调：恢复默认门槛（超管）。 */

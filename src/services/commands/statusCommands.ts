@@ -15,12 +15,8 @@ import {
   PermissionLevel,
   PlatformLevel,
 } from "../../core/enums.js";
-import {
-  appVersion,
-  formatBytes,
-  formatUptime,
-  processStartedAt,
-} from "../../core/buildInfo.js";
+import { appVersion, formatBytes, formatUptime, processStartedAt } from "../../core/buildInfo.js";
+import { moduleStatusLines } from "./healthCommands.js";
 import { formatDisplayTime } from "../../core/timeFormat.js";
 import type { KeyboardModal } from "../../adapters/qqOfficial.js";
 import { encodeCallback, extractPageToken, pageCallback } from "../callbackData.js";
@@ -286,6 +282,7 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
   const diagnostics = ctx.diagnostics;
   if (!diagnostics) {
     lines.push("**运行配置**：（未装配诊断依赖，只显示进程自身信息）");
+    lines.push("", ...moduleStatusLines(ctx.health, undefined));
     return lines;
   }
   const settings = diagnostics.settings;
@@ -310,6 +307,8 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
     )}`,
     `**管理员**：${settings.adminUserIds.length} 人 · 首次菜单 ${settings.menuFirstPush}`,
   );
+  // 层 1 / 层 3 的可见性：哪些模块降级了、哪些迁移步骤失败了（含「重试加载」按钮）
+  lines.push("", ...moduleStatusLines(ctx.health, diagnostics.migration));
   return lines;
 }
 

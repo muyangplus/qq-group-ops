@@ -21,6 +21,11 @@ export interface TickTask {
   minIntervalMs?: number;
   /** 启动时那一次「立即扫描」是否也跑（缺省 true）；`false` = 等一个周期再上场。 */
   runOnStart?: boolean;
+  /**
+   * 依赖的模块是否可用（层 2 闸门）：返回 `false` 时整轮跳过，且**不更新 `lastRun`**，
+   * 模块恢复后会立刻补跑（不因为降级期间的空转而把节拍推到下一个周期）。
+   */
+  enabled?: () => boolean;
 }
 
 export interface TickSchedulerOptions {
@@ -96,6 +101,10 @@ export class TickScheduler {
   public async runOnce(): Promise<void> {
     const now = this.clock();
     for (const task of this.tasks) {
+      // 依赖的模块降级时整轮跳过：不执行、也不更新 `lastRun`（恢复后立刻补跑）
+      if (task.enabled && !task.enabled()) {
+        continue;
+      }
       if (this.skipNext.delete(task.name)) {
         this.lastRun.set(task.name, now);
         continue;

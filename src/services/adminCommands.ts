@@ -67,6 +67,10 @@ import {
   migrateRefreshCard,
   migrateRunCard,
 } from "./commands/migrateCommands.js";
+import {
+  moduleUnavailableCard,
+  moduleRetryCard,
+} from "./commands/healthCommands.js";
 import { handleExport } from "./commands/exportCommands.js";
 import {
   handleNotify,
@@ -105,6 +109,7 @@ import type { DisplayNameService } from "./displayNames.js";
 import type { ExportService } from "./export.js";
 import type { MemberRoster } from "./memberRoster.js";
 import type { DataMigrationService } from "./dataMigration.js";
+import type { HealthRegistry, ModuleKey } from "./health.js";
 import type { ModerationNotifier } from "./moderationNotifier.js";
 import type { PunishmentService } from "./punishments.js";
 import type { GroupConfigStore } from "./groupConfig.js";
@@ -122,7 +127,10 @@ import type { NotificationService, NotifyChannel } from "./notifications.js";
 import type { PermissionService } from "./permissions.js";
 import type { UserProfileService } from "./userProfiles.js";
 
-import { viewButton } from "./commands/support.js";
+import {
+  moduleForCommand,
+  viewButton,
+} from "./commands/support.js";
 const log = getLogger("admin-commands");
 
 export interface AdminCommandServiceOptions {
@@ -200,6 +208,9 @@ export interface AdminCommandServiceOptions {
 
   /** 一次性数据迁移（`/migrate`）；缺省时该指令拒绝执行。 */
   migrate?: DataMigrationService | undefined;
+
+  /** 模块健康与功能闸门；缺省时不做闸门判断（纯单测场景）。 */
+  health?: HealthRegistry | undefined;
 }
 
 export class AdminCommandService {
@@ -262,6 +273,9 @@ export class AdminCommandService {
 
   private readonly migrate: DataMigrationService | undefined;
 
+  /** 模块健康与功能闸门；未装配时不做闸门判断（纯单测场景）。 */
+  private readonly health: HealthRegistry | undefined;
+
   /** 班级库（活动学院/年级按钮）；runtime.load() 里拿到后注入。 */
   private activityRoster: MemberRoster | undefined;
 
@@ -302,6 +316,7 @@ export class AdminCommandService {
     this.restart = options.restart;
     this.deploy = options.deploy;
     this.migrate = options.migrate;
+    this.health = options.health;
   }
 
   /** 班级库在 `runtime.load()` 里才加载完成，因此构造后再注入（与 UserProfileService 同套路）。 */
@@ -343,6 +358,17 @@ export class AdminCommandService {
     }
     const command = parts[0]!.replace(/^\//u, "").toLowerCase();
     log.debug("command", { groupId, userId, command });
+
+    // 层 2 闸门：模块降级时它的功能域一律拒绝执行（诊断 / 恢复入口不受影响）
+    const module = moduleForCommand(command);
+    if (
+      module !== undefined &&
+      this.health &&
+      !this.health.isAvailable(module)
+    ) {
+      log.warn("command blocked: module unavailable", { command, module });
+      return moduleUnavailableCard(this.context(), userId, module);
+    }
 
     // 申诉是隐私动作，且被处罚的人可能还没绑定 QQ 号，因此豁免绑定检查
     const bindingExempt = new Set([
@@ -542,6 +568,7 @@ export class AdminCommandService {
       restart: this.restart,
       deploy: this.deploy,
       migrate: this.migrate,
+      health: this.health,
       permissions: this.permissions,
       joinAudit: this.joinAudit,
       configStore: this.configStore,
@@ -794,6 +821,16 @@ export class AdminCommandService {
     return migrateRefreshCard(this.context(), userId, replyGroupId);
   }
 
+  /** 回调：`cb:health:retry:<模块>` —— 重试加载单个模块（仅全局超管）。 */
+  public moduleRetryCard(userId: string, moduleKey: string): Promise<CardResult> {
+    return moduleRetryCard(this.context(), userId, moduleKey);
+  }
+
+  /** 回调闸门用：模块不可用卡（`runtime` 侧不带 context，这里代它包装）。 */
+  public moduleUnavailableMessage(userId: string, key: ModuleKey): RichMessage {
+    return moduleUnavailableCard(this.context(), userId, key).rich;
+  }
+
   public pendingCard(
     groupId: string | undefined,
     userId: string,
@@ -883,9 +920,13 @@ export class AdminCommandService {
     );
   }
 
-  /** 回调：`cb:notify:level` —— 话题门槛子卡（仅全局超管）。 */
-  public notifyLevelPanel(userId: string, notice?: string): CardResult {
-    return notifyLevelPanel(this.context(), userId, notice);
+  /** 回调：`cb:notify:level[:页码]` —— 话题门槛子卡（仅全局超管）。 */
+  public notifyLevelPanel(
+    userId: string,
+    notice?: string,
+    page = 1,
+  ): CardResult {
+    return notifyLevelPanel(this.context(), userId, notice, page);
   }
 
   /** 回调：`cb:notify:levelReset` —— 恢复默认门槛（仅全局超管）。 */

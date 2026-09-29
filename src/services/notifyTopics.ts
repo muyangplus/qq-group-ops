@@ -33,7 +33,8 @@ export type NotifyChannel =
   | "bot_leave"
   | "friend"
   | "member_join"
-  | "unknown_event";
+  | "unknown_event"
+  | "startup";
 
 export const NOTIFY_CHANNELS: readonly NotifyChannel[] = [
   "join",
@@ -44,6 +45,7 @@ export const NOTIFY_CHANNELS: readonly NotifyChannel[] = [
   "friend",
   "member_join",
   "unknown_event",
+  "startup",
 ];
 
 export interface NotifyTopicMeta {
@@ -115,6 +117,12 @@ export const NOTIFY_TOPIC_META: Readonly<Record<NotifyChannel, NotifyTopicMeta>>
     label: "未定义事件",
     short: "未知事件",
     hint: "机器人收到未定义的事件类型时告警（每个事件类型只通知一次）",
+    defaultLevel: PlatformLevel.GlobalSuperAdmin,
+  },
+  startup: {
+    label: "启动报告",
+    short: "启动",
+    hint: "启动时模块降级、数据迁移失败，或模块重试恢复时私信超管",
     defaultLevel: PlatformLevel.GlobalSuperAdmin,
   },
 };

@@ -1,5 +1,6 @@
 import type { CardButton } from "../cardTemplate.js";
 import type { Settings } from "../../config.js";
+import type { MigrationResult } from "../../db/migrate.js";
 import type { WriteQueue } from "../../db/writeQueue.js";
 import type { AuditLog } from "../audit.js";
 import type { ActivityService } from "../activity.js";
@@ -13,6 +14,7 @@ import type { DisplayNameService } from "../displayNames.js";
 import type { ExportService } from "../export.js";
 import type { GroupConfigStore } from "../groupConfig.js";
 import type { GroupMessageModeRegistry } from "../groupMessageMode.js";
+import type { HealthRegistry } from "../health.js";
 import type { IdentityMapService } from "../identityMap.js";
 import type { JoinApprovalService } from "../joinApproval.js";
 import type { JoinAuditService } from "../joinAudit.js";
@@ -83,11 +85,15 @@ export interface CommandHelpers {
 export interface DiagnosticsDeps {
   settings: Settings;
   writeQueue: WriteQueue;
+  /** 启动期迁移里的非致命问题（补列 / 数据归一化失败），由 `/status proc` 展示。 */
+  migration?: MigrationResult | undefined;
 }
 
 export interface AdminCommandContext {
   /** 共享小工具（展示名 / 目标解析 / 卡片包装）。 */
   readonly helpers: CommandHelpers;
+  /** 模块健康与功能闸门；未装配时不做闸门判断（纯单测场景）。 */
+  readonly health: HealthRegistry | undefined;
   /** 进程级诊断依赖（`/status proc`）：配置摘要 + 写队列；未装配时只显示进程自身信息。 */
   readonly diagnostics: DiagnosticsDeps | undefined;
   readonly permissions: PermissionService;

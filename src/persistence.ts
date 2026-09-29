@@ -105,6 +105,8 @@ export interface PersistencePool extends PgPoolLike {
 
 export interface Persistence {
   driver: "sqlite" | "postgres";
+  /** 启动期迁移里的非致命问题（补列 / 数据归一化失败）：由运行时展示给超管。 */
+  migration: MigrationResult;
   audit: AuditRepository;
   joinRequests: JoinRequestRepository;
   groupConfigs: GroupConfigRepository;
@@ -180,6 +182,7 @@ export async function connectPersistence(
     log.info("sqlite database ready", { path: target.path });
     return {
       driver: "sqlite",
+      migration,
       ...createRepositories(queryable),
       close: async () => {
         db.close();
@@ -211,6 +214,7 @@ export async function connectPersistence(
   log.info("postgres database ready");
   return {
     driver: "postgres",
+    migration,
     ...createRepositories(db),
     close: async () => {
       await pool.end();

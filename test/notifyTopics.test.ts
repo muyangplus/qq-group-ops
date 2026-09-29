@@ -26,6 +26,7 @@ const EVENT_TOPICS: readonly NotifyChannel[] = [
   "friend",
   "member_join",
   "unknown_event",
+  "startup",
 ];
 
 function permissionsFixture(): PermissionService {
@@ -300,7 +301,7 @@ describe("NotificationService · 订阅与推送同一判据", () => {
     store.setLevel("join", PlatformLevel.GlobalSuperAdmin);
     expect(notifications.subscribersFor("g1", "join")).toEqual([]);
 
-    expect(notifications.seedSuperAdminDefaults(["root"])).toBe(6);
+    expect(notifications.seedSuperAdminDefaults(["root"])).toBe(7);
     expect(notifications.subscribersFor("g1", "join")).toEqual(["root"]);
     // 幂等：再种一次不新增
     expect(notifications.seedSuperAdminDefaults(["root"])).toBe(0);
@@ -360,7 +361,7 @@ describe("notifyTopics · 退订墓碑（入库）", () => {
 
   it("默认开的话题退订后不会被重新种上；重新订阅会清墓碑", async () => {
     const { notifications, store } = await createHarness();
-    expect(notifications.seedSuperAdminDefaults(["root"])).toBe(5);
+    expect(notifications.seedSuperAdminDefaults(["root"])).toBe(6);
     expect(
       notifications.isSubscribed("root", NOTIFY_SCOPE_ALL, "bot_join"),
     ).toBe(true);

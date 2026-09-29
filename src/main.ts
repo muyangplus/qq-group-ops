@@ -14,6 +14,8 @@ import { attachGateway } from "./gatewayRunner.js";
 import { connectPersistence } from "./persistence.js";
 import { createRuntime, type Runtime } from "./runtime.js";
 import { escapeCardText, renderCard } from "./services/cardTemplate.js";
+import { startupReportText } from "./services/commands/healthCommands.js";
+import type { MigrationResult } from "./db/migrate.js";
 import { ActivityReminderService } from "./services/activityReminder.js";
 import { AppealWatcher } from "./services/appealWatcher.js";
 import { RetentionService } from "./services/retention.js";
@@ -132,11 +134,14 @@ async function main(): Promise<void> {
            },
           }
         : {}),
+      migration: persistence?.migration,
     },
   );
   if (persistence) {
     await runtime.load();
   }
+  // 层 1 / 层 3 的可见性：模块降级、迁移失败都私信超管（通知模块没起来就只留日志）
+  await announceStartupReport(runtime, persistence?.migration);
   // 上次 `/restart` 留下的回执：给发起人私信一条「已重启」（说明进程管理器真的拉回来了）
   await announceRestartIfAny(runtime);
 
@@ -193,12 +198,15 @@ async function main(): Promise<void> {
   scheduler.register({
     name: "retention",
     minIntervalMs: DEFAULT_RETENTION_INTERVAL_MS,
+    enabled: () =>
+      runtime.health.isAllAvailable(["audit", "join", "notify", "sanction"]),
     run: async () => {
       await retention.runOnce();
     },
   });
   scheduler.register({
     name: "activity-reminder",
+    enabled: () => runtime.health.isAvailable("activity"),
     run: async () => {
       await activityReminder.runOnce();
     },
@@ -207,6 +215,7 @@ async function main(): Promise<void> {
     name: "appeal-watcher",
     // 启动时不扫（与旧行为一致：首次派发在 notifyAppeal 里完成）
     runOnStart: false,
+    enabled: () => runtime.health.isAvailable("sanction"),
     run: async () => {
       await appealWatcher.runOnce();
     },
@@ -214,6 +223,7 @@ async function main(): Promise<void> {
   // 待审批申请 TTL：纯内存检查，每轮都跑（过期申请立刻从 /pending 消失）
   scheduler.register({
     name: "join-pending-ttl",
+    enabled: () => runtime.health.isAvailable("join"),
     run: () => {
       runtime.joinAudit.expireStalePending();
     },
@@ -423,6 +433,59 @@ async function announceRestartIfAny(runtime: Runtime): Promise<void> {
     const result = await runtime.notifications.sendPrivateCard(userId, card);
     if (!result.ok) {
       getLogger("main").warn("restart notice not delivered", {
+        userId,
+        detail: result.detail,
+      });
+    }
+  }
+}
+
+/**
+ * 启动报告：模块降级 / 数据迁移失败时私信订阅了「启动报告」话题的超管。
+ *
+ * 每一条都会在 `/status proc` 里常驻显示，这里只是主动告知；发送失败只记日志，
+ * 通知模块自己就是降级模块时也无从发送（那种情况只剩日志与状态卡）。
+ */
+async function announceStartupReport(
+  runtime: Runtime,
+  migration: MigrationResult | undefined,
+): Promise<void> {
+  const degraded = runtime.health.degraded;
+  const issues = migration?.issues ?? [];
+  if (degraded.length === 0 && issues.length === 0) {
+    return;
+  }
+  getLogger("main").warn("startup report: degraded state", {
+    modules: degraded.map((status) => status.key),
+    migrationSteps: issues.map((issue) => issue.step),
+  });
+  if (!runtime.health.isAllAvailable(["notify", "permissions"])) {
+    getLogger("main").warn("startup report not delivered: notify unavailable");
+    return;
+  }
+  const recipients = runtime.notifications.topicSubscribers("startup");
+  if (recipients.length === 0) {
+    getLogger("main").warn("startup report has no subscriber");
+    return;
+  }
+  const text = startupReportText(runtime.health, migration);
+  const card = renderCard({
+    title: "启动报告",
+    lines: text.split("\n"),
+    rows: [
+      [
+        {
+          id: "status",
+          label: "查看状态",
+          callbackData: encodeCallback("status", "proc"),
+        },
+      ],
+    ],
+  });
+  for (const userId of recipients) {
+    const result = await runtime.notifications.sendPrivateCard(userId, card);
+    if (!result.ok) {
+      getLogger("main").warn("startup report not delivered", {
         userId,
         detail: result.detail,
       });

@@ -119,9 +119,9 @@ describe("AdminCommandService · notify", () => {
     expect(api.sentPrivateMessages.at(-1)?.markdown).toContain("推送测试");
   });
 
-  it("通知中心分页：超管看到全部 8 个话题", async () => {
+  it("通知中心分页：超管看到全部 9 个话题", async () => {
     const first = await service.handle("g1", "root", "/notify");
-    expect(first.rich.markdown).toContain("通知中心（1/2）");
+    expect(first.rich.markdown).toContain("通知中心（1/3）");
     expect(first.rich.markdown).toContain("**入群申请**");
     expect(first.rich.markdown).toContain("**机器人入群**");
     expect(first.rich.markdown).not.toContain("**未定义事件**");
@@ -129,10 +129,16 @@ describe("AdminCommandService · notify", () => {
     expect(keyboard).toContain("cb:notify:view:2");
 
     const second = service.notifyCard(undefined, "root", undefined, 2);
-    expect(second.rich.markdown).toContain("通知中心（2/2）");
+    expect(second.rich.markdown).toContain("通知中心（2/3）");
     expect(second.rich.markdown).toContain("**机器人退群**");
     expect(second.rich.markdown).toContain("**未定义事件**");
-    expect(JSON.stringify(second.rich.keyboard)).toContain("cb:notify:view:1");
+    expect(JSON.stringify(second.rich.keyboard)).toContain("cb:notify:view:3");
+
+    // 启动报告是超管专属话题（默认开），排在最后一页
+    const third = service.notifyCard(undefined, "root", undefined, 3);
+    expect(third.rich.markdown).toContain("通知中心（3/3）");
+    expect(third.rich.markdown).toContain("**启动报告**");
+    expect(JSON.stringify(third.rich.keyboard)).toContain("cb:notify:view:2");
   });
 
   it("超管专属话题不对普通群管理员显示", async () => {
