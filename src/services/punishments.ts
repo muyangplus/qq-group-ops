@@ -369,15 +369,33 @@ export class PunishmentService {
   }
 
   /**
-   * 清空早于 `cutoff` 的**消息原文**（§B7，受 `RAW_MESSAGE_RETENTION_DAYS` 控制）。
+   * 清空早于 `cutoff` 的**消息原文**（§B7）。
    *
    * 只清原文、**保留处罚记录本身**（记录还要支撑申诉、处罚卡与审计回看）；
+   * 传 `groupId` 时只清该群（原文保留期是**按群**配置的：群没设过就用平台默认值）；
    * 返回被清空的条数，便于日志与测试断言。
    */
-  public async clearMessageExcerptsBefore(cutoff: Date): Promise<number> {
+  /** 还有消息原文的群（原文保留期按群算，必须先知道有哪些群要处理）。 */
+  public listGroupsWithExcerpts(): string[] {
+    const groups = new Set<string>();
+    for (const record of this.records.values()) {
+      if (record.messageExcerpt.length > 0) {
+        groups.add(record.groupId);
+      }
+    }
+    return [...groups].sort();
+  }
+
+  public async clearMessageExcerptsBefore(
+    cutoff: Date,
+    groupId?: string,
+  ): Promise<number> {
     let cleared = 0;
     for (const record of [...this.records.values()]) {
       if (record.messageExcerpt.length === 0) {
+        continue;
+      }
+      if (groupId !== undefined && record.groupId !== groupId) {
         continue;
       }
       if (record.createdAt.getTime() >= cutoff.getTime()) {

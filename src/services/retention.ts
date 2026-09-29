@@ -18,11 +18,11 @@ export interface RetentionOptions {
   /** 已审批入群申请的保留天数；<= 0 表示不清理。可传取值函数（热配置）。 */
   joinRequestRetentionDays: Provider<number>;
   /**
-   * 处罚记录里**消息原文**的保留天数（§B7）；`<= 0` 表示根本不落库。
+   * 该群生效的**消息原文保留期**（天）：群没显式设过就用平台默认值（`/config` 里那一项）。
    *
-   * 与审计保留期独立：到期只清原文，处罚记录本身仍按 `auditLogRetentionDays` 保留。
+   * 缺省不清理原文（老调用方 / 纯测试场景）。
    */
-  rawMessageRetentionDays?: Provider<number> | undefined;
+  rawMessageDaysFor?: ((groupId: string) => number) | undefined;
   /** 时钟（测试注入）。 */
   clock?: () => number;
 }
@@ -91,7 +91,6 @@ export class RetentionService {
     };
 
     const auditDays = valueOf(options.auditLogRetentionDays);
-    const rawDays = valueOf(options.rawMessageRetentionDays ?? 0);
     const joinDays = valueOf(options.joinRequestRetentionDays);
 
     if (auditDays > 0) {
@@ -102,12 +101,20 @@ export class RetentionService {
         (await this.punishments?.pruneOlderThan(cutoff)) ?? 0;
       result.appealsRemoved = (await this.appeals?.pruneOlderThan(cutoff)) ?? 0;
     }
-    // §B7：消息原文有独立的、更短的保留期（`RAW_MESSAGE_RETENTION_DAYS`）；
-    // 只在开启（> 0）时才有数据可清 —— 清空原文后处罚记录仍保留。
-    if (rawDays > 0) {
-      const cutoff = new Date(now - rawDays * DAY_MS);
-      result.messageExcerptsCleared =
-        (await this.punishments?.clearMessageExcerptsBefore(cutoff)) ?? 0;
+    // §B7：消息原文的保留期是**按群**算的（群没显式设过就用平台默认值，`/config` 里那一项），
+    // 所以要先问「哪些群还有原文」，再按各群生效值分别清 —— 清空原文后处罚记录仍保留。
+    const excerptGroups = this.punishments?.listGroupsWithExcerpts() ?? [];
+    for (const groupId of excerptGroups) {
+      const days = options.rawMessageDaysFor?.(groupId) ?? 0;
+      if (days <= 0) {
+        // `-1` = 永久保留 / `0` = 根本没存（或已关闭），都不清
+        continue;
+      }
+      result.messageExcerptsCleared +=
+        (await this.punishments?.clearMessageExcerptsBefore(
+          new Date(now - days * DAY_MS),
+          groupId,
+        )) ?? 0;
     }
     if (joinDays > 0) {
       const cutoff = new Date(now - joinDays * DAY_MS);

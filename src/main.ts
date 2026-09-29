@@ -9,6 +9,7 @@ import { QQOfficialEventMapper } from "./adapters/qqOfficialEventMapper.js";
 import { QQOfficialGateway } from "./adapters/qqOfficialGateway.js";
 import { WebhookEventGateway } from "./adapters/webhookEventGateway.js";
 import { isRateLimitedError } from "./adapters/qqOfficial.js";
+import { rawMessageDaysResolver } from "./services/excerptRetention.js";
 import { hasQqCredentials, loadSettings, type Settings } from "./config.js";
 import { instrumentEventGateway } from "./core/instrumentation.js";
 import { closeLogging, configureLogging, getLogger } from "./core/logger.js";
@@ -201,8 +202,11 @@ async function main(): Promise<void> {
       auditLogRetentionDays: () => runtime.platform.get("auditLogRetentionDays"),
       joinRequestRetentionDays: () =>
         runtime.platform.get("auditLogRetentionDays"),
-      rawMessageRetentionDays: () =>
-        runtime.platform.get("rawMessageRetentionDays"),
+      // 原文保留期按**群**算：群（或全局默认规则）显式设过就用群值，否则用平台默认值
+      rawMessageDaysFor: rawMessageDaysResolver(
+        runtime.configStore,
+        runtime.platform,
+      ),
     },
     runtime.notifications,
     runtime.activityNotifications,

@@ -175,7 +175,8 @@ describe("RetentionService", () => {
       {
         auditLogRetentionDays: 0,
         joinRequestRetentionDays: 0,
-        rawMessageRetentionDays: 7,
+        // 原文保留期按群算：这里给每个群 7 天
+        rawMessageDaysFor: () => 7,
         clock: () => now,
       },
       undefined,
@@ -190,6 +191,58 @@ describe("RetentionService", () => {
     expect(punishments.get(freshRecord.recordId)?.messageExcerpt).toBe("今天的原文");
     // 记录本身还在（处罚与申诉仍可回看）
     expect(punishments.get(oldRecord.recordId)?.recordId).toBe(oldRecord.recordId);
+  });
+
+  it("原文按**群**分别清理：设了天数的群清、-1 的群不清", async () => {
+    const now = Date.UTC(2026, 0, 20);
+    const api = new FakeQQOfficialAPI();
+    const punishments = new PunishmentService(api, new BlacklistService(api, {
+      auditLog: new AuditLogStore(),
+      listBoundGroups: () => ["g1", "g2"],
+    }), { now: () => new Date(now) });
+    const old = new Date(now - 10 * DAY_MS);
+    const make = async (groupId: string) =>
+      punishments.create({
+        groupId,
+        userId: "u1",
+        messageExcerpt: "十几天前的原文",
+        actions: {
+          recalled: false,
+          muted: false,
+          muteDurationSeconds: 0,
+          kicked: false,
+          blacklist: "",
+        },
+      });
+    const shortLived = await make("g1");
+    const permanent = await make("g2");
+    // 把两条都拨回 10 天前（g1 保留期 7 天 → 该清；g2 永久 → 不清）
+    for (const record of [shortLived, permanent]) {
+      (punishments.get(record.recordId) as { createdAt: Date }).createdAt = old;
+    }
+    expect(punishments.listGroupsWithExcerpts()).toEqual(["g1", "g2"]);
+
+    const service = new RetentionService(
+      new AuditLogStore(),
+      new JoinAuditService(),
+      {
+        auditLogRetentionDays: 0,
+        joinRequestRetentionDays: 0,
+        rawMessageDaysFor: (groupId) => (groupId === "g1" ? 7 : -1),
+        clock: () => now,
+      },
+      undefined,
+      undefined,
+      punishments,
+    );
+
+    const result = await service.runOnce();
+
+    expect(result.messageExcerptsCleared).toBe(1);
+    expect(punishments.get(shortLived.recordId)?.messageExcerpt).toBe("");
+    expect(punishments.get(permanent.recordId)?.messageExcerpt).toBe(
+      "十几天前的原文",
+    );
   });
 
   it("不再负责 TTL 过期（改由统一扫描的 join-pending-ttl 任务每轮检查）", async () => {
