@@ -31,27 +31,28 @@
     （`ACTIVITY_NOTIFY_DAILY_LIMIT` / `ACTIVITY_NOTIFY_RATE_PER_SECOND` / `APPEAL_HOLD_MINUTES`）、
     统一计时与部署四项（`SCAN_INTERVAL_MS` / `AUTO_RESTART_ON_DEPLOY` / `DEPLOY_RESTART_DELAY_MINUTES` /
     `DEPLOY_CHECK_INTERVAL_MS`）、`ACTIVITY_STATS_FONT_URL`、`TZ`。
-  - 存储：新增 `platform_settings` 键值表（`CREATE TABLE IF NOT EXISTS`，与 `group_settings` 同思路，免 ALTER），
-    启动时载入；**优先级 = DB 覆盖 > `.env` 默认值**，`/config clear <项>` 回落到 `.env`。
-  - 热生效：`settings` 收敛成**可变的单一来源**，服务在**用的时候**读当前值而不是构造时固化 ——
-    例如 `TickScheduler` 每轮读 `SCAN_INTERVAL_MS`、`RetentionService` 每次运行读保留期、
-    `DeployWatcher` 每次检查读宽限期；需要重建连接/文件句柄的项不进这份清单。
-  - 命令：`/config`（**仅全局超管、只在私信**）列出每项「当前值 + 来源（`.env` / 已覆盖）」；
-    改值用「填入指令」按钮（卡片键盘打不了自由文本），`/config set <项> <值>`、`/config clear <项>`，
-    每次改动写审计（平台级动作，`groupId=""`）。
+  - 存储：**已完成**（`11bd7bd`）—— `platform_settings` 键值表 + 仓储 + `PlatformSettingsStore`
+    （13 项收口成单一来源，`.env` 默认 > 被 DB 覆盖；写入前校验；坏值只进 `issues` 不拦启动；
+    `onChange` 钩子给需要主动生效的项）。`get()` 是读时取值。
+  - 待做（按序）：① 各服务改成**读时取值**（`TickScheduler` 每轮读 `SCAN_INTERVAL_MS`、
+    `RetentionService` 每次运行读保留期、`DeployWatcher` 每次检查读宽限期/开关、活动通知限额、
+    申诉超时、统计字体、首次菜单推送；`joinRequestTtlDays` 与 `displayTimezone` 走 `onChange` 主动生效）；
+    ② `/config` 命令（仅全局超管、只在私信；列出「当前值 + 来源」，改值用「填入指令」按钮，
+    `set` / `clear`，每次改动写审计）；③ 文档（`.env.example` 标注「只是默认值，可 /config 热改」、
+    `docs/CONFIGURATION.md`、`/help config`）。
   - 验收：① 改完**立即生效、不重启**（`SCAN_INTERVAL_MS`、`AUDIT_LOG_RETENTION_DAYS` 各验一次）；
     ② `clear` 回落到 `.env`；③ 非法值被拒绝且不改库；④ 非全局超管 / 群里不可用；
     ⑤ 每次改动都能在 `/audit` 查到；⑥ `.env.example`、`docs/CONFIGURATION.md` 与 `/help config` 标注哪些是热量项。
-  - 关联：与下面「处罚原文按群清理」一起定 `RAW_MESSAGE_RETENTION_DAYS` 的去留（本条落地后它从 `.env` 挪进 `/config`）。
-- [ ] **处罚原文按群清理（保留口径不一致，⚠️ 待定方案）**
+- [ ] **处罚原文按群清理（保留口径不一致）**
   - 现状：**是否存原文**看本群 `rawMessageRetentionDays`（`0` 不存 / `-1` 永久 / `N` 存），
     而**清理**看环境变量 `RAW_MESSAGE_RETENTION_DAYS`（默认 `0` = 不清理）。
     于是某群执行 `/rules set rawMessageRetentionDays 7`、环境变量仍是默认值时，
     原文会**永久留在库里**（隐私 + 无上限增长）。
-  - 方案（待定）：清理改成按群策略（该群 `> 0` 时按自己的天数清 `message_excerpt`，`-1` / `0` 不动）；
-    此时环境变量只剩「全局总开关」这一个语义 —— 是直接删掉 `RAW_MESSAGE_RETENTION_DAYS`
-    （配置瘦身，保留口径完全交给 `/rules`），还是保留成「全局上限」？
-  - 落点：`RetentionService` 注入 `configStore`；`PunishmentService` 增加「列出有原文的群」与「按群清空原文」。
+  - 口径（随 `/config` 定）：`RAW_MESSAGE_RETENTION_DAYS` 变成**平台默认值**（进 `/config` 热改项），
+    不再单独当「清理开关」；清理按**该群生效值**来 —— 群没覆盖就用平台默认值，
+    `> 0` 按各自天数清 `message_excerpt`，`-1` / `0` 不动。这样「存」与「清」出自同一个值。
+  - 落点：`RetentionService` 注入 `PlatformSettingsStore` + `GroupConfigStore`；
+    `PunishmentService` 增加「列出有原文的群」与「按群清空原文」。
 - [ ] **B4 文本内容安全 API 接入**（批次4 · Phase 2 · ⚠️ 官方能力未确认）
   - 阻塞：公开资料只能确认小程序体系有 `msgSecCheck`，未见 QQ 机器人开放平台向普通机器人开放文本审核接口；
     先在开放平台后台确认权限集，或真机调一次记录错误码（真机清单 R3）。
