@@ -779,7 +779,7 @@ pnpm db:up     # docker compose --profile postgres up -d db
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `RAW_MESSAGE_RETENTION_DAYS` | 否 | 消息原文保留天数：`-1` = 永久保留、`0` = 不保存、正整数 = 天数（见下方说明） |
+| `RAW_MESSAGE_RETENTION_DAYS` | 否 | **平台默认的**消息原文保留天数：`-1` = 永久保留、`0` = 不保存、正整数 = 天数。可 `/config` 热改；单个群可用 `/rules set rawMessageRetentionDays <天数>` 覆盖（群没设过才用这里的默认值，见下方说明） |
 | `AUDIT_LOG_RETENTION_DAYS` | 否 | 审计记录保留天数，默认 `180`；`-1` = 永久保留、`0` = 不清理（同义，推荐用 -1） |
 | `JOIN_REQUEST_TTL_DAYS` | 否 | 待审批入群申请有效期（天），默认 `7`；超过即标记 `expired`（不删数据，`/whois` 可追溯）；`0` / `-1` = 不自动过期 |
 | `ACTIVITY_NOTIFY_DAILY_LIMIT` | 否 | **活动通知**每人每日上限，默认 `3`；非负整数，`0` = 不限制 |
@@ -838,11 +838,15 @@ pnpm db:up     # docker compose --profile postgres up -d db
 - 查询 `/pending` 时还会做一次懒清理，保证卡片里不出现过期项。
 - 清理同时作用于内存缓存与数据库，避免启动全量载入导致内存无限增长。
 
-`RAW_MESSAGE_RETENTION_DAYS` 控制**触发处罚的那条消息原文**的保留期：`-1` = 永久保留、默认 `0` 表示不落库
-（隐私优先，只保存审核结果与规则命中信息）；设为 `3–7` 后，关键词 / 正则命中的消息会以**单行 + 截断 ≤200 字**
-存进 `punishment_records.message_excerpt`，只用于审核员与当事人本人的**私信卡片**（群里那张「处罚通知」不带原文、
-也不写命中的具体规则）。到期由 `RetentionService` **只清原文**，处罚记录本身仍按 `AUDIT_LOG_RETENTION_DAYS` 保留。
-也可按群覆盖：`/rules set rawMessageRetentionDays 7`（`clear` 归零）。
+`RAW_MESSAGE_RETENTION_DAYS` 是**平台默认的**原文保留期（`/config` 里可热改）：`-1` = 永久保留、
+默认 `0` 表示不落库（隐私优先，只保存审核结果与规则命中信息）；设为 `3–7` 后，关键词 / 正则命中的消息会以
+**单行 + 截断 ≤200 字**存进 `punishment_records.message_excerpt`，只用于审核员与当事人本人的**私信卡片**
+（群里那张「处罚通知」不带原文、也不写命中的具体规则）。
+
+保留期是**按群生效**的：某群 `/rules set rawMessageRetentionDays 7`（或全局默认规则
+`/rules set all rawMessageRetentionDays 7`）之后，该群按自己的天数清；**没设过的群才用这个平台默认值**。
+到期由 `RetentionService` **按群分别只清原文**，处罚记录本身仍按 `AUDIT_LOG_RETENTION_DAYS` 保留
+（`0` / `-1` 的群不清）。
 
 `ACTIVITY_STATS_FONT_URL` 只影响活动统计图片：系统已有中文字体（Windows 雅黑 / Linux Noto CJK 等）时
 根本不会请求它；下载成功的字体会缓存到 `data/fonts/activity-stats.otf`（`data/` 已 gitignore，
