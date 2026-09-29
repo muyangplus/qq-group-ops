@@ -13,16 +13,16 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
 export const DEFAULT_RETENTION_INTERVAL_MS = DAY_MS;
 
 export interface RetentionOptions {
-  /** 审计记录保留天数；<= 0 表示不清理。 */
-  auditLogRetentionDays: number;
-  /** 已审批入群申请的保留天数；<= 0 表示不清理。 */
-  joinRequestRetentionDays: number;
+  /** 审计记录保留天数；<= 0 表示不清理。可传取值函数（热配置）。 */
+  auditLogRetentionDays: Provider<number>;
+  /** 已审批入群申请的保留天数；<= 0 表示不清理。可传取值函数（热配置）。 */
+  joinRequestRetentionDays: Provider<number>;
   /**
    * 处罚记录里**消息原文**的保留天数（§B7）；`<= 0` 表示根本不落库。
    *
    * 与审计保留期独立：到期只清原文，处罚记录本身仍按 `auditLogRetentionDays` 保留。
    */
-  rawMessageRetentionDays?: number;
+  rawMessageRetentionDays?: Provider<number> | undefined;
   /** 时钟（测试注入）。 */
   clock?: () => number;
 }
@@ -90,10 +90,12 @@ export class RetentionService {
       appealsRemoved: 0,
     };
 
-    if (options.auditLogRetentionDays > 0) {
-      const cutoff = new Date(
-        now - options.auditLogRetentionDays * DAY_MS,
-      );
+    const auditDays = valueOf(options.auditLogRetentionDays);
+    const rawDays = valueOf(options.rawMessageRetentionDays ?? 0);
+    const joinDays = valueOf(options.joinRequestRetentionDays);
+
+    if (auditDays > 0) {
+      const cutoff = new Date(now - auditDays * DAY_MS);
       result.auditRecordsRemoved = await this.auditLog.pruneOlderThan(cutoff);
       // 处罚 / 申诉记录与审计同一保留期：处罚记录本身只保留动作与规则说明。
       result.punishmentsRemoved =
@@ -102,17 +104,13 @@ export class RetentionService {
     }
     // §B7：消息原文有独立的、更短的保留期（`RAW_MESSAGE_RETENTION_DAYS`）；
     // 只在开启（> 0）时才有数据可清 —— 清空原文后处罚记录仍保留。
-    if ((options.rawMessageRetentionDays ?? 0) > 0) {
-      const cutoff = new Date(
-        now - options.rawMessageRetentionDays! * DAY_MS,
-      );
+    if (rawDays > 0) {
+      const cutoff = new Date(now - rawDays * DAY_MS);
       result.messageExcerptsCleared =
         (await this.punishments?.clearMessageExcerptsBefore(cutoff)) ?? 0;
     }
-    if (options.joinRequestRetentionDays > 0) {
-      const cutoff = new Date(
-        now - options.joinRequestRetentionDays * DAY_MS,
-      );
+    if (joinDays > 0) {
+      const cutoff = new Date(now - joinDays * DAY_MS);
       result.joinRequestsRemoved =
         await this.joinAudit.pruneReviewedOlderThan(cutoff);
       result.notificationsRemoved =

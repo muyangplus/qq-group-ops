@@ -71,6 +71,10 @@ import {
   moduleUnavailableCard,
   moduleRetryCard,
 } from "./commands/healthCommands.js";
+import {
+  configPanelCard,
+  handleConfig,
+} from "./commands/configCommands.js";
 import { handleExport } from "./commands/exportCommands.js";
 import {
   handleNotify,
@@ -110,6 +114,7 @@ import type { ExportService } from "./export.js";
 import type { MemberRoster } from "./memberRoster.js";
 import type { DataMigrationService } from "./dataMigration.js";
 import type { HealthRegistry, ModuleKey } from "./health.js";
+import type { PlatformSettingsStore } from "./platformSettings.js";
 import type { ModerationNotifier } from "./moderationNotifier.js";
 import type { PunishmentService } from "./punishments.js";
 import type { GroupConfigStore } from "./groupConfig.js";
@@ -211,6 +216,9 @@ export interface AdminCommandServiceOptions {
 
   /** 模块健康与功能闸门；缺省时不做闸门判断（纯单测场景）。 */
   health?: HealthRegistry | undefined;
+
+  /** 平台热配置（`/config`）；缺省时该指令拒绝执行。 */
+  platform?: PlatformSettingsStore | undefined;
 }
 
 export class AdminCommandService {
@@ -276,6 +284,9 @@ export class AdminCommandService {
   /** 模块健康与功能闸门；未装配时不做闸门判断（纯单测场景）。 */
   private readonly health: HealthRegistry | undefined;
 
+  /** 平台热配置（`/config`）；未装配时该指令拒绝执行。 */
+  private readonly platform: PlatformSettingsStore | undefined;
+
   /** 班级库（活动学院/年级按钮）；runtime.load() 里拿到后注入。 */
   private activityRoster: MemberRoster | undefined;
 
@@ -317,6 +328,7 @@ export class AdminCommandService {
     this.deploy = options.deploy;
     this.migrate = options.migrate;
     this.health = options.health;
+    this.platform = options.platform;
   }
 
   /** 班级库在 `runtime.load()` 里才加载完成，因此构造后再注入（与 UserProfileService 同套路）。 */
@@ -569,6 +581,7 @@ export class AdminCommandService {
       deploy: this.deploy,
       migrate: this.migrate,
       health: this.health,
+      platform: this.platform,
       permissions: this.permissions,
       joinAudit: this.joinAudit,
       configStore: this.configStore,
@@ -709,6 +722,9 @@ export class AdminCommandService {
       case "migrate":
       case "迁移":
         return migrateCard(this.context(), userId, groupId);
+      case "config":
+      case "配置":
+        return handleConfig(this.context(), groupId, userId, parts);
       case "test":
       case "测试":
         return handleTest(this.context(), groupId, userId);
@@ -819,6 +835,11 @@ export class AdminCommandService {
     replyGroupId: string | undefined,
   ): Promise<CardResult> {
     return migrateRefreshCard(this.context(), userId, replyGroupId);
+  }
+
+  /** 回调：`cb:config:view[:页码]` —— 平台配置面板翻页（仅全局超管、只私信）。 */
+  public configPanelCard(userId: string, page = 1): CardResult {
+    return configPanelCard(this.context(), userId, page);
   }
 
   /** 回调：`cb:health:retry:<模块>` —— 重试加载单个模块（仅全局超管）。 */

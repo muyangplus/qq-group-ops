@@ -34,6 +34,8 @@ export interface SettingDefinition {
   /** `.env` 里的名字（面板上显示「来源」用）。 */
   envKey: string;
   label: string;
+  /** 按钮上的短名（卡片一行最多 12 个字，两列必须短）。 */
+  short: string;
   unit: string;
   /** 解析 + 校验一段用户输入；失败给出能直接展示的中文原因。 */
   parse(raw: string): ParsedSetting;
@@ -50,6 +52,7 @@ function intSetting(
   key: HotSettingKey,
   envKey: string,
   label: string,
+  short: string,
   unit: string,
   min: number,
   max: number,
@@ -59,6 +62,7 @@ function intSetting(
     key,
     envKey,
     label,
+    short,
     unit,
     parse: (raw) => {
       const trimmed = raw.trim();
@@ -82,11 +86,13 @@ function boolSetting(
   key: HotSettingKey,
   envKey: string,
   label: string,
+  short: string,
 ): SettingDefinition {
   return {
     key,
     envKey,
     label,
+    short,
     unit: "",
     parse: (raw) => {
       const value = raw.trim().toLowerCase();
@@ -104,13 +110,14 @@ function boolSetting(
 
 /** 可热改项的定义（顺序即面板顺序）。 */
 export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
-  intSetting("auditLogRetentionDays", "AUDIT_LOG_RETENTION_DAYS", "审计日志保留", "天", -1, 3650, retentionLabel),
-  intSetting("rawMessageRetentionDays", "RAW_MESSAGE_RETENTION_DAYS", "处罚原文保留", "天", -1, 365, retentionLabel),
-  intSetting("joinRequestTtlDays", "JOIN_REQUEST_TTL_DAYS", "待审批申请有效期", "天", -1, 365, retentionLabel),
+  intSetting("auditLogRetentionDays", "AUDIT_LOG_RETENTION_DAYS", "审计日志保留", "审计保留", "天", -1, 3650, retentionLabel),
+  intSetting("rawMessageRetentionDays", "RAW_MESSAGE_RETENTION_DAYS", "处罚原文保留", "原文保留", "天", -1, 365, retentionLabel),
+  intSetting("joinRequestTtlDays", "JOIN_REQUEST_TTL_DAYS", "待审批申请有效期", "审批有效期", "天", -1, 365, retentionLabel),
   {
     key: "menuFirstPush",
     envKey: "MENU_FIRST_PUSH",
     label: "首次菜单推送",
+    short: "首次菜单",
     unit: "",
     parse: (raw) => {
       const value = raw.trim().toLowerCase();
@@ -122,19 +129,20 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     describe: (value: unknown) =>
       value === "persistent" ? "persistent（入库）" : "memory（内存）",
   },
-  intSetting("activityNotifyDailyLimit", "ACTIVITY_NOTIFY_DAILY_LIMIT", "活动通知每日上限", "条", 0, 10000),
-  intSetting("activityNotifyRatePerSecond", "ACTIVITY_NOTIFY_RATE_PER_SECOND", "活动通知速率", "条/秒", 1, 100),
-  intSetting("appealHoldMinutes", "APPEAL_HOLD_MINUTES", "申诉超时轮转", "分钟", 1, 10080),
-  intSetting("scanIntervalMs", "SCAN_INTERVAL_MS", "扫描周期", "毫秒", 0, 3_600_000, (value) =>
+  intSetting("activityNotifyDailyLimit", "ACTIVITY_NOTIFY_DAILY_LIMIT", "活动通知每日上限", "每日上限", "条", 0, 10000),
+  intSetting("activityNotifyRatePerSecond", "ACTIVITY_NOTIFY_RATE_PER_SECOND", "活动通知速率", "通知速率", "条/秒", 1, 100),
+  intSetting("appealHoldMinutes", "APPEAL_HOLD_MINUTES", "申诉超时轮转", "申诉超时", "分钟", 1, 10080),
+  intSetting("scanIntervalMs", "SCAN_INTERVAL_MS", "扫描周期", "扫描周期", "毫秒", 0, 3_600_000, (value) =>
     value === 0 ? "关闭所有周期任务" : `${value} 毫秒`,
   ),
-  boolSetting("autoRestartOnDeploy", "AUTO_RESTART_ON_DEPLOY", "部署后自动重启"),
-  intSetting("deployRestartDelayMinutes", "DEPLOY_RESTART_DELAY_MINUTES", "自动重启宽限", "分钟", 0, 1440),
-  intSetting("deployCheckIntervalMs", "DEPLOY_CHECK_INTERVAL_MS", "部署检查周期", "毫秒", 1000, 3_600_000),
+  boolSetting("autoRestartOnDeploy", "AUTO_RESTART_ON_DEPLOY", "部署后自动重启", "自动重启"),
+  intSetting("deployRestartDelayMinutes", "DEPLOY_RESTART_DELAY_MINUTES", "自动重启宽限", "重启宽限", "分钟", 0, 1440),
+  intSetting("deployCheckIntervalMs", "DEPLOY_CHECK_INTERVAL_MS", "部署检查周期", "检查周期", "毫秒", 1000, 3_600_000),
   {
     key: "activityStatsFontUrl",
     envKey: "ACTIVITY_STATS_FONT_URL",
     label: "统计图字体地址",
+    short: "字体地址",
     unit: "",
     parse: (raw) => {
       const value = raw.trim();
@@ -152,6 +160,7 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     key: "displayTimezone",
     envKey: "TZ",
     label: "展示时区",
+    short: "时区",
     unit: "",
     parse: (raw) => {
       const value = raw.trim();

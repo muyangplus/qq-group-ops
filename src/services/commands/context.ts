@@ -24,6 +24,7 @@ import type { MemberRoster } from "../memberRoster.js";
 import type { DataMigrationService } from "../dataMigration.js";
 import type { ModerationNotifier } from "../moderationNotifier.js";
 import type { NotificationService } from "../notifications.js";
+import type { PlatformSettingsStore } from "../platformSettings.js";
 import type { PermissionService } from "../permissions.js";
 import type { PunishmentService } from "../punishments.js";
 import type { RestartHook } from "../restart.js";
@@ -94,6 +95,8 @@ export interface AdminCommandContext {
   readonly helpers: CommandHelpers;
   /** 模块健康与功能闸门；未装配时不做闸门判断（纯单测场景）。 */
   readonly health: HealthRegistry | undefined;
+  /** 平台热配置（`/config`）；未装配时该指令拒绝执行。 */
+  readonly platform: PlatformSettingsStore | undefined;
   /** 进程级诊断依赖（`/status proc`）：配置摘要 + 写队列；未装配时只显示进程自身信息。 */
   readonly diagnostics: DiagnosticsDeps | undefined;
   readonly permissions: PermissionService;

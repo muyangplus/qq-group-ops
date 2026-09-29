@@ -8,7 +8,7 @@ import {
   QQOfficialClient,
   type QQOfficialAPI,
 } from "./adapters/qqOfficial.js";
-import { loadSettings, type Settings } from "./config.js";
+import { loadSettings, type MenuFirstPushMode, type Settings } from "./config.js";
 import {
   instrumentQQOfficialAPI,
   instrumentTransport,
@@ -63,10 +63,12 @@ import { DisplayNameService } from "./services/displayNames.js";
 import { EventRouter } from "./services/eventRouter.js";
 import { ExportService } from "./services/export.js";
 import {
-  MemoryFirstMenuPushState,
-  PersistentFirstMenuPushState,
+  HotFirstMenuPushState,
   type FirstMenuPushState,
 } from "./services/firstMenuPush.js";
+import { PlatformSettingsStore } from "./services/platformSettings.js";
+import type { HotSettingKey } from "./services/platformSettings.js";
+import type { PlatformSettingsRepository } from "./db/platformSettingsRepository.js";
 import { GroupConfigStore, DEFAULT_GROUP_ID } from "./services/groupConfig.js";
 import { GroupMessageModeRegistry } from "./services/groupMessageMode.js";
 import { IdentityMapService } from "./services/identityMap.js";
@@ -101,6 +103,8 @@ export interface Runtime {
   api: QQOfficialAPI;
   /** 模块健康与功能闸门（层 1 隔离加载 / 层 2 拒绝执行）。 */
   health: HealthRegistry;
+  /** 平台热配置（`/config`）：`.env` 默认 + 数据库覆盖，读时取值。 */
+  platform: PlatformSettingsStore;
   auditLog: AuditLogStore;
   joinAudit: JoinAuditService;
   configStore: GroupConfigStore;
@@ -175,6 +179,8 @@ export interface RuntimeRepositories {
   userProfiles?: UserProfileRepository;
   classAliases?: ClassAliasRepository;
   menuDeliveries?: MenuDeliveryRepository;
+  /** 平台级热配置（`/config`）。 */
+  platformSettings?: PlatformSettingsRepository;
 }
 
 export interface RuntimeDependencies {
@@ -206,6 +212,12 @@ export function createRuntime(
     );
   }
   const writeQueue = new WriteQueue();
+  // 平台热配置（`/config`）：`.env` 是默认值，数据库覆盖优先；服务在用的时候读它
+  const platform = new PlatformSettingsStore(
+    settings,
+    repositories.platformSettings,
+    writeQueue,
+  );
   const api = instrumentQQOfficialAPI(createApi(settings), getLogger("runtime"));
   const richMessages = new RichMessageSender(api);
   const auditLog = new AuditLogStore(repositories.audit, writeQueue);
@@ -292,7 +304,8 @@ export function createRuntime(
     userLabel: (userId) => display.user(userId),
     // 申诉人那张结果卡只给处理人的**短码**（不给 QQ 号/昵称）
     userShortLabel: (userId) => shortCodes.label("user", userId),
-    appealHoldMs: settings.appealHoldMinutes * 60_000,
+    // 热配置（/config）：申诉超时轮转按「用的时候」的当前值判断
+    appealHoldMs: () => platform.get("appealHoldMinutes") * 60_000,
   });
   const punishments = new PunishmentService(api, blacklist, {
     repository: repositories.punishments,
@@ -326,8 +339,8 @@ export function createRuntime(
     repositories.activityNotifications,
     // 满员广播是**群消息**：直接复用富消息发送器发到绑定群（不占用户私信额度）。
     {
-      dailyLimit: settings.activityNotifyDailyLimit,
-      ratePerSecond: settings.activityNotifyRatePerSecond,
+      dailyLimit: () => platform.get("activityNotifyDailyLimit"),
+      ratePerSecond: () => platform.get("activityNotifyRatePerSecond"),
       groupSender: richMessages,
     },
   );
@@ -343,7 +356,7 @@ export function createRuntime(
    */
   const activityStats = new ActivityStatsService({
     api,
-    fontUrl: settings.activityStatsFontUrl,
+    fontUrl: () => platform.get("activityStatsFontUrl"),
   });
   const activityExport = new ActivityExportService({
     sender: richMessages,
@@ -373,11 +386,12 @@ export function createRuntime(
   });
   // 模块健康：单个模块加载失败只降级它自己（层 1），它的功能域由闸门拦住（层 2）
   const menuState = createFirstMenuPushState(
-    settings,
+    () => platform.get("menuFirstPush"),
     repositories.menuDeliveries,
     writeQueue,
   );
   const health = new HealthRegistry([
+    { key: "platform", load: () => platform.load() },
     { key: "identity", load: () => identityMap.reload() },
     { key: "audit", load: () => auditLog.load() },
     { key: "join", load: () => joinAudit.load() },
@@ -440,6 +454,7 @@ export function createRuntime(
     deploy: dependencies.deploy,
     migrate: dataMigration,
     health,
+    platform,
   });
   // 回调 renderer 表：导航/查看类按钮点击后由此渲染新卡片（见 docs/CARD-STANDARD.md）
   const callbackRenderers = new Map<string, CallbackRenderer>([
@@ -950,6 +965,17 @@ export function createRuntime(
     ],
     ["testmenu", (parsed, event) => testMenu.render(parsed, event)],
     [
+      "config",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        return adminCommands.configPanelCard(userId, pageArg(parsed.args) ?? 1)
+          .rich;
+      },
+    ],
+    [
       "health",
       async (parsed, event) => {
         const userId = event.userId;
@@ -982,6 +1008,25 @@ export function createRuntime(
     sender: richMessages,
     renderers: guardedRenderers,
   });
+  /**
+   * 需要在系统里「主动推一下」才生效的热配置项（其余项都是读时取值，改完自然生效）：
+   * 待审批申请的有效期（服务里存的是毫秒数）、展示时区（模块级设置）。
+   */
+  const applyHotSetting = (key: HotSettingKey): void => {
+    if (key === "joinRequestTtlDays") {
+      joinAudit.setPendingTtlMs(
+        platform.get("joinRequestTtlDays") * 24 * 60 * 60 * 1_000,
+      );
+    }
+    if (key === "displayTimezone") {
+      const timezone = platform.get("displayTimezone");
+      if (!setDisplayTimeZone(timezone)) {
+        log.warn("invalid display timezone, keeping previous", { timezone });
+      }
+    }
+  };
+  platform.onChange(applyHotSetting);
+
   const load = async (): Promise<void> => {
     // 层 1：逐个模块隔离加载，失败的只标记降级、不中断启动
     const report = await health.loadAll();
@@ -990,6 +1035,9 @@ export function createRuntime(
         modules: report.degraded.map((status) => status.key),
       });
     }
+    // 平台配置刚从库里读出来：把「需要主动生效」的两项按覆盖值推一遍
+    applyHotSetting("joinRequestTtlDays");
+    applyHotSetting("displayTimezone");
     // 超管专属话题「默认开」：给现有全局超管补订阅行（权限/通知模块没起来时跳过，不拦启动）
     if (health.isAllAvailable(["permissions", "notify"])) {
       notifications.seedSuperAdminDefaults(permissions.listSuperAdmins());
@@ -1008,6 +1056,7 @@ export function createRuntime(
     mode: settings.qqBotAppId && settings.qqBotClientSecret ? "official" : "fake",
     api,
     health,
+    platform,
     auditLog,
     joinAudit,
     configStore,
@@ -1052,20 +1101,24 @@ export function createRuntime(
   };
 }
 
+/**
+ * 首次菜单推送的去重状态。
+ *
+ * 模式是**热配置**（`MENU_FIRST_PUSH` 可在 `/config` 改），所以返回的是
+ * `HotFirstMenuPushState`：一份去重集合，当前模式只决定要不要落库；
+ * `persistent` 但没有数据库时降级为内存记录（老行为）。
+ */
 function createFirstMenuPushState(
-  settings: Settings,
+  mode: () => MenuFirstPushMode,
   repository: MenuDeliveryRepository | undefined,
   queue: WriteQueue,
 ): FirstMenuPushState {
-  if (settings.menuFirstPush === "persistent" && repository) {
-    return new PersistentFirstMenuPushState(repository, queue);
-  }
-  if (settings.menuFirstPush === "persistent" && !repository) {
+  if (mode() === "persistent" && !repository) {
     getLogger("runtime").warn(
       "MENU_FIRST_PUSH=persistent 但当前是纯内存数据库模式，降级为内存记录",
     );
   }
-  return new MemoryFirstMenuPushState();
+  return new HotFirstMenuPushState(mode, repository, queue);
 }
 
 function createApi(settings: Settings): QQOfficialAPI {

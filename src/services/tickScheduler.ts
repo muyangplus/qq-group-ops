@@ -19,8 +19,8 @@ export interface TickTask {
   name: string;
   /** 跑一轮。抛错由调度器兜住（只记日志，不影响其它任务）。 */
   run(now: number): Promise<void> | void;
-  /** 自己的最小间隔（毫秒）：距上次执行不足这个值就跳过；缺省 / `<= 0` = 每轮都跑。 */
-  minIntervalMs?: number;
+  /** 自己的最小间隔（毫秒）：距上次执行不足这个值就跳过；缺省 / `<= 0` = 每轮都跑。可传取值函数。 */
+  minIntervalMs?: Provider<number>;
   /** 启动时那一次「立即扫描」是否也跑（缺省 true）；`false` = 等一个周期再上场。 */
   runOnStart?: boolean;
   /**
@@ -112,7 +112,7 @@ export class TickScheduler {
         continue;
       }
       const last = this.lastRun.get(task.name);
-      const min = task.minIntervalMs ?? 0;
+      const min = valueOf(task.minIntervalMs ?? 0);
       if (last !== undefined && min > 0 && now - last < min) {
         continue;
       }

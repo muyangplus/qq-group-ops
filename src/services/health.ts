@@ -10,6 +10,7 @@ const log = getLogger("health");
  * 否则用户没有任何办法看到出了什么事。
  */
 export const MODULE_KEYS = [
+  "platform",
   "identity",
   "audit",
   "join",
@@ -28,6 +29,7 @@ export const MODULE_KEYS = [
 export type ModuleKey = (typeof MODULE_KEYS)[number];
 
 export const MODULE_LABELS: Record<ModuleKey, string> = {
+  platform: "平台配置",
   identity: "账号绑定",
   audit: "审计日志",
   join: "入群申请",

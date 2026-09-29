@@ -125,9 +125,10 @@ async function main(): Promise<void> {
    * 但真正执行都在启动之后，所以是安全的。
    */
   const deployWatcher = new DeployWatcher({
-    enabled: settings.autoRestartOnDeploy,
-    checkIntervalMs: settings.deployCheckIntervalMs,
-    delayMs: settings.deployRestartDelayMinutes * 60_000,
+    // 热配置（/config）：这三项都在用的时候取当前值
+    enabled: () => runtime.platform.get("autoRestartOnDeploy"),
+    checkIntervalMs: () => runtime.platform.get("deployCheckIntervalMs"),
+    delayMs: () => runtime.platform.get("deployRestartDelayMinutes") * 60_000,
     runningVersion: runningVersionOf,
     onDiskVersion,
     recipients: () => runtime.permissions.listSuperAdmins(),
@@ -167,6 +168,7 @@ async function main(): Promise<void> {
             userProfiles: persistence.userProfiles,
             classAliases: persistence.classAliases,
             menuDeliveries: persistence.menuDeliveries,
+            platformSettings: persistence.platformSettings,
            },
           }
         : {}),
@@ -195,9 +197,12 @@ async function main(): Promise<void> {
     runtime.auditLog,
     runtime.joinAudit,
     {
-      auditLogRetentionDays: settings.auditLogRetentionDays,
-      joinRequestRetentionDays: settings.auditLogRetentionDays,
-      rawMessageRetentionDays: settings.rawMessageRetentionDays,
+      // 保留期是热配置：每次运行都取当前值
+      auditLogRetentionDays: () => runtime.platform.get("auditLogRetentionDays"),
+      joinRequestRetentionDays: () =>
+        runtime.platform.get("auditLogRetentionDays"),
+      rawMessageRetentionDays: () =>
+        runtime.platform.get("rawMessageRetentionDays"),
     },
     runtime.notifications,
     runtime.activityNotifications,
@@ -223,9 +228,10 @@ async function main(): Promise<void> {
     qqCredentialsConfigured: hasQqCredentials(settings),
     runtimeMode: runtime.mode,
     databaseDriver: persistence?.driver ?? "memory",
-    rawMessageRetentionDays: settings.rawMessageRetentionDays,
-    auditLogRetentionDays: settings.auditLogRetentionDays,
-    appealHoldMinutes: settings.appealHoldMinutes,
+    // 热配置项打印**生效值**（可能是 /config 覆盖过的）
+    rawMessageRetentionDays: runtime.platform.get("rawMessageRetentionDays"),
+    auditLogRetentionDays: runtime.platform.get("auditLogRetentionDays"),
+    appealHoldMinutes: runtime.platform.get("appealHoldMinutes"),
     logLevel: settings.logLevel,
     logFile: settings.logFile,
   });
@@ -240,7 +246,15 @@ async function main(): Promise<void> {
 
   // 统一计时：全项目只跑一个定时器（`SCAN_INTERVAL_MS`，0 = 关闭所有周期任务）；
   // 各任务只声明自己的最小间隔，是否到点由调度器判断。
-  const scheduler = new TickScheduler({ intervalMs: settings.scanIntervalMs });
+  // 扫描周期是热配置：每轮节拍按当前值排；改完立刻按新节拍重启定时器
+  const scheduler = new TickScheduler({
+    intervalMs: () => runtime.platform.get("scanIntervalMs"),
+  });
+  runtime.platform.onChange((key) => {
+    if (key === "scanIntervalMs") {
+      scheduler.restart();
+    }
+  });
   scheduler.register({
     name: "retention",
     minIntervalMs: DEFAULT_RETENTION_INTERVAL_MS,
@@ -276,7 +290,7 @@ async function main(): Promise<void> {
   });
   scheduler.register({
     name: "deploy-watcher",
-    minIntervalMs: settings.deployCheckIntervalMs,
+    minIntervalMs: () => runtime.platform.get("deployCheckIntervalMs"),
     run: async () => {
       await deployWatcher.runOnce();
     },
