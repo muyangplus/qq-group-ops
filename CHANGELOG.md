@@ -34,6 +34,9 @@
 
 ### 修复
 
+- **启动期数据迁移失败不再让进程退出**：`migrate()` 只把建表脚本当硬要求，补列与数据归一化逐步兜住，
+  失败的步骤记进 `issues` 并跳过（由 `logMigrationIssues` 记 error 日志）。
+  真机教训：一条修不了的老数据曾经让机器人彻底起不来。
 - **启动期订阅迁移会撞主键、把机器人搞成起不来**（0.19.0 引入）：归一化把「没有 `join:` / `punish:` /
   `activity:` 前缀」的 scope 一律当成老格式补 `join:`，于是新话题（`bot_join` / `bot_leave` / `friend` /
   `member_join` / `unknown_event`）被写成 `join:bot_join:all`。这些话题每次启动会补种，下一次启动再迁移时
