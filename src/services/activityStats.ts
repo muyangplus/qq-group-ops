@@ -1,4 +1,5 @@
 import { DEFAULT_ACTIVITY_STATS_FONT_URL } from "../config.js";
+import { valueOf, type Provider } from "../core/provider.js";
 import type {
   Activity,
   ActivityRegistration,
@@ -43,7 +44,7 @@ export class ActivityStatsService {
   private readonly hasSystemFont: (path: string) => boolean;
   private readonly readFontFile: (path: string) => Uint8Array | undefined;
   private readonly fontCacheDir: string;
-  private readonly fontUrl: string;
+  private readonly fontUrl: Provider<string>;
   private readonly canvasLoader: () => Promise<CanvasModule>;
   private readonly renderFn: ((input: ActivityStatsRenderInput) => Promise<Buffer>) | undefined;
   private readonly now: () => Date;
@@ -160,7 +161,7 @@ export class ActivityStatsService {
       log.debug("activity stats using cached font", { path: cached });
       return { path: cached, source: "cache" };
     }
-    const url = this.fontUrl.trim();
+    const url = valueOf(this.fontUrl).trim();
     if (url.length === 0) {
       log.info("no system font and ACTIVITY_STATS_FONT_URL is empty, degrading");
       return undefined;

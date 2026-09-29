@@ -1,4 +1,5 @@
 import { getLogger } from "../core/logger.js";
+import { valueOf, type Provider } from "../core/provider.js";
 import type { AuditLogStore } from "./audit.js";
 import type { JoinAuditService } from "./joinAudit.js";
 import type { ActivityNotificationService } from "./activityNotifications.js";
@@ -62,17 +63,23 @@ export class RetentionService {
   public constructor(
     private readonly auditLog: AuditLogStore,
     private readonly joinAudit: JoinAuditService,
-    private readonly options: RetentionOptions,
+    private readonly options: Provider<RetentionOptions>,
     private readonly notifications?: NotificationService,
     private readonly activityNotifications?: ActivityNotificationService,
     private readonly punishments?: PunishmentService,
     private readonly appeals?: AppealService,
   ) {
-    this.clock = options.clock ?? Date.now;
+    // 时钟只在测试里注入，构造时定下来就行（不随热配置变化）
+    this.clock =
+      typeof options === "function"
+        ? Date.now
+        : (options.clock ?? Date.now);
   }
 
   public async runOnce(): Promise<RetentionRunResult> {
     const now = this.clock();
+    // 热配置：保留期在**用的时候**取当前值（`/config` 改完立即生效）
+    const options = valueOf(this.options);
     const result: RetentionRunResult = {
       auditRecordsRemoved: 0,
       joinRequestsRemoved: 0,
@@ -83,9 +90,9 @@ export class RetentionService {
       appealsRemoved: 0,
     };
 
-    if (this.options.auditLogRetentionDays > 0) {
+    if (options.auditLogRetentionDays > 0) {
       const cutoff = new Date(
-        now - this.options.auditLogRetentionDays * DAY_MS,
+        now - options.auditLogRetentionDays * DAY_MS,
       );
       result.auditRecordsRemoved = await this.auditLog.pruneOlderThan(cutoff);
       // 处罚 / 申诉记录与审计同一保留期：处罚记录本身只保留动作与规则说明。
@@ -95,16 +102,16 @@ export class RetentionService {
     }
     // §B7：消息原文有独立的、更短的保留期（`RAW_MESSAGE_RETENTION_DAYS`）；
     // 只在开启（> 0）时才有数据可清 —— 清空原文后处罚记录仍保留。
-    if ((this.options.rawMessageRetentionDays ?? 0) > 0) {
+    if ((options.rawMessageRetentionDays ?? 0) > 0) {
       const cutoff = new Date(
-        now - this.options.rawMessageRetentionDays! * DAY_MS,
+        now - options.rawMessageRetentionDays! * DAY_MS,
       );
       result.messageExcerptsCleared =
         (await this.punishments?.clearMessageExcerptsBefore(cutoff)) ?? 0;
     }
-    if (this.options.joinRequestRetentionDays > 0) {
+    if (options.joinRequestRetentionDays > 0) {
       const cutoff = new Date(
-        now - this.options.joinRequestRetentionDays * DAY_MS,
+        now - options.joinRequestRetentionDays * DAY_MS,
       );
       result.joinRequestsRemoved =
         await this.joinAudit.pruneReviewedOlderThan(cutoff);

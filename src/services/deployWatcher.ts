@@ -5,6 +5,7 @@ import {
 import { encodeCallback } from "./callbackData.js";
 import { renderCard, type CardButton } from "./cardTemplate.js";
 import { getLogger } from "../core/logger.js";
+import { valueOf, type Provider } from "../core/provider.js";
 import { formatDisplayTime } from "../core/timeFormat.js";
 import type { RichMessage } from "./richMessages.js";
 
@@ -38,11 +39,11 @@ export interface DeployControl {
 
 export interface DeployWatcherOptions {
   /** 总开关（`AUTO_RESTART_ON_DEPLOY`）。 */
-  enabled: boolean;
+  enabled: Provider<boolean>;
   /** 扫描间隔；`<= 0` = 关闭监测。 */
-  checkIntervalMs: number;
+  checkIntervalMs: Provider<number>;
   /** 宽限期（毫秒）：通知后等这么久再自动重启；`0` = 立即。 */
-  delayMs: number;
+  delayMs: Provider<number>;
   stableChecks?: number;
   runningVersion: () => string;
   onDiskVersion: () => string;
@@ -78,9 +79,9 @@ export interface DeployWatcherOptions {
  * `start()/stop()` 只是过渡期的独立定时器（本地 `DEPLOY_CHECK_INTERVAL_MS`）。
  */
 export class DeployWatcher implements DeployControl {
-  private readonly enabled: boolean;
-  private readonly checkIntervalMs: number;
-  private readonly delayMs: number;
+  private readonly enabledProvider: Provider<boolean>;
+  private readonly checkIntervalMs: Provider<number>;
+  private readonly delayMs: Provider<number>;
   private readonly stableChecks: number;
   private readonly runningVersion: () => string;
   private readonly onDiskVersion: () => string;
@@ -99,9 +100,10 @@ export class DeployWatcher implements DeployControl {
   private running = false;
 
   public constructor(options: DeployWatcherOptions) {
-    this.enabled = options.enabled && options.checkIntervalMs > 0;
+    // 热配置：这三项都在用的时候取当前值（`/config` 改完立即生效）
+    this.enabledProvider = options.enabled;
     this.checkIntervalMs = options.checkIntervalMs;
-    this.delayMs = Math.max(0, options.delayMs);
+    this.delayMs = () => Math.max(0, valueOf(options.delayMs));
     this.stableChecks = Math.max(1, options.stableChecks ?? DEFAULT_DEPLOY_STABLE_CHECKS);
     this.runningVersion = options.runningVersion;
     this.onDiskVersion = options.onDiskVersion;
@@ -137,7 +139,7 @@ export class DeployWatcher implements DeployControl {
 
   /** 扫一轮：判断「是否有稳定的新版本」，并在到点时自动重启。 */
   public async runOnce(): Promise<void> {
-    if (!this.enabled) {
+    if (!this.active()) {
       return;
     }
     const target = this.onDiskVersion();
@@ -183,7 +185,7 @@ export class DeployWatcher implements DeployControl {
       targetVersion: target,
       currentVersion: current,
       detectedAt,
-      deadlineAt: new Date(now + this.delayMs).toISOString(),
+      deadlineAt: new Date(now + valueOf(this.delayMs)).toISOString(),
     };
     this.pendingState = pending;
     log.info("new deploy detected, auto-restart scheduled", {
@@ -197,15 +199,15 @@ export class DeployWatcher implements DeployControl {
 
   /** 过渡期的独立定时器；将来由 `TickScheduler` 调 `runOnce()` 即可去掉。 */
   public start(): void {
-    if (this.running || !this.enabled) {
-      log.info("deploy watcher disabled", { enabled: this.enabled });
+    if (this.running || !this.active()) {
+      log.info("deploy watcher disabled", { enabled: valueOf(this.enabledProvider) });
       return;
     }
     this.running = true;
     this.scheduleNext();
     log.info("deploy watcher started", {
-      checkIntervalMs: this.checkIntervalMs,
-      delayMinutes: Math.round(this.delayMs / 60_000),
+      checkIntervalMs: valueOf(this.checkIntervalMs),
+      delayMinutes: Math.round(valueOf(this.delayMs) / 60_000),
     });
   }
 
@@ -312,7 +314,12 @@ export class DeployWatcher implements DeployControl {
             this.scheduleNext();
           }
         });
-    }, this.checkIntervalMs);
+    }, valueOf(this.checkIntervalMs));
+  }
+
+  /** 当前是否生效：开关为真且检查周期为正（热配置，随时可能变）。 */
+  private active(): boolean {
+    return valueOf(this.enabledProvider) && valueOf(this.checkIntervalMs) > 0;
   }
 }
 

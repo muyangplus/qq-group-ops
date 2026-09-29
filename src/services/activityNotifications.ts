@@ -1,4 +1,5 @@
 import { getLogger } from "../core/logger.js";
+import { valueOf, type Provider } from "../core/provider.js";
 import { utcNow } from "../core/models.js";
 import type {
   ActivityNotification,
@@ -45,10 +46,10 @@ export interface ActivityGroupBroadcastResult {
 }
 
 export interface ActivityNotifyOptions {
-  /** 每人每日上限；`0` = 不限制（默认 3）。 */
-  dailyLimit?: number;
-  /** 令牌桶速率（条/秒）；`0` = 不限制。默认 0，由 runtime 按配置传入。 */
-  ratePerSecond?: number;
+  /** 每人每日上限；`0` = 不限制（默认 3）。可传取值函数（热配置）。 */
+  dailyLimit?: Provider<number>;
+  /** 令牌桶速率（条/秒）；`0` = 不限制。默认 0，由 runtime 按配置传入。可传取值函数（热配置）。 */
+  ratePerSecond?: Provider<number>;
   now?: () => Date;
   /**
    * 群消息发送器（§B4 满员广播用）。
@@ -78,7 +79,7 @@ export class ActivityNotificationService {
   private readonly sent = new Map<string, ActivityNotification>();
   private readonly notificationRepository: ActivityNotificationRepository | undefined;
   private readonly queue: WriteQueue | undefined;
-  private readonly dailyLimit: number;
+  private readonly dailyLimit: Provider<number> | undefined;
   private readonly now: () => Date;
   private readonly groupSender: RichMessageSender | undefined;
   /** 统一推送骨架（去重 + 每日封顶 + 记录）。 */
@@ -91,9 +92,12 @@ export class ActivityNotificationService {
   ) {
     this.notificationRepository = notifications;
     this.queue = notifications ? new WriteQueue() : undefined;
-    this.dailyLimit = normalizeDailyLimit(options.dailyLimit);
+    this.dailyLimit = options.dailyLimit;
     this.now = options.now ?? (() => utcNow());
     this.groupSender = options.groupSender;
+    // 热配置：用 getter 把「当前值」传进推送骨架（它在每次发送时才读这两个值）
+    const dailyLimitProvider = options.dailyLimit;
+    const rateProvider = options.ratePerSecond;
     this.push = new PushService({
       store: {
         has: (key) => this.sent.has(key),
@@ -102,8 +106,12 @@ export class ActivityNotificationService {
       },
       now: this.now,
       label: "activity notification",
-      dailyLimit: this.dailyLimit,
-      rateLimitPerSecond: options.ratePerSecond ?? 0,
+      get dailyLimit() {
+        return normalizeDailyLimit(valueOf(dailyLimitProvider));
+      },
+      get rateLimitPerSecond() {
+        return valueOf(rateProvider ?? 0);
+      },
     });
   }
 
@@ -112,7 +120,7 @@ export class ActivityNotificationService {
   }
 
   public get dailyNotifyLimit(): number {
-    return this.dailyLimit;
+    return normalizeDailyLimit(valueOf(this.dailyLimit));
   }
 
   public async load(): Promise<void> {

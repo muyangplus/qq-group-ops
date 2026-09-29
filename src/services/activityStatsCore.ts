@@ -1,6 +1,7 @@
 import { DEFAULT_ACTIVITY_STATS_FONT_URL } from "../config.js";
 import { compareLabels } from "../core/collation.js";
 import { getLogger } from "../core/logger.js";
+import type { Provider } from "../core/provider.js";
 import type {
   Activity,
   ActivityRegistration,
@@ -101,8 +102,8 @@ export interface ActivityStatsServiceOptions {
   readFontFile?: ((path: string) => Uint8Array | undefined) | undefined;
   /** 字体缓存目录；默认 `data/fonts`。 */
   fontCacheDir?: string | undefined;
-  /** 字体下载地址；默认 `DEFAULT_ACTIVITY_STATS_FONT_URL`。 */
-  fontUrl?: string | undefined;
+  /** 字体下载地址；默认 `DEFAULT_ACTIVITY_STATS_FONT_URL`。可传取值函数（热配置）。 */
+  fontUrl?: Provider<string> | undefined;
   /** 注入 canvas 模块加载器（缺省 `import("@napi-rs/canvas")`）。 */
   canvasLoader?: (() => Promise<CanvasModule>) | undefined;
   /** 注入渲染函数（排版固定，测试可断言绘制内容）。 */

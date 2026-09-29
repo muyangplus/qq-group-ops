@@ -2,6 +2,8 @@ import {
   SystemScheduler,
   type Scheduler,
 } from "../adapters/reconnectingWebSocketGateway.js";
+import type { Provider } from "../core/provider.js";
+import { valueOf } from "../core/provider.js";
 import { getLogger } from "../core/logger.js";
 
 const log = getLogger("tick-scheduler");
@@ -29,8 +31,8 @@ export interface TickTask {
 }
 
 export interface TickSchedulerOptions {
-  /** **统一扫描周期**（毫秒）；`<= 0` = 关闭所有周期任务（统一总开关）。 */
-  intervalMs: number;
+  /** **统一扫描周期**（毫秒）；`<= 0` = 关闭所有周期任务（统一总开关）。可传取值函数（热配置）。 */
+  intervalMs: Provider<number>;
   scheduler?: Scheduler;
   clock?: () => number;
   onError?: (task: string, error: unknown) => void;
@@ -55,7 +57,7 @@ export class TickScheduler {
   private readonly lastRun = new Map<string, number>();
   /** `runOnStart: false` 的任务：把「启动时那一次」跳过一次。 */
   private readonly skipNext = new Set<string>();
-  private readonly intervalMs: number;
+  private readonly intervalMs: Provider<number>;
   private readonly scheduler: Scheduler;
   private readonly clock: () => number;
   private readonly onError: (task: string, error: unknown) => void;
@@ -127,14 +129,14 @@ export class TickScheduler {
     if (this.running) {
       return;
     }
-    if (this.intervalMs <= 0) {
+    if (valueOf(this.intervalMs) <= 0) {
       log.info("tick scheduler disabled (intervalMs <= 0)");
       return;
     }
     this.running = true;
     this.scheduleNext();
     log.info("tick scheduler started", {
-      intervalMs: this.intervalMs,
+      intervalMs: valueOf(this.intervalMs),
       tasks: this.taskNames,
     });
   }
@@ -145,6 +147,15 @@ export class TickScheduler {
       this.scheduler.clearTimeout(this.timer);
       this.timer = undefined;
     }
+  }
+
+  /**
+   * 按**当前**周期重启节拍（`SCAN_INTERVAL_MS` 热改后用）：
+   * 改成 `0` 就停下，从 `0` 改成正数就重新跑起来。
+   */
+  public restart(): void {
+    this.stop();
+    this.start();
   }
 
   /** 固定节拍：到点就跑一轮；上一轮没跑完就跳过这一轮（overrun 保护）。 */
@@ -158,13 +169,13 @@ export class TickScheduler {
       if (this.running) {
         this.scheduleNext();
       }
-    }, this.intervalMs);
+    }, valueOf(this.intervalMs));
   }
 
   private tick(): void {
     if (this.inFlight) {
       log.warn("tick skipped: previous round still running", {
-        intervalMs: this.intervalMs,
+        intervalMs: valueOf(this.intervalMs),
         tasks: this.taskNames,
       });
       return;

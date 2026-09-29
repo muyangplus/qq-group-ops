@@ -1,6 +1,7 @@
 import type { AppealRecord } from "../db/appealRepository.js";
 import type { PunishmentRecord } from "../db/punishmentRepository.js";
 import { getLogger } from "../core/logger.js";
+import { valueOf, type Provider } from "../core/provider.js";
 import { PermissionLevel, PlatformLevel } from "../core/enums.js";
 import type { RichMessage } from "./richMessages.js";
 import {
@@ -40,7 +41,7 @@ export interface ModerationNotifierOptions {
    * 申诉只推给**一个**审核员（按订阅顺序轮转），超过这个时间仍未处理则转给下一位；
    * `<= 0` 表示不自动转派（只推第一人）。
    */
-  appealHoldMs?: number | undefined;
+  appealHoldMs?: Provider<number> | undefined;
   /** 注入时钟便于测试。 */
   now?: (() => number) | undefined;
 }
@@ -71,7 +72,7 @@ export class ModerationNotifier {
   private readonly userLabel: (userId: string) => string;
   /** 只给短码的标签（申诉人卡片上的处理人）。 */
   private readonly userShortLabel: (userId: string) => string;
-  private readonly appealHoldMs: number;
+  private readonly appealHoldMs: Provider<number>;
   private readonly now: () => number;
   /** 申诉 → 当前值班人（内存态；重启后由值班轮转服务重新从第一人开始派发）。 */
   private readonly assignments = new Map<string, AppealAssignment>();
@@ -152,7 +153,7 @@ export class ModerationNotifier {
     appeal: AppealRecord,
     punishment: PunishmentRecord,
   ): Promise<boolean> {
-    if (this.appealHoldMs <= 0) {
+    if (valueOf(this.appealHoldMs) <= 0) {
       return false;
     }
     const audience = this.appealAudience(appeal.groupId);
@@ -171,7 +172,7 @@ export class ModerationNotifier {
       );
       return first !== undefined;
     }
-    if (this.now() - current.assignedAt < this.appealHoldMs) {
+    if (this.now() - current.assignedAt < valueOf(this.appealHoldMs)) {
       return false;
     }
     const nextAttempt = current.attempt + 1;
