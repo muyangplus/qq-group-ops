@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import type { KeyboardModal } from "../../adapters/qqOfficial.js";
 import { AuditStatus, PlatformLevel } from "../../core/enums.js";
 import { encodeCallback } from "../callbackData.js";
 import { renderCard } from "../cardTemplate.js";
@@ -12,16 +11,6 @@ import {
   viewButtonWithOptions,
   type CardResult,
 } from "./support.js";
-
-/** 迁移前的二次确认弹窗（与「重启」「恢复继承」同一套不可逆动作规范）。 */
-export function confirmMigrateModal(): KeyboardModal {
-  return {
-    content:
-      "确认迁移？会改写库里的旧格式数据（老处罚字段 / 四位年级 / 小写短码），执行前请确认已经备份。",
-    confirmText: "确认迁移",
-    cancelText: "取消",
-  };
-}
 
 function isSuperAdmin(ctx: AdminCommandContext, userId: string): boolean {
   return ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin);

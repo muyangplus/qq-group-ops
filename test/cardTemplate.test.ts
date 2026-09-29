@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildKeyboard,
+  CARD_MODAL_ACTION_MAX,
+  CARD_MODAL_CONTENT_MAX,
   escapeCardText,
   renderCard,
 } from "../src/services/cardTemplate.js";
@@ -45,6 +47,61 @@ describe("cardTemplate", () => {
       rows: [[{ id: "a", label: "这是一个很长的按钮文字", command: "/x" }]],
     });
     expect(message.keyboard?.content.rows[0]?.buttons[0]?.label).toHaveLength(10);
+  });
+
+  /**
+   * 真机事故回归：`/migrate` 的二次确认弹窗文案 49 字，超过官方 `action.modal.content`
+   * 的 40 字上限 → 官方判整个 payload 非法 → **整张卡片的按钮全部消失**
+   * （用户看到「卡片上什么按钮都没有」，而其它弹窗都在限额内、一切正常）。
+   */
+  it("clamps over-long modal texts instead of losing the whole keyboard", () => {
+    const message = renderCard({
+      title: "t",
+      rows: [
+        [
+          {
+            id: "m",
+            label: "迁移",
+            callbackData: "cb:migrate:run",
+            modal: {
+              content: "确".repeat(49),
+              confirmText: "确认迁移",
+              cancelText: "取消",
+            },
+          },
+        ],
+      ],
+    });
+
+    const action = message.keyboard?.content.rows[0]?.buttons[0]?.action;
+    expect(action?.modal?.content).toHaveLength(CARD_MODAL_CONTENT_MAX);
+    expect(action?.modal?.content.endsWith("…")).toBe(true);
+    // 4 字以内的按钮文字不动
+    expect(action?.modal?.confirmText).toBe("确认迁移");
+    // 键盘本身必须完好：按钮一个都不能丢
+    expect(message.keyboard?.content.rows[0]?.buttons).toHaveLength(1);
+    expect(message.keyboard?.content.rows[0]?.buttons[0]?.id).toBe("m");
+
+    // 确认 / 取消文字超 4 字同样裁剪
+    const clampedActions = renderCard({
+      title: "t",
+      rows: [
+        [
+          {
+            id: "m",
+            label: "迁移",
+            callbackData: "cb:migrate:run",
+            modal: {
+              content: "确认？",
+              confirmText: "确认执行迁移",
+              cancelText: "先不要执行",
+            },
+          },
+        ],
+      ],
+    }).keyboard?.content.rows[0]?.buttons[0]?.action;
+    expect(clampedActions?.modal?.confirmText).toHaveLength(CARD_MODAL_ACTION_MAX);
+    expect(clampedActions?.modal?.cancelText).toHaveLength(CARD_MODAL_ACTION_MAX);
   });
 
   it("rejects keyboards outside the project limits", () => {

@@ -4,6 +4,7 @@ import type {
   KeyboardModal,
   KeyboardPayload,
 } from "../adapters/qqOfficial.js";
+import { getLogger } from "../core/logger.js";
 import type { RichMessage } from "./richMessages.js";
 
 /**
@@ -33,6 +34,10 @@ export const CARD_MAX_BUTTONS_PER_ROW = 5;
  * （开关类一行 2 个约 8-10 字，导航类一行 3 个约 8-12 字）。超过就要拆行或拆子卡。
  */
 export const CARD_MAX_ROW_TEXT_LENGTH = 12;
+/** 官方限制：二次确认弹窗正文最多 40 个字符（且不能包含 URL）。 */
+export const CARD_MODAL_CONTENT_MAX = 40;
+/** 官方限制：弹窗的确认 / 取消按钮文字最多 4 个字符。 */
+export const CARD_MODAL_ACTION_MAX = 4;
 
 /** 一个按钮：`command`（指令按钮）或 `callbackData`（回调按钮）二选一。 */
 export interface CardButton {
@@ -252,7 +257,7 @@ function toKeyboardButton(
           unsupportTips: button.unsupportTips ?? DEFAULT_UNSUPPORT_TIPS,
           // 回调按钮同样支持二次确认：报名 / 取消报名 / 取消活动这类不可逆动作
           // 需要先弹官方 modal，避免误点（官方 `action.modal` 对 type=1 有效）。
-          ...(button.modal !== undefined ? { modal: button.modal } : {}),
+          ...(button.modal !== undefined ? { modal: clampModal(button.modal) } : {}),
         }
       : {
           type: 2,
@@ -265,7 +270,7 @@ function toKeyboardButton(
           enter: button.fillOnly !== true,
           reply: false,
           unsupportTips: button.unsupportTips ?? DEFAULT_UNSUPPORT_TIPS,
-          ...(button.modal !== undefined ? { modal: button.modal } : {}),
+          ...(button.modal !== undefined ? { modal: clampModal(button.modal) } : {}),
         },
   };
 }
@@ -275,6 +280,48 @@ function clampLabel(label: string): string {
   return trimmed.length > CARD_BUTTON_LABEL_MAX
     ? trimmed.slice(0, CARD_BUTTON_LABEL_MAX)
     : trimmed;
+}
+
+/**
+ * 二次确认弹窗的统一裁剪（官方 `action.modal` 有长度上限）。
+ *
+ * **超限的 modal 会让官方判整个 payload 非法**：真机上表现为**整张卡片的按钮全部消失**
+ * （`/migrate` 的弹窗文案 49 字 > 40 字，用户看到的就是「卡片上什么按钮都没有」，
+ * 而其它弹窗都在限额内、一切正常）。所以这里统一裁剪到官方上限：宁可弹窗文案被截短，
+ * 也不能让按钮跟着一起丢。裁剪发生时打 warn，方便在日志里发现文案写长了。
+ */
+function clampModal(modal: KeyboardModal): KeyboardModal {
+  const content = clampModalText(modal.content, CARD_MODAL_CONTENT_MAX);
+  const confirmText =
+    modal.confirmText === undefined
+      ? undefined
+      : clampModalText(modal.confirmText, CARD_MODAL_ACTION_MAX);
+  const cancelText =
+    modal.cancelText === undefined
+      ? undefined
+      : clampModalText(modal.cancelText, CARD_MODAL_ACTION_MAX);
+  if (
+    content === modal.content &&
+    confirmText === modal.confirmText &&
+    cancelText === modal.cancelText
+  ) {
+    return modal;
+  }
+  getLogger("cardTemplate").warn("卡片二次确认弹窗文案超限，已自动裁剪", {
+    content: modal.content,
+    confirmText: modal.confirmText,
+    cancelText: modal.cancelText,
+  });
+  return {
+    content,
+    ...(confirmText !== undefined ? { confirmText } : {}),
+    ...(cancelText !== undefined ? { cancelText } : {}),
+  };
+}
+
+function clampModalText(text: string, max: number): string {
+  const trimmed = text.trim();
+  return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
 }
 
 function plainTitle(title: string): string {
