@@ -1,4 +1,5 @@
 import { getLogger } from "../core/logger.js";
+import type { BackupResult } from "./dbBackup.js";
 import type { ActivityDetails } from "./activity.js";
 import type { ActivityDetailsRepository } from "../db/activityDetailsRepository.js";
 import type {
@@ -51,6 +52,8 @@ export interface DataMigrationDeps {
   profiles?: UserProfileRepository | undefined;
   activityDetails?: ActivityDetailsRepository | undefined;
   shortCodes?: ShortCodeRepository | undefined;
+  /** 迁移**执行前**自动备份数据库（SQLite 文件副本）；缺省表示不备份。 */
+  backup?: (() => Promise<BackupResult> | BackupResult) | undefined;
   /** 新短码 / 活动码生成器：线上用与业务同一份全局码池，保证不与现有码重码。 */
   generateCode: () => string;
   /** 迁移完成后重载内存态（配置 / 个人资料 / 短码 / 活动）。 */
@@ -105,6 +108,8 @@ export class DataMigrationService {
   private readonly activityDetails: ActivityDetailsRepository | undefined;
   private readonly shortCodes: ShortCodeRepository | undefined;
   private readonly generateCode: () => string;
+  private readonly backup: (() => Promise<BackupResult> | BackupResult) | undefined;
+  private backupResult: BackupResult | undefined;
   private readonly reload: (() => Promise<void>) | undefined;
 
   public constructor(deps: DataMigrationDeps) {
@@ -113,6 +118,7 @@ export class DataMigrationService {
     this.activityDetails = deps.activityDetails;
     this.shortCodes = deps.shortCodes;
     this.generateCode = deps.generateCode;
+    this.backup = deps.backup;
     this.reload = deps.reload;
   }
 
@@ -132,6 +138,11 @@ export class DataMigrationService {
   }
 
   /** 执行迁移（幂等）：先扫描再改写，改完重载内存态。返回本次改写的条数。 */
+  /** 最近一次迁移前的自动备份结果（卡片用它展示备份到哪了）。 */
+  public get lastBackup(): BackupResult | undefined {
+    return this.backupResult;
+  }
+
   public async run(): Promise<MigrationCounts> {
     if (!this.persistent) {
       throw new Error("数据迁移需要已连接的数据库");
@@ -141,6 +152,8 @@ export class DataMigrationService {
     if (totalPending(counts) === 0) {
       return counts;
     }
+    // 先备份再改写：备份失败只警告，不拦住迁移（卡片上如实显示）
+    this.backupResult = await this.runBackup();
     await this.apply(scan);
     await this.reload?.();
     log.info("legacy data migrated", { ...counts });
@@ -241,6 +254,25 @@ export class DataMigrationService {
       }
     }
     return result;
+  }
+
+  private async runBackup(): Promise<BackupResult | undefined> {
+    if (!this.backup) {
+      return undefined;
+    }
+    try {
+      const result = await this.backup();
+      if (result.ok) {
+        log.info("database backed up before migration", { path: result.path });
+      } else {
+        log.warn("database backup failed before migration", { detail: result.detail });
+      }
+      return result;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      log.warn("database backup threw before migration", { error: detail });
+      return { ok: false, detail };
+    }
   }
 
   private async apply(scan: ScanResult): Promise<void> {

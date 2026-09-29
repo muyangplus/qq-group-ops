@@ -166,6 +166,14 @@ export async function migrateRunCard(
   }
   const counts = await ctx.migrate!.run();
   const changed = totalPending(counts) > 0;
+  const backup = ctx.migrate!.lastBackup;
+  const backupLines = backup
+    ? backup.ok
+      ? [`**已自动备份**：\`${backup.path ?? ""}\``]
+      : backup.skipped !== undefined
+        ? [`**未自动备份**：${backup.skipped}`]
+        : [`**自动备份失败**：${backup.detail}（迁移仍已执行）`]
+    : [];
   ctx.auditLog.append({
     recordId: randomUUID(),
     // 平台级动作不挂在任何群上（与全局黑名单 / 授权同一口径）
@@ -183,6 +191,7 @@ export async function migrateRunCard(
       ? "已把库里的旧格式数据转成现行格式："
       : "没有需要改写的项，库里的数据已经是现行格式。",
     ...(changed ? ["", "本次改写：", ...countLines(counts)] : []),
+    ...(backupLines.length > 0 ? ["", ...backupLines] : []),
   ].join("\n");
   return cardFromText("数据迁移完成", text, {
     rows: [

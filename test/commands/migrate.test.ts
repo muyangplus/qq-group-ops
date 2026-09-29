@@ -52,6 +52,12 @@ describe("AdminCommandService · /migrate", () => {
       activityDetails: new FakeMigrationActivityDetailsRepository(),
       shortCodes: new FakeMigrationShortCodeRepository(),
       generateCode: () => "AAA111",
+      // 执行前自动备份（真实现见 src/services/dbBackup.ts）
+      backup: () => ({
+        ok: true,
+        path: "data/qq-group-ops_20260929_114503.db",
+        detail: "已备份",
+      }),
       reload: async () => {
         reloads += 1;
       },
@@ -119,6 +125,12 @@ describe("AdminCommandService · /migrate", () => {
     // 确认卡本身还不改库
     expect(localStorage()).toContain("你好");
     expect(reloads).toBe(0);
+  });
+
+  it("执行前自动备份，并在结果卡上写明备份文件", async () => {
+    const result = await service.migrateRunCard("root", undefined);
+    expect(result.rich.markdown).toContain("已自动备份");
+    expect(result.rich.markdown).toContain("qq-group-ops_20260929_114503.db");
   });
 
   it("文本兜底：`/migrate run` 直接执行（按钮没渲染时手输也能走）", async () => {

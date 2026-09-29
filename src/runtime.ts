@@ -88,6 +88,7 @@ import { PermissionService } from "./services/permissions.js";
 import { PunishmentService } from "./services/punishments.js";
 import { RichMessageSender } from "./services/richMessages.js";
 import { DataMigrationService } from "./services/dataMigration.js";
+import { backupDatabase } from "./services/dbBackup.js";
 import { HealthRegistry } from "./services/health.js";
 import {
   reserveGlobalCode,
@@ -375,6 +376,8 @@ export function createRuntime(
     activityDetails: repositories.activityDetails,
     shortCodes: repositories.shortCodes,
     generateCode: () => reserveGlobalCode(SHORT_CODE_LENGTH),
+    // 迁移执行前自动备份数据库（SQLite 文件副本）
+    backup: () => backupDatabase(settings.databaseTarget),
     reload: async () => {
       await Promise.all([
         configStore.load(),
