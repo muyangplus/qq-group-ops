@@ -107,15 +107,48 @@ export async function migrateCard(
       [
         ...(pending
           ? [
-              viewButtonWithOptions(
-                "run",
-                "开始迁移",
-                encodeCallback("migrate", "run"),
-                { modal: confirmMigrateModal() },
-              ),
+              // 不用官方 `modal`（内邀能力，未开通时客户端会把这个按钮整个丢掉）：
+              // 点一下出**确认卡**，再点「确定开始」才真正迁移。
+              viewButton("run", "开始迁移", "migrate", "request"),
             ]
           : []),
         viewButton("help", "指令帮助", "help", "topic", "migrate"),
+      ],
+    ],
+  });
+}
+
+/**
+ * 回调 `cb:migrate:request`：**确认卡**（不依赖官方弹窗的两步确认）。
+ *
+ * 「开始迁移」→ 本卡列出待改写条数 + 备份提醒 → 「确定开始」才执行。
+ */
+export async function migrateConfirmCard(
+  ctx: AdminCommandContext,
+  userId: string,
+  groupId: string | undefined,
+): Promise<CardResult> {
+  const guard = blocked(ctx, userId, groupId);
+  if (guard) {
+    return guard;
+  }
+  const counts = await ctx.migrate!.plan();
+  const text = [
+    "确认现在迁移吗？**会改写数据库里的老格式数据**（不可撤销，除非你回滚备份）。",
+    "",
+    "将改写：",
+    ...countLines(counts),
+    "",
+    "执行前请确认已经备份数据库；迁移幂等，重复执行不会重复改写。",
+    totalPending(counts) > 0
+      ? ""
+      : "（当前扫描没有待改写项，确定也无事发生。）",
+  ].join("\n");
+  return cardFromText("确认迁移", text, {
+    rows: [
+      [
+        viewButton("confirm", "确定开始", "migrate", "run"),
+        viewButton("cancel", "取消", "migrate", "preview"),
       ],
     ],
   });

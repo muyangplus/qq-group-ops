@@ -100,8 +100,34 @@ describe("AdminCommandService · /migrate", () => {
     expect(reloads).toBe(0);
 
     const keyboard = JSON.stringify(result.rich.keyboard);
+    // 两步确认：先出确认卡（`cb:migrate:request`），点「确定开始」才 `cb:migrate:run`
+    expect(keyboard).toContain("cb:migrate:request");
+    expect(keyboard).not.toContain("cb:migrate:run");
+    // 不用官方 `modal`（内邀能力）：客户端不认时会把**整块键盘**丢掉，卡上什么按钮都没有
+    expect(keyboard).not.toContain("modal");
+  });
+
+  it("确认卡：列出条数 + 备份提醒，点「确定开始」才执行", async () => {
+    const confirm = await service.migrateConfirmCard("root", undefined);
+
+    expect(confirm.rich.markdown).toContain("确认迁移");
+    expect(confirm.rich.markdown).toContain("群配置键值：1 行");
+    expect(confirm.rich.markdown).toContain("备份数据库");
+    const keyboard = JSON.stringify(confirm.rich.keyboard);
     expect(keyboard).toContain("cb:migrate:run");
-    expect(keyboard).toContain("modal");
+    expect(keyboard).toContain("cb:migrate:preview");
+    // 确认卡本身还不改库
+    expect(localStorage()).toContain("你好");
+    expect(reloads).toBe(0);
+  });
+
+  it("文本兜底：`/migrate run` 直接执行（按钮没渲染时手输也能走）", async () => {
+    const result = await service.handle(undefined, "root", "/migrate run");
+
+    expect(result.rich.markdown).toContain("数据迁移完成");
+    expect(settings.rows.get("g1\u0000welcomeMessage")?.value).toBe(
+      JSON.stringify("你好"),
+    );
   });
 
   it("没有待迁移项时不提供「开始迁移」按钮", async () => {

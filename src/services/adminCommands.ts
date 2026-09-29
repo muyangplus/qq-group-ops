@@ -65,6 +65,7 @@ import {
 } from "./commands/deployCommands.js";
 import {
   migrateCard,
+  migrateConfirmCard as migrateConfirmCardImpl,
   migrateRefreshCard,
   migrateRunCard,
 } from "./commands/migrateCommands.js";
@@ -721,8 +722,17 @@ export class AdminCommandService {
       case "重启":
         return restartCard(this.context(), userId);
       case "migrate":
-      case "迁移":
+      case "迁移": {
+        const sub = (parts[1] ?? "").trim().toLowerCase();
+        // 文本兜底：卡片按钮没渲染出来时，手输也能走同一条路
+        if (["run", "confirm", "开始", "确定"].includes(sub)) {
+          return migrateRunCard(this.context(), userId, groupId);
+        }
+        if (["check", "preview", "检查", "预览"].includes(sub)) {
+          return migrateRefreshCard(this.context(), userId, groupId);
+        }
         return migrateCard(this.context(), userId, groupId);
+      }
       case "config":
       case "配置":
         return handleConfig(this.context(), groupId, userId, parts);
@@ -829,6 +839,14 @@ export class AdminCommandService {
     groupId: string | undefined,
   ): Promise<CardResult> {
     return migrateCard(this.context(), userId, groupId);
+  }
+
+  /** 回调：`cb:migrate:request` —— 迁移确认卡（不依赖官方弹窗的两步确认）。 */
+  public migrateConfirmCard(
+    userId: string,
+    groupId: string | undefined,
+  ): Promise<CardResult> {
+    return migrateConfirmCardImpl(this.context(), userId, groupId);
   }
 
   /** 回调：`cb:migrate:run` —— 执行迁移并回执。 */
