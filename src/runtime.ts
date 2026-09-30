@@ -534,13 +534,6 @@ export function createRuntime(
         if (!userId) {
           return undefined;
         }
-        if (parsed.action === "request") {
-          const card = await adminCommands.migrateConfirmCard(
-            userId,
-            event.groupId,
-          );
-          return card.rich;
-        }
         if (parsed.action === "run") {
           const card = await adminCommands.migrateRunCard(userId, event.groupId);
           return card.rich;

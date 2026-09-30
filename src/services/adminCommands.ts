@@ -65,7 +65,6 @@ import {
 } from "./commands/deployCommands.js";
 import {
   migrateCard,
-  migrateConfirmCard as migrateConfirmCardImpl,
   migrateRefreshCard,
   migrateRunCard,
 } from "./commands/migrateCommands.js";
@@ -839,14 +838,6 @@ export class AdminCommandService {
     groupId: string | undefined,
   ): Promise<CardResult> {
     return migrateCard(this.context(), userId, groupId);
-  }
-
-  /** 回调：`cb:migrate:request` —— 迁移确认卡（不依赖官方弹窗的两步确认）。 */
-  public migrateConfirmCard(
-    userId: string,
-    groupId: string | undefined,
-  ): Promise<CardResult> {
-    return migrateConfirmCardImpl(this.context(), userId, groupId);
   }
 
   /** 回调：`cb:migrate:run` —— 执行迁移并回执。 */

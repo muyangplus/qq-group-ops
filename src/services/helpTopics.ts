@@ -891,7 +891,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       ),
     body: () => [
       "用法：",
-      "  /migrate        在私信中打开迁移预览卡（点「开始迁移」→ 确认卡「确定开始」才执行）",
+      "  /migrate        在私信中打开迁移预览卡（点「开始迁移」→ 弹窗确认才执行）",
       "  /migrate run    直接执行（按钮渲染不出来时的文本兜底）；/migrate check 只重扫一次",
       "",
       "做什么：把库里早期版本写下的内容转成现行格式 ——",

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { AdminCommandService } from "../../src/services/adminCommands.js";
+import { confirmMigrateModal } from "../../src/services/commands/migrateCommands.js";
 import { DataMigrationService } from "../../src/services/dataMigration.js";
 import {
   auditLog,
@@ -106,25 +107,22 @@ describe("AdminCommandService · /migrate", () => {
     expect(reloads).toBe(0);
 
     const keyboard = JSON.stringify(result.rich.keyboard);
-    // 两步确认：先出确认卡（`cb:migrate:request`），点「确定开始」才 `cb:migrate:run`
-    expect(keyboard).toContain("cb:migrate:request");
-    expect(keyboard).not.toContain("cb:migrate:run");
-    // 不用官方 `modal`（内邀能力）：客户端不认时会把**整块键盘**丢掉，卡上什么按钮都没有
-    expect(keyboard).not.toContain("modal");
+    // 一键进入「开始迁移」→ 官方弹窗二次确认 → `cb:migrate:run` 才真正改写
+    expect(keyboard).toContain("cb:migrate:run");
+    // 弹窗文案必须压在官方 40 字上限以内（超限会让整块键盘一起丢，见 ADR-0054）
+    const modal = confirmMigrateModal();
+    expect(modal.content.length).toBeLessThanOrEqual(40);
+    expect(modal.confirmText?.length ?? 0).toBeLessThanOrEqual(4);
+    expect(modal.cancelText?.length ?? 0).toBeLessThanOrEqual(4);
+    expect(keyboard).toContain(modal.content);
   });
 
-  it("确认卡：列出条数 + 备份提醒，点「确定开始」才执行", async () => {
-    const confirm = await service.migrateConfirmCard("root", undefined);
-
-    expect(confirm.rich.markdown).toContain("确认迁移");
-    expect(confirm.rich.markdown).toContain("群配置键值：1 行");
-    expect(confirm.rich.markdown).toContain("备份数据库");
-    const keyboard = JSON.stringify(confirm.rich.keyboard);
-    expect(keyboard).toContain("cb:migrate:run");
-    expect(keyboard).toContain("cb:migrate:preview");
-    // 确认卡本身还不改库
-    expect(localStorage()).toContain("你好");
-    expect(reloads).toBe(0);
+  it("没有待迁移项时不提供「开始迁移」按钮", async () => {
+    settings.rows.clear();
+    const result = await service.handle(undefined, "root", "/migrate");
+    expect(result.ok).toBe(true);
+    expect(result.rich.markdown).toContain("（无）");
+    expect(JSON.stringify(result.rich.keyboard)).not.toContain("cb:migrate:run");
   });
 
   it("执行前自动备份，并在结果卡上写明备份文件", async () => {
@@ -140,14 +138,6 @@ describe("AdminCommandService · /migrate", () => {
     expect(settings.rows.get("g1\u0000welcomeMessage")?.value).toBe(
       JSON.stringify("你好"),
     );
-  });
-
-  it("没有待迁移项时不提供「开始迁移」按钮", async () => {
-    settings.rows.clear();
-    const result = await service.handle(undefined, "root", "/migrate");
-    expect(result.ok).toBe(true);
-    expect(result.rich.markdown).toContain("（无）");
-    expect(JSON.stringify(result.rich.keyboard)).not.toContain("cb:migrate:run");
   });
 
   it("回调 `cb:migrate:run` 才真正改写，并写审计", async () => {
