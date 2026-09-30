@@ -178,17 +178,20 @@ export class JoinApprovalService {
     reason = "",
   ): Promise<JoinRequest> {
     const request = this.requireRequest(groupId, requestId);
+    // 人工拒绝的理由是审核员手写的自由文本（`/reject <短码> <自定义理由>`）：
+    // 压成单行并截断，避免长文/换行撑坏官方 `reject_reason`
+    const normalizedReason = buildRejectReason(reason);
     await this.api.approveJoinRequest(groupId, request.userId, false, {
       joinRequestId: requestId,
-      ...(reason ? { reason } : {}),
+      ...(normalizedReason ? { reason: normalizedReason } : {}),
     });
     log.info("rejected join request", {
       groupId,
       requestId,
       reviewerId,
-      hasReason: reason.length > 0,
+      hasReason: normalizedReason.length > 0,
     });
-    return this.joinAudit.reject(requestId, reviewerId, reason);
+    return this.joinAudit.reject(requestId, reviewerId, normalizedReason);
   }
 
   private requireRequest(groupId: string, requestId: string): JoinRequest {
@@ -203,7 +206,7 @@ export class JoinApprovalService {
   }
 }
 
-/** 自动拒绝时把审核意见作为拒绝理由回传给官方（太长则截断）。 */
+/** 拒绝理由统一处理：压成单行（多行用「；」连接）并截断到 120 字；自动 / 人工两条路径共用。 */
 function buildRejectReason(opinion: string): string {
   const compact = opinion
     .split("\n")

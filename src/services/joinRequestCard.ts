@@ -14,8 +14,9 @@ import type { RichMessage } from "./richMessages.js";
  * **Markdown + 内嵌按钮**（`msg_type=2` + `keyboard`），所以这里的「卡片」
  * 就是 Markdown 正文 + 底部指令按钮：
  * - 「同意」→ 发送 `/approve <申请ID>`
- * - 「拒绝」→ 发送 `/reject <申请ID> <原因>`
- * - 第二行是预设拒绝原因，一键把常用回复作为拒绝理由提交
+ * - 「拒绝」→ 发送 `/reject <申请ID> <默认拒因>`（一键，默认文案见 `DEFAULT_REJECT_REASON`）
+ * - 「自定义理由」→ 只把 `/reject <申请ID> ` 填进输入框（官方 `enter:false`），
+ *   审核员接在后面写自己的拒绝文案，再手动发送
  *
  * 布局交给统一的 `cardTemplate` 渲染，因此与系统菜单、活动卡片保持同一套
  * 「标题 + 正文 + 按钮 + 底部提示」结构与同一份纯文本降级。
@@ -65,24 +66,15 @@ const AUTO_DECISION_LABELS: Record<"auto_approved" | "auto_rejected", string> = 
   auto_rejected: "已自动拒绝（按入群规则）",
 };
 
-/** 预设拒绝理由：一键拒绝并把原因作为官方 `reject_reason` 回给申请人。 */
-export const JOIN_REJECT_PRESETS = [
-  {
-    id: "reject-answer",
-    label: "回答错误",
-    reason: "请正确回答问题。",
-  },
-  {
-    id: "reject-class",
-    label: "班级姓名",
-    reason: "请回答正确的班级姓名（如：环工2214小明）。",
-  },
-] as const;
+/**
+ * 一键拒绝的默认理由。`/reject <申请短码>` **不写理由时也用它**（见 `reviewCommands` 的
+ * 拒绝处理），保证「点按钮」与「手输指令」得到的拒因完全一致。
+ */
+export const DEFAULT_REJECT_REASON = "请正确回答问题。";
 
 /** 官方按钮样式：0 灰色线框 / 1 蓝色线框 / 3 白底红字 / 4 蓝底白字。 */
 const STYLE_PRIMARY = 1 as const;
 const STYLE_DANGER = 3 as const;
-const DEFAULT_REJECT_REASON = "审核未通过";
 
 export function buildJoinRequestCard(
   input: JoinRequestCardInput,
@@ -90,7 +82,7 @@ export function buildJoinRequestCard(
   return renderCard(buildJoinRequestSpec(input));
 }
 
-/** 按钮不可用时的纯文本降级内容（包含同样的指令与预设拒因）。 */
+/** 按钮不可用时的纯文本降级内容（包含同样的指令与自定义理由模板）。 */
 export function renderJoinRequestCardText(input: JoinRequestCardInput): string {
   return renderCard(buildJoinRequestSpec(input)).text;
 }
@@ -135,17 +127,15 @@ function buildJoinRequestSpec(input: JoinRequestCardInput): CardSpec {
   }
 
   if (input.withButtons === false) {
-    // 没有按钮时把指令（含预设拒因）写进正文，否则这条消息无法直接审批
+    // 没有按钮时把指令（含自定义理由模板）写进正文，否则这条消息无法直接审批
     return {
       title: "新的入群申请",
       lines,
       footer: [
         "请审核（按钮不可用，可直接发送指令）：",
         `同意：${approveCommand}`,
-        `拒绝：${rejectCommandFor("[原因]")}`,
-        ...JOIN_REJECT_PRESETS.map(
-          (preset) => `${preset.label}：${rejectCommandFor(preset.reason)}`,
-        ),
+        `拒绝（默认理由）：${rejectCommandFor(DEFAULT_REJECT_REASON)}`,
+        `自定义理由：/reject ${input.requestId} <你的拒绝理由>`,
       ],
     };
   }
@@ -170,17 +160,27 @@ function buildJoinRequestSpec(input: JoinRequestCardInput): CardSpec {
           },
         },
         rejectButton(input, "reject", "拒绝", DEFAULT_REJECT_REASON, rejectCommandFor),
+        customRejectButton(input),
       ],
-      JOIN_REJECT_PRESETS.map((preset) =>
-        rejectButton(
-          input,
-          `reject-${preset.id}`,
-          preset.label,
-          preset.reason,
-          rejectCommandFor,
-        ),
-      ),
     ],
+  };
+}
+
+/**
+ * 「自定义理由」按钮：只把 `/reject <申请ID> ` 填进输入框（官方 `enter:false`），
+ * 审核员接在后面写自己的拒绝文案再发送——预置拒因已去掉，理由完全自定义。
+ *
+ * 语义是「填草稿」而不是「执行」，所以**不加** `modal` 二次确认（真正的确认是用户自己按下发送）。
+ */
+function customRejectButton(input: JoinRequestCardInput): CardButton {
+  return {
+    id: "reject-custom",
+    label: "自定义理由",
+    style: STYLE_DANGER,
+    command: `/reject ${input.requestId} `,
+    fillOnly: true,
+    // 同上：私信卡片不做客户端可见性限制
+    unsupportTips: `当前 QQ 版本不支持按钮，请直接发送 /reject ${input.requestId} <拒绝理由>`,
   };
 }
 

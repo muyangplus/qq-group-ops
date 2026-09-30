@@ -53,6 +53,22 @@ describe("JoinApprovalService", () => {
     expect(auditLog.all().at(-1)?.reason).toBe("资料不完整");
   });
 
+  it("compacts a multi-line custom reject reason into one line and caps its length", async () => {
+    joinAudit.submit("g1", "u1", "想加入", "r1");
+
+    await service.reject("g1", "r1", "admin", "资料不完整\n请补齐后重新申请");
+
+    // 审核员手写的自由文本同样要压成单行（官方 reject_reason 是单行字段）
+    expect(api.joinRequestReviews[0]?.reason).toBe("资料不完整；请补齐后重新申请");
+    expect(auditLog.all().at(-1)?.reason).toBe("资料不完整；请补齐后重新申请");
+
+    joinAudit.submit("g1", "u2", "想加入", "r2");
+    await service.reject("g1", "r2", "admin", "很".repeat(200));
+    const long = api.joinRequestReviews[1]?.reason ?? "";
+    expect(long).toHaveLength(121); // 120 字 + 省略号
+    expect(long.endsWith("…")).toBe(true);
+  });
+
   it("leaves local state untouched when the official call fails", async () => {
     joinAudit.submit("g1", "u1", "想加入", "r1");
     api.failJoinRequestApprovals = true;

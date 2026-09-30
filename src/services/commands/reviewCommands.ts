@@ -9,6 +9,7 @@ import {
 import { getLogger } from "../../core/logger.js";
 import type { AdminCommandContext } from "./context.js";
 import type { JoinRequest } from "../joinAudit.js";
+import { DEFAULT_REJECT_REASON } from "../joinRequestCard.js";
 import {
   actionButton,
   cardFromText,
@@ -167,7 +168,8 @@ export function pendingCard(
         ),
         style: 1,
       },
-      // 「拒绝」支持可选原因 → 保留指令按钮，用户可在发送前补上原因
+      // 「拒绝」一键按默认理由拒绝（带二次确认）；「自定义理由」只把指令填进输入框，
+      // 让审核员补自己的拒绝文案——两条路径都走 `/reject`，权限与审计完全一致
       actionButton(`reject-${code}`, "拒绝", `/reject ${code}`, {
         style: 3,
         modal: {
@@ -175,6 +177,10 @@ export function pendingCard(
           confirmText: "拒绝",
           cancelText: "取消",
         },
+      }),
+      actionButton(`reject-custom-${code}`, "自定义理由", `/reject ${code} `, {
+        style: 3,
+        fillOnly: true,
       }),
     ]);
   }
@@ -518,13 +524,16 @@ export async function handleReject(
       ok: false,
       text:
         "用法：\n" +
-        "  /reject <#申请短码> [原因]   群内 / 私信都可以（短码已定位该申请所属群）",
+        "  /reject <#申请短码> [原因]   群内 / 私信都可以（短码已定位该申请所属群）\n" +
+        `  不写原因时默认用「${DEFAULT_REJECT_REASON}」`,
     };
   }
   if (!ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.GroupAdmin)) {
     return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
   }
-  const reason = reasonParts.join(" ").trim();
+  // 不写理由时统一用默认文案（卡片「拒绝」按钮发的是同一条指令，因此两处口径一致）
+  const typedReason = reasonParts.join(" ").trim();
+  const reason = typedReason.length > 0 ? typedReason : DEFAULT_REJECT_REASON;
   try {
     const request = ctx.joinAudit.get(requestId);
     if (request.groupId !== targetGroupId) {
@@ -553,7 +562,7 @@ export async function handleReject(
   log.info("rejected join request", {
     requestId,
     userId,
-    hasReason: reason.length > 0,
+    hasReason: typedReason.length > 0,
   });
   return approvalResultCard(ctx,
     targetGroupId,

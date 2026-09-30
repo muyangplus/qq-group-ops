@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { NotificationDeliveryStatus } from "../src/core/enums.js";
 import {
   buildJoinRequestCard,
-  JOIN_REJECT_PRESETS,
+  DEFAULT_REJECT_REASON,
   renderJoinRequestCardText,
 } from "../src/services/joinRequestCard.js";
 
@@ -31,13 +31,12 @@ describe("join request card", () => {
     expect(card.markdown).not.toContain("/reject");
 
     const rows = card.keyboard?.content.rows ?? [];
+    // 预置拒因已去掉：只有一行「同意 / 拒绝 / 自定义理由」
+    expect(rows).toHaveLength(1);
     expect(rows[0]?.buttons.map((button) => button.label)).toEqual([
       "同意",
       "拒绝",
-    ]);
-    expect(rows[1]?.buttons.map((button) => button.label)).toEqual([
-      "回答错误",
-      "班级姓名",
+      "自定义理由",
     ]);
 
     const approve = rows[0]!.buttons[0]!;
@@ -52,33 +51,36 @@ describe("join request card", () => {
     expect(approve.action.modal?.content).toContain("确认");
   });
 
-  it("uses the red style for every reject button", () => {
+  it("uses the red style for reject buttons, and keeps the custom one fill-only", () => {
     const card = buildJoinRequestCard(input);
-    const rows = card.keyboard?.content.rows ?? [];
-    const rejectButtons = [rows[0]!.buttons[1]!, ...rows[1]!.buttons];
+    const buttons = card.keyboard?.content.rows[0]?.buttons ?? [];
+    const oneTapReject = buttons[1]!;
+    const customReject = buttons[2]!;
 
-    for (const button of rejectButtons) {
+    for (const button of [oneTapReject, customReject]) {
       // 官方样式 3 = 白色背景 + 红色字体（唯一的红色按钮样式）
       expect(button.style).toBe(3);
-      expect(button.visitedLabel).toBe("已拒绝");
       expect(button.action.type).toBe(2);
-      expect(button.action.enter).toBe(true);
     }
-    expect(rows[0]!.buttons[0]!.style).toBe(1);
+    // 一键拒绝：点击即发送（配 modal 二次确认）
+    expect(oneTapReject.visitedLabel).toBe("已拒绝");
+    expect(oneTapReject.action.enter).toBe(true);
+    // 自定义理由：只把草稿填进输入框（官方 enter:false），真正的确认是用户自己按发送
+    expect(customReject.action.enter).toBe(false);
+    expect(customReject.action.modal).toBeUndefined();
+    expect(buttons[0]!.style).toBe(1);
   });
 
-  it("sends the preset reject reasons as the rejection reason", () => {
+  it("rejects with the default reason and offers a custom draft", () => {
     const card = buildJoinRequestCard(input);
-    const presetButtons = card.keyboard?.content.rows[1]?.buttons ?? [];
+    const buttons = card.keyboard?.content.rows[0]?.buttons ?? [];
 
-    expect(presetButtons[0]?.action.data).toBe("/reject r1 请正确回答问题。");
-    expect(presetButtons[1]?.action.data).toBe(
-      "/reject r1 请回答正确的班级姓名（如：环工2214小明）。",
-    );
-    expect(JOIN_REJECT_PRESETS.map((preset) => preset.label)).toEqual([
-      "回答错误",
-      "班级姓名",
-    ]);
+    // 一键拒绝：默认文案就是官方 reject_reason 里的内容
+    expect(DEFAULT_REJECT_REASON).toBe("请正确回答问题。");
+    expect(buttons[1]?.action.data).toBe(`/reject r1 ${DEFAULT_REJECT_REASON}`);
+    // 自定义理由：草稿末尾留一个空格，审核员接着写自己的拒绝文案
+    expect(buttons[2]?.action.data).toBe("/reject r1 ");
+    expect(buttons[2]?.action.enter).toBe(false);
   });
 
   it("shows a bound applicant QQ number instead of the openid", () => {
@@ -143,20 +145,18 @@ describe("join request card", () => {
     expect(card.markdown).toContain("> 建议：通过");
   });
 
-  it("falls back to text commands with the presets when buttons are disabled", () => {
+  it("falls back to text commands when buttons are disabled", () => {
     const card = buildJoinRequestCard({ ...input, withButtons: false });
     expect(card.keyboard).toBeUndefined();
     expect(card.markdown).toContain("**申请ID**：r1");
     expect(card.markdown).toContain("请审核（按钮不可用，可直接发送指令）：");
     // 文本里的指令用已绑定的群号（同样能被 /approve、/reject 解析）
     expect(card.markdown).toContain("同意：/approve r1");
-    expect(card.markdown).toContain("拒绝：/reject r1 [原因]");
     expect(card.markdown).toContain(
-      "回答错误：/reject r1 请正确回答问题。",
+      `拒绝（默认理由）：/reject r1 ${DEFAULT_REJECT_REASON}`,
     );
-    expect(card.markdown).toContain(
-      "班级姓名：/reject r1 请回答正确的班级姓名（如：环工2214小明）。",
-    );
+    // 自定义理由只给模板，审核员照着补自己的文案
+    expect(card.markdown).toContain("自定义理由：/reject r1 <你的拒绝理由>");
     expect(card.markdown).not.toContain("/reject 654321");
   });
 
@@ -176,12 +176,10 @@ describe("join request card", () => {
     expect(text).toContain("【新的入群申请】");
     expect(text).toContain("申请ID：r1");
     expect(text).toContain("同意：/approve r1");
-    // 统一模板的纯文本降级直接列出每个按钮对应的完整指令（不再有 [原因] 占位符）
-    expect(text).toContain("拒绝：/reject r1 审核未通过");
-    expect(text).toContain("回答错误：/reject r1 请正确回答问题。");
-    expect(text).toContain(
-      "班级姓名：/reject r1 请回答正确的班级姓名（如：环工2214小明）。",
-    );
+    // 统一模板的纯文本降级直接列出每个按钮对应的完整指令
+    // （一键拒绝带默认文案；「自定义理由」是 fill-only 草稿，正文里的模板见卡片页脚）
+    expect(text).toContain(`拒绝：/reject r1 ${DEFAULT_REJECT_REASON}`);
+    expect(text).toContain("自定义理由：/reject r1");
     expect(text).toContain("建议：人工核实");
   });
 

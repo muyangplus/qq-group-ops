@@ -1,6 +1,7 @@
 import { JoinRequestStatus } from "../../src/core/enums.js";
 import { AdminCommandService } from "../../src/services/adminCommands.js";
 import { JoinRuleEvaluator } from "../../src/services/joinRules.js";
+import { DEFAULT_REJECT_REASON } from "../../src/services/joinRequestCard.js";
 import { MemberRoster } from "../../src/services/memberRoster.js";
 import { NOTIFY_SCOPE_ALL } from "../../src/services/notifications.js";
 import {
@@ -64,6 +65,25 @@ describe("AdminCommandService · review", () => {
         op: "decline",
         joinRequestId: "r1",
         reason: "资料不完整",
+      },
+    ]);
+  });
+
+  it("falls back to the default reason when /reject has no reason", async () => {
+    joinAudit.submit("g1", "u1", "想加入", "r1");
+    const result = await service.handle("g1", "admin", "/reject r1");
+
+    expect(result.ok).toBe(true);
+    expect(joinAudit.get("r1").status).toBe(JoinRequestStatus.Rejected);
+    // 手输不写理由时与卡片「拒绝」按钮口径一致（同一条默认文案）
+    expect(auditLog.all().at(-1)?.reason).toBe(DEFAULT_REJECT_REASON);
+    expect(api.joinRequestReviews).toEqual([
+      {
+        groupId: "g1",
+        memberOpenid: "u1",
+        op: "decline",
+        joinRequestId: "r1",
+        reason: DEFAULT_REJECT_REASON,
       },
     ]);
   });
@@ -227,6 +247,10 @@ describe("AdminCommandService · review", () => {
       type: 2,
       data: "/reject r1",
     });
+    // 「自定义理由」只把指令填进输入框（官方 enter:false），审核员接着写自己的拒绝文案
+    expect(
+      firstButtons.find((button) => button.id === "reject-custom-r1")?.action,
+    ).toMatchObject({ type: 2, data: "/reject r1 ", enter: false });
     // 翻页是回调
     expect(firstButtons.find((button) => button.id === "next")?.action).toMatchObject({
       type: 1,

@@ -128,11 +128,20 @@ describe("NotificationService", () => {
     expect(message.markdown).toContain("新的入群申请");
     const buttons = (
       message.keyboard as {
-        content: { rows: Array<{ buttons: Array<{ action: { data: string; permission: unknown } }> }> };
+        content: {
+          rows: Array<{
+            buttons: Array<{
+              action: { data: string; permission: unknown; enter?: boolean | undefined };
+            }>;
+          }>;
+        };
       }
     ).content.rows[0]!.buttons;
     expect(buttons[0]!.action.data).toBe("/approve r1");
-    expect(buttons[1]!.action.data).toBe("/reject r1 审核未通过");
+    expect(buttons[1]!.action.data).toBe("/reject r1 请正确回答问题。");
+    // 第三枚是 fill-only 的「自定义理由」草稿（预置拒因已去掉）
+    expect(buttons[2]!.action.data).toBe("/reject r1 ");
+    expect(buttons[2]!.action.enter).toBe(false);
     // 私信卡片不做客户端可见性限制（真机：specifyUserIds 会被误判「无权限操作」）
     expect(buttons[0]!.action.permission).toBeUndefined();
     expect(deliveries.rows.size).toBe(1);
