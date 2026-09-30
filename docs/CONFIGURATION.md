@@ -302,7 +302,7 @@ CLASS_RAW_FILE=data/class.json CLASS_INDEX_FILE=data/class-index.json \
 
 - 推送时机：默认只推送**仍需人工处理**的申请（`manual` / 规则无法判定）；群配置 `notifyAutoApproved on` 后，机器人自动通过/拒绝的申请也会推一张只读卡片（显示处理结果、无按钮）；
 - 接收者：订阅了该群（或全部群）**且**在当前群有审批权限的人；订阅持久化在 `notification_subscriptions`；
-- 卡片：Markdown 正文（群号、申请人+昵称、入群问题、回答、申请 ID、审核意见）+ 「同意 / 拒绝」指令按钮，第二行是两个红色预设拒因（回答错误 / 班级姓名），点击即把固定文案作为拒绝理由提交；按钮未开通（官方内邀）会自动降级为纯 Markdown → 纯文本（正文里会列出全部指令与预设拒因）；
+- 卡片：Markdown 正文（群号、申请人+昵称、入群问题、回答、申请 ID、审核意见）+ 「同意 / 拒绝 / 自定义理由」指令按钮；「拒绝」一键按默认拒因（`请正确回答问题。`）拒绝，「自定义理由」只把草稿填进输入框、由审核员写自己的拒绝文案；按钮未开通（官方内邀）会自动降级为纯 Markdown → 纯文本（正文里会列出全部指令与自定义理由模板）；
 - 回答来源：`verify_info.method = verify_message` 取 `verify_message`，`admin_review_qa` 取 `review_qa_list[].answer`（多个用空格拼接）；被邀请入群（`invited`）没有答案，班级类规则自动转人工；
 - 去重：同一 (群, 申请, 人) 只推一次，投递记录在 `notification_deliveries`，重启后不重复；
 - 推送是**主动消息**：用户可在 QQ 客户端关闭「允许主动发送」，失败只记日志，不影响 `/pending`。
