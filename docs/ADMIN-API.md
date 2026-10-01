@@ -19,13 +19,35 @@
 | 运维成本 | 需要 `.env` 配账号与会话密钥 | 需要为每个管理员手工发令牌 | 需要反代 + 内网限制 |
 | 失效手段 | 改密码 / 撤销会话即全失效 | 删白名单 / 令牌 | 断网 |
 
-**选 A**，理由：唯一能同时满足「多人多设备」「映射到现有 `userId` 做最小权限」「审计能落到人」的方案，
-且不依赖任何未取证能力；C 作为**附加层**（默认只监听 `127.0.0.1`，对外必须显式配置 + 反代 TLS）。
-B 的做法不浪费：改成 **机器调用用的 API token**（见 §3 E1-e），给 CI / 脚本只读访问。
+**选 B2：机器人私信一次性令牌 + 会话 cookie**（2026-09-29 改定）。理由：
 
-写操作的安全底座（A 方案必做）：会话 cookie 用 `HttpOnly + SameSite=Strict + Secure`（配了 TLS 时），
-登录失败按「IP + 账号」双维度限流并锁定，所有写操作校验自定义头（`X-Admin-Request: 1`）防 CSRF，
-CORS 默认关闭（同源部署）。
+- **少一类凭据**：服务器上不再存口令哈希，只存会话密钥；令牌本身**只存 `sha256`**，库泄露也拿不到可用令牌；
+- **身份天然正确**：令牌里带的就是 openid（= 机器人 `userId`），权限直接复用现有两轴模型（ADR-0050），`actor_id` 也不用手工映射；
+- **加人 / 移除复用现有能力**：默认门槛 = 平台超管（240），撤销超管即失去签发资格，不用改 `.env` 重启；
+- **爆破面小**：令牌是 32 字节随机串、一次性、默认 10 分钟 TTL；不需要"登录失败锁定"那套（只对兑换端点做 IP 限流）。
+
+流程：
+
+```text
+① 管理员私信机器人 /admin login   →  ② 机器人签发一次性令牌（私信里给链接 + 可粘贴的令牌）
+                                      ↓
+③ 浏览器打开 <ADMIN_API_PUBLIC_BASE_URL>/login?token=… （QQ 里链接点不动就手工粘贴令牌）
+                                      ↓
+④ POST /auth/token 兑换 → 校验（未用过 + 未过期 + 在有效期内）→ 标记已用 → 种会话 cookie
+```
+
+**令牌必须落库，不能只放内存**——这是 B2 的关键实现细节：签发方是**机器人进程**或 `pnpm admin:token`
+（CLI），兑换方是**独立的管理 API 进程**，三者是不同进程，内存里互相看不见；
+落库顺带解决了「重启后链接还有效」和「跨进程一次性」这两件事。
+表：`admin_api_tokens(token_hash PK, user_id, created_at, expires_at, used_at)`，
+`token_hash = sha256(明文令牌)`，兑换时 `used_at IS NULL` 才通过并立刻写下 `used_at`（一次性）。
+
+**应急入口（机器人挂了 / 私信收不到时）**：`pnpm admin:token --user=<openid|#短码>` 直接落一行令牌并把
+链接/令牌打到终端——能登服务器本来就是这个后台的最高信任级别，所以这条既简单又不降低安全性。
+
+写操作的安全底座（B2 同样需要）：会话 cookie 用 `HttpOnly + SameSite=Strict`（配了 TLS 再加 `Secure`），
+所有写操作校验自定义头（`X-Admin-Request: 1`）防 CSRF，CORS 默认关闭（同源部署），
+兑换端点按 IP 限流，登录 / 兑换 / 权限拒绝都写审计。
 
 ## 2. 运行形态对比
 
@@ -46,22 +68,33 @@ CD 产物已经包含 `dist/`，**默认关闭**即可零影响；开启与否�
 
 ### E1-a 骨架与安全底座（P0）
 
-1. `src/adminApi/`：`main.ts`（进程入口）+ `server.ts`（Fastify 装配）+ `routes/*`；`/healthz` 不鉴权，
-   只回 `{ ok, version, uptime }`（不暴露群 / 用户信息）；
+1. `src/adminApi/`：`main.ts`（进程入口）+ `server.ts`（Fastify 装配）+ `config.ts` / `session.ts` /
+   `rateLimit.ts` / `tokens.ts`（令牌仓储）；`/healthz` 不鉴权，只回 `{ ok, version, uptime }`
+   （不暴露群 / 用户信息）；
 2. 配置项进 `.env.example`：`ADMIN_API_ENABLED` / `ADMIN_API_HOST` / `ADMIN_API_PORT` /
-   `ADMIN_API_SESSION_SECRET` / `ADMIN_API_ACCOUNTS`（`user:scrypt$...`）；**这些属于核心安全项，不进 `/config` 热改**；
-3. 认证：`POST /auth/login`（scrypt 校验 + 会话 cookie）、`POST /auth/logout`、`GET /auth/me`；会话默认 12 小时滑动过期；
-4. 登录限流与锁定：按 IP + 账号计数（默认 15 分钟内 5 次失败锁 15 分钟），成功即清零；
-5. 全站限流：令牌桶，默认 60 req/min/会话（复用活动通知那套令牌桶思路）；
+   `ADMIN_API_SESSION_SECRET` / `ADMIN_API_COOKIE_SECURE` / `ADMIN_API_PUBLIC_BASE_URL` /
+   `ADMIN_API_TOKEN_TTL_MINUTES` / `ADMIN_API_ALLOWED_OPENIDS`（可选）/
+   `ADMIN_API_RATE_LIMIT_PER_MINUTE`；**这些属于核心安全项，不进 `/config` 热改**；
+3. 令牌表 `admin_api_tokens(token_hash PK, user_id, created_at, expires_at, used_at)` + 仓储：
+   `issue(userId, ttl)` 只把明文令牌返给调用方、库里只存 `sha256`；`redeem(token)` 一次性
+   （校验未用过 + 未过期 → 立刻写 `used_at`）；顺手清过期行；
+4. 兑换与登出：`POST /auth/token { token }`（校验 + 种会话 cookie）、`POST /auth/logout`、
+   `GET /auth/me`（返回 userId 与到期时间）；会话默认 12 小时滑动过期；
+5. 限流：兑换端点按 IP 滑窗（默认 10 次/分钟），会话级全站限流默认 60 req/min；
 6. CSRF：写操作必须带 `X-Admin-Request: 1`；CORS 默认关闭；
-7. 审计：登录成功 / 失败、权限拒绝、每个写操作都写 `audit_log`（平台级 `group_id = ""`，`actor_id` = 账号映射的 `userId`）。
+7. 审计：令牌签发 / 兑换（成功与失败）、权限拒绝、每个写操作都写 `audit_log`
+   （平台级 `group_id = ""`，`actor_id` = openid）。
 
 ### E1-b 身份与权限映射（P0）
 
-8. `ADMIN_API_ACCOUNTS` 的每个账号可带 `openid`：登录后映射成 `userId`，直接复用 `PermissionService` 两轴判定；
-   没配 openid 的账号按**只读 + 仅平台级状态**处理；
+8. 身份就是 openid：令牌兑换后拿到的 `userId` 直接进 `PermissionService` 两轴判定；签发端门槛 =
+   平台超管（240），可用 `ADMIN_API_ALLOWED_OPENIDS` 进一步收窄；
 9. 每个路由声明所需门槛（例：`GET /api/audit` 需某群 130 或平台 240），统一前置钩子判定，
-   失败返回 403 并写明原因，**同时写审计**。
+   失败返回 403 并写明原因，**同时写审计**；
+10. 机器人侧：`/admin login`（默认仅全局超管、只私信）→ 签发一次性令牌 → 私信链接与令牌；
+    `PUBLIC_BASE_URL` 没配时只给令牌（浏览器里手工粘贴）；
+11. 应急 CLI：`pnpm admin:token --user=<openid|#短码> [--ttl=10]` —— 直接落一行令牌并打印链接/令牌，
+    用于机器人不可用时（能登服务器 = 后台的最高信任级别）。
 
 ### E1-c 只读端点（P1）
 
@@ -80,8 +113,9 @@ CD 产物已经包含 `dist/`，**默认关闭**即可零影响；开启与否�
 
 ### E1-e 机器调用的 token（P2）
 
-19. `ADMIN_API_TOKENS`（`token:scope`，scope 形如 `read` / `read:pending`，可过期）：`Authorization: Bearer`，
-    只读优先；token 用 `crypto.timingSafeEqual` 比较，日志里只打 token 前缀。
+19. **机器调用 token**（与一次性登录令牌分开，长时有效、按 scope 限定）：`ADMIN_API_TOKENS`
+    （`token:scope`，如 `read` / `read:pending`，可配过期），`Authorization: Bearer`，
+    用 `crypto.timingSafeEqual` 比较，日志里只打 token 前缀。
 
 ### E1-f 可观测性与运维（P1）
 
@@ -107,7 +141,9 @@ CD 产物已经包含 `dist/`，**默认关闭**即可零影响；开启与否�
 
 ## 4. 明确不做（能力边界）
 
-- **不做 OAuth 扫码登录**：官方是否开放该能力未取证（见真机清单 R3/R18），且会话方案已满足需求；
+- **不做账号密码登录**：改用私信一次性令牌（B2），服务器上不存任何口令哈希；
+  机器人不可用时用 `pnpm admin:token` 应急（见 §1）；
+- **不做 OAuth 扫码登录**：官方是否开放该能力未取证（见真机清单 R3/R18），且 B2 已覆盖同一体验；
 - **不做多租户 / 按群隔离的独立账号体系**：权限复用现有两轴模型，账号只是「登录凭据」；
 - **管理 API 不暴露消息原文**：`RAW_MESSAGE_RETENTION_DAYS` 的短期原文只走机器人卡片，API 一律不返回；
 - **不在管理面提供个人数据删除**：那属于 `/data`（见 COMMANDS.md「个人数据删除 / 导出」），

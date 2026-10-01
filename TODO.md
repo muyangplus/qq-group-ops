@@ -33,25 +33,26 @@
 ### P2
 
 - [ ] **E1 管理 API**（批次4 · Phase 2）：设计（方案对比 + 分阶段计划）见
-  [docs/ADMIN-API.md](./docs/ADMIN-API.md)。**认证选账号密码 + 会话 cookie**（`ADMIN_API_ACCOUNTS` +
-  scrypt），**运行选独立入口**（`pnpm admin:api`，默认只监听 `127.0.0.1`、默认关闭）。
-  - [ ] **E1-a 骨架与安全底座**（P0）：`src/adminApi/`（入口 + Fastify 装配 + 路由）+ 免鉴权 `/healthz`；
-    `.env` 配置项（`ADMIN_API_ENABLED` / `HOST` / `PORT` / `SESSION_SECRET` / `ACCOUNTS`，属核心安全项、
-    不进 `/config`）；`POST /auth/login|logout` + `GET /auth/me`（scrypt 校验、12h 滑动会话、
-    `HttpOnly + SameSite=Strict`）；登录失败按 IP + 账号限流锁定；全站令牌桶限流；写操作校验
-    `X-Admin-Request: 1`；登录成功/失败与权限拒绝都写审计。
-  - [ ] **E1-b 身份与权限映射**（P0）：账号可配 `openid` → 映射成 `userId` → 复用现有两轴权限判定；
-    没配 openid 的账号只读且只看平台级状态；每个路由声明门槛，统一前置钩子判定（403 + 原因 + 审计）。
+  [docs/ADMIN-API.md](./docs/ADMIN-API.md)。**认证选 B2：机器人私信一次性令牌 + 会话 cookie**
+  （令牌落库、只存 `sha256`、一次性 + TTL；机器人不可用时用 `pnpm admin:token` 应急），
+  **运行选独立入口**（`pnpm admin:api`，默认只监听 `127.0.0.1`、默认关闭）。
+  - [ ] **E1-a 骨架与安全底座**（P0，进行中）：已落地 `src/adminApi/config.ts`（核心安全项 + fail-closed
+    校验）、`session.ts`（HMAC 签名 cookie + 滑动过期 + 上限淘汰）、`rateLimit.ts`（滑窗限流）与
+    `test/adminApi.test.ts`；**待做**：令牌表 `admin_api_tokens` + 仓储、`server.ts`（`/healthz`、
+    `/auth/token|logout`、`/auth/me`、CSRF 头、请求日志）、`main.ts` 入口、`.env.example`。
+  - [ ] **E1-b 身份与权限映射**（P0）：身份就是 openid（令牌里带）→ 直接复用现有两轴权限判定；
+    签发端门槛 = 平台 240（可用 `ADMIN_API_ALLOWED_OPENIDS` 收窄）；每个路由声明门槛，统一前置钩子
+    判定（403 + 原因 + 审计）；机器人侧 `/admin login` 指令与 `pnpm admin:token` 应急 CLI。
   - [ ] **E1-c 只读端点**（P1）：`/api/status`、`/api/pending`（分页）、`/api/audit`（过滤 + 分页）、
     `/api/rules?group=`、`/api/activities`（名单默认脱敏）、`/api/notify/topics`。
   - [ ] **E1-d 写端点**（P2，与 E2 一起）：审批通过 / 拒绝（复用 `JoinApprovalService`）、
     规则字段修改（复用 `parseRuleSetting`）、活动开停与 CSV 导出；全部写审计。
-  - [ ] **E1-e 机器 token**（P2）：`ADMIN_API_TOKENS`（`token:scope`、可过期、只读优先）、
+  - [ ] **E1-e 机器 token**（P2）：`ADMIN_API_TOKENS`（`token:scope`、可过期）——与一次性登录令牌分开，
     `Authorization: Bearer`、`timingSafeEqual` 比较、日志只打前缀。
   - [ ] **E1-f 可观测与运维**（P1）：结构化请求日志（路由 / 状态 / 耗时 / actor，不打凭据与 cookie）、
     `/status proc` 显示管理 API 监听地址与当前会话数、systemd 与 docker compose 单元示例。
-  - 退出条件：未登录 401 / 越权 403 且有审计 / 连续失败登录被锁 / 写操作都能在 `/audit` 查到
-    （actor = 登录账号）/ `ADMIN_API_ENABLED=false` 时完全不监听端口。
+  - 退出条件：未登录 401 / 越权 403 且有审计 / 令牌只能用一次且过期即失效 / 写操作都能在 `/audit` 查到
+    （actor = openid）/ `ADMIN_API_ENABLED=false` 时完全不监听端口。
 - [ ] **E2 Vue 3 + TypeScript 管理后台**（批次4 · Phase 2）：计划见
   [docs/ADMIN-API.md](./docs/ADMIN-API.md) 的 E2-a…E2-e。
   - [ ] **E2-a 脚手架**：`web/`（Vite + Vue 3 + TS + vue-router + pinia），`pnpm web:dev` / `pnpm web:build`
