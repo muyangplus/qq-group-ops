@@ -132,6 +132,86 @@ rand := strings.NewReader(seed[:ed25519.SeedSize])    // 取前 32 字节
 `webhook url validation answered` / `webhook request rejected: bad signature` 一起发出来 ——
 派生算法与握手签名内容都固定按官方实现（`WEBHOOK_KEY_DERIVATION` / `WEBHOOK_SIGN_CONTENT` 两个逃生舱已删除）。
 
+## 管理 API 进程（`pnpm admin:api`）
+
+与机器人**分开**的一个进程，默认**关闭**、默认只监听 `127.0.0.1`（设计与认证见 [ADMIN-API.md](./ADMIN-API.md)，
+配置项见 [CONFIGURATION.md](./CONFIGURATION.md) 的「管理 API」一节）。开启与部署：
+
+```bash
+# .env
+ADMIN_API_ENABLED=true
+ADMIN_API_HOST=127.0.0.1      # 对外由反向代理终结 TLS；不要直接 0.0.0.0
+ADMIN_API_PORT=8787
+ADMIN_API_SESSION_SECRET=<32 字符以上的随机串>
+ADMIN_API_PUBLIC_BASE_URL=https://ops.example.com
+ADMIN_API_COOKIE_SECURE=true  # 挂了 TLS 反代才开
+
+pnpm build && pnpm admin:api   # 启动（CD 产物已含 dist/，无需重新构建）
+curl -s http://127.0.0.1:8787/healthz   # 健康检查：{"ok":true,"version":…}
+```
+
+systemd（与机器人服务并列，两个 unit 各管一个进程）：
+
+```ini
+# /etc/systemd/system/qqops-admin-api.service
+[Unit]
+Description=qq-group-ops admin API
+After=network.target
+
+[Service]
+Type=simple
+User=qqops
+WorkingDirectory=/opt/qq-group-ops
+EnvironmentFile=/opt/qq-group-ops/.env
+ExecStart=/usr/bin/node dist/adminApi/main.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+docker compose（同一份镜像，换入口；与机器人 service 共用 `.env` 与数据卷）：
+
+```yaml
+services:
+  bot:
+    build: .
+    command: node dist/main.js
+    env_file: .env
+    volumes: ["./data:/app/data"]
+    restart: unless-stopped
+  admin-api:
+    build: .
+    command: node dist/adminApi/main.js
+    env_file: .env
+    volumes: ["./data:/app/data"]
+    ports: ["127.0.0.1:8787:8787"]   # 只发布到宿主机回环
+    restart: unless-stopped
+```
+
+反向代理只需要转发一个前缀（同源部署时管理后台的静态资源也走这里）：
+
+```nginx
+location / {
+  proxy_pass http://127.0.0.1:8787;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+排障速查：
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| `/healthz` 连不上 | `ADMIN_API_ENABLED` 没开、进程没起、或端口被占用（看启动日志 `admin api listening`） |
+| 登录 401 `invalid_token` | 令牌已用过 / 超过 10 分钟 TTL / 复制时漏字符 —— 重新 `/admin login` 或 `pnpm admin:token --user=<openid>` |
+| 登录 403 `csrf` | 页面之外的调用忘了带 `X-Admin-Request: 1` |
+| 429 `rate_limited` | 兑换端点每分钟 10 次、会话每分钟 `ADMIN_API_RATE_LIMIT_PER_MINUTE`（默认 60） |
+| 接口 503 | 管理 API 连着内存模式（没有数据库），或该数据源未装配 |
+| 想立刻踢掉所有人 | 换 `ADMIN_API_SESSION_SECRET` 并重启管理 API（会话与 cookie 签名一起失效） |
+
 ## 迎新晚会
 材料学院迎新联欢，欢迎参加。
 
