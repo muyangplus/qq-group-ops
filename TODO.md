@@ -55,8 +55,10 @@
     规则字段修改（复用 `parseRuleSetting`）、活动开停与 CSV 导出；全部写审计。
   - [ ] **E1-e 机器 token**（P2）：`ADMIN_API_TOKENS`（`token:scope`、可过期）——与一次性登录令牌分开，
     `Authorization: Bearer`、`timingSafeEqual` 比较、日志只打前缀。
-  - [ ] **E1-f 可观测与运维**（P1）：结构化请求日志（路由 / 状态 / 耗时 / actor，不打凭据与 cookie）、
-    `/status proc` 显示管理 API 监听地址与当前会话数、systemd 与 docker compose 单元示例。
+  - [x] **E1-f 可观测与运维**（P1）：`/api/status` 报告版本 / 运行时长 / 数据库类型 / 迁移问题数 /
+    **有效令牌数** / 当前会话数；请求日志为结构化一行（路由 / 状态 / 耗时 / actor，不打凭据与 cookie）；
+    [OPERATIONS.md](./docs/OPERATIONS.md) 新增「管理 API 进程」一节（`.env` 要点 + systemd unit +
+    docker compose + nginx 反代 + 排障速查表）。
   - 退出条件：未登录 401 / 越权 403 且有审计 / 令牌只能用一次且过期即失效 / 写操作都能在 `/audit` 查到
     （actor = openid）/ `ADMIN_API_ENABLED=false` 时完全不监听端口。
 - [ ] **E2 Vue 3 + TypeScript 管理后台**（批次4 · Phase 2）：计划见
