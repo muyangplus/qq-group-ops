@@ -678,13 +678,18 @@ describe("activity card callbacks (§B2)", async () => {
     expect(stats.text).toContain("文字统计");
   });
 
-  it("exposes /activity subscribe|unsubscribe as a command fallback", async () => {
+  it("keeps the subscription toggle on the card callback, with the command removed", async () => {
     const { svc } = withActivity();
-    const on = await svc.handle("g1", "member", "/activity subscribe");
+    // 老指令入口已删除：不再能靠手输 /activity subscribe 改订阅
+    const stale = await svc.handle("g1", "member", "/activity subscribe");
+    expect(stale.text).toContain("用法");
+    expect(activityNotifications.isSubscribed("g1", "member")).toBe(false);
+
+    // 订阅开关仍然在活动卡的回调按钮上：cb:activity:subscribe:<群>:<on|off>
+    const on = await svc.activityCallbackCard("subscribe", ["g1", "on"], "member", "g1");
     expect(on.ok).toBe(true);
-    expect(on.text).toContain("订阅状态");
     expect(activityNotifications.isSubscribed("g1", "member")).toBe(true);
-    const off = await svc.handle("g1", "member", "/activity unsubscribe");
+    const off = await svc.activityCallbackCard("subscribe", ["g1", "off"], "member", "g1");
     expect(off.ok).toBe(true);
     expect(activityNotifications.isSubscribed("g1", "member")).toBe(false);
   });

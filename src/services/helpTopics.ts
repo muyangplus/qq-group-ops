@@ -357,7 +357,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "  /activity list [群号|#群短码]                  查看活动列表（本群可省略）",
       "  /activity bind <#活动短码> <群号|#群短码>      绑定发布 / 广播目标群（可多个）",
       "  /activity unbind <#活动短码> <群号|#群短码>    解绑目标群",
-      "  · 新活动通知的订阅统一在 /notify 菜单（活动通知 本群 / 全部）；/activity subscribe 等价于「本群」开关",
+      "  · 新活动通知的订阅统一在 /notify 菜单（活动通知 本群 / 全部），或活动卡上的「订阅」按钮；老指令 /activity subscribe 已删除",
       "",
       "可配置字段（/activity set）：",
       "  title 标题 · desc 简介 · capacity 名额 · group 活动群号",

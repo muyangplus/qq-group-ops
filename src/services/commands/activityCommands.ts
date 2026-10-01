@@ -133,18 +133,12 @@ export async function handleActivity(
     case "signups":
     case "名单":
       return handleActivitySignups(ctx, userId, parts, groupId);
-    case "subscribe":
-    case "订阅":
-      return subscribeCard(ctx, groupId, userId, parts[2]);
     case "bind":
     case "绑定群":
       return handleActivityBindCommand(ctx, userId, parts);
     case "unbind":
     case "解绑群":
       return handleActivityUnbindCommand(ctx, userId, parts);
-    case "unsubscribe":
-    case "退订":
-      return subscribeCard(ctx, groupId, userId, parts[2], false);
     case "manage":
     case "管理":
       return activityManageCard(ctx, userId, parts[2]);
@@ -160,9 +154,11 @@ export async function handleActivity(
 /** 统一构造活动卡片输入（补齐名单 / 候补 / 展示群名 / 查看者权限）。 */
 
 /**
- * 订阅开关（`cb:activity:subscribe` / `/activity subscribe`）：任意成员可切换。
+ * 订阅开关（`cb:activity:subscribe:<群>:<on|off>`）：任意成员可切换。
  *
  * 订阅是**按群**的：只在发布新活动时给订阅者私信，不发群消息（主动消息有限额）。
+ * 老指令入口 `/activity subscribe|unsubscribe` 已删除（ADR-0051：订阅统一在 `/notify` 面板、
+ * 活动卡上的「订阅」按钮、以及通知卡底部的退订按钮），这里只服务回调按钮。
  */
 export function subscribeCard(
   ctx: AdminCommandContext,
@@ -179,8 +175,8 @@ export function subscribeCard(
     const card = renderCard({
       title: "新活动订阅",
       lines: [
-        "该指令需要在群内使用，或在私信中带上群号 / #群短码。",
-        "用法：/activity subscribe <群号|#群短码>；/activity unsubscribe",
+        "没拿到要操作的群：请在活动卡片上点「订阅」按钮，或用 `/notify` 打开通知中心。",
+        "（老指令 `/activity subscribe` 已删除。）",
       ],
       rows: [[viewButton("help", "指令帮助", "help", "topic", "activity")]],
     });
