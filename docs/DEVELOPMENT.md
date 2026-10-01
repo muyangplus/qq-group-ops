@@ -147,5 +147,6 @@ test/
 | [CARD-STANDARD.md](./CARD-STANDARD.md) | 卡片交互规范变化 |
 | [ACCEPTANCE.md](./ACCEPTANCE.md) | 新增需要真机验收的交互 |
 | [SECURITY.md](./SECURITY.md) | 审计频率 / 处置流程 / 依赖升级口径 / 安全例外变化 |
+| [ADMIN-API.md](./ADMIN-API.md) | 管理 API / 管理后台的认证与运行形态、分阶段计划变化 |
 | [DATA-COMPLIANCE.md](./DATA-COMPLIANCE.md) | 保留期、删除与导出、PIPIA 口径变化 |
 | [ROADMAP.md](./ROADMAP.md) / [TODO.md](../TODO.md) | 计划与已知限制变化 |

@@ -16,8 +16,8 @@
 
 | 顺位 | 条目 | 为什么排在这里 |
 |---|---|---|
-| 1 | **E1** 管理 API | 批次4 Phase 2 的底座（登录 / 鉴权 / 限流 / 最小权限） |
-| 2 | **E2** Vue 3 管理后台 | 依赖 E1；验收：审批 / 规则 / 日志 / 权限都能在后台完成 |
+| 1 | **E1 管理 API** | 计划见 [docs/ADMIN-API.md](./docs/ADMIN-API.md)：E1-a/b 安全底座 → E1-c 只读 → E1-f 运维（E1-d/e 与 E2 一起） |
+| 2 | **E2 Vue 3 管理后台** | 依赖 E1；E2-a 脚手架 → E2-b 登录 → E2-c 页面 → E2-d/e 权限与交付 |
 | 3 | **E3 → E4 → E6**（AI 判断 / 辅助审核 / 策略闭环）、**E5** 统计报表 | 批次5 Phase 3；E6 依赖 E3 + E4 |
 | — | **B4 / B5 / A2** | ⚠️ 全部卡在官方能力取证：取证动作在 §4（真机清单 R3 / R18），拿到结论再排实现 |
 | 真机前 | **D8** 部署演练 + 备份恢复演练 | 要真实部署环境：跟 D2 一起放在 §4 之前 |
@@ -32,9 +32,37 @@
 
 ### P2
 
-- [ ] **E1 管理 API**（批次4 · Phase 2）Fastify / Node.js + 登录鉴权 + 限流 + 最小权限。
-- [ ] **E2 Vue 3 + TypeScript 管理后台**（批次4 · Phase 2）
-  - 审核队列、规则配置、日志查询、权限管理；验收：能在后台完成入群审批、规则配置与活动报名管理。
+- [ ] **E1 管理 API**（批次4 · Phase 2）：设计（方案对比 + 分阶段计划）见
+  [docs/ADMIN-API.md](./docs/ADMIN-API.md)。**认证选账号密码 + 会话 cookie**（`ADMIN_API_ACCOUNTS` +
+  scrypt），**运行选独立入口**（`pnpm admin:api`，默认只监听 `127.0.0.1`、默认关闭）。
+  - [ ] **E1-a 骨架与安全底座**（P0）：`src/adminApi/`（入口 + Fastify 装配 + 路由）+ 免鉴权 `/healthz`；
+    `.env` 配置项（`ADMIN_API_ENABLED` / `HOST` / `PORT` / `SESSION_SECRET` / `ACCOUNTS`，属核心安全项、
+    不进 `/config`）；`POST /auth/login|logout` + `GET /auth/me`（scrypt 校验、12h 滑动会话、
+    `HttpOnly + SameSite=Strict`）；登录失败按 IP + 账号限流锁定；全站令牌桶限流；写操作校验
+    `X-Admin-Request: 1`；登录成功/失败与权限拒绝都写审计。
+  - [ ] **E1-b 身份与权限映射**（P0）：账号可配 `openid` → 映射成 `userId` → 复用现有两轴权限判定；
+    没配 openid 的账号只读且只看平台级状态；每个路由声明门槛，统一前置钩子判定（403 + 原因 + 审计）。
+  - [ ] **E1-c 只读端点**（P1）：`/api/status`、`/api/pending`（分页）、`/api/audit`（过滤 + 分页）、
+    `/api/rules?group=`、`/api/activities`（名单默认脱敏）、`/api/notify/topics`。
+  - [ ] **E1-d 写端点**（P2，与 E2 一起）：审批通过 / 拒绝（复用 `JoinApprovalService`）、
+    规则字段修改（复用 `parseRuleSetting`）、活动开停与 CSV 导出；全部写审计。
+  - [ ] **E1-e 机器 token**（P2）：`ADMIN_API_TOKENS`（`token:scope`、可过期、只读优先）、
+    `Authorization: Bearer`、`timingSafeEqual` 比较、日志只打前缀。
+  - [ ] **E1-f 可观测与运维**（P1）：结构化请求日志（路由 / 状态 / 耗时 / actor，不打凭据与 cookie）、
+    `/status proc` 显示管理 API 监听地址与当前会话数、systemd 与 docker compose 单元示例。
+  - 退出条件：未登录 401 / 越权 403 且有审计 / 连续失败登录被锁 / 写操作都能在 `/audit` 查到
+    （actor = 登录账号）/ `ADMIN_API_ENABLED=false` 时完全不监听端口。
+- [ ] **E2 Vue 3 + TypeScript 管理后台**（批次4 · Phase 2）：计划见
+  [docs/ADMIN-API.md](./docs/ADMIN-API.md) 的 E2-a…E2-e。
+  - [ ] **E2-a 脚手架**：`web/`（Vite + Vue 3 + TS + vue-router + pinia），`pnpm web:dev` / `pnpm web:build`
+    （产物 `web/dist`，不进 `dist/`，CD 默认不发）；
+  - [ ] **E2-b 登录页与会话保持**：`GET /auth/me`，401 自动跳登录；
+  - [ ] **E2-c 页面**：状态看板 / 待审批（通过 · 拒绝 + 二次确认）/ 审计查询（过滤 + 分页）/
+    规则编辑（字段级，提交前给 diff）/ 活动列表与开关；
+  - [ ] **E2-d 权限呈现**：按两轴权限隐藏或禁用入口（服务端仍强校验，前端只做体验）；
+  - [ ] **E2-e 交付**：管理 API 静态托管 `web/dist`（同源）或独立 nginx；CD 加一步（默认不发）。
+  - 验收：能在后台完成一次入群审批、改一个规则字段、并查到对应的审计记录；权限不足时入口不可用
+    且直接调 API 也会被拒。
 
 ### P3
 
