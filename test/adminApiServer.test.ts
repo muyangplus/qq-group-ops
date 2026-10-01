@@ -300,6 +300,123 @@ describe("管理 API HTTP 层", () => {
     await app.close();
   });
 
+  it("/api/pending 需要登录，可按群过滤 + 分页", async () => {
+    const tokens = memoryTokens();
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "test",
+      readers: {
+        pending: async () =>
+          Array.from({ length: 4 }, (_value, index) => ({
+            requestId: `r${index}`,
+            groupId: index < 3 ? "g1" : "g2",
+            userId: `u${index}`,
+            reason: "想加入",
+            createdAt: "2026-10-01T00:00:00.000Z",
+          })),
+        rules: async (groupId: string) => ({
+          groupId,
+          override: null,
+          settings: [],
+        }),
+      },
+    }).app;
+
+    const unauth = await app.inject({ method: "GET", url: "/api/pending" });
+    expect(unauth.statusCode).toBe(401);
+
+    const { token } = await tokens.issue({ userId: "op1", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const cookie = cookieOf(login);
+
+    const filtered = await app.inject({
+      method: "GET",
+      url: "/api/pending?group=g1",
+      headers: { cookie },
+    });
+    expect(filtered.json()).toMatchObject({ total: 3, page: 1 });
+    expect(filtered.json<{ items: unknown[] }>().items).toHaveLength(3);
+
+    const paged = await app.inject({
+      method: "GET",
+      url: "/api/pending?page=2&pageSize=1",
+      headers: { cookie },
+    });
+    expect(paged.json()).toMatchObject({ total: 4, page: 2, pageSize: 1 });
+    expect(paged.json<{ items: unknown[] }>().items).toHaveLength(1);
+
+    await app.close();
+  });
+
+  it("/api/rules 需要 ?group=，缺参数 400；无数据源 503", async () => {
+    const tokens = memoryTokens();
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "test",
+      readers: {
+        pending: async () => [],
+        rules: async (groupId: string) => ({
+          groupId,
+          override: { groupId, warningMessage: "本群文案" },
+          settings: [{ key: "punishActions", value: "{}" }],
+        }),
+      },
+    }).app;
+    const { token } = await tokens.issue({ userId: "op1", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const cookie = cookieOf(login);
+
+    const missing = await app.inject({
+      method: "GET",
+      url: "/api/rules",
+      headers: { cookie },
+    });
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json()).toMatchObject({ error: "bad_request" });
+
+    const ok = await app.inject({
+      method: "GET",
+      url: "/api/rules?group=g1",
+      headers: { cookie },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({ groupId: "g1" });
+    expect(ok.json<{ settings: unknown[] }>().settings).toHaveLength(1);
+
+    await app.close();
+
+    const bare = build().app;
+    const bareTokens = memoryTokens();
+    const bareApp = buildAdminApiServer({ config: CONFIG, tokens: bareTokens, version: "test" }).app;
+    const issued = await bareTokens.issue({ userId: "op1", ttlMs: 60_000 });
+    const bareLogin = await bareApp.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: issued.token },
+    });
+    const unavailable = await bareApp.inject({
+      method: "GET",
+      url: "/api/pending",
+      headers: { cookie: cookieOf(bareLogin) },
+    });
+    expect(unavailable.statusCode).toBe(503);
+    await bare.close();
+    await bareApp.close();
+  });
+
   it("登录链接按 PUBLIC_BASE_URL 拼", async () => {
     const { app, loginUrl } = build();
     expect(loginUrl("tok")).toBe("https://ops.example.com/login?token=tok");

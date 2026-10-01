@@ -34,6 +34,8 @@ export interface AdminApiServerOptions {
   statusProvider?: (() => Promise<AdminApiStatusExtra> | AdminApiStatusExtra) | undefined;
   /** 审计记录读取器（E1-c `/api/audit`）；未装配时该端点回 503。 */
   auditReader?: AdminApiAuditReader | undefined;
+  /** 只读数据源（E1-c）：待审批与规则覆盖。未装配时对应端点回 503。 */
+  readers?: AdminApiReaders | undefined;
 }
 
 export interface AdminApiAuditRecord {
@@ -49,6 +51,29 @@ export interface AdminApiAuditRecord {
 /** 审计数据源：入口用仓储实现（`persistence.audit.findAll()`）。 */
 export interface AdminApiAuditReader {
   list(): Promise<AdminApiAuditRecord[]>;
+}
+
+/** 待审批申请（`/api/pending`）。 */
+export interface AdminApiPendingItem {
+  requestId: string;
+  groupId: string;
+  userId: string;
+  reason: string;
+  createdAt: string;
+}
+
+/** 某个群的规则覆盖（`/api/rules`）：原始覆盖行，合并生效值的逻辑在机器人侧。 */
+export interface AdminApiRulesView {
+  groupId: string;
+  /** `group_configs` 的覆盖行（没有覆盖时为 null）。 */
+  override: Record<string, unknown> | null;
+  /** `group_settings` 的键值覆盖（关键词等扩展字段）。 */
+  settings: Array<{ key: string; value: string }>;
+}
+
+export interface AdminApiReaders {
+  pending(): Promise<AdminApiPendingItem[]>;
+  rules(groupId: string): Promise<AdminApiRulesView>;
 }
 
 /** 入口能提供、server 自己算不出来的那部分状态。 */
@@ -218,6 +243,48 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
       pageSize,
       items: filtered.slice(start, start + pageSize),
     };
+  });
+
+  /** 待审批入群申请（E1-c）：状态为 pending，可按群过滤 + 分页。 */
+  app.get("/api/pending", async (request, reply) => {
+    const readers = options.readers;
+    if (!readers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "数据源未装配（缺少数据库）。"));
+    }
+    const query = request.query as Record<string, unknown>;
+    const page = positiveQueryInt(query.page, 1);
+    const pageSize = Math.min(positiveQueryInt(query.pageSize, 50), 200);
+    const group = queryString(query.group);
+
+    const all = await readers.pending();
+    const filtered =
+      group === undefined ? all : all.filter((item) => item.groupId === group);
+    const start = (page - 1) * pageSize;
+    return {
+      total: filtered.length,
+      page,
+      pageSize,
+      items: filtered.slice(start, start + pageSize),
+    };
+  });
+
+  /** 某个群的规则覆盖（E1-c）：只读原始覆盖行，生效值合并逻辑在机器人侧。 */
+  app.get("/api/rules", async (request, reply) => {
+    const readers = options.readers;
+    if (!readers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "数据源未装配（缺少数据库）。"));
+    }
+    const group = queryString((request.query as Record<string, unknown>).group);
+    if (group === undefined) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 ?group=<群ID 或 #群短码>。"));
+    }
+    return readers.rules(group);
   });
 
   app.post("/auth/logout", async (request, reply) => {

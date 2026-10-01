@@ -52,6 +52,33 @@ async function main(): Promise<void> {
           createdAt: record.createdAt.toISOString(),
         })),
     },
+    // 只读数据源（E1-c）：待审批申请与规则覆盖
+    readers: {
+      pending: async () =>
+        (await persistence.joinRequests.findAll())
+          .filter((request) => request.status === "pending")
+          .map((request) => ({
+            requestId: request.requestId,
+            groupId: request.groupId,
+            userId: request.userId,
+            reason: request.reason,
+            createdAt: request.createdAt.toISOString(),
+          })),
+      rules: async (groupId: string) => {
+        const overrides = await persistence.groupConfigs.findAll();
+        const settings = await persistence.groupSettings.findAll();
+        return {
+          groupId,
+          override:
+            (overrides.find((row) => row.groupId === groupId) as unknown as
+              | Record<string, unknown>
+              | undefined) ?? null,
+          settings: settings
+            .filter((row) => row.groupId === groupId)
+            .map((row) => ({ key: row.key, value: row.value })),
+        };
+      },
+    },
   });
 
   let closing = false;
