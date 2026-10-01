@@ -7,19 +7,18 @@
 > **所有需要真实 QQ 群环境的条目统一收在最后一节 §4**（不再散落在各优先级里）：等有环境时照
 > [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md) 一次跑完并回填。
 >
-> 当前状态（2026-09-29）：测试 **124 文件 / 988 用例**全绿；**0.22.1 已发版**
+> 当前状态（2026-09-29）：测试 **126 文件 / 1003 用例**全绿；**0.22.1 已发版**
 > （其后 `[Unreleased]` 又攒了：`/migrate` 弹窗文案压到 21 字 + 卡片弹窗文案统一裁剪兜底、
 > `/migrate` 执行前自动备份数据库、入群申请拒绝理由改为自定义）。
-> 已完成：A1–A5、B1–B3、B6–B11、C1–C3、C5–C6、C9、D1、D3、D5、D6、D10、F1–F2、H1–H8、D9（0.19.0 起）。
+> 已完成：A1–A5、B1–B3、B6–B11、C1–C3、C5–C6、C9、D1、D3、D5、D6、D7、D10、F1–F2、H1–H8、D9（0.19.0 起）。
 
 ## 1. 排期（从上往下做）
 
 | 顺位 | 条目 | 为什么排在这里 |
 |---|---|---|
-| 1 | **D7** 个人数据删除 / 导出 | Phase 4：过期清理已有，缺「按人删除 / 导出」 |
-| 2 | **E1** 管理 API | 批次4 Phase 2 的底座（登录 / 鉴权 / 限流 / 最小权限） |
-| 3 | **E2** Vue 3 管理后台 | 依赖 E1；验收：审批 / 规则 / 日志 / 权限都能在后台完成 |
-| 4 | **E3 → E4 → E6**（AI 判断 / 辅助审核 / 策略闭环）、**E5** 统计报表 | 批次5 Phase 3；E6 依赖 E3 + E4 |
+| 1 | **E1** 管理 API | 批次4 Phase 2 的底座（登录 / 鉴权 / 限流 / 最小权限） |
+| 2 | **E2** Vue 3 管理后台 | 依赖 E1；验收：审批 / 规则 / 日志 / 权限都能在后台完成 |
+| 3 | **E3 → E4 → E6**（AI 判断 / 辅助审核 / 策略闭环）、**E5** 统计报表 | 批次5 Phase 3；E6 依赖 E3 + E4 |
 | — | **B4 / B5 / A2** | ⚠️ 全部卡在官方能力取证：取证动作在 §4（真机清单 R3 / R18），拿到结论再排实现 |
 | 真机前 | **D8** 部署演练 + 备份恢复演练 | 要真实部署环境：跟 D2 一起放在 §4 之前 |
 | 真机前 | **D2** Docker Compose 启停补测 | 环境验证集中到最后（要 Docker 引擎） |
@@ -30,34 +29,6 @@
 ## 2. 待办明细
 
 ### P1
-
-- [ ] **D7 个人数据删除能力**（批次5 · Phase 4）
-  - 过期数据清理已有；**按用户删除 / 导出个人数据未做**。口径见
-    [docs/DATA-COMPLIANCE.md](./docs/DATA-COMPLIANCE.md) 的「删除与导出」一节。
-  - **进度**：存储层 + 服务层已完成（`src/db/privacyRepository.ts`、`src/services/privacy.ts`、
-    `test/privacy.test.ts`）；**待做**：指令层 `/data delete|anonymize|export` 卡片 + 接线
-    （context / 门面 / runtime / 持久化）+ 指令层测试 + 文档。
-  - **实施偏差（已定）**：确认按钮用**指令按钮**而不是回调按钮——`encodeCallback` 用 `:` 拼参数、
-    不转义，自由文本理由塞进回调 data 会被 `:` 截断（还有官方 data 长度上限），所以：
-    `/data delete <用户> [理由]` 只出**预览卡**，卡上「确认匿名化」是指令按钮，发送
-    `/data anonymize <用户> [理由]` 才真正执行（私信里点一下即自动发送，仍是两步确认）；
-    理由随指令文本走，直接进审计。
-  - **已定口径（2026-09-29 确认，实施时照这个做，不要再改）**：
-    1. 入口：`/data delete <#用户短码|userId> [原因]` 与 `/data export <…>`，**仅全局超管、只私信**；
-       删除走两步确认卡（`cb:data:request` 预览 → `cb:data:run` 执行），两种动作都写审计
-       （平台级动作 `groupId = ""`，action 用 `data_delete` / `data_export`）；
-    2. 删除 = **全部匿名化**（不物理删行）：同一次操作生成一个占位值 `anon:<随机>`，把下列表里该用户的
-       `user_id` 全部换成它，并清空个人字段（姓名 / 学号 / 班级 / 学院 / 报名备注 / 处罚与申诉正文）：
-       `user_profiles`、`identity_bindings`、`activity_registrations`、`activity_waitlist`、
-       `punishment_records`、`appeal_records`、`join_requests`、`short_codes`、
-       `notification_subscriptions`、`notification_deliveries`、`activity_subscriptions`、
-       `activity_notifications`、`menu_deliveries`、`group_message_modes`；
-    3. **不动**：`blacklist_entries`、`permission_grants`（保留生效——删号不等于解封；**结果卡里不写这一点**）、
-       `audit_records`（合规保留，只追加一条「已匿名化 …」的动作记录）；
-    4. 导出 = 私信一段**可复制的 CSV 文本**（资料 / 报名 / 候补 / 处罚 / 申诉 / 订阅；字段对应
-       DATA-COMPLIANCE 的保留期表），不落文件到磁盘；
-    5. 匿名化后必须 `reload()` 内存态（资料 / 报名 / 短码 / 订阅），否则内存里还认得出这个人；
-    6. 目标是幂等：已匿名化的人再执行一次应当报「没有可匿名化的数据」，而不是再换一个占位值。
 
 ### P2
 
