@@ -5,6 +5,7 @@ import { getLogger, type Logger } from "../core/logger.js";
 import type { AdminTokenRepository } from "../db/adminTokenRepository.js";
 import { adminLoginUrl, machineTokenAllows, type AdminApiConfig, type AdminApiMachineToken } from "./config.js";
 import { WindowRateLimiter } from "./rateLimit.js";
+import type { AdminApiPermissionsView } from "./permissions.js";
 import { SessionStore, type AdminSession } from "./session.js";
 
 declare module "fastify" {
@@ -39,6 +40,8 @@ export interface AdminApiServerOptions {
   auditReader?: AdminApiAuditReader | undefined;
   /** 只读数据源（E1-c）：待审批与规则覆盖。未装配时对应端点回 503。 */
   readers?: AdminApiReaders | undefined;
+  /** 权限画像（E2-d）：给 `/auth/me` 附带，前端据此隐藏入口（服务端仍强校验）。 */
+  permissionsOf?: ((userId: string) => Promise<AdminApiPermissionsView>) | undefined;
 }
 
 export interface AdminApiAuditRecord {
@@ -255,12 +258,20 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     (request as FastifyRequest).adminSession = session;
   });
 
-  app.get("/auth/me", async (request) => ({
-    userId: request.adminSession?.userId ?? null,
-    expiresAt: new Date(
-      (request.adminSession?.lastSeenAt ?? now().getTime()) + config.sessionTtlMs,
-    ).toISOString(),
-  }));
+  app.get("/auth/me", async (request) => {
+    const userId = request.adminSession?.userId ?? null;
+    const permissions =
+      userId !== null && options.permissionsOf
+        ? await options.permissionsOf(userId)
+        : undefined;
+    return {
+      userId,
+      expiresAt: new Date(
+        (request.adminSession?.lastSeenAt ?? now().getTime()) + config.sessionTtlMs,
+      ).toISOString(),
+      ...(permissions !== undefined ? { permissions } : {}),
+    };
+  });
 
   /** 只读状态（E1-c）：入口给数据库与迁移信息，server 补版本 / 运行时长 / 会话数。 */
   app.get("/api/status", async () => {

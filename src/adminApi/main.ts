@@ -3,6 +3,10 @@ import { loadSettings } from "../config.js";
 import { connectPersistence } from "../persistence.js";
 import { adminLoginUrl, loadAdminApiConfig } from "./config.js";
 import { NOTIFY_TOPIC_META } from "../services/notifyTopics.js";
+import {
+  describePermissions,
+  loadAdminApiPermissions,
+} from "./permissions.js";
 import { buildAdminApiServer } from "./server.js";
 
 /**
@@ -134,6 +138,24 @@ async function main(): Promise<void> {
           createdAt: activity.createdAt.toISOString(),
         }));
       },
+    },
+    // 权限画像（E2-d）：与机器人共用两轴模型；每次请求重新加载（授权表很小）
+    permissionsOf: async (userId: string) => {
+      const permissions = await loadAdminApiPermissions(persistence.permissions);
+      if (!permissions) {
+        return { platformLevel: 0, groups: [] };
+      }
+      const [grants, configs] = await Promise.all([
+        persistence.permissions.findAll(),
+        persistence.groupConfigs.findAll(),
+      ]);
+      const groupIds = [
+        ...grants
+          .map((grant) => grant.groupId)
+          .filter((groupId) => groupId.length > 0),
+        ...configs.map((row) => row.groupId),
+      ];
+      return describePermissions(permissions, userId, groupIds);
     },
   });
 
