@@ -541,6 +541,58 @@ describe("管理 API HTTP 层", () => {
     await app.close();
   });
 
+  it("机器令牌：Bearer + scope（read 读 / write 写 / 缺 scope 403 / 假令牌 401）", async () => {
+    const tokens = memoryTokens();
+    const config = loadAdminApiConfig({
+      ADMIN_API_ENABLED: "true",
+      ADMIN_API_SESSION_SECRET: "m".repeat(40),
+      ADMIN_API_TOKENS:
+        "readonly-token-1234:read,writer-token-5678:write",
+    });
+    const app = buildAdminApiServer({ config, tokens, version: "test" }).app;
+
+    const read = await app.inject({
+      method: "GET",
+      url: "/api/status",
+      headers: { authorization: "Bearer readonly-token-1234" },
+    });
+    expect(read.statusCode).toBe(200);
+
+    // 只有 write scope，读接口拒
+    const scopeDenied = await app.inject({
+      method: "GET",
+      url: "/api/status",
+      headers: { authorization: "Bearer writer-token-5678" },
+    });
+    expect(scopeDenied.statusCode).toBe(403);
+    expect(scopeDenied.json()).toMatchObject({ error: "forbidden" });
+
+    // 只有 read scope，写接口拒
+    const writeDenied = await app.inject({
+      method: "POST",
+      url: "/auth/logout",
+      headers: { authorization: "Bearer readonly-token-1234" },
+    });
+    expect(writeDenied.statusCode).toBe(403);
+
+    // write scope + 无需 CSRF 头（机器调用没有 cookie）
+    const writeOk = await app.inject({
+      method: "POST",
+      url: "/auth/logout",
+      headers: { authorization: "Bearer writer-token-5678" },
+    });
+    expect(writeOk.statusCode).toBe(200);
+
+    const bogus = await app.inject({
+      method: "GET",
+      url: "/api/status",
+      headers: { authorization: "Bearer 不存在的令牌" },
+    });
+    expect(bogus.statusCode).toBe(401);
+
+    await app.close();
+  });
+
   it("登录链接按 PUBLIC_BASE_URL 拼", async () => {
     const { app, loginUrl } = build();
     expect(loginUrl("tok")).toBe("https://ops.example.com/login?token=tok");

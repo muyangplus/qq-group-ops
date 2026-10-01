@@ -30,8 +30,21 @@ export interface AdminApiConfig {
   tokenTtlMs: number;
   /** 额外白名单：留空 = 允许所有**平台超管**（240）签发令牌。 */
   allowedOpenIds: readonly string[];
+  /**
+   * 机器调用用的长期令牌（E1-e）：`Authorization: Bearer <token>`，
+   * 与一次性登录令牌分开——它不种会话、按 `scope` 限定能干什么，给 CI / 脚本用。
+   */
+  machineTokens: readonly AdminApiMachineToken[];
   /** 全站限流：每个会话每分钟的请求数上限（`0` = 不限）。 */
   rateLimitPerMinute: number;
+}
+
+export interface AdminApiMachineToken {
+  token: string;
+  /** 允许的范围：`read` / `write` / `*`（`*` = 全部）。 */
+  scopes: readonly string[];
+  /** 到期时间（可选；过期即视为不可用）。 */
+  expiresAt?: Date | undefined;
 }
 
 export const DEFAULT_ADMIN_API_PORT = 8787;
@@ -56,6 +69,7 @@ export function loadAdminApiConfig(env: NodeJS.ProcessEnv = process.env): AdminA
       .split(",")
       .map((item) => item.trim())
       .filter((item) => item.length > 0),
+    machineTokens: parseMachineTokens(env.ADMIN_API_TOKENS).tokens,
     rateLimitPerMinute: nonNegativeInt(
       env.ADMIN_API_RATE_LIMIT_PER_MINUTE,
       DEFAULT_RATE_LIMIT_PER_MINUTE,
@@ -71,6 +85,7 @@ export function loadAdminApiConfig(env: NodeJS.ProcessEnv = process.env): AdminA
       "ADMIN_API_SESSION_SECRET 至少 32 个字符（生成：`node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\"`）",
     );
   }
+  problems.push(...parseMachineTokens(env.ADMIN_API_TOKENS).issues);
   if (problems.length > 0) {
     // fail-closed：配置坏了就不启动管理 API，而不是带着半套凭据跑
     throw new Error(`管理 API 配置有问题：\n- ${problems.join("\n- ")}`);
@@ -78,8 +93,82 @@ export function loadAdminApiConfig(env: NodeJS.ProcessEnv = process.env): AdminA
   return config;
 }
 
-/** 登录链接（`PUBLIC_BASE_URL` 没配时返回 undefined，调用方只给令牌）。 */
-export function adminLoginUrl(config: AdminApiConfig, token: string): string | undefined {
+export interface MachineTokensParseResult {
+  tokens: AdminApiMachineToken[];
+  issues: string[];
+}
+
+/**
+ * 解析 `ADMIN_API_TOKENS`：`token:scope1|scope2[:到期ISO时间]`，多个令牌用 `,` 分隔。
+ *
+ * 例：`ADMIN_API_TOKENS=abcdef0123456789:read,abcdef9876543210:read|write:2027-01-01T00:00:00Z`
+ * 令牌长度下限 16（防止有人填个 `test` 就当凭据用）。
+ */
+export function parseMachineTokens(
+  value: string | undefined,
+): MachineTokensParseResult {
+  const tokens: AdminApiMachineToken[] = [];
+  const issues: string[] = [];
+  for (const raw of (value ?? "").split(",")) {
+    const entry = raw.trim();
+    if (entry.length === 0) {
+      continue;
+    }
+    // 只用前两个冒号切分：到期时间是 ISO 时间（自身含冒号），不能按 `:` 全切
+    const firstSep = entry.indexOf(":");
+    const secondSep = firstSep < 0 ? -1 : entry.indexOf(":", firstSep + 1);
+    const token = (firstSep < 0 ? entry : entry.slice(0, firstSep)).trim();
+    const scopeRaw =
+      firstSep < 0
+        ? ""
+        : secondSep < 0
+          ? entry.slice(firstSep + 1)
+          : entry.slice(firstSep + 1, secondSep);
+    const expiryRaw = secondSep < 0 ? "" : entry.slice(secondSep + 1).trim();
+    const scopes = scopeRaw
+      .split("|")
+      .map((scope) => scope.trim())
+      .filter((scope) => scope.length > 0);
+    const label = `${token.slice(0, 4)}…`;
+    if (token.length < 16) {
+      issues.push(`机器令牌太短（至少 16 字符）：${label}`);
+      continue;
+    }
+    if (scopes.length === 0) {
+      issues.push(`机器令牌缺少 scope（read / write / *）：${label}`);
+      continue;
+    }
+    let expiresAt: Date | undefined;
+    if (expiryRaw.length > 0) {
+      const parsed = new Date(expiryRaw);
+      if (Number.isNaN(parsed.getTime())) {
+        issues.push(`机器令牌的到期时间不是合法 ISO 时间：${expiryRaw}`);
+        continue;
+      }
+      expiresAt = parsed;
+    }
+    tokens.push({
+      token,
+      scopes,
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+    });
+  }
+  return { tokens, issues };
+}
+
+/** 机器令牌是否允许某个 scope（`*` 通配）；过期即不可用。 */
+export function machineTokenAllows(
+  token: AdminApiMachineToken,
+  scope: "read" | "write",
+  now: Date = new Date(),
+): boolean {
+  if (token.expiresAt !== undefined && token.expiresAt.getTime() <= now.getTime()) {
+    return false;
+  }
+  return token.scopes.includes("*") || token.scopes.includes(scope);
+}
+
+/** 登录链接（`PUBLIC_BASE_URL` 没配时返回 undefined，调用方只给令牌）。 */export function adminLoginUrl(config: AdminApiConfig, token: string): string | undefined {
   if (config.publicBaseUrl.length === 0) {
     return undefined;
   }

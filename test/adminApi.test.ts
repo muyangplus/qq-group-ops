@@ -4,6 +4,8 @@ import {
   adminLoginUrl,
   DEFAULT_ADMIN_API_PORT,
   loadAdminApiConfig,
+  machineTokenAllows,
+  parseMachineTokens,
 } from "../src/adminApi/config.js";
 import { WindowRateLimiter } from "../src/adminApi/rateLimit.js";
 import { SessionStore } from "../src/adminApi/session.js";
@@ -60,6 +62,37 @@ describe("loadAdminApiConfig", () => {
     expect(config.sessionTtlMs).toBe(60 * 60 * 1000);
     expect(config.allowedOpenIds).toEqual(["op1", "op2"]);
     expect(config.rateLimitPerMinute).toBe(0);
+  });
+
+  it("解析机器令牌：长度 / scope / 到期时间，过期即不可用", () => {
+    const parsed = parseMachineTokens(
+      "abcdef0123456789:read,abcdef9876543210:read|write:2027-01-01T00:00:00Z,short:read,abcdef0000000000",
+    );
+
+    expect(parsed.tokens).toHaveLength(2);
+    expect(parsed.tokens[0]).toMatchObject({
+      token: "abcdef0123456789",
+      scopes: ["read"],
+    });
+    expect(parsed.tokens[1]?.expiresAt?.toISOString()).toBe(
+      "2027-01-01T00:00:00.000Z",
+    );
+    expect(parsed.issues).toHaveLength(2);
+
+    const valid = { token: "x".repeat(16), scopes: ["read"] };
+    expect(machineTokenAllows(valid, "read")).toBe(true);
+    expect(machineTokenAllows(valid, "write")).toBe(false);
+    expect(machineTokenAllows({ token: "x".repeat(16), scopes: ["*"] }, "write")).toBe(
+      true,
+    );
+    const expired = {
+      token: "x".repeat(16),
+      scopes: ["read"],
+      expiresAt: new Date("2020-01-01T00:00:00.000Z"),
+    };
+    expect(
+      machineTokenAllows(expired, "read", new Date("2026-01-01T00:00:00.000Z")),
+    ).toBe(false);
   });
 
   it("登录链接只在配了 PUBLIC_BASE_URL 时给（并去掉尾斜杠）", () => {

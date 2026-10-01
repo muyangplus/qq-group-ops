@@ -1,15 +1,18 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import { timingSafeEqual } from "node:crypto";
 
 import { getLogger, type Logger } from "../core/logger.js";
 import type { AdminTokenRepository } from "../db/adminTokenRepository.js";
-import { adminLoginUrl, type AdminApiConfig } from "./config.js";
+import { adminLoginUrl, machineTokenAllows, type AdminApiConfig, type AdminApiMachineToken } from "./config.js";
 import { WindowRateLimiter } from "./rateLimit.js";
 import { SessionStore, type AdminSession } from "./session.js";
 
 declare module "fastify" {
   interface FastifyRequest {
-    /** 通过鉴权后挂上的会话（`preHandler` 里注入）。 */
+    /** 通过会话鉴权后挂上的会话（`preHandler` 里注入）。 */
     adminSession?: AdminSession | undefined;
+    /** 通过机器令牌鉴权时挂上的 scope（E1-e）。 */
+    adminMachineScopes?: readonly string[] | undefined;
   }
 }
 
@@ -207,9 +210,37 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
       readCookie(request.headers.cookie, ADMIN_SESSION_COOKIE),
     );
     if (!session) {
-      return reply
-        .code(401)
-        .send(errorBody("unauthorized", "请先登录：在机器人私信里发送 /admin login。"));
+      // 没有会话 cookie：试机器令牌（E1-e）——`Authorization: Bearer <token>`
+      const bearer = readBearerToken(request.headers.authorization);
+      const machine = bearer === undefined
+        ? undefined
+        : findMachineToken(config.machineTokens, bearer, now());
+      if (!machine) {
+        return reply.code(401).send(
+          errorBody("unauthorized", "请先登录：在机器人私信里发送 /admin login。"),
+        );
+      }
+      const requiredScope = isWriteMethod(request.method) ? "write" : "read";
+      if (!machineTokenAllows(machine, requiredScope, now())) {
+        log.warn("admin api machine token scope denied", {
+          scope: requiredScope,
+          route,
+        });
+        return reply.code(403).send(
+          errorBody(
+            "forbidden",
+            `这个机器令牌没有 \`${requiredScope}\` 权限（当前：${machine.scopes.join("|")}）。`,
+          ),
+        );
+      }
+      if (!limiter.allow(`token:${machine.token.slice(0, 8)}`)) {
+        return reply
+          .code(429)
+          .send(errorBody("rate_limited", "请求过于频繁，请稍后再试。"));
+      }
+      request.adminMachineScopes = machine.scopes;
+      // 机器令牌不涉及 cookie，因此不需要 CSRF 头
+      return;
     }
     if (!limiter.allow(session.id)) {
       return reply
@@ -423,6 +454,38 @@ export function readCookie(
     }
   }
   return undefined;
+}
+
+/** 从 `Authorization: Bearer <token>` 里取令牌。 */
+export function readBearerToken(header: string | undefined): string | undefined {
+  if (!header) {
+    return undefined;
+  }
+  const match = /^Bearer\s+(.+)$/iu.exec(header.trim());
+  return match?.[1]?.trim() || undefined;
+}
+
+/** 用常量时间比较找出匹配的机器令牌（避免按字符提前返回的时序差异）。 */
+export function findMachineToken(
+  tokens: readonly AdminApiMachineToken[],
+  candidate: string,
+  now: Date = new Date(),
+): AdminApiMachineToken | undefined {
+  let matched: AdminApiMachineToken | undefined;
+  for (const token of tokens) {
+    if (machineTokenAllows(token, "read", now) || machineTokenAllows(token, "write", now)) {
+      if (tokensEqual(token.token, candidate)) {
+        matched = token;
+      }
+    }
+  }
+  return matched;
+}
+
+function tokensEqual(left: string, right: string): boolean {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /** `maxAgeSeconds = 0` 表示清 cookie（登出）。 */
