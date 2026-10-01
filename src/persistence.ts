@@ -57,6 +57,10 @@ import {
   type PlatformSettingsRepository,
 } from "./db/platformSettingsRepository.js";
 import {
+  SqlPrivacyRepository,
+  type PrivacyRepository,
+} from "./db/privacyRepository.js";
+import {
   SqlGroupMessageModeRepository,
   type GroupMessageModeRepository,
 } from "./db/groupMessageModeRepository.js";
@@ -256,6 +260,8 @@ interface RepositorySet {
   classAliases: ClassAliasRepository;
   activityDetails: ActivityDetailsRepository;
   menuDeliveries: MenuDeliveryRepository;
+  /** 个人数据匿名化 / 导出（D7）：按表改写，不是普通仓储。 */
+  privacy: PrivacyRepository;
 }
 
 function createRepositories(db: Queryable): RepositorySet {
@@ -284,6 +290,7 @@ function createRepositories(db: Queryable): RepositorySet {
     userProfiles: new SqlUserProfileRepository(db),
     classAliases: new SqlClassAliasRepository(db),
     menuDeliveries: new SqlMenuDeliveryRepository(db),
+    privacy: new SqlPrivacyRepository(db),
   };
 }
 

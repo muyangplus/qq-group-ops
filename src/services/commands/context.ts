@@ -22,6 +22,7 @@ import type { JoinRequestSyncService } from "../joinAuditSync.js";
 import type { JoinRuleEvaluator } from "../joinRules.js";
 import type { MemberRoster } from "../memberRoster.js";
 import type { DataMigrationService } from "../dataMigration.js";
+import type { PrivacyService } from "../privacy.js";
 import type { ModerationNotifier } from "../moderationNotifier.js";
 import type { NotificationService } from "../notifications.js";
 import type { PlatformSettingsStore } from "../platformSettings.js";
@@ -129,6 +130,8 @@ export interface AdminCommandContext {
   readonly restart: RestartHook | undefined;
   /** 一次性数据迁移（`/migrate`，仅全局超管、只私信）；未装配时该指令拒绝执行。 */
   readonly migrate: DataMigrationService | undefined;
+  /** 个人数据匿名化 / 导出（`/data`，仅全局超管、只私信）；未装配时该指令拒绝执行。 */
+  readonly privacy: PrivacyService | undefined;
   /** 部署监测（新版本自动重启）的控制面；未装配时没有待重启状态。 */
   readonly deploy: DeployControl | undefined;
   readonly richMessages: RichMessageSender | undefined;

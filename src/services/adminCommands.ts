@@ -68,6 +68,7 @@ import {
   migrateRefreshCard,
   migrateRunCard,
 } from "./commands/migrateCommands.js";
+import { handleData } from "./commands/dataCommands.js";
 import {
   moduleUnavailableCard,
   moduleRetryCard,
@@ -114,6 +115,7 @@ import type { DisplayNameService } from "./displayNames.js";
 import type { ExportService } from "./export.js";
 import type { MemberRoster } from "./memberRoster.js";
 import type { DataMigrationService } from "./dataMigration.js";
+import type { PrivacyService } from "./privacy.js";
 import type { HealthRegistry, ModuleKey } from "./health.js";
 import type { PlatformSettingsStore } from "./platformSettings.js";
 import type { ModerationNotifier } from "./moderationNotifier.js";
@@ -214,6 +216,8 @@ export interface AdminCommandServiceOptions {
 
   /** 一次性数据迁移（`/migrate`）；缺省时该指令拒绝执行。 */
   migrate?: DataMigrationService | undefined;
+  /** 个人数据匿名化 / 导出（`/data`，仅全局超管、只私信）。 */
+  privacy?: PrivacyService | undefined;
 
   /** 模块健康与功能闸门；缺省时不做闸门判断（纯单测场景）。 */
   health?: HealthRegistry | undefined;
@@ -282,6 +286,9 @@ export class AdminCommandService {
 
   private readonly migrate: DataMigrationService | undefined;
 
+  /** 个人数据匿名化 / 导出（`/data`）；未装配时该指令拒绝执行。 */
+  private readonly privacy: PrivacyService | undefined;
+
   /** 模块健康与功能闸门；未装配时不做闸门判断（纯单测场景）。 */
   private readonly health: HealthRegistry | undefined;
 
@@ -328,6 +335,7 @@ export class AdminCommandService {
     this.restart = options.restart;
     this.deploy = options.deploy;
     this.migrate = options.migrate;
+    this.privacy = options.privacy;
     this.health = options.health;
     this.platform = options.platform;
   }
@@ -581,6 +589,7 @@ export class AdminCommandService {
       restart: this.restart,
       deploy: this.deploy,
       migrate: this.migrate,
+      privacy: this.privacy,
       health: this.health,
       platform: this.platform,
       permissions: this.permissions,
@@ -735,6 +744,9 @@ export class AdminCommandService {
       case "config":
       case "配置":
         return handleConfig(this.context(), groupId, userId, parts);
+      case "data":
+      case "隐私":
+        return handleData(this.context(), groupId, userId, parts);
       case "test":
       case "测试":
         return handleTest(this.context(), groupId, userId);

@@ -315,8 +315,8 @@ export const COMMAND_CARD_TITLES: Record<string, string> = {
  * 指令 → 功能域（模块）：模块降级时这些指令一律拒绝执行（层 2 闸门）。
  *
  * 别名也要列进来（闸门在「指令名归一化之后、dispatch 之前」判断）。
- * **诊断与恢复入口**（`help` / `menu` / `status` / `test*` / `restart` / `migrate`）刻意不在表里：
- * 模块全挂了也得能靠它们看到状态、重试加载、重启。
+ * **诊断与恢复入口**（`help` / `menu` / `status` / `test*` / `restart` / `migrate` / `data`）刻意不在表里：
+ * 模块全挂了也得能靠它们看到状态、重试加载、重启、处理个人数据请求。
  */
 export const COMMAND_MODULES: Readonly<Record<string, ModuleKey>> = {
   bind: "identity",

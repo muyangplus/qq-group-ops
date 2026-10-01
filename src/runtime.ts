@@ -25,6 +25,7 @@ import type { ActivityNotificationRepository } from "./db/activityNotificationRe
 import type { AuditRepository } from "./db/auditRepository.js";
 import type { BlacklistRepository } from "./db/blacklistRepository.js";
 import type { PunishmentRepository } from "./db/punishmentRepository.js";
+import type { PrivacyRepository } from "./db/privacyRepository.js";
 import type { AppealRepository } from "./db/appealRepository.js";
 import type { GroupConfigRepository } from "./db/groupConfigRepository.js";
 import type { GroupSettingsRepository } from "./db/groupSettingsRepository.js";
@@ -88,6 +89,7 @@ import { PermissionService } from "./services/permissions.js";
 import { PunishmentService } from "./services/punishments.js";
 import { RichMessageSender } from "./services/richMessages.js";
 import { DataMigrationService } from "./services/dataMigration.js";
+import { PrivacyService } from "./services/privacy.js";
 import { backupDatabase } from "./services/dbBackup.js";
 import { HealthRegistry } from "./services/health.js";
 import {
@@ -182,6 +184,8 @@ export interface RuntimeRepositories {
   menuDeliveries?: MenuDeliveryRepository;
   /** 平台级热配置（`/config`）。 */
   platformSettings?: PlatformSettingsRepository;
+  /** 个人数据匿名化 / 导出（`/data`，D7）。 */
+  privacy?: PrivacyRepository;
 }
 
 export interface RuntimeDependencies {
@@ -370,22 +374,37 @@ export function createRuntime(
     exportService: activityExport,
   });
   // 一次性数据迁移（`/migrate`）：只做存储层改写，改完把内存态整个重载
+  // 迁移执行前自动备份数据库（SQLite 文件副本）
+  const reloadPersistedState = async (): Promise<void> => {
+    await Promise.all([
+      configStore.load(),
+      userProfiles.load(),
+      shortCodes.load(),
+      activity.load(),
+    ]);
+  };
   const dataMigration = new DataMigrationService({
     settings: repositories.groupSettings,
     profiles: repositories.userProfiles,
     activityDetails: repositories.activityDetails,
     shortCodes: repositories.shortCodes,
     generateCode: () => reserveGlobalCode(SHORT_CODE_LENGTH),
-    // 迁移执行前自动备份数据库（SQLite 文件副本）
     backup: () => backupDatabase(settings.databaseTarget),
+    reload: reloadPersistedState,
+  });
+  // 个人数据匿名化 / 导出（D7）：同样只做存储层改写，但要把**认人**的那几份内存态一起重载
+  // （绑定、订阅、活动通知去重），否则本地还认得出被匿名化的人
+  const privacy = new PrivacyService({
+    repository: repositories.privacy,
     reload: async () => {
       await Promise.all([
-        configStore.load(),
-        userProfiles.load(),
-        shortCodes.load(),
-        activity.load(),
+        reloadPersistedState(),
+        identityMap.reload(),
+        notifications.load(),
+        activityNotifications.load(),
       ]);
     },
+    sender: richMessages,
   });
   // 模块健康：单个模块加载失败只降级它自己（层 1），它的功能域由闸门拦住（层 2）
   const menuState = createFirstMenuPushState(
@@ -456,6 +475,7 @@ export function createRuntime(
     restart,
     deploy: dependencies.deploy,
     migrate: dataMigration,
+    privacy,
     health,
     platform,
   });
