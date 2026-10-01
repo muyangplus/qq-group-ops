@@ -20,6 +20,10 @@
 
 ### 新增
 
+- **安全审计与依赖更新策略（D6）**：新增 `pnpm check:audit`（= `pnpm audit --audit-level=high`，
+  只有 high / critical 算失败）、每周自动跑的 GitHub Actions「安全审计」（失败自动开 / 更新 issue，
+  报告存 artifact），以及 `docs/SECURITY.md`——审计频率与处置流程、依赖升级与回归口径、
+  凭据与密钥管理、11 项可勾选的安全检查清单。
 - **`/migrate` 执行前自动备份数据库**：SQLite 复制成 `{原名}_YYYYMMDD_HHMMSS{原扩展名}`
   （本地时间；连 `-wal` / `-shm` 一起拷，避免丢掉还没落盘的提交）；PostgreSQL / 内存模式如实说明
   「未自动备份」（PG 提示自行 `pg_dump`）。备份失败**不拦住迁移**，结果卡写明备份文件或失败原因。

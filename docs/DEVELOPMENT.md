@@ -12,6 +12,7 @@
 | 单文件测试 | `node node_modules/vitest/vitest.mjs run --configLoader runner test/xxx.test.ts` |
 | 构建 + 启动 | `pnpm build && pnpm start`（`dist/` 不会自动更新） |
 | 班级索引 | `pnpm class:index`（读 `data/class.json`，输出 JSON + SQLite） |
+| 依赖漏洞审计 | `pnpm check:audit`（`pnpm audit --audit-level=high`；每周 CI 也自动跑，处置流程见 [SECURITY.md](./SECURITY.md)） |
 
 > 在受限沙箱/CI 里 `pnpm` 可能因锁文件或 store 权限失败，此时直接用 node 二进制：
 > `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`、
@@ -145,4 +146,6 @@ test/
 | [DECISIONS.md](./DECISIONS.md) | 做了需要留痕的技术取舍（追加 ADR，不修改历史条目） |
 | [CARD-STANDARD.md](./CARD-STANDARD.md) | 卡片交互规范变化 |
 | [ACCEPTANCE.md](./ACCEPTANCE.md) | 新增需要真机验收的交互 |
+| [SECURITY.md](./SECURITY.md) | 审计频率 / 处置流程 / 依赖升级口径 / 安全例外变化 |
+| [DATA-COMPLIANCE.md](./DATA-COMPLIANCE.md) | 保留期、删除与导出、PIPIA 口径变化 |
 | [ROADMAP.md](./ROADMAP.md) / [TODO.md](../TODO.md) | 计划与已知限制变化 |
