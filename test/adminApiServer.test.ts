@@ -204,6 +204,31 @@ describe("管理 API HTTP 层", () => {
     await app.close();
   });
 
+  it("/api/status 需要登录，返回只读状态", async () => {
+    const { app, tokens } = build();
+    const unauth = await app.inject({ method: "GET", url: "/api/status" });
+    expect(unauth.statusCode).toBe(401);
+
+    const { token } = await tokens.issue({ userId: "op1", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const cookie = cookieOf(login);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/status",
+      headers: { cookie },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ version: "test", sessions: 1 });
+
+    await app.close();
+  });
+
   it("登录链接按 PUBLIC_BASE_URL 拼", async () => {
     const { app, loginUrl } = build();
     expect(loginUrl("tok")).toBe("https://ops.example.com/login?token=tok");

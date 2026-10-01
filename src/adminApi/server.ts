@@ -27,6 +27,17 @@ export interface AdminApiServerOptions {
   logger?: Logger | undefined;
   version?: string | undefined;
   uptimeMs?: (() => number) | undefined;
+  /**
+   * 只读状态来源（E1-c）：数据库类型与启动期迁移问题数由入口注入；
+   * 会话数等本进程信息由 server 自己补。
+   */
+  statusProvider?: (() => Promise<AdminApiStatusExtra> | AdminApiStatusExtra) | undefined;
+}
+
+/** 入口能提供、server 自己算不出来的那部分状态。 */
+export interface AdminApiStatusExtra {
+  database: string;
+  migrationIssues: number;
 }
 
 export interface AdminApiServer {
@@ -148,6 +159,18 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
       (request.adminSession?.lastSeenAt ?? now().getTime()) + config.sessionTtlMs,
     ).toISOString(),
   }));
+
+  /** 只读状态（E1-c）：入口给数据库与迁移信息，server 补版本 / 运行时长 / 会话数。 */
+  app.get("/api/status", async () => {
+    const extra = options.statusProvider ? await options.statusProvider() : undefined;
+    return {
+      version: options.version ?? "unknown",
+      uptimeMs: options.uptimeMs?.() ?? Date.now() - startedAt,
+      database: extra?.database ?? "unknown",
+      migrationIssues: extra?.migrationIssues ?? 0,
+      sessions: sessions.size,
+    };
+  });
 
   app.post("/auth/logout", async (request, reply) => {
     sessions.destroy(readCookie(request.headers.cookie, ADMIN_SESSION_COOKIE));
