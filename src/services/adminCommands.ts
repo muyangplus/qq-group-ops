@@ -69,6 +69,7 @@ import {
   migrateRunCard,
 } from "./commands/migrateCommands.js";
 import { handleData } from "./commands/dataCommands.js";
+import { handleAdmin } from "./commands/adminApiCommands.js";
 import {
   moduleUnavailableCard,
   moduleRetryCard,
@@ -116,6 +117,7 @@ import type { ExportService } from "./export.js";
 import type { MemberRoster } from "./memberRoster.js";
 import type { DataMigrationService } from "./dataMigration.js";
 import type { PrivacyService } from "./privacy.js";
+import type { AdminApiLinkService } from "../adminApi/loginLink.js";
 import type { HealthRegistry, ModuleKey } from "./health.js";
 import type { PlatformSettingsStore } from "./platformSettings.js";
 import type { ModerationNotifier } from "./moderationNotifier.js";
@@ -218,6 +220,8 @@ export interface AdminCommandServiceOptions {
   migrate?: DataMigrationService | undefined;
   /** 个人数据匿名化 / 导出（`/data`，仅全局超管、只私信）。 */
   privacy?: PrivacyService | undefined;
+  /** 管理后台登录令牌签发（`/admin login`）。 */
+  adminApi?: AdminApiLinkService | undefined;
 
   /** 模块健康与功能闸门；缺省时不做闸门判断（纯单测场景）。 */
   health?: HealthRegistry | undefined;
@@ -289,6 +293,9 @@ export class AdminCommandService {
   /** 个人数据匿名化 / 导出（`/data`）；未装配时该指令拒绝执行。 */
   private readonly privacy: PrivacyService | undefined;
 
+  /** 管理后台登录令牌签发（`/admin login`）；未装配时该指令拒绝执行。 */
+  private readonly adminApi: AdminApiLinkService | undefined;
+
   /** 模块健康与功能闸门；未装配时不做闸门判断（纯单测场景）。 */
   private readonly health: HealthRegistry | undefined;
 
@@ -336,6 +343,7 @@ export class AdminCommandService {
     this.deploy = options.deploy;
     this.migrate = options.migrate;
     this.privacy = options.privacy;
+    this.adminApi = options.adminApi;
     this.health = options.health;
     this.platform = options.platform;
   }
@@ -590,6 +598,7 @@ export class AdminCommandService {
       deploy: this.deploy,
       migrate: this.migrate,
       privacy: this.privacy,
+      adminApi: this.adminApi,
       health: this.health,
       platform: this.platform,
       permissions: this.permissions,
@@ -747,6 +756,9 @@ export class AdminCommandService {
       case "data":
       case "隐私":
         return handleData(this.context(), groupId, userId, parts);
+      case "admin":
+      case "后台":
+        return handleAdmin(this.context(), groupId, userId, parts);
       case "test":
       case "测试":
         return handleTest(this.context(), groupId, userId);

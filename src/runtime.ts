@@ -26,6 +26,7 @@ import type { AuditRepository } from "./db/auditRepository.js";
 import type { BlacklistRepository } from "./db/blacklistRepository.js";
 import type { PunishmentRepository } from "./db/punishmentRepository.js";
 import type { PrivacyRepository } from "./db/privacyRepository.js";
+import type { AdminTokenRepository } from "./db/adminTokenRepository.js";
 import type { AppealRepository } from "./db/appealRepository.js";
 import type { GroupConfigRepository } from "./db/groupConfigRepository.js";
 import type { GroupSettingsRepository } from "./db/groupSettingsRepository.js";
@@ -90,6 +91,8 @@ import { PunishmentService } from "./services/punishments.js";
 import { RichMessageSender } from "./services/richMessages.js";
 import { DataMigrationService } from "./services/dataMigration.js";
 import { PrivacyService } from "./services/privacy.js";
+import { AdminApiLinkService } from "./adminApi/loginLink.js";
+import { loadAdminApiConfig } from "./adminApi/config.js";
 import { backupDatabase } from "./services/dbBackup.js";
 import { HealthRegistry } from "./services/health.js";
 import {
@@ -186,6 +189,8 @@ export interface RuntimeRepositories {
   platformSettings?: PlatformSettingsRepository;
   /** 个人数据匿名化 / 导出（`/data`，D7）。 */
   privacy?: PrivacyRepository;
+  /** 管理 API 的一次性登录令牌（E1）。 */
+  adminTokens?: AdminTokenRepository;
 }
 
 export interface RuntimeDependencies {
@@ -406,6 +411,12 @@ export function createRuntime(
     },
     sender: richMessages,
   });
+  // 管理后台登录令牌（E1-b）：配置没开或没有令牌仓储时 `enabled` 为 false，指令会明确说明
+  const adminApiLink = new AdminApiLinkService({
+    tokens: repositories.adminTokens,
+    config: loadAdminApiConfig(),
+    permissions,
+  });
   // 模块健康：单个模块加载失败只降级它自己（层 1），它的功能域由闸门拦住（层 2）
   const menuState = createFirstMenuPushState(
     () => platform.get("menuFirstPush"),
@@ -476,6 +487,7 @@ export function createRuntime(
     deploy: dependencies.deploy,
     migrate: dataMigration,
     privacy,
+    adminApi: adminApiLink,
     health,
     platform,
   });
