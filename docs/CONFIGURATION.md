@@ -569,7 +569,6 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 管理 / 超管菜单
 /activity quit <#活动短码>                      取消报名（群内结果只私信）
 /activity info <#活动短码>
 /activity signups <#活动短码> [+页码] [full]    报名名单（群管理员/发布者；默认不含学号/学院）
-/activity subscribe|unsubscribe [群号|#群短码]  订阅/退订「新活动通知」（默认本群）
 ```
 
 回调命名空间 `activity`（`cb:activity:<action>[:args]`，**renderer 内部重新做权限校验**）：

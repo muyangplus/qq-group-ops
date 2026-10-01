@@ -534,7 +534,7 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 - 接收者需要先 `/bind qq <QQ号>` 绑定自己（活动「全部群」与平台类话题的「全部」都要求绑定）。
 
 **已删除的老入口（不兼容）**：`/notify on|off`、`/notify all on|off`、`/notify <群> on|off`、
-`/notify punish …`、`/activity subscribe|unsubscribe` —— 订阅只通过面板按钮、或通知卡底部的退订按钮完成。
+`/notify punish …`、`/activity subscribe|unsubscribe` —— 订阅只通过 `/notify` 面板的开关、活动卡上的「订阅」按钮、或通知卡底部的退订按钮完成。
 
 ## 迎新（仅群内，`/rules set welcome`）
 
