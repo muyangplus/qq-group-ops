@@ -20,6 +20,9 @@
 
 ### 新增
 
+- **管理 API 机器令牌（E1-e）**：`ADMIN_API_TOKENS` 配置 `token:scope1|scope2[:到期ISO时间]`
+  （`read` / `write` / `*`），请求带 `Authorization: Bearer <token>` 即可调用，按方法校验 scope
+  （缺 scope 403），不涉及 cookie 所以不需要 CSRF 头；令牌用常量时间比较、限流按令牌前缀计数。
 - **管理后台登录（`/admin login`，E1-b）**：管理员私信机器人 `/admin login`（仅全局超管、只在私信）
   拿到**一次性登录令牌**（默认 10 分钟）与登录链接，浏览器兑换后种会话 cookie；
   `/admin status` 看管理 API 是否开启。机器人不可用时在服务器终端用
