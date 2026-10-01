@@ -104,6 +104,35 @@ async function main(): Promise<void> {
           };
         });
       },
+      activities: async () => {
+        const [activities, details, registrations] = await Promise.all([
+          persistence.activities.findActivities(),
+          persistence.activityDetails.findAll(),
+          persistence.activities.findRegistrations(),
+        ]);
+        const codeOf = new Map(
+          details.map((detail) => [detail.activityId, detail.code]),
+        );
+        const registeredOf = new Map<string, number>();
+        for (const registration of registrations) {
+          registeredOf.set(
+            registration.activityId,
+            (registeredOf.get(registration.activityId) ?? 0) + 1,
+          );
+        }
+        return activities.map((activity) => ({
+          activityId: activity.activityId,
+          code: codeOf.get(activity.activityId) ?? "",
+          title: activity.title,
+          groupId: activity.groupId,
+          status: activity.status,
+          ...(activity.capacity !== undefined
+            ? { capacity: activity.capacity }
+            : {}),
+          registered: registeredOf.get(activity.activityId) ?? 0,
+          createdAt: activity.createdAt.toISOString(),
+        }));
+      },
     },
   });
 

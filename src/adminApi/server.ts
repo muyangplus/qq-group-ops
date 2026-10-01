@@ -76,6 +76,20 @@ export interface AdminApiReaders {
   rules(groupId: string): Promise<AdminApiRulesView>;
   /** 通知话题：默认门槛 + 订阅人数（订「全部群」与按群订阅分开）。 */
   notifyTopics(): Promise<AdminApiNotifyTopic[]>;
+  /** 活动列表（含报名人数；群卡片广播目标在机器人侧管理）。 */
+  activities(): Promise<AdminApiActivityItem[]>;
+}
+
+export interface AdminApiActivityItem {
+  activityId: string;
+  /** 活动短码（展示用）。 */
+  code: string;
+  title: string;
+  groupId: string;
+  status: string;
+  capacity?: number | undefined;
+  registered: number;
+  createdAt: string;
 }
 
 export interface AdminApiNotifyTopic {
@@ -309,6 +323,35 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
         .send(errorBody("unavailable", "数据源未装配（缺少数据库）。"));
     }
     return { topics: await readers.notifyTopics() };
+  });
+
+  /** 活动列表（E1-c）：可选按群 / 状态过滤 + 分页。 */
+  app.get("/api/activities", async (request, reply) => {
+    const readers = options.readers;
+    if (!readers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "数据源未装配（缺少数据库）。"));
+    }
+    const query = request.query as Record<string, unknown>;
+    const page = positiveQueryInt(query.page, 1);
+    const pageSize = Math.min(positiveQueryInt(query.pageSize, 50), 200);
+    const group = queryString(query.group);
+    const status = queryString(query.status);
+
+    const all = await readers.activities();
+    const filtered = all.filter(
+      (item) =>
+        (group === undefined || item.groupId === group) &&
+        (status === undefined || item.status === status),
+    );
+    const start = (page - 1) * pageSize;
+    return {
+      total: filtered.length,
+      page,
+      pageSize,
+      items: filtered.slice(start, start + pageSize),
+    };
   });
 
   app.post("/auth/logout", async (request, reply) => {

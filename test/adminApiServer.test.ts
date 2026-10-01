@@ -470,6 +470,68 @@ describe("管理 API HTTP 层", () => {
     await bareApp.close();
   });
 
+  it("/api/activities 需要登录，可按群/状态过滤 + 分页", async () => {
+    const tokens = memoryTokens();
+    const readers = {
+      pending: async () => [],
+      rules: async (groupId: string) => ({ groupId, override: null, settings: [] }),
+      notifyTopics: async () => [],
+      activities: async () => [
+        {
+          activityId: "a1",
+          code: "ACT001",
+          title: "春游",
+          groupId: "g1",
+          status: "open",
+          registered: 3,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        },
+        {
+          activityId: "a2",
+          code: "ACT002",
+          title: "秋游",
+          groupId: "g2",
+          status: "closed",
+          registered: 1,
+          createdAt: "2026-10-02T00:00:00.000Z",
+        },
+      ],
+    };
+    const app = buildAdminApiServer({ config: CONFIG, tokens, version: "test", readers }).app;
+
+    const unauth = await app.inject({ method: "GET", url: "/api/activities" });
+    expect(unauth.statusCode).toBe(401);
+
+    const { token } = await tokens.issue({ userId: "op1", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const cookie = cookieOf(login);
+
+    const byGroup = await app.inject({
+      method: "GET",
+      url: "/api/activities?group=g1&status=open",
+      headers: { cookie },
+    });
+    expect(byGroup.json()).toMatchObject({ total: 1, page: 1 });
+    expect(byGroup.json<{ items: Array<{ code: string }> }>().items[0]?.code).toBe(
+      "ACT001",
+    );
+
+    const all = await app.inject({
+      method: "GET",
+      url: "/api/activities?pageSize=1",
+      headers: { cookie },
+    });
+    expect(all.json()).toMatchObject({ total: 2, pageSize: 1 });
+    expect(all.json<{ items: unknown[] }>().items).toHaveLength(1);
+
+    await app.close();
+  });
+
   it("登录链接按 PUBLIC_BASE_URL 拼", async () => {
     const { app, loginUrl } = build();
     expect(loginUrl("tok")).toBe("https://ops.example.com/login?token=tok");
