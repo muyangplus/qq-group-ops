@@ -417,6 +417,59 @@ describe("管理 API HTTP 层", () => {
     await bareApp.close();
   });
 
+  it("/api/notify/topics 返回默认门槛与订阅人数（无数据源 503）", async () => {
+    const tokens = memoryTokens();
+    const readers = {
+      pending: async () => [],
+      rules: async (groupId: string) => ({ groupId, override: null, settings: [] }),
+      notifyTopics: async () => [
+        { topic: "join", label: "入群申请", defaultLevel: 130, allScope: 2, groupScopes: 5 },
+      ],
+    };
+    const app = buildAdminApiServer({ config: CONFIG, tokens, version: "test", readers }).app;
+    const { token } = await tokens.issue({ userId: "op1", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/notify/topics",
+      headers: { cookie: cookieOf(login) },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      topics: [
+        { topic: "join", label: "入群申请", defaultLevel: 130, allScope: 2, groupScopes: 5 },
+      ],
+    });
+    await app.close();
+
+    const bareTokens = memoryTokens();
+    const bareApp = buildAdminApiServer({
+      config: CONFIG,
+      tokens: bareTokens,
+      version: "test",
+    }).app;
+    const issued = await bareTokens.issue({ userId: "op1", ttlMs: 60_000 });
+    const bareLogin = await bareApp.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: issued.token },
+    });
+    const unavailable = await bareApp.inject({
+      method: "GET",
+      url: "/api/notify/topics",
+      headers: { cookie: cookieOf(bareLogin) },
+    });
+    expect(unavailable.statusCode).toBe(503);
+    await bareApp.close();
+  });
+
   it("登录链接按 PUBLIC_BASE_URL 拼", async () => {
     const { app, loginUrl } = build();
     expect(loginUrl("tok")).toBe("https://ops.example.com/login?token=tok");

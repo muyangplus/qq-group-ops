@@ -2,6 +2,7 @@ import { getLogger } from "../core/logger.js";
 import { loadSettings } from "../config.js";
 import { connectPersistence } from "../persistence.js";
 import { adminLoginUrl, loadAdminApiConfig } from "./config.js";
+import { NOTIFY_TOPIC_META } from "../services/notifyTopics.js";
 import { buildAdminApiServer } from "./server.js";
 
 /**
@@ -77,6 +78,31 @@ async function main(): Promise<void> {
             .filter((row) => row.groupId === groupId)
             .map((row) => ({ key: row.key, value: row.value })),
         };
+      },
+      notifyTopics: async () => {
+        const rows = await persistence.notificationSubscriptions.findAll();
+        return Object.entries(NOTIFY_TOPIC_META).map(([topic, meta]) => {
+          const prefix = `${topic}:`;
+          let allScope = 0;
+          let groupScopes = 0;
+          for (const row of rows) {
+            if (!row.scope.startsWith(prefix)) {
+              continue;
+            }
+            if (row.scope === `${prefix}__all__`) {
+              allScope += 1;
+            } else {
+              groupScopes += 1;
+            }
+          }
+          return {
+            topic,
+            label: meta.label,
+            defaultLevel: meta.defaultLevel,
+            allScope,
+            groupScopes,
+          };
+        });
       },
     },
   });

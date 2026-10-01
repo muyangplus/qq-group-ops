@@ -74,6 +74,19 @@ export interface AdminApiRulesView {
 export interface AdminApiReaders {
   pending(): Promise<AdminApiPendingItem[]>;
   rules(groupId: string): Promise<AdminApiRulesView>;
+  /** 通知话题：默认门槛 + 订阅人数（订「全部群」与按群订阅分开）。 */
+  notifyTopics(): Promise<AdminApiNotifyTopic[]>;
+}
+
+export interface AdminApiNotifyTopic {
+  topic: string;
+  label: string;
+  /** 全局默认门槛（实际门槛可能被 `__default__.notifyTopicLevels` 覆盖）。 */
+  defaultLevel: number;
+  /** 订「全部群」的人数。 */
+  allScope: number;
+  /** 按具体群订阅的行数（同一人可订多个群）。 */
+  groupScopes: number;
 }
 
 /** 入口能提供、server 自己算不出来的那部分状态。 */
@@ -285,6 +298,17 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
         .send(errorBody("bad_request", "需要 ?group=<群ID 或 #群短码>。"));
     }
     return readers.rules(group);
+  });
+
+  /** 通知话题概览（E1-c）：默认门槛与订阅人数，供后台展示。 */
+  app.get("/api/notify/topics", async (_request, reply) => {
+    const readers = options.readers;
+    if (!readers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "数据源未装配（缺少数据库）。"));
+    }
+    return { topics: await readers.notifyTopics() };
   });
 
   app.post("/auth/logout", async (request, reply) => {
