@@ -50,6 +50,15 @@ function memoryTokens(ttlMs = 60_000): AdminTokenRepository {
     async pruneExpired() {
       // 内存版无需清理
     },
+    async countActive() {
+      let count = 0;
+      for (const row of rows.values()) {
+        if (!row.used && row.expiresAt > Date.now()) {
+          count += 1;
+        }
+      }
+      return count;
+    },
   };
 }
 

@@ -107,6 +107,8 @@ export interface AdminApiNotifyTopic {
 export interface AdminApiStatusExtra {
   database: string;
   migrationIssues: number;
+  /** 当前未用且未过期的登录令牌数。 */
+  activeTokens?: number | undefined;
 }
 
 export interface AdminApiServer {
@@ -237,6 +239,7 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
       uptimeMs: options.uptimeMs?.() ?? Date.now() - startedAt,
       database: extra?.database ?? "unknown",
       migrationIssues: extra?.migrationIssues ?? 0,
+      activeTokens: extra?.activeTokens ?? 0,
       sessions: sessions.size,
     };
   });

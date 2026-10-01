@@ -36,9 +36,10 @@ async function main(): Promise<void> {
     version: process.env.npm_package_version ?? "unknown",
     uptimeMs: () => Math.round(process.uptime() * 1000),
     // 只读状态（E1-c）：数据库类型 + 启动期迁移问题数（问题详情在机器人侧 /status proc）
-    statusProvider: () => ({
+    statusProvider: async () => ({
       database: persistence.driver,
       migrationIssues: persistence.migration.issues.length,
+      activeTokens: await persistence.adminTokens.countActive(),
     }),
     // 只读审计（E1-c）：直接读审计表（保留期由 RetentionService 控制，量级有上限）
     auditReader: {

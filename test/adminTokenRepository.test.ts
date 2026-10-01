@@ -91,6 +91,18 @@ describe("SqlAdminTokenRepository", () => {
     expect(blank.calls).toHaveLength(0);
   });
 
+  it("countActive 只数未用且未过期的令牌", async () => {
+    const db = new FakeQueryable([[{ n: "2" }]]);
+    const repository = new SqlAdminTokenRepository(db);
+    const now = new Date("2026-10-01T00:05:00.000Z");
+
+    expect(await repository.countActive(now)).toBe(2);
+    const call = db.calls[0];
+    expect(call?.text).toContain("COUNT(*)");
+    expect(call?.text).toContain("used_at IS NULL");
+    expect(call?.values).toEqual([now.toISOString()]);
+  });
+
   it("hashAdminToken 是稳定的 sha256；tokensEqual 常量时间比较", () => {
     expect(hashAdminToken("abc")).toBe(hashAdminToken("abc"));
     expect(hashAdminToken("abc")).toHaveLength(64);

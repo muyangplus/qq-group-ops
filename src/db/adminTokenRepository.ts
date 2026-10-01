@@ -24,6 +24,8 @@ export interface AdminTokenRepository {
   redeem(token: string, now?: Date | undefined): Promise<string | undefined>;
   /** 清理过期行；返回删除前探测到的条数（0 表示没有）。 */
   pruneExpired(now?: Date | undefined): Promise<void>;
+  /** 当前**未用且未过期**的令牌数（`/api/status` 用，便于确认"刚才那张卡是不是还有效"）。 */
+  countActive(now?: Date | undefined): Promise<number>;
 }
 
 interface TokenRow {
@@ -45,6 +47,10 @@ UPDATE admin_api_tokens SET used_at = $2 WHERE token_hash = $1 AND used_at IS NU
 `.trim();
 
 const PRUNE_SQL = "DELETE FROM admin_api_tokens WHERE expires_at <= $1";
+
+const COUNT_ACTIVE_SQL = `
+SELECT COUNT(*) AS n FROM admin_api_tokens WHERE used_at IS NULL AND expires_at > $1
+`.trim();
 
 export function hashAdminToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -97,6 +103,14 @@ export class SqlAdminTokenRepository implements AdminTokenRepository {
 
   public async pruneExpired(now: Date = new Date()): Promise<void> {
     await this.db.query(PRUNE_SQL, [now.toISOString()]);
+  }
+
+  public async countActive(now: Date = new Date()): Promise<number> {
+    const result = await this.db.query<{ n: number | string }>(
+      COUNT_ACTIVE_SQL,
+      [now.toISOString()],
+    );
+    return Number(result.rows[0]?.n ?? 0);
   }
 }
 
