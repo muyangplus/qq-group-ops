@@ -32,8 +32,24 @@
 ### P1
 
 - [ ] **D7 个人数据删除能力**（批次5 · Phase 4）
-  - 过期数据清理已有；**按用户删除 / 导出个人数据未做**。
-  - 口径见 [docs/DATA-COMPLIANCE.md](./docs/DATA-COMPLIANCE.md) 的「删除与导出」一节。
+  - 过期数据清理已有；**按用户删除 / 导出个人数据未做**。口径见
+    [docs/DATA-COMPLIANCE.md](./docs/DATA-COMPLIANCE.md) 的「删除与导出」一节。
+  - **已定口径（2026-09-29 确认，实施时照这个做，不要再改）**：
+    1. 入口：`/data delete <#用户短码|userId> [原因]` 与 `/data export <…>`，**仅全局超管、只私信**；
+       删除走两步确认卡（`cb:data:request` 预览 → `cb:data:run` 执行），两种动作都写审计
+       （平台级动作 `groupId = ""`，action 用 `data_delete` / `data_export`）；
+    2. 删除 = **全部匿名化**（不物理删行）：同一次操作生成一个占位值 `anon:<随机>`，把下列表里该用户的
+       `user_id` 全部换成它，并清空个人字段（姓名 / 学号 / 班级 / 学院 / 报名备注 / 处罚与申诉正文）：
+       `user_profiles`、`identity_bindings`、`activity_registrations`、`activity_waitlist`、
+       `punishment_records`、`appeal_records`、`join_requests`、`short_codes`、
+       `notification_subscriptions`、`notification_deliveries`、`activity_subscriptions`、
+       `activity_notifications`、`menu_deliveries`、`group_message_modes`；
+    3. **不动**：`blacklist_entries`、`permission_grants`（保留生效——删号不等于解封；**结果卡里不写这一点**）、
+       `audit_records`（合规保留，只追加一条「已匿名化 …」的动作记录）；
+    4. 导出 = 私信一段**可复制的 CSV 文本**（资料 / 报名 / 候补 / 处罚 / 申诉 / 订阅；字段对应
+       DATA-COMPLIANCE 的保留期表），不落文件到磁盘；
+    5. 匿名化后必须 `reload()` 内存态（资料 / 报名 / 短码 / 订阅），否则内存里还认得出这个人；
+    6. 目标是幂等：已匿名化的人再执行一次应当报「没有可匿名化的数据」，而不是再换一个占位值。
 
 ### P2
 
