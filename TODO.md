@@ -7,7 +7,7 @@
 > **所有需要真实 QQ 群环境的条目统一收在最后一节 §4**（不再散落在各优先级里）：等有环境时照
 > [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md) 一次跑完并回填。
 >
-> 当前状态（2026-09-29）：测试 **130 文件 / 1033 用例**全绿；**0.22.1 已发版**
+> 当前状态（2026-09-29）：测试 **130 文件 / 1040 用例**全绿；**0.22.1 已发版**
 > （其后 `[Unreleased]` 又攒了：`/migrate` 弹窗文案压到 21 字 + 卡片弹窗文案统一裁剪兜底、
 > `/migrate` 执行前自动备份数据库、入群申请拒绝理由改为自定义）。
 > 已完成：A1–A5、B1–B3、B6–B11、C1–C3、C5–C6、C9、D1、D3、D5、D6、D7、D10、F1–F2、H1–H8、D9（0.19.0 起）。
@@ -47,8 +47,10 @@
     与 `pnpm admin:token` 应急 CLI 已落地（`src/adminApi/loginLink.ts`、`src/adminApi/cliToken.ts`、
     `src/services/commands/adminApiCommands.ts`，7 个用例）；**端点级门槛**（每个路由声明所需门槛、
     403 + 审计）随 E1-c 的路由一起做。
-  - [ ] **E1-c 只读端点**（P1）：`/api/status`、`/api/pending`（分页）、`/api/audit`（过滤 + 分页）、
-    `/api/rules?group=`、`/api/activities`（名单默认脱敏）、`/api/notify/topics`。
+  - [x] **E1-c 只读端点**（P1）：`/api/status`、`/api/audit`（按群 / 操作人 / 动作过滤 + 分页）、
+    `/api/pending`（只列 pending，可按群过滤 + 分页）、`/api/rules?group=`（原始覆盖行，缺 group 400）、
+    `/api/notify/topics`（默认门槛 + 订阅人数）、`/api/activities`（按群 / 状态过滤 + 分页）；
+    全部要会话（未登录 401），数据源未装配回 503（内存模式）。
   - [ ] **E1-d 写端点**（P2，与 E2 一起）：审批通过 / 拒绝（复用 `JoinApprovalService`）、
     规则字段修改（复用 `parseRuleSetting`）、活动开停与 CSV 导出；全部写审计。
   - [ ] **E1-e 机器 token**（P2）：`ADMIN_API_TOKENS`（`token:scope`、可过期）——与一次性登录令牌分开，
