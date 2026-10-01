@@ -299,4 +299,19 @@ CREATE INDEX IF NOT EXISTS appeal_records_punishment_idx
 
 CREATE INDEX IF NOT EXISTS appeal_records_user_idx
   ON appeal_records (user_id, created_at DESC);
+
+-- 管理 API 的一次性登录令牌（E1 · 认证方案 B2）：
+-- 签发方是机器人进程或 pnpm admin:token（CLI），兑换方是独立的管理 API 进程，
+-- 三个进程内存互不可见，所以令牌必须落库；**只存 sha256**，明文只在签发时返回一次。
+-- 兑换成功即写 used_at（一次性），过期行由 issue / redeem 顺手清理。
+CREATE TABLE IF NOT EXISTS admin_api_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS admin_api_tokens_expires_idx
+  ON admin_api_tokens (expires_at);
 `.trim();

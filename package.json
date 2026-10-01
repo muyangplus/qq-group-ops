@@ -16,7 +16,8 @@
     "check:audit": "pnpm audit --audit-level=high",
     "db:up": "docker compose --profile postgres up -d db",
     "class:index": "node scripts/build-class-index.mjs",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "admin:api": "node dist/adminApi/main.js"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

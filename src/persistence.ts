@@ -61,6 +61,10 @@ import {
   type PrivacyRepository,
 } from "./db/privacyRepository.js";
 import {
+  SqlAdminTokenRepository,
+  type AdminTokenRepository,
+} from "./db/adminTokenRepository.js";
+import {
   SqlGroupMessageModeRepository,
   type GroupMessageModeRepository,
 } from "./db/groupMessageModeRepository.js";
@@ -144,6 +148,8 @@ export interface Persistence {
   activityDetails: ActivityDetailsRepository;
   menuDeliveries: MenuDeliveryRepository;
   close(): Promise<void>;
+  /** 管理 API 的一次性登录令牌（E1）。 */
+  adminTokens: AdminTokenRepository;
 }
 
 export interface PersistenceOptions {
@@ -262,6 +268,8 @@ interface RepositorySet {
   menuDeliveries: MenuDeliveryRepository;
   /** 个人数据匿名化 / 导出（D7）：按表改写，不是普通仓储。 */
   privacy: PrivacyRepository;
+  /** 管理 API 的一次性登录令牌（E1）。 */
+  adminTokens: AdminTokenRepository;
 }
 
 function createRepositories(db: Queryable): RepositorySet {
@@ -291,6 +299,7 @@ function createRepositories(db: Queryable): RepositorySet {
     classAliases: new SqlClassAliasRepository(db),
     menuDeliveries: new SqlMenuDeliveryRepository(db),
     privacy: new SqlPrivacyRepository(db),
+    adminTokens: new SqlAdminTokenRepository(db),
   };
 }
 
