@@ -260,6 +260,7 @@ function buildHelp(
     lines.push("/rules set all <字段> <值> - 修改全局默认规则");
     lines.push("/migrate - 一次性数据迁移（私信中使用）");
     lines.push("/data delete|anonymize|export <用户> - 个人数据匿名化 / 导出（私信中使用）");
+    lines.push("/admin login - 管理后台登录令牌（私信中使用；机器人不可用时用 pnpm admin:token）");
     lines.push("/config - 平台配置热改：保留期 / 计时 / 部署监测等（私信中使用）");
   }
   if (!canModerate && !canAdmin && !isSuper) {

@@ -938,6 +938,33 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     ],
   },
   {
+    name: "admin",
+    aliases: ["后台", "管理后台"],
+    title: "管理后台登录（仅全局超级管理员）",
+    requirement: SUPER_ADMIN_ONLY,
+    allows: (context) =>
+      context.permissions.meetsGlobal(
+        context.userId,
+        PlatformLevel.GlobalSuperAdmin,
+      ),
+    body: () => [
+      "用法（只在私信）：",
+      "  /admin login        签发一次性登录令牌 + 管理后台登录链接",
+      "  /admin status       看管理 API 是否开启",
+      "",
+      "怎么登录：",
+      "  ① 私信机器人 `/admin login` → 拿到一次性令牌（默认 10 分钟有效）；",
+      "  ② 打开消息里的链接，或把令牌粘到后台登录页；",
+      "  ③ 兑换成功后浏览器里种会话 cookie（HttpOnly + SameSite=Strict），默认 12 小时滑动过期。",
+      "",
+      "边界：",
+      "  · 令牌等价于凭据：**只在私信里发**，别转发；用过一次即失效，下次重新获取；",
+      "  · 默认只有平台超管（240）能签发，可用 `ADMIN_API_ALLOWED_OPENIDS` 进一步收窄；",
+      "  · 机器人挂了 / 收不到私信时，在服务器终端跑 `pnpm admin:token --user=<openid>` 应急签发；",
+      "  · 管理 API 本身默认关闭（`ADMIN_API_ENABLED`），且默认只监听 `127.0.0.1`。",
+    ],
+  },
+  {
     name: "test",
     aliases: ["测试"],
     title: "机器人自检",

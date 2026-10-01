@@ -20,6 +20,11 @@
 
 ### 新增
 
+- **管理后台登录（`/admin login`，E1-b）**：管理员私信机器人 `/admin login`（仅全局超管、只在私信）
+  拿到**一次性登录令牌**（默认 10 分钟）与登录链接，浏览器兑换后种会话 cookie；
+  `/admin status` 看管理 API 是否开启。机器人不可用时在服务器终端用
+  `pnpm admin:token --user=<openid>` 应急签发。默认只有平台超管（240）能签发，
+  可用 `ADMIN_API_ALLOWED_OPENIDS` 收窄；`/help admin` 有完整说明。
 - **管理 API 骨架（E1-a）**：与机器人分开的进程（`pnpm admin:api`，默认关闭、默认只监听 `127.0.0.1`），
   认证是**机器人私信一次性令牌 + 会话 cookie**：`/admin login`（下一步接线）或 `pnpm admin:token`
   签发的令牌**只存 `sha256`**、一次性（兑换即写 `used_at`）、默认 10 分钟 TTL；兑换后种
