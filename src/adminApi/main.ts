@@ -39,6 +39,19 @@ async function main(): Promise<void> {
       database: persistence.driver,
       migrationIssues: persistence.migration.issues.length,
     }),
+    // 只读审计（E1-c）：直接读审计表（保留期由 RetentionService 控制，量级有上限）
+    auditReader: {
+      list: async () =>
+        (await persistence.audit.findAll()).map((record) => ({
+          recordId: record.recordId,
+          groupId: record.groupId,
+          actorId: record.actorId,
+          action: record.action,
+          status: record.status,
+          reason: record.reason,
+          createdAt: record.createdAt.toISOString(),
+        })),
+    },
   });
 
   let closing = false;

@@ -229,6 +229,77 @@ describe("管理 API HTTP 层", () => {
     await app.close();
   });
 
+  it("/api/audit 需要登录，支持按群/操作人/动作过滤与分页", async () => {
+    const tokens = memoryTokens();
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "test",
+      auditReader: {
+        list: async () =>
+          Array.from({ length: 5 }, (_value, index) => ({
+            recordId: `r${index}`,
+            groupId: index % 2 === 0 ? "g1" : "g2",
+            actorId: index === 0 ? "op1" : "op2",
+            action: index < 3 ? "approve_join_request" : "reject_join_request",
+            status: "executed",
+            reason: "",
+            createdAt: "2026-10-01T00:00:00.000Z",
+          })),
+      },
+    }).app;
+
+    const unauth = await app.inject({ method: "GET", url: "/api/audit" });
+    expect(unauth.statusCode).toBe(401);
+
+    const { token } = await tokens.issue({ userId: "op1", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const cookie = cookieOf(login);
+
+    const filtered = await app.inject({
+      method: "GET",
+      url: "/api/audit?group=g1&pageSize=10",
+      headers: { cookie },
+    });
+    expect(filtered.statusCode).toBe(200);
+    expect(filtered.json()).toMatchObject({ total: 3, page: 1, pageSize: 10 });
+    expect(filtered.json<{ items: unknown[] }>().items).toHaveLength(3);
+
+    const paged = await app.inject({
+      method: "GET",
+      url: "/api/audit?page=2&pageSize=2",
+      headers: { cookie },
+    });
+    expect(paged.json()).toMatchObject({ total: 5, page: 2, pageSize: 2 });
+    expect(paged.json<{ items: unknown[] }>().items).toHaveLength(2);
+
+    await app.close();
+  });
+
+  it("审计数据源未装配时回 503", async () => {
+    const { app, tokens } = build();
+    const { token } = await tokens.issue({ userId: "op1", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/audit",
+      headers: { cookie: cookieOf(login) },
+    });
+
+    expect(response.statusCode).toBe(503);
+    await app.close();
+  });
+
   it("登录链接按 PUBLIC_BASE_URL 拼", async () => {
     const { app, loginUrl } = build();
     expect(loginUrl("tok")).toBe("https://ops.example.com/login?token=tok");

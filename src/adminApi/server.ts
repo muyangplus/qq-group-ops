@@ -32,6 +32,23 @@ export interface AdminApiServerOptions {
    * 会话数等本进程信息由 server 自己补。
    */
   statusProvider?: (() => Promise<AdminApiStatusExtra> | AdminApiStatusExtra) | undefined;
+  /** 审计记录读取器（E1-c `/api/audit`）；未装配时该端点回 503。 */
+  auditReader?: AdminApiAuditReader | undefined;
+}
+
+export interface AdminApiAuditRecord {
+  recordId: string;
+  groupId: string;
+  actorId: string;
+  action: string;
+  status: string;
+  reason: string;
+  createdAt: string;
+}
+
+/** 审计数据源：入口用仓储实现（`persistence.audit.findAll()`）。 */
+export interface AdminApiAuditReader {
+  list(): Promise<AdminApiAuditRecord[]>;
 }
 
 /** 入口能提供、server 自己算不出来的那部分状态。 */
@@ -172,6 +189,37 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     };
   });
 
+  /** 只读审计记录（E1-c）：按群 / 操作人 / 动作过滤 + 分页。 */
+  app.get("/api/audit", async (request, reply) => {
+    const reader = options.auditReader;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "审计数据源未装配（缺少数据库）。"));
+    }
+    const query = request.query as Record<string, unknown>;
+    const page = positiveQueryInt(query.page, 1);
+    const pageSize = Math.min(positiveQueryInt(query.pageSize, 50), 200);
+    const group = queryString(query.group);
+    const actor = queryString(query.actor);
+    const action = queryString(query.action);
+
+    const all = await reader.list();
+    const filtered = all.filter(
+      (record) =>
+        (group === undefined || record.groupId === group) &&
+        (actor === undefined || record.actorId === actor) &&
+        (action === undefined || record.action === action),
+    );
+    const start = (page - 1) * pageSize;
+    return {
+      total: filtered.length,
+      page,
+      pageSize,
+      items: filtered.slice(start, start + pageSize),
+    };
+  });
+
   app.post("/auth/logout", async (request, reply) => {
     sessions.destroy(readCookie(request.headers.cookie, ADMIN_SESSION_COOKIE));
     reply.header("set-cookie", sessionCookie("", config, 0));
@@ -197,6 +245,20 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
 
 function errorBody(code: string, message: string): { error: string; message: string } {
   return { error: code, message };
+}
+
+function queryString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function positiveQueryInt(value: unknown, fallback: number): number {
+  const parsed =
+    typeof value === "string" ? Number.parseInt(value, 10) : Number.NaN;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function hasCsrfHeader(request: FastifyRequest): boolean {
