@@ -1,0 +1,80 @@
+name: 安全审计
+
+# 依赖漏洞审计（D6）：每周自动跑一次，发现 high / critical 就开（或更新）一个 issue。
+# 处置流程与检查清单见 docs/SECURITY.md。
+on:
+  schedule:
+    # 每周一 03:17 UTC（北京时间 11:17）——避开整点，减少与其它仓库排队冲突
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 审计失败不直接让 job 红，先留报告，再决定开 issue
+      # （必须 pipefail：否则管道退出码取的是 tee，审计永远「通过」）
+      - name: 依赖漏洞审计
+        id: audit
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pnpm check:audit 2>&1 | tee audit-report.txt
+
+      - name: 失败或超时都保留报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-report
+          path: audit-report.txt
+          if-no-files-found: ignore
+
+      - name: 发现问题 → 开 / 更新 issue
+        if: steps.audit.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          title="依赖审计失败：pnpm audit 发现 high/critical 漏洞"
+          {
+            echo "每周自动审计（\`security-audit.yml\`）未通过：\`pnpm check:audit\` 发现 high / critical 级漏洞。"
+            echo
+            echo '```'
+            cat audit-report.txt
+            echo '```'
+            echo
+            echo "处置流程见 \`docs/SECURITY.md\`：判定可达性 → 升级 → \`pnpm typecheck && pnpm test && pnpm build\` → 升级不动就记一条**已知例外**。"
+            echo
+            echo "本次运行：$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > issue-body.md
+          existing="$(gh issue list --state open --search '依赖审计失败 in:title' --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file issue-body.md
+          else
+            gh issue create --title "$title" --body-file issue-body.md
+          fi
+
+      - name: 审计通过
+        if: steps.audit.outcome == 'success'
+        run: echo "pnpm audit --audit-level=high 通过，无需处理。"

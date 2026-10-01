@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "check:audit": "pnpm audit --audit-level=high",
     "db:up": "docker compose --profile postgres up -d db",
     "class:index": "node scripts/build-class-index.mjs",
     "start": "node dist/main.js"
