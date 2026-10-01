@@ -495,8 +495,15 @@ export class NotificationService {
   /**
    * 这张卡实际是通过哪个范围投给该用户的：订过「全部群」就是「全部群」，
    * 否则是具体群 —— 卡上的「取消订阅」要退掉真正生效的那一条。
+   *
+   * 对外公开是给活动通知用的（`ActivityNotificationService` 投递个人提醒类卡片时
+   * 也要按同一口径决定退订范围，见 H8-2）。
    */
-  private scopeFor(userId: string, groupId: string, topic: NotifyChannel): string {
+  public scopeForDelivery(
+    userId: string,
+    groupId: string,
+    topic: NotifyChannel,
+  ): string {
     return this.isSubscribed(userId, NOTIFY_SCOPE_ALL, topic)
       ? NOTIFY_SCOPE_ALL
       : groupId;
@@ -561,7 +568,7 @@ export class NotificationService {
       const card = this.withUnsubscribeRow(
         input.cardFor(userId),
         input.channel,
-        this.scopeFor(userId, input.groupId, input.channel),
+        this.scopeForDelivery(userId, input.groupId, input.channel),
         userId,
       );
       const outcome = await this.push.deliver({
@@ -650,7 +657,7 @@ export class NotificationService {
       const card = this.withUnsubscribeRow(
         buildJoinRequestCard(input),
         "join",
-        this.scopeFor(userId, push.groupId, "join"),
+        this.scopeForDelivery(userId, push.groupId, "join"),
         userId,
       );
       const outcome = await this.push.deliver({

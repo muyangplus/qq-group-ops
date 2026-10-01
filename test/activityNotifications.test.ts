@@ -103,6 +103,7 @@ describe("ActivityNotificationService", () => {
     await service.publishNewActivity({ activityId: "a1", groupId: "g1", card: CARD });
     await service.notifyParticipants({
       activityId: "a1",
+      groupId: "g1",
       userIds: ["u1"],
       kind: "changed",
       text: "变更",
@@ -119,6 +120,7 @@ describe("ActivityNotificationService", () => {
     for (const activityId of ["a1", "a2", "a3"]) {
       await service.notifyParticipants({
         activityId,
+        groupId: "g1",
         userIds: ["u1"],
         kind: "changed",
         text: "变更",
@@ -127,6 +129,7 @@ describe("ActivityNotificationService", () => {
     expect(spy.sent).toHaveLength(2);
     const fourth = await service.notifyParticipants({
       activityId: "a4",
+      groupId: "g1",
       userIds: ["u1"],
       kind: "changed",
       text: "变更",
@@ -135,6 +138,7 @@ describe("ActivityNotificationService", () => {
     // 另一个人不受影响
     const other = await service.notifyParticipants({
       activityId: "a4",
+      groupId: "g1",
       userIds: ["u2"],
       kind: "changed",
       text: "变更",
@@ -152,6 +156,7 @@ describe("ActivityNotificationService", () => {
     for (const activityId of ["a1", "a2", "a3", "a4"]) {
       await service.notifyParticipants({
         activityId,
+        groupId: "g1",
         userIds: ["u1"],
         kind: "changed",
         text: "变更",
@@ -167,6 +172,7 @@ describe("ActivityNotificationService", () => {
     });
     const result = await capped.notifyParticipants({
       activityId: "a5",
+      groupId: "g1",
       userIds: ["u1"],
       kind: "changed",
       text: "变更",
@@ -202,6 +208,7 @@ describe("ActivityNotificationService", () => {
     const service = new ActivityNotificationService(spy.notifications);
     await service.notifyParticipants({
       activityId: "a1",
+      groupId: "g1",
       userIds: ["u1", "u1", "u2"],
       kind: "cancelled",
       text: "活动已取消。",
@@ -209,6 +216,29 @@ describe("ActivityNotificationService", () => {
     expect(spy.sent).toHaveLength(2);
     expect(spy.sent[0]?.markdown).toContain("活动已取消");
     expect(spy.sent[0]?.markdown).toContain("自动发出");
+    // H8-2：个人提醒类私信也带退订入口，范围 = 发布群
+    expect(JSON.stringify(spy.sent[0]?.keyboard)).toContain(
+      "cb:notify:unsub:activity:g1",
+    );
+  });
+
+  it("uses the scope actually delivering the card for the unsubscribe row (H8-2)", async () => {
+    const spy = createSpySender();
+    const service = new ActivityNotificationService(spy.notifications);
+    // 订的是「全部群」：退订要退掉真正生效的那一条，而不是这个群
+    service.subscribe("__all__", "u1");
+
+    await service.notifyParticipants({
+      activityId: "a1",
+      groupId: "g1",
+      userIds: ["u1"],
+      kind: "promoted",
+      text: "你已递补成功。",
+    });
+
+    expect(JSON.stringify(spy.sent[0]?.keyboard)).toContain(
+      "cb:notify:unsub:activity:__all__",
+    );
   });
 
   it("survives a round trip through the repositories", async () => {

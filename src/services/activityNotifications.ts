@@ -195,6 +195,8 @@ export class ActivityNotificationService {
    */
   public async notifyParticipants(input: {
     activityId: string;
+    /** 活动所属群（发布群）：用来给这些个人提醒卡加「取消订阅」。 */
+    groupId: string;
     userIds: readonly string[];
     kind: ActivityNotificationKind;
     text: string;
@@ -212,13 +214,20 @@ export class ActivityNotificationService {
         title: input.title ?? NOTIFY_TITLES[input.kind],
         lines: input.text.split("\n"),
         footer: [
-          "本消息由活动通知自动发出；如需减少打扰请联系活动管理者。",
+          "本消息由活动通知自动发出。",
+          "退订：卡片上的「取消订阅」按钮，或在 /notify 里关掉该群的活动通知。",
         ],
       });
     for (const userId of recipients) {
       tally(
         result,
-        await this.deliver(input.activityId, userId, input.kind, card),
+        await this.deliver(
+          input.activityId,
+          userId,
+          input.kind,
+          card,
+          input.groupId,
+        ),
       );
     }
     log.info("activity participants push finished", {
@@ -333,13 +342,23 @@ export class ActivityNotificationService {
     userId: string,
     kind: ActivityNotificationKind,
     message: RichMessage,
-    /** 该卡实际投递的订阅范围（群号）；缺省 = 不加退订按钮（个人提醒类） */
-    scope?: string | undefined,
+    /**
+     * 该卡对应的发布群；有它才加「取消订阅」行。
+     *
+     * 范围按**实际投递范围**算（订阅了「全部群」就退「全部群」），与其它通知卡同一口径；
+     * 缺省 = 不加退订按钮（群消息广播没有个人订阅可退）。
+     */
+    groupId?: string | undefined,
   ): Promise<{ delivered: boolean; skipped: boolean; rateLimited: boolean }> {
     const card =
-      scope === undefined
+      groupId === undefined
         ? message
-        : this.sender.withUnsubscribeRow(message, "activity", scope, userId);
+        : this.sender.withUnsubscribeRow(
+            message,
+            "activity",
+            this.sender.scopeForDelivery(userId, groupId, "activity"),
+            userId,
+          );
     const outcome = await this.push.deliver({
       key: notificationKey({ activityId, userId, kind }),
       userId,

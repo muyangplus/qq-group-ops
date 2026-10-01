@@ -1149,6 +1149,7 @@ export function voidNotifyActivityChanged(ctx: AdminCommandContext, activity: Ac
   void notifications
     .notifyParticipants({
       activityId: activity.activityId,
+      groupId: activity.groupId,
       userIds,
       kind: "changed",
       text,

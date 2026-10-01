@@ -249,6 +249,7 @@ export async function notifyPromoted(
   await notifications
     .notifyParticipants({
       activityId: activity.activityId,
+      groupId: activity.groupId,
       userIds: [entry.userId],
       kind: "promoted",
       text,
@@ -279,6 +280,7 @@ export async function notifyActivityCancelled(ctx: AdminCommandContext, activity
   await notifications
     .notifyParticipants({
       activityId: activity.activityId,
+      groupId: activity.groupId,
       userIds,
       kind: "cancelled",
       text,
