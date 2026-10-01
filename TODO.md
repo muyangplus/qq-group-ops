@@ -34,6 +34,14 @@
 - [ ] **D7 个人数据删除能力**（批次5 · Phase 4）
   - 过期数据清理已有；**按用户删除 / 导出个人数据未做**。口径见
     [docs/DATA-COMPLIANCE.md](./docs/DATA-COMPLIANCE.md) 的「删除与导出」一节。
+  - **进度**：存储层 + 服务层已完成（`src/db/privacyRepository.ts`、`src/services/privacy.ts`、
+    `test/privacy.test.ts`）；**待做**：指令层 `/data delete|anonymize|export` 卡片 + 接线
+    （context / 门面 / runtime / 持久化）+ 指令层测试 + 文档。
+  - **实施偏差（已定）**：确认按钮用**指令按钮**而不是回调按钮——`encodeCallback` 用 `:` 拼参数、
+    不转义，自由文本理由塞进回调 data 会被 `:` 截断（还有官方 data 长度上限），所以：
+    `/data delete <用户> [理由]` 只出**预览卡**，卡上「确认匿名化」是指令按钮，发送
+    `/data anonymize <用户> [理由]` 才真正执行（私信里点一下即自动发送，仍是两步确认）；
+    理由随指令文本走，直接进审计。
   - **已定口径（2026-09-29 确认，实施时照这个做，不要再改）**：
     1. 入口：`/data delete <#用户短码|userId> [原因]` 与 `/data export <…>`，**仅全局超管、只私信**；
        删除走两步确认卡（`cb:data:request` 预览 → `cb:data:run` 执行），两种动作都写审计
