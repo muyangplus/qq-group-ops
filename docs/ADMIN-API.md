@@ -79,6 +79,12 @@
 
 ## 3. 分阶段计划（与 TODO 的 E1-a…E2-e 一一对应）
 
+> **进度（2026-09-29）**：E1-a 配置 / 会话 / 限流 / 令牌表与仓储 / HTTP 层 ✅；
+> E1-b 身份映射 + `/admin login` + `pnpm admin:token` + `/auth/me` 权限画像 ✅；
+> E1-c 六个只读端点 ✅；E1-e 机器 token ✅；E1-f 可观测与运维文档 ✅；
+> **E1-d 写端点 + 进程模型调整进行中**（同进程第二回环监听口 → 四个写端点）；
+> E2-a…e 未开始。逐项勾选见 [../TODO.md](../TODO.md) §2 的 E1 / E2。
+
 ### E1-a 骨架与安全底座（P0）
 
 1. `src/adminApi/`：`main.ts`（进程入口）+ `server.ts`（Fastify 装配）+ `config.ts` / `session.ts` /
