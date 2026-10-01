@@ -20,6 +20,13 @@
 
 ### 新增
 
+- **管理 API 骨架（E1-a）**：与机器人分开的进程（`pnpm admin:api`，默认关闭、默认只监听 `127.0.0.1`），
+  认证是**机器人私信一次性令牌 + 会话 cookie**：`/admin login`（下一步接线）或 `pnpm admin:token`
+  签发的令牌**只存 `sha256`**、一次性（兑换即写 `used_at`）、默认 10 分钟 TTL；兑换后种
+  `HttpOnly + SameSite=Strict` 会话 cookie，写操作要 `X-Admin-Request: 1`（CSRF），
+  兑换端点按 IP 限流、会话级每分钟限流，`/healthz` 免鉴权且不含敏感信息。
+  配置项见 [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) 的「管理 API」一节；
+  设计与分阶段计划见 [docs/ADMIN-API.md](./docs/ADMIN-API.md)。
 - **个人数据删除 / 导出（`/data`，D7）**：仅全局超管、只在私信。
   `/data delete <#用户短码|QQ号|openid> [理由]` 先出**只读预览卡**（按表列出条数），卡上的
   「确认匿名化」发送 `/data anonymize …` 才执行：相关行的 `user_id` 换成一次性占位值

@@ -854,11 +854,38 @@ pnpm db:up     # docker compose --profile postgres up -d db
 
 合规建议见 [DATA-COMPLIANCE.md](DATA-COMPLIANCE.md)。
 
+## 管理 API（E1，默认关闭）
+
+与机器人**分开**的进程（`pnpm admin:api`），认证是「机器人私信一次性令牌 + 会话 cookie」，
+只用 `.env` 配置、**不进 `/config` 热改**（核心安全项）。设计见 [ADMIN-API.md](./ADMIN-API.md)。
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `ADMIN_API_ENABLED` | 否 | 默认 `false`：不监听任何端口。设 `true` 才启动 |
+| `ADMIN_API_HOST` | 否 | 监听地址，默认 `127.0.0.1`（**只给本机反代**）；要对外必须显式改并挂 TLS |
+| `ADMIN_API_PORT` | 否 | 监听端口，默认 `8787` |
+| `ADMIN_API_SESSION_SECRET` | 开启时必填 | 会话 cookie 的 HMAC 密钥，**≥32 字符**；缺了直接拒绝启动（fail-closed） |
+| `ADMIN_API_SESSION_TTL_MINUTES` | 否 | 会话滑动过期，默认 `720`（12 小时） |
+| `ADMIN_API_COOKIE_SECURE` | 否 | 反代终止 TLS 时设 `true`（cookie 加 `Secure`） |
+| `ADMIN_API_PUBLIC_BASE_URL` | 否 | 浏览器能访问到的地址，用于拼登录链接；留空则 `/admin login` 只给令牌、需手工粘贴 |
+| `ADMIN_API_TOKEN_TTL_MINUTES` | 否 | 一次性登录令牌有效期，默认 `10` 分钟 |
+| `ADMIN_API_ALLOWED_OPENIDS` | 否 | 额外白名单（逗号分隔）；留空 = 所有平台超管（240）都能签发令牌 |
+| `ADMIN_API_RATE_LIMIT_PER_MINUTE` | 否 | 每个会话每分钟请求上限，默认 `60`；`0` = 不限 |
+
+生成会话密钥：
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+登录链路：管理员私信机器人 `/admin login`（或服务器上 `pnpm admin:token`）→ 拿到一次性令牌 →
+浏览器打开 `<PUBLIC_BASE_URL>/login?token=…` → 兑换后种 `HttpOnly + SameSite=Strict` 会话 cookie。
+令牌**只存 `sha256`**、一次性、过期即失效；写操作还要带 `X-Admin-Request: 1`（CSRF）。
+
 ## 预留配置
 
 以下变量尚未被当前代码读取，仅作为后续阶段参考：
 
-- Web 管理后台：`WEB_ADMIN_HOST`、`WEB_ADMIN_PORT`、`WEB_ADMIN_JWT_SECRET`
 - 内容安全 API：`CONTENT_MODERATION_PROVIDER`、`CONTENT_MODERATION_API_KEY`
 - AI 辅助：`LLM_PROVIDER`、`LLM_API_KEY`、`LLM_MODEL`
 

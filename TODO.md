@@ -7,7 +7,7 @@
 > **所有需要真实 QQ 群环境的条目统一收在最后一节 §4**（不再散落在各优先级里）：等有环境时照
 > [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md) 一次跑完并回填。
 >
-> 当前状态（2026-09-29）：测试 **126 文件 / 1003 用例**全绿；**0.22.1 已发版**
+> 当前状态（2026-09-29）：测试 **129 文件 / 1026 用例**全绿；**0.22.1 已发版**
 > （其后 `[Unreleased]` 又攒了：`/migrate` 弹窗文案压到 21 字 + 卡片弹窗文案统一裁剪兜底、
 > `/migrate` 执行前自动备份数据库、入群申请拒绝理由改为自定义）。
 > 已完成：A1–A5、B1–B3、B6–B11、C1–C3、C5–C6、C9、D1、D3、D5、D6、D7、D10、F1–F2、H1–H8、D9（0.19.0 起）。
@@ -36,10 +36,12 @@
   [docs/ADMIN-API.md](./docs/ADMIN-API.md)。**认证选 B2：机器人私信一次性令牌 + 会话 cookie**
   （令牌落库、只存 `sha256`、一次性 + TTL；机器人不可用时用 `pnpm admin:token` 应急），
   **运行选独立入口**（`pnpm admin:api`，默认只监听 `127.0.0.1`、默认关闭）。
-  - [ ] **E1-a 骨架与安全底座**（P0，进行中）：已落地 `src/adminApi/config.ts`（核心安全项 + fail-closed
-    校验）、`session.ts`（HMAC 签名 cookie + 滑动过期 + 上限淘汰）、`rateLimit.ts`（滑窗限流）与
-    `test/adminApi.test.ts`；**待做**：令牌表 `admin_api_tokens` + 仓储、`server.ts`（`/healthz`、
-    `/auth/token|logout`、`/auth/me`、CSRF 头、请求日志）、`main.ts` 入口、`.env.example`。
+  - [x] **E1-a 骨架与安全底座**（P0）：`src/adminApi/config.ts`（核心安全项 + fail-closed 校验）、
+    `session.ts`（HMAC 签名 cookie + 滑动过期 + 上限淘汰）、`rateLimit.ts`（滑窗限流）、
+    `admin_api_tokens` 表 + `SqlAdminTokenRepository`（只存 sha256 / 一次性 / TTL / 顺手清过期）、
+    `server.ts`（`/healthz`、`/auth/token|logout|me`、CSRF 头、请求日志、兑换 IP 限流、会话限流）、
+    `main.ts` 入口 + `pnpm admin:api`、`.env.example` 与 CONFIGURATION 文档；
+    测试：`test/adminApi.test.ts`（11）+ `test/adminApiServer.test.ts`（8）+ `test/adminTokenRepository.test.ts`（4）。
   - [ ] **E1-b 身份与权限映射**（P0）：身份就是 openid（令牌里带）→ 直接复用现有两轴权限判定；
     签发端门槛 = 平台 240（可用 `ADMIN_API_ALLOWED_OPENIDS` 收窄）；每个路由声明门槛，统一前置钩子
     判定（403 + 原因 + 审计）；机器人侧 `/admin login` 指令与 `pnpm admin:token` 应急 CLI。
