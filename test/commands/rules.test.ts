@@ -163,6 +163,33 @@ describe("AdminCommandService · rules", () => {
     expect(view.text).toContain("全局默认规则");
   });
 
+  it("limits global rules to platform super admins (H8-5)", async () => {
+    // 群管理员改本群规则没问题
+    const inGroup = await service.handle("g1", "admin", "/rules set warning 本群文案");
+    expect(inGroup.ok).toBe(true);
+    expect(configStore.get("g1").warningMessage).toBe("本群文案");
+
+    // 全局规则的目标是 `__default__`：只有平台超管能过，
+    // 群内管理员不会被「平台档 - 100」折算成能改全局规则的人（过去靠的是隐性折算，现在显式判定）
+    const byGroupAdmin = await service.handle(
+      "g1",
+      "admin",
+      "/rules set all warning 全局文案",
+    );
+    expect(byGroupAdmin.ok).toBe(false);
+    expect(byGroupAdmin.text).toContain("权限不足");
+
+    const bySuperAdmin = await service.handle(
+      "g1",
+      "root",
+      "/rules set all warning 全局文案",
+    );
+    expect(bySuperAdmin.ok).toBe(true);
+    expect(configStore.default.warningMessage).toBe("全局文案");
+    // 没被覆盖的群继承全局值
+    expect(configStore.get("g-other").warningMessage).toBe("全局文案");
+  });
+
   it("requires a field and value for global rules", async () => {
     const result = await service.handle("g1", "root", "/rules set all");
     expect(result.ok).toBe(false);

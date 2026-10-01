@@ -61,6 +61,26 @@ const RULE_KEYWORD_MAX_LENGTH = 50;
 const log = getLogger("admin-commands");
 
 /**
+ * 规则目标的「可管理」判据（H8-5）。
+ *
+ * 目标可能是**全局默认规则**（`__default__`，`/rules all`）：那只有平台超管能改，
+ * 所以显式走 `meetsGlobal(GlobalSuperAdmin)`。以前这里一律写
+ * `meetsInGroup(user, targetGroupId, GroupAdmin)`——全局目标之所以能过，只是因为平台超管会
+ * 被折算成「本群超管 140 ≥ 130」，读代码时得先推一遍折算规则。
+ *
+ * 运行期行为不变（`__default__` 上不会有群内授权）：只是把「为什么行」写明白。
+ */
+export function canManageRules(
+  ctx: AdminCommandContext,
+  userId: string,
+  targetGroupId: string,
+): boolean {
+  return targetGroupId === DEFAULT_GROUP_ID
+    ? ctx.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)
+    : ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.GroupAdmin);
+}
+
+/**
  * `/rules [群号|#群短码]`：规则概览卡（§C 重构）。
  *
  * 正文标明**本群覆盖了哪些字段**（其余继承全局），入口是 5 个子卡：
@@ -105,11 +125,7 @@ export function rulesCard(
   }
 
   const config = ctx.configStore.get(targetGroupId);
-  const canManage = ctx.permissions.meetsInGroup(
-    userId,
-    targetGroupId,
-    PermissionLevel.GroupAdmin,
-  );
+  const canManage = canManageRules(ctx, userId, targetGroupId);
 
   const overridden = ctx.configStore.overriddenFields(targetGroupId);
   const overrideNames = [...overridden]
@@ -188,11 +204,7 @@ export function rulesPanelCard(
   page = 1,
   mode: "allow" | "deny" = "allow",
 ): CardResult {
-  const canManage = ctx.permissions.meetsInGroup(
-    userId,
-    targetGroupId,
-    PermissionLevel.GroupAdmin,
-  );
+  const canManage = canManageRules(ctx, userId, targetGroupId);
   if (!canManage) {
     const card = renderCard({
       title: "权限不足",
@@ -513,7 +525,7 @@ export async function keywordListCard(
   replyGroupId?: string,
 ): Promise<CardResult> {
   if (
-    !ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.GroupAdmin)
+    !canManageRules(ctx, userId, targetGroupId)
   ) {
     return ruleDeniedCard(ctx, targetGroupId, "查看词表需要群管理员或以上权限。");
   }
@@ -1032,11 +1044,7 @@ export function delKeywordCard(
   userId: string,
   replyGroupId?: string,
 ): CardResult {
-  const canManage = ctx.permissions.meetsInGroup(
-    userId,
-    targetGroupId,
-    PermissionLevel.GroupAdmin,
-  );
+  const canManage = canManageRules(ctx, userId, targetGroupId);
   if (!canManage) {
     return ruleDeniedCard(ctx, targetGroupId, "删除关键词需要群管理员或以上权限。");
   }
@@ -1072,11 +1080,7 @@ export function clearKeywordsCard(
   userId: string,
   replyGroupId?: string,
 ): CardResult {
-  const canManage = ctx.permissions.meetsInGroup(
-    userId,
-    targetGroupId,
-    PermissionLevel.GroupAdmin,
-  );
+  const canManage = canManageRules(ctx, userId, targetGroupId);
   if (!canManage) {
     return ruleDeniedCard(ctx, targetGroupId, "清空关键词需要群管理员或以上权限。");
   }
@@ -1105,11 +1109,7 @@ export function resetRulePageCard(
   page = 1,
   mode: "allow" | "deny" = "allow",
 ): CardResult {
-  const canManage = ctx.permissions.meetsInGroup(
-    userId,
-    targetGroupId,
-    PermissionLevel.GroupAdmin,
-  );
+  const canManage = canManageRules(ctx, userId, targetGroupId);
   if (!canManage) {
     return ruleDeniedCard(ctx, targetGroupId, "恢复继承需要群管理员或以上权限。");
   }
@@ -1147,6 +1147,7 @@ export function resetRulePageCard(
  * 与「恢复本页继承」不同，这里清空该群的全部字段级覆盖，等价于旧 `removeOverride`。
  *
  * 门槛沿用历史对外行为 = 群管理员 130（与下方提示文案一致）；H2 不收紧到本群超管 140。
+ * 目标为全局规则（`__default__`）时由 {@link canManageRules} 走平台超管分支。
  */
 export function resetAllRulesCard(
   ctx: AdminCommandContext,
@@ -1154,11 +1155,7 @@ export function resetAllRulesCard(
   userId: string,
   replyGroupId?: string,
 ): CardResult {
-  const canManage = ctx.permissions.meetsInGroup(
-    userId,
-    targetGroupId,
-    PermissionLevel.GroupAdmin,
-  );
+  const canManage = canManageRules(ctx, userId, targetGroupId);
   if (!canManage) {
     return ruleDeniedCard(ctx, targetGroupId, "恢复继承需要群管理员或以上权限。");
   }
@@ -1179,11 +1176,7 @@ export function punishToggleCard(
   userId: string,
   replyGroupId?: string,
 ): CardResult {
-  const canManage = ctx.permissions.meetsInGroup(
-    userId,
-    targetGroupId,
-    PermissionLevel.GroupAdmin,
-  );
+  const canManage = canManageRules(ctx, userId, targetGroupId);
   if (!canManage) {
     return ruleDeniedCard(ctx, targetGroupId, "修改规则需要群管理员或以上权限。");
   }
@@ -1225,11 +1218,7 @@ export function rosterToggleCard(
   replyGroupId?: string,
   page = 1,
 ): CardResult {
-  const canManage = ctx.permissions.meetsInGroup(
-    userId,
-    targetGroupId,
-    PermissionLevel.GroupAdmin,
-  );
+  const canManage = canManageRules(ctx, userId, targetGroupId);
   if (!canManage) {
     return ruleDeniedCard(ctx, targetGroupId, "修改名单需要群管理员或以上权限。");
   }
@@ -1458,7 +1447,7 @@ export async function handleRulesKeywordAdd(
     return { ok: false, text: target.text };
   }
   if (
-    !ctx.permissions.meetsInGroup(userId, target.groupId, PermissionLevel.GroupAdmin)
+    !canManageRules(ctx, userId, target.groupId)
   ) {
     return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
   }
@@ -1512,7 +1501,7 @@ export async function handleRulesKeywordDelete(
     return { ok: false, text: target.text };
   }
   if (
-    !ctx.permissions.meetsInGroup(userId, target.groupId, PermissionLevel.GroupAdmin)
+    !canManageRules(ctx, userId, target.groupId)
   ) {
     return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
   }
@@ -1607,7 +1596,7 @@ export async function handleRulesListAdd(
     return { ok: false, text: target.text };
   }
   if (
-    !ctx.permissions.meetsInGroup(userId, target.groupId, PermissionLevel.GroupAdmin)
+    !canManageRules(ctx, userId, target.groupId)
   ) {
     return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
   }
@@ -1671,7 +1660,7 @@ export async function handleRulesListDelete(
     return { ok: false, text: target.text };
   }
   if (
-    !ctx.permissions.meetsInGroup(userId, target.groupId, PermissionLevel.GroupAdmin)
+    !canManageRules(ctx, userId, target.groupId)
   ) {
     return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
   }
@@ -1717,7 +1706,7 @@ export function clearRuleListCard(
   replyGroupId?: string,
 ): CardResult {
   if (
-    !ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.GroupAdmin)
+    !canManageRules(ctx, userId, targetGroupId)
   ) {
     const card = cardFromText("群规则", "权限不足：需要群管理员或以上权限。");
     return { ok: false, text: card.text, rich: card.rich };
@@ -1771,7 +1760,7 @@ export async function handleRulesSet(
     };
   }
   if (
-    !ctx.permissions.meetsInGroup(userId, targetGroupId, PermissionLevel.GroupAdmin)
+    !canManageRules(ctx, userId, targetGroupId)
   ) {
     return { ok: false, text: "权限不足：需要群管理员或以上权限。" };
   }
