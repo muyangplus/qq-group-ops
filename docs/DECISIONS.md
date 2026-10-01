@@ -1074,7 +1074,10 @@
   测试：`test/notifyTopics.test.ts`、`test/welcome.test.ts`、`test/unknownEvent.test.ts`、`test/commands/notify.test.ts`、
   `test/activityNotifications.test.ts`。
   **能力边界**：真机上纯文本 `content` 与 Markdown 卡片的 `<@!openid>` 谁生效与客户端版本有关，所以迎新两条通道都发；
-  个人提醒类活动私信（候补/名额/变更）没有退订按钮（那条路径拿不到群号，塞范围会退错群）。
+  ~~个人提醒类活动私信（候补/名额/变更）没有退订按钮（那条路径拿不到群号，塞范围会退错群）。~~
+  **修订（`[Unreleased]`，H8-2）**：个人提醒类活动私信（递补成功 / 活动变更 / 活动取消）现在也带
+  「取消订阅」——`notifyParticipants` 传入活动发布群，退订范围按**实际投递范围**算
+  （订的是「全部群」就退「全部群」，复用 `NotificationService.scopeForDelivery`）。
 
 ## ADR-0052：统一计时任务（一个扫描周期）+ 发现新版本自动重启
 
