@@ -51,8 +51,11 @@
     `/api/pending`（只列 pending，可按群过滤 + 分页）、`/api/rules?group=`（原始覆盖行，缺 group 400）、
     `/api/notify/topics`（默认门槛 + 订阅人数）、`/api/activities`（按群 / 状态过滤 + 分页）；
     全部要会话（未登录 401），数据源未装配回 503（内存模式）。
-  - [ ] **E1-d 写端点**（P2，与 E2 一起）：审批通过 / 拒绝（复用 `JoinApprovalService`）、
-    规则字段修改（复用 `parseRuleSetting`）、活动开停与 CSV 导出；全部写审计。
+  - [ ] **E1-d 写端点**（P2，与 E2 一起）：**先做进程模型调整**——管理 API 改为「机器人进程内的第二个
+    Fastify 实例 + 独立回环端口」（一份内存态、一份 tick，见 [docs/ADMIN-API.md](./docs/ADMIN-API.md) §2），
+    `pnpm admin:api` 降为只读巡检模式；然后审批通过 / 拒绝（复用 `JoinApprovalService`）、
+    规则字段修改（复用 `parseRuleSetting`）、活动开停与 CSV 导出（复用 `ActivityService` / 导出服务），
+    全部走"调服务 + 写审计"。
   - [x] **E1-e 机器 token**（P2）：`ADMIN_API_TOKENS`（`token:scope1|scope2[:到期]`，`read` / `write` / `*`）
     + `Authorization: Bearer`、常量时间比较、按方法校验 scope（缺 scope 403）、机器调用不需要 CSRF 头、
     限流按令牌前缀计数；解析器有长度下限（≥16）与到期时间。
