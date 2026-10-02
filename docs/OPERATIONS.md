@@ -230,6 +230,40 @@ server {
 | 接口 503 | 连着内存模式（没有数据库），或该数据源未装配 |
 | 想立刻踢掉所有人 | 重启机器人（会话只在内存里）或换 `ADMIN_API_SESSION_SECRET` |
 
+## 备份与恢复（SQLite）
+
+默认库是 `data/qq-group-ops.db`（WAL 模式），因此**`.db` / `-wal` / `-shm` 是一套**：
+只拷 `.db` 会丢掉还在 WAL 里、尚未 checkpoint 的提交。
+
+**备份**（会话期间也可以做，机器人不必停）：
+
+```bash
+systemctl stop qqops           # 想绝对干净就先停服务（可选）
+cp data/qq-group-ops.db* /backup/qqops-$(date +%Y%m%d_%H%M%S)/   # 三个文件一起拷
+```
+
+- `/migrate` 执行前会**自动**做一次同样的拷贝（同目录、命名 `{原名}_YYYYMMDD_HHMMSS{扩展名}`）；
+- PostgreSQL 不做文件备份：迁移前自行 `pg_dump`（结果卡里也会提醒）。
+
+**恢复**（**必须先停服务**，否则在线改文件会把库写坏）：
+
+```bash
+systemctl stop qqops
+cp /backup/<那个时间点>/qq-group-ops.db data/qq-group-ops.db
+cp /backup/<那个时间点>/qq-group-ops.db-wal data/qq-group-ops.db-wal   # 备份里没有就删掉这个目标文件
+cp /backup/<那个时间点>/qq-group-ops.db-shm data/qq-group-ops.db-shm
+node -e "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('data/qq-group-ops.db');console.log(db.prepare('PRAGMA integrity_check').get());db.close()"
+systemctl start qqops
+```
+
+- 打开备份检查前先把它**单独放到一个干净目录**（身边没有 `-wal` 才是「只要 .db」的现场），
+  避免误以为数据都在；
+- `integrity_check` 要回 `ok`；再抽查关键表（`SELECT COUNT(*) FROM join_requests` 之类）与备份时刻对得上；
+- 这套「备份 → 破坏 → 恢复 → 校验」的流程有**本机演练用例**照着跑：
+  `node node_modules/vitest/vitest.mjs run --configLoader runner test/dbBackup.test.ts`
+  （覆盖热库、WAL 里的未落盘提交、只拷 `.db` 会丢数据这三种情形）。真机演练（D8-b）
+  就是把同一条流程在被托管的库上再走一遍。
+
 ## 活动卡片（§B3）
 
 活动卡片是 Markdown + 内嵌按钮，与入群申请共用三级降级（富消息 → 纯文本 → 回执）。
