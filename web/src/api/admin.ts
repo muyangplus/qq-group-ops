@@ -105,7 +105,11 @@ export interface AdminApiActivityItem {
   capacity?: number;
   registered: number;
   createdAt: string;
+  /** 报名截止时间（ISO）；未设置时缺省。 */
+  closeAt?: string;
   group: AdminApiEntityRef;
+  /** 发布 / 广播目标群；没有任何绑定行时回落到归属群，至少一项。 */
+  boundGroups: AdminApiEntityRef[];
 }
 
 export interface AdminApiActivityResult {
@@ -113,6 +117,13 @@ export interface AdminApiActivityResult {
   code: string;
   groupId: string;
   status: string;
+  message: string;
+}
+
+/** 活动创建 / 绑定 / 解绑的写结果（`activity` 是回读后的最新快照）。 */
+export interface AdminApiActivityWriteResult {
+  activity: AdminApiActivityItem;
+  boundGroups: AdminApiEntityRef[];
   message: string;
 }
 
@@ -685,5 +696,28 @@ export const adminApi = {
   ): Promise<AdminApiActivityResult> =>
     api.post<AdminApiActivityResult>(
       `/api/activities/${encodeURIComponent(code)}/${action}`,
+    ),
+
+  /** 新建活动：只建草稿（不广播），并自动绑定创建群。 */
+  createActivity: (group: string, title: string): Promise<AdminApiActivityWriteResult> =>
+    api.post<AdminApiActivityWriteResult>("/api/activities", { group, title }),
+
+  /** 绑定发布群；重复绑定是幂等空操作（消息会说明已绑过）。 */
+  bindActivityGroup: (
+    code: string,
+    group: string,
+  ): Promise<AdminApiActivityWriteResult> =>
+    api.post<AdminApiActivityWriteResult>(
+      `/api/activities/${encodeURIComponent(code)}/groups`,
+      { group },
+    ),
+
+  /** 解绑发布群；解到没有任何绑定行时会回落到归属群。 */
+  unbindActivityGroup: (
+    code: string,
+    group: string,
+  ): Promise<AdminApiActivityWriteResult> =>
+    api.del<AdminApiActivityWriteResult>(
+      `/api/activities/${encodeURIComponent(code)}/groups/${encodeURIComponent(group)}`,
     ),
 };

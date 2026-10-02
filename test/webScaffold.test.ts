@@ -124,6 +124,10 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     expect(source).toContain("/reject");
     expect(source).toContain("/api/activities/");
     expect(source).toContain("AdminApiActivityAction");
+    expect(source).toContain("AdminApiActivityWriteResult");
+    expect(source).toContain("createActivity");
+    expect(source).toContain("bindActivityGroup");
+    expect(source).toContain("unbindActivityGroup");
     expect(source).toContain("clearSetting");
     // 审计导出是**同源下载链接**（靠 cookie 鉴权），不是 fetch
     expect(source).toContain("/api/audit/export.csv");
@@ -328,5 +332,11 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     expect(source).toContain("export.csv");
     expect(source).toContain("?full=1");
     expect(source).toContain("GROUP_ADMIN_LEVEL");
+    // P2 写：新建草稿 + 发布群绑定 / 解绑（同一活动服务方法，门槛 130）
+    expect(source).toContain("adminApi.createActivity");
+    expect(source).toContain("adminApi.bindActivityGroup");
+    expect(source).toContain("adminApi.unbindActivityGroup");
+    expect(source).toContain("boundGroups");
+    expect(source).toContain("草稿");
   });
 });

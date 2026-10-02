@@ -639,6 +639,28 @@ export interface AdminApiWriters {
     groupId: string;
     actorId: string;
   }): Promise<AdminApiRuleResetResult>;
+  /**
+   * 新建活动（本群群管理员 130）：只建**草稿**，与 `/activity create <标题>` 一致 ——
+   * 绑定发布群之后再用 `open` 广播；其余字段（名额 / 截止 / 简介 / 限制…）仍在机器人里
+   * 用 `/activity set <短码> <字段> <值>` 配（字段解析与「改字段通知」都在那条路径上，
+   * 抽成共享模块后再搬，见 TODO §5）。
+   */
+  createActivity(input: {
+    groupId: string;
+    title: string;
+    actorId: string;
+  }): Promise<AdminApiActivityBindResult>;
+  /** 绑定 / 解绑发布群（与 `/activity bind|unbind` 同一服务方法）。 */
+  bindActivityGroup(input: {
+    code: string;
+    groupId: string;
+    actorId: string;
+  }): Promise<AdminApiActivityBindResult>;
+  unbindActivityGroup(input: {
+    code: string;
+    groupId: string;
+    actorId: string;
+  }): Promise<AdminApiActivityBindResult>;
   /** 维护别名表（平台超管 240；类型由服务自动判定，与 `/alias set` 一致）。 */
   setAlias(input: {
     alias: string;
@@ -661,6 +683,18 @@ export interface AdminApiActivityItem {
   registered: number;
   createdAt: string;
   group: AdminApiEntityRef;
+  /** 已绑定的**发布 / 广播**目标群（`open` 时往这些群发卡）。 */
+  boundGroups: AdminApiEntityRef[];
+  /** 报名截止时间（ISO）；没设就不带。 */
+  closeAt?: string | undefined;
+}
+
+/** 活动创建 / 绑定群的结果（P2 写）。 */
+export interface AdminApiActivityBindResult {
+  activity: AdminApiActivityItem;
+  /** 变更之后仍然绑定的群（界面直接替换）。 */
+  boundGroups: AdminApiEntityRef[];
+  message: string;
 }
 
 export interface AdminApiNotifyTopic {
@@ -1965,6 +1999,71 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
       ...(typeof body.note === "string" ? { note: body.note } : {}),
     });
     return { ok: true, result };
+  });
+
+  /** 新建活动：`POST /api/activities { group, title }`（只建草稿）。 */
+  app.post("/api/activities", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const group = typeof body.group === "string" ? body.group.trim() : "";
+    const title = typeof body.title === "string" ? body.title.trim() : "";
+    if (group.length === 0 || title.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 group 与 title（标题不能为空）。"));
+    }
+    const result = await writers.createActivity({
+      groupId: group,
+      title,
+      actorId: actorOf(request),
+    });
+    return { ok: true, ...result };
+  });
+
+  /** 绑定发布群：`POST /api/activities/:code/groups { group }`。 */
+  app.post("/api/activities/:code/groups", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { code } = request.params as { code: string };
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const group = typeof body.group === "string" ? body.group.trim() : "";
+    if (group.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 group（要绑定的群 ID）。"));
+    }
+    const result = await writers.bindActivityGroup({
+      code: code.trim(),
+      groupId: group,
+      actorId: actorOf(request),
+    });
+    return { ok: true, ...result };
+  });
+
+  /** 解绑发布群：`DELETE /api/activities/:code/groups/:group`。 */
+  app.delete("/api/activities/:code/groups/:group", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { code, group } = request.params as { code: string; group: string };
+    const result = await writers.unbindActivityGroup({
+      code: code.trim(),
+      groupId: group.trim(),
+      actorId: actorOf(request),
+    });
+    return { ok: true, ...result };
   });
 
   const ACTIVITY_ACTIONS = new Set(["open", "close", "cancel"]);

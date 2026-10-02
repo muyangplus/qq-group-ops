@@ -154,11 +154,18 @@ async function main(): Promise<void> {
           await persistence.notificationSubscriptions.findAll(),
         ),
       activities: async () => {
-        const [activities, details, registrations] = await Promise.all([
+        const [activities, details, registrations, groupRows] = await Promise.all([
           persistence.activities.findActivities(),
           persistence.activityDetails.findAll(),
           persistence.activities.findRegistrations(),
+          persistence.activityGroups.findAll(),
         ]);
+        const groupsOf = new Map<string, string[]>();
+        for (const row of groupRows) {
+          const list = groupsOf.get(row.activityId) ?? [];
+          list.push(row.groupId);
+          groupsOf.set(row.activityId, list);
+        }
         const codeOf = new Map(
           details.map((detail) => [detail.activityId, detail.code]),
         );
@@ -181,6 +188,18 @@ async function main(): Promise<void> {
           registered: registeredOf.get(activity.activityId) ?? 0,
           createdAt: activity.createdAt.toISOString(),
           group: entities.group(activity.groupId),
+          // 发布群绑定在 `activity_groups` 表里（只读巡检也读得到）；
+          // 没有任何绑定行时与 `ActivityService.listBoundGroups` 一致，回落到归属群。
+          boundGroups: (() => {
+            const bound = [...(groupsOf.get(activity.activityId) ?? [])].sort();
+            const groups = bound.length > 0 ? bound : [activity.groupId];
+            return groups
+              .filter((groupId) => groupId.length > 0)
+              .map((groupId) => entities.group(groupId));
+          })(),
+          ...(activity.closeAt !== undefined
+            ? { closeAt: activity.closeAt.toISOString() }
+            : {}),
         }));
       },
     },

@@ -40,6 +40,7 @@ interface Harness {
   permissions: PermissionService;
   configStore: GroupConfigStore;
   classAliases: ClassAliasService;
+  activity: ActivityService;
 }
 
 function harness(): Harness {
@@ -60,6 +61,7 @@ function harness(): Harness {
   });
   const appeals = new AppealService({ queue: writeQueue });
   const classAliases = new ClassAliasService();
+  const activity = new ActivityService();
   // 别名类型判定依赖班级库（线上来自 class:index）；测试里给一份最小索引
   classAliases.setRoster(
     MemberRoster.fromIndex({
@@ -85,7 +87,7 @@ function harness(): Harness {
     joinAudit,
     joinApproval: new JoinApprovalService(api, joinAudit, configStore),
     configStore,
-    activity: new ActivityService(),
+    activity,
     activityExport: new ActivityExportService({
       profiles: { get: () => undefined },
     }),
@@ -110,6 +112,7 @@ function harness(): Harness {
     permissions,
     configStore,
     classAliases,
+    activity,
   };
 }
 
@@ -622,6 +625,82 @@ describe("管理 API P2：别名表", () => {
     });
     expect(missing.ok).toBe(false);
     expect(missing.message).toContain("没有");
+  });
+});
+
+describe("管理 API P2：活动创建与发布群绑定", () => {
+  it("创建 = 草稿（不广播）；绑定 / 解绑走同一服务方法并写审计", async () => {
+    const h = harness();
+
+    const created = await h.backend.createActivity({
+      groupId: "g1",
+      title: "周三晚自习",
+      actorId: "admin",
+    });
+
+    expect(created.activity.status).toBe("draft");
+    expect(created.activity.title).toBe("周三晚自习");
+    // 与指令层一致：创建活动**自动绑定创建群**（省掉一次手动绑定）
+    expect(created.boundGroups.map((group) => group.officialId)).toEqual(["g1"]);
+    expect(created.message).toContain("草稿");
+    // 建的是草稿：还没往任何群发卡
+    expect(h.api.sentMessages).toHaveLength(0);
+
+    // 再绑一个发布群（活动创建群已自动绑定）
+    const bound = await h.backend.bindActivityGroup({
+      code: created.activity.code,
+      groupId: "g2",
+      actorId: "admin",
+    });
+    expect(bound.boundGroups.map((group) => group.officialId)).toEqual(["g1", "g2"]);
+    expect(h.activity.listBoundGroups(created.activity.activityId)).toEqual([
+      "g1",
+      "g2",
+    ]);
+    // 重复绑定：如实说「已经绑过了」，不报错
+    const again = await h.backend.bindActivityGroup({
+      code: created.activity.code,
+      groupId: "g2",
+      actorId: "admin",
+    });
+    expect(again.message).toContain("已经绑定");
+
+    const unbound = await h.backend.unbindActivityGroup({
+      code: created.activity.code,
+      groupId: "g2",
+      actorId: "admin",
+    });
+    expect(unbound.boundGroups.map((group) => group.officialId)).toEqual(["g1"]);
+    const unboundAgain = await h.backend.unbindActivityGroup({
+      code: created.activity.code,
+      groupId: "g2",
+      actorId: "admin",
+    });
+    expect(unboundAgain.message).toContain("本来就没绑定");
+
+    const actions = h.auditLog.all().map((row) => row.action);
+    expect(actions).toContain("admin_api:activity_create");
+    expect(actions).toContain("admin_api:activity_bind");
+    expect(actions).toContain("admin_api:activity_unbind");
+  });
+
+  it("门槛：本群 130；活动不存在 → 404 语义", async () => {
+    const h = harness();
+
+    await expect(
+      h.backend.createActivity({
+        groupId: "g1",
+        title: "x",
+        actorId: "nobody",
+      }),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+    await expect(
+      h.backend.bindActivityGroup({
+        code: "NOPE1",
+        groupId: "g1",
+        actorId: "admin",
+      }),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
   });
 });
 

@@ -29,9 +29,18 @@ const loading = ref(false);
 const error = ref("");
 const notice = ref("");
 const busyCode = ref("");
+const newGroup = ref("");
+const newTitle = ref("");
+const creating = ref(false);
+/** 每行的「绑定到…」下拉当前选择；key 是活动短码。 */
+const bindTargets = ref<Record<string, string>>({});
 
 const groupOptions = computed(() =>
   (session.identity?.permissions?.groups ?? []).map((group) => group.groupId),
+);
+/** 只有本群群管理员（130）才能新建活动 / 改发布群，下拉里只列这些群。 */
+const manageGroupOptions = computed(() =>
+  groupOptions.value.filter((groupId) => canManage(groupId)),
 );
 const totalPages = computed(() =>
   Math.max(1, Math.ceil(total.value / pageSize.value)),
@@ -90,6 +99,68 @@ async function setStatus(
   }
 }
 
+/** 新建活动 = 只建**草稿**（不广播），服务端会自动绑定创建群。 */
+async function createActivity(): Promise<void> {
+  const group = newGroup.value;
+  const title = newTitle.value.trim();
+  if (group.length === 0 || title.length === 0) {
+    error.value = "请选择归属群并填写标题。";
+    return;
+  }
+  creating.value = true;
+  try {
+    const result = await adminApi.createActivity(group, title);
+    notice.value = result.message;
+    newTitle.value = "";
+    error.value = "";
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : String(err);
+  } finally {
+    creating.value = false;
+  }
+}
+
+/** 该行还能绑哪些群：只列自己管得动、且当前没绑过的群。 */
+function bindableGroups(item: AdminApiActivityItem): string[] {
+  const bound = new Set(item.boundGroups.map((group) => group.officialId));
+  return manageGroupOptions.value.filter((groupId) => !bound.has(groupId));
+}
+
+async function bindGroup(item: AdminApiActivityItem): Promise<void> {
+  const group = bindTargets.value[item.code] ?? "";
+  if (group.length === 0) {
+    error.value = "先选一个要绑定的群。";
+    return;
+  }
+  busyCode.value = item.code;
+  try {
+    const result = await adminApi.bindActivityGroup(item.code, group);
+    notice.value = `${result.message}（${item.title}）`;
+    bindTargets.value = { ...bindTargets.value, [item.code]: "" };
+    error.value = "";
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : String(err);
+  } finally {
+    busyCode.value = "";
+  }
+}
+
+async function unbindGroup(item: AdminApiActivityItem, group: string): Promise<void> {
+  busyCode.value = item.code;
+  try {
+    const result = await adminApi.unbindActivityGroup(item.code, group);
+    notice.value = `${result.message}（${item.title}）`;
+    error.value = "";
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : String(err);
+  } finally {
+    busyCode.value = "";
+  }
+}
+
 async function goto(next: number): Promise<void> {
   page.value = Math.min(Math.max(1, next), totalPages.value);
   await load();
@@ -134,6 +205,40 @@ function formatTime(value: string): string {
 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="notice" class="ok">{{ notice }}</p>
+
+    <!-- 新建活动：只建草稿（不广播），服务端自动绑定创建群 -->
+    <div class="section-title">新建活动（草稿）</div>
+    <div class="toolbar">
+      <label for="activity-new-group">归属群</label>
+      <select
+        id="activity-new-group"
+        v-model="newGroup"
+        :disabled="manageGroupOptions.length === 0"
+      >
+        <option value="">（选择归属群）</option>
+        <option v-for="groupId in manageGroupOptions" :key="groupId" :value="groupId">
+          {{ groupLabel(groupId) }}
+        </option>
+      </select>
+      <label for="activity-new-title">标题</label>
+      <input
+        id="activity-new-title"
+        v-model="newTitle"
+        maxlength="60"
+        placeholder="例如：周三晚自习"
+      />
+      <button
+        type="button"
+        :disabled="creating || !newGroup || newTitle.trim().length === 0"
+        @click="createActivity"
+      >
+        新建活动
+      </button>
+      <span class="hint">
+        新建后是「草稿」，不会往群里发卡；开放报名才会广播。需要本群群管理员（130）。
+      </span>
+    </div>
+
     <p v-if="!loading && items.length === 0" class="hint">没有活动。</p>
 
     <ul class="list">
@@ -151,8 +256,49 @@ function formatTime(value: string): string {
               {{ item.registered }}<span v-if="item.capacity"> / {{ item.capacity }}</span>
               · 创建于 {{ formatTime(item.createdAt) }}
             </div>
+            <!-- 发布群：绑定集合为空时后端回落到归属群，至少一项 -->
+            <div class="hint">发布群：</div>
+            <ul class="chips">
+              <li
+                v-for="group in item.boundGroups"
+                :key="group.officialId"
+                class="chip-with-action"
+              >
+                <EntityLabel :entity="group" :fallback="group.officialId" />
+                <button
+                  v-if="canManage(item.groupId) && item.boundGroups.length > 1"
+                  type="button"
+                  class="chip"
+                  :disabled="busyCode === item.code"
+                  title="解绑这个发布群（至少要保留归属群作为发布目标）"
+                  @click="unbindGroup(item, group.officialId)"
+                >
+                  解绑
+                </button>
+              </li>
+            </ul>
           </div>
           <div class="row-actions">
+            <template v-if="canManage(item.groupId)">
+              <select
+                v-model="bindTargets[item.code]"
+                :disabled="busyCode === item.code || bindableGroups(item).length === 0"
+                title="选择要绑定为发布 / 广播目标的群"
+              >
+                <option value="">绑定到…</option>
+                <option v-for="groupId in bindableGroups(item)" :key="groupId" :value="groupId">
+                  {{ groupLabel(groupId) }}
+                </option>
+              </select>
+              <button
+                type="button"
+                :disabled="busyCode === item.code || !bindTargets[item.code]"
+                title="把选中的群加为发布 / 广播目标"
+                @click="bindGroup(item)"
+              >
+                绑定
+              </button>
+            </template>
             <button
               type="button"
               :disabled="!canManage(item.groupId) || busyCode === item.code || item.status === 'open'"

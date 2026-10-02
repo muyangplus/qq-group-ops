@@ -24,6 +24,7 @@ import type { BlacklistEntry } from "../db/blacklistRepository.js";
 import type { NotificationDelivery } from "../db/notificationRepository.js";
 import type { WriteQueue } from "../db/writeQueue.js";
 import type { ActivityService } from "../services/activity.js";
+import type { Activity } from "../services/activity.js";
 import type { ActivityExportService } from "../services/activityExport.js";
 import type { AppealService } from "../services/appeals.js";
 import type { AuditLogStore } from "../services/audit.js";
@@ -542,6 +543,12 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
       registered: deps.activity.listRegistrations(activity.activityId).length,
       createdAt: activity.createdAt.toISOString(),
       group: entities.group(activity.groupId),
+      boundGroups: deps.activity
+        .listBoundGroups(activity.activityId)
+        .map((groupId) => entities.group(groupId)),
+      ...(activity.closeAt !== undefined
+        ? { closeAt: activity.closeAt.toISOString() }
+        : {}),
     };
   };
 
@@ -1616,6 +1623,100 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
       };
     },
 
+    // -------------------------------------------------------------- 活动（P2）
+
+    createActivity: async (input) => {
+      const groupId = input.groupId.trim();
+      requireGroupAdmin(input.actorId, groupId, "新建活动");
+      let created;
+      try {
+        created = deps.activity.createActivity({
+          groupId,
+          title: input.title,
+          createdBy: input.actorId,
+        });
+      } catch (error) {
+        throw badRequest(error instanceof Error ? error.message : String(error));
+      }
+      appendAudit({
+        groupId,
+        actorId: input.actorId,
+        action: "admin_api:activity_create",
+        status: AuditStatus.Executed,
+        reason: `活动 ${activityLabel(created)}「${created.title}」（草稿）`,
+      });
+      log.info("admin api created activity", {
+        activityId: created.activityId,
+        groupId,
+        actorId: input.actorId,
+      });
+      return {
+        activity: activityItem(created.activityId),
+        // 与指令层一致：创建活动自动绑定创建群，这里如实回读绑定集合。
+        boundGroups: deps.activity
+          .listBoundGroups(created.activityId)
+          .map((groupId) => entities.group(groupId)),
+        message: `已新建活动草稿 ${activityLabel(created)}「${created.title}」。默认只绑定创建群；需要发到别的群请再绑定，点「开放报名」才会广播。`,
+      };
+    },
+
+    bindActivityGroup: async (input) => {
+      const activity = requireActivity(input.code);
+      requireGroupAdmin(input.actorId, activity.groupId, "绑定活动发布群");
+      const added = deps.activity.bindGroup(activity.activityId, input.groupId);
+      const boundGroups = deps.activity
+        .listBoundGroups(activity.activityId)
+        .map((groupId) => entities.group(groupId));
+      appendAudit({
+        groupId: activity.groupId,
+        actorId: input.actorId,
+        action: "admin_api:activity_bind",
+        status: AuditStatus.Executed,
+        reason: `活动 ${activityLabel(activity)} 绑定发布群 ${input.groupId}${added ? "" : "（已绑定过）"}`,
+      });
+      log.info("admin api bound activity group", {
+        activityId: activity.activityId,
+        bound: input.groupId,
+        actorId: input.actorId,
+        added,
+      });
+      return {
+        activity: activityItem(activity.activityId),
+        boundGroups,
+        message: added
+          ? `已把 ${activityLabel(activity)} 绑定到该群：开放报名时会往它发卡。`
+          : "这个群之前就已经绑定了，无需重复绑定。",
+      };
+    },
+
+    unbindActivityGroup: async (input) => {
+      const activity = requireActivity(input.code);
+      requireGroupAdmin(input.actorId, activity.groupId, "解绑活动发布群");
+      const removed = deps.activity.unbindGroup(
+        activity.activityId,
+        input.groupId,
+      );
+      const boundGroups = deps.activity
+        .listBoundGroups(activity.activityId)
+        .map((groupId) => entities.group(groupId));
+      appendAudit({
+        groupId: activity.groupId,
+        actorId: input.actorId,
+        action: "admin_api:activity_unbind",
+        status: removed ? AuditStatus.Executed : AuditStatus.Rejected,
+        reason: removed
+          ? `活动 ${activityLabel(activity)} 解绑发布群 ${input.groupId}`
+          : `活动 ${activityLabel(activity)} 本来就没绑这个群：${input.groupId}`,
+      });
+      return {
+        activity: activityItem(activity.activityId),
+        boundGroups,
+        message: removed
+          ? "已解绑：之后再开放报名不会往那个群发卡。"
+          : "这个群本来就没绑定，无需解绑。",
+      };
+    },
+
     // ---------------------------------------------------------- 别名表（240）
 
     setAlias: async (input) => {
@@ -1714,6 +1815,11 @@ export function buildNotifyTopicViews(
       groupScopes,
     };
   });
+}
+
+/** 活动在审计与回执里的标签（`#活动短码`）。 */
+function activityLabel(activity: { code: string }): string {
+  return `#${activity.code}`;
 }
 
 /** 别名类型的展示名（与机器人 `/alias` 卡片同一套文案）。 */
