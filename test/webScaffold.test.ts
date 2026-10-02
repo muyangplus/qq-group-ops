@@ -199,6 +199,34 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     expect(router).toContain("NotifyView");
   });
 
+  it("规则页：关键词增删 + 恢复继承（字段级 / 整群都要确认）", () => {
+    const view = read("views/RulesView.vue");
+
+    expect(view).toContain("adminApi.ruleKeywords");
+    expect(view).toContain("adminApi.resetRuleFields");
+    expect(view).toContain("adminApi.resetRuleGroup");
+    // 跳过哪些词、为什么跳过，要如实显示（后端 skipped）
+    expect(view).toContain("skipped");
+    expect(view).toContain("ModalDialog");
+    expect(view).toContain("不可逆");
+  });
+
+  it("别名页：平台超管专属，增删都二次确认", () => {
+    const view = read("views/AliasesView.vue");
+    const router = read("router.ts");
+    const app = read("App.vue");
+
+    expect(view).toContain("adminApi.aliases");
+    expect(view).toContain("adminApi.setAlias");
+    expect(view).toContain("adminApi.removeAlias");
+    expect(view).toContain("ModalDialog");
+    expect(view).toContain("session.isSuperAdmin");
+    // 班级库未加载是最常见的一次性故障，页面上要说清怎么修
+    expect(view).toContain("class:index");
+    expect(router).toContain("AliasesView");
+    expect(app).toContain("aliases");
+  });
+
   it("待审批页：申请人资料摘要 + 同步官方队列（120 起）", () => {
     const source = read("views/PendingView.vue");
 

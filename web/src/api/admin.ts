@@ -236,6 +236,41 @@ export interface AdminApiNotifyTestResult {
   message: string;
 }
 
+/** 规则关键词批量增删的结果。 */
+export interface AdminApiRuleKeywordsResult {
+  /** 改完之后的**完整**关键词表（已 trim、去重、排序）。 */
+  keywords: string[];
+  added: string[];
+  removed: string[];
+  /** 被跳过的词与原因（已存在 / 不存在 / 超长 / 空）—— 界面要如实显示。 */
+  skipped: Array<{ word: string; reason: string }>;
+  message: string;
+}
+
+/** 恢复继承（字段级 / 整群）的结果。 */
+export interface AdminApiRuleResetResult {
+  groupId: string;
+  scope: "fields" | "all";
+  fields: string[];
+  /** 清完之后仍在覆盖的字段（界面据此刷新「覆盖中」标记）。 */
+  overriddenFields: string[];
+  message: string;
+}
+
+/** 别名表条目。 */
+export interface AdminApiAliasItem {
+  alias: string;
+  target: string;
+  /** `class` 班级 / `college` 学院 / `major` 专业。 */
+  kind: string;
+}
+
+export interface AdminApiAliasResult {
+  ok: boolean;
+  message: string;
+  aliases: AdminApiAliasItem[];
+}
+
 /** 通知投递记录（`/api/notify/deliveries`，只读）。 */
 export interface AdminApiDeliveryItem {
   groupId: string;
@@ -452,6 +487,52 @@ export const adminApi = {
   resetNotifyLevels: (): Promise<{ ok: boolean } & AdminApiNotifyLevelResult> =>
     api.post<{ ok: boolean } & AdminApiNotifyLevelResult>(
       "/api/notify/levels/reset",
+    ),
+
+  /** 规则关键词逐条增删（可批量；单个词失败只进 skipped，不整批失败）。 */
+  ruleKeywords: (
+    group: string,
+    action: "add" | "remove",
+    words: string[],
+  ): Promise<{ ok: boolean } & AdminApiRuleKeywordsResult> =>
+    api.post<{ ok: boolean } & AdminApiRuleKeywordsResult>(
+      "/api/rules/keywords",
+      { group, action, words },
+    ),
+
+  /** 恢复继承：字段级（`fields`）或整群（`resetRuleGroup`）—— 不可逆，界面要二次确认。 */
+  resetRuleFields: (
+    group: string,
+    fields: string[],
+  ): Promise<{ ok: boolean } & AdminApiRuleResetResult> =>
+    api.post<{ ok: boolean } & AdminApiRuleResetResult>(
+      "/api/rules/reset-fields",
+      { group, fields },
+    ),
+
+  resetRuleGroup: (
+    group: string,
+  ): Promise<{ ok: boolean } & AdminApiRuleResetResult> =>
+    api.post<{ ok: boolean } & AdminApiRuleResetResult>("/api/rules/reset", {
+      group,
+    }),
+
+  /** 别名表（平台超管 240）。 */
+  aliases: (): Promise<{ aliases: AdminApiAliasItem[] }> =>
+    api.get<{ aliases: AdminApiAliasItem[] }>("/api/aliases"),
+
+  setAlias: (
+    alias: string,
+    target: string,
+  ): Promise<{ ok: boolean } & AdminApiAliasResult> =>
+    api.put<{ ok: boolean } & AdminApiAliasResult>("/api/aliases", {
+      alias,
+      target,
+    }),
+
+  removeAlias: (alias: string): Promise<{ ok: boolean } & AdminApiAliasResult> =>
+    api.del<{ ok: boolean } & AdminApiAliasResult>(
+      `/api/aliases/${encodeURIComponent(alias)}`,
     ),
 
   /** 给自己发一张测试卡（自助；测私聊推送通道是否通）。 */

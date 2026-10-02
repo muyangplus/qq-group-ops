@@ -518,6 +518,8 @@ export function createRuntime(
         moderationNotifier,
         // P2 写：话题门槛的读写都走 `/notify level` 同一份存储
         notifyTopics,
+        // P2 写：别名表与 `/alias` 同一份数据
+        classAliases,
         database: dependencies.databaseDriver,
         migrationIssues: dependencies.migration?.issues.length,
       })

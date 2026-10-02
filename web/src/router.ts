@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from "vue-router";
 import { onUnauthorized } from "@/api/client";
 import { useSessionStore } from "@/stores/session";
 import ActivitiesView from "@/views/ActivitiesView.vue";
+import AliasesView from "@/views/AliasesView.vue";
 import AppealsView from "@/views/AppealsView.vue";
 import AuditView from "@/views/AuditView.vue";
 import BlacklistView from "@/views/BlacklistView.vue";
@@ -34,6 +35,8 @@ export const router = createRouter({
     { path: "/deliveries", name: "deliveries", component: DeliveriesView },
     { path: "/notify", name: "notify", component: NotifyView },
     { path: "/rules", name: "rules", component: RulesView },
+    // 别名表是平台级数据（只给平台超管 240）：入口在超管那组导航里
+    { path: "/aliases", name: "aliases", component: AliasesView },
     { path: "/activities", name: "activities", component: ActivitiesView },
     { path: "/status", name: "status", component: StatusView },
     { path: "/settings", name: "settings", component: SettingsView },

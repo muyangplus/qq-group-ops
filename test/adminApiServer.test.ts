@@ -787,6 +787,163 @@ describe("管理 API HTTP 层", () => {
     await app.close();
   });
 
+  it("规则关键词 / 恢复继承 / 别名表：参数校验与门槛都在路由层挡住明显的错", async () => {
+    const tokens = memoryTokens();
+    const calls: Array<Record<string, unknown>> = [];
+    const aliases = [{ alias: "环工2214", target: "环境类2214", kind: "class" }];
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      readers: {
+        aliases: async () => aliases,
+      },
+      writers: {
+        addRuleKeywords: async (input) => {
+          calls.push({ kind: "kw-add", ...input });
+          return {
+            keywords: ["广告"],
+            added: ["广告"],
+            removed: [],
+            skipped: [],
+            message: "已添加 1 个关键词，当前共 1 条。",
+          };
+        },
+        removeRuleKeywords: async (input) => {
+          calls.push({ kind: "kw-remove", ...input });
+          return {
+            keywords: [],
+            added: [],
+            removed: ["广告"],
+            skipped: [],
+            message: "已删除 1 个关键词，当前共 0 条。",
+          };
+        },
+        resetRuleFields: async (input) => {
+          calls.push({ kind: "reset-fields", ...input });
+          return {
+            groupId: input.groupId,
+            scope: "fields" as const,
+            fields: input.fields,
+            overriddenFields: [],
+            message: "已恢复 1 个字段的继承。",
+          };
+        },
+        resetRuleGroup: async (input) => {
+          calls.push({ kind: "reset-all", ...input });
+          return {
+            groupId: input.groupId,
+            scope: "all" as const,
+            fields: [],
+            overriddenFields: [],
+            message: "本群全部覆盖已清空。",
+          };
+        },
+        setAlias: async (input) => {
+          calls.push({ kind: "alias-set", ...input });
+          return { ok: true, message: "已保存别名。", aliases };
+        },
+        removeAlias: async (input) => {
+          calls.push({ kind: "alias-remove", ...input });
+          return { ok: true, message: "已删除别名。", aliases: [] };
+        },
+      },
+    }).app;
+    const { token } = await tokens.issue({ userId: "admin", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const cookie = cookieOf(login);
+    const write = { cookie, "x-admin-request": "1" };
+
+    // 关键词：缺 group / 缺 words 都 400；正常带 actor 进后端
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/rules/keywords",
+          headers: write,
+          payload: { action: "add", words: ["广告"] },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/rules/keywords",
+          headers: write,
+          payload: { group: "g1", action: "add", words: [] },
+        })
+      ).statusCode,
+    ).toBe(400);
+    const added = await app.inject({
+      method: "POST",
+      url: "/api/rules/keywords",
+      headers: write,
+      payload: { group: "g1", action: "add", words: ["广告"] },
+    });
+    expect(added.statusCode).toBe(200);
+    expect(calls).toContainEqual({
+      kind: "kw-add",
+      groupId: "g1",
+      words: ["广告"],
+      actorId: "admin",
+    });
+
+    // 恢复继承：缺 fields 400；整群重置可以不带 fields
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/rules/reset-fields",
+          headers: write,
+          payload: { group: "g1" },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/rules/reset",
+          headers: write,
+          payload: { group: "g1" },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    // 别名：读要装配；写要 alias + target
+    const list = await app.inject({ method: "GET", url: "/api/aliases", headers: { cookie } });
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toEqual({ aliases });
+    expect(
+      (
+        await app.inject({
+          method: "PUT",
+          url: "/api/aliases",
+          headers: write,
+          payload: { alias: "环工2214" },
+        })
+      ).statusCode,
+    ).toBe(400);
+    const removedAlias = await app.inject({
+      method: "DELETE",
+      url: "/api/aliases/%E7%8E%AF%E5%B7%A52214",
+      headers: write,
+    });
+    expect(removedAlias.statusCode).toBe(200);
+    expect(calls).toContainEqual({
+      kind: "alias-remove",
+      alias: "环工2214",
+      actorId: "admin",
+    });
+
+    await app.close();
+  });
+
   it("/api/status 需要登录，返回只读状态", async () => {
     const { app, tokens } = build();
     const unauth = await app.inject({ method: "GET", url: "/api/status" });

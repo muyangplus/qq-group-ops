@@ -416,3 +416,15 @@ button.chip {
 .mono {
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
+
+/* 带操作按钮的 chip（规则页的关键词：每个词旁边一个「删」）。
+   用 flex 让词与按钮贴着，按钮高度对齐词而不撑高整行（.chips 的 li 本来是普通块）。 */
+.chips li.chip-with-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chips li.chip-with-action button.chip {
+  padding: 2px 8px;
+}

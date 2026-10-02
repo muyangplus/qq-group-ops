@@ -57,7 +57,8 @@ import {
 } from "../groupConfigCore.js";
 import { findHelpTopic, type HelpTopic } from "../helpTopics.js";
 /** 关键词单条上限（与卡片标准一致：太长会挤爆按钮）。 */
-const RULE_KEYWORD_MAX_LENGTH = 50;
+/** 单条关键词长度上限（指令层与管理面**共用**这一个来源）。 */
+export const RULE_KEYWORD_MAX_LENGTH = 50;
 /** §B1 正则单条上限 / 列表条数上限（防御 ReDoS 与卡片过长）。 */
 export const RULE_REGEX_MAX_LENGTH = 200;
 export const RULE_LIST_MAX_COUNT = 50;

@@ -448,6 +448,8 @@ export interface AdminApiReaders {
     | undefined;
   /** 运维只读（`/api/health`）：只读巡检模式没有进程内状态，不装配。 */
   health?: (() => Promise<AdminApiHealthView>) | undefined;
+  /** 别名表（`/api/aliases`，平台超管 240）。 */
+  aliases?: (() => Promise<AdminApiAliasItem[]>) | undefined;
 }
 
 /** 通过 / 拒绝入群申请后的回执。 */
@@ -606,6 +608,45 @@ export interface AdminApiWriters {
     userId: string;
     groupId?: string | undefined;
   }): Promise<AdminApiNotifyTestResult>;
+  /**
+   * 规则关键词**逐条**增删（可批量提交，逐词按指令层同一套规则校验）。
+   *
+   * 单个词失败（已存在 / 不存在 / 超长）**不整批失败**，而是进 `skipped` 并如实回给界面 ——
+   * 批量操作里因为一个重复词整批回滚更难用。门槛同 `PUT /api/rules`：本群 130 / 全局 240。
+   */
+  addRuleKeywords(input: {
+    groupId: string;
+    words: string[];
+    actorId: string;
+  }): Promise<AdminApiRuleKeywordsResult>;
+  removeRuleKeywords(input: {
+    groupId: string;
+    words: string[];
+    actorId: string;
+  }): Promise<AdminApiRuleKeywordsResult>;
+  /**
+   * 恢复继承：只清指定字段的覆盖（`clearFields`），或整群重置（`removeOverride`）。
+   *
+   * 与指令层「恢复本页继承 / 恢复全部继承」同一套存储方法；**不可逆**（覆盖行被清掉），
+   * 界面必须二次确认。门槛同 `PUT /api/rules`。
+   */
+  resetRuleFields(input: {
+    groupId: string;
+    fields: string[];
+    actorId: string;
+  }): Promise<AdminApiRuleResetResult>;
+  resetRuleGroup(input: {
+    groupId: string;
+    actorId: string;
+  }): Promise<AdminApiRuleResetResult>;
+  /** 维护别名表（平台超管 240；类型由服务自动判定，与 `/alias set` 一致）。 */
+  setAlias(input: {
+    alias: string;
+    target: string;
+    actorId: string;
+  }): Promise<AdminApiAliasResult>;
+  /** 删除别名（平台超管 240）；不存在时按「没这条」如实回。 */
+  removeAlias(input: { alias: string; actorId: string }): Promise<AdminApiAliasResult>;
 }
 
 export interface AdminApiActivityItem {
@@ -649,6 +690,43 @@ export interface AdminApiNotifyLevelResult {
 export interface AdminApiNotifyTestResult {
   ok: boolean;
   message: string;
+}
+
+/** 规则关键词批量增删的结果（P2 写）。 */
+export interface AdminApiRuleKeywordsResult {
+  /** 改完之后的**完整**关键词表（与 `/rules` 显示的是同一份：已 trim、去重、排序）。 */
+  keywords: string[];
+  added: string[];
+  removed: string[];
+  /** 被跳过的词与原因（已存在 / 不存在 / 超长 / 空）—— **不静默**，界面要如实显示。 */
+  skipped: Array<{ word: string; reason: string }>;
+  message: string;
+}
+
+/** 恢复继承（字段级 / 整群）的结果（P2 写）。 */
+export interface AdminApiRuleResetResult {
+  groupId: string;
+  /** `fields` = 只清了这些字段；`all` = 整群覆盖全部重置。 */
+  scope: "fields" | "all";
+  fields: string[];
+  /** 清完之后**仍在覆盖**的字段（界面据此刷新「覆盖中」标记）。 */
+  overriddenFields: string[];
+  message: string;
+}
+
+/** 别名表条目（P2 写，平台超管 240）。 */
+export interface AdminApiAliasItem {
+  alias: string;
+  target: string;
+  /** 自动判定的类型：`class` 班级 / `college` 学院 / `major` 专业。 */
+  kind: string;
+}
+
+/** 别名表写操作的结果（回整表，界面直接替换）。 */
+export interface AdminApiAliasResult {
+  ok: boolean;
+  message: string;
+  aliases: AdminApiAliasItem[];
 }
 
 /** 入口能提供、server 自己算不出来的那部分状态。 */
@@ -1332,6 +1410,147 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
       ...(group !== undefined ? { groupId: group } : {}),
     });
     return { ok: result.ok, result };
+  });
+
+  /** 规则关键词逐条增删：`POST /api/rules/keywords { group, action, words }`（130 / 全局 240）。 */
+  app.post("/api/rules/keywords", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const group = typeof body.group === "string" ? body.group.trim() : "";
+    if (group.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 group（群 ID；全局用 __default__）。"));
+    }
+    const action = body.action === "remove" ? "remove" : "add";
+    const words = Array.isArray(body.words)
+      ? body.words.filter((word): word is string => typeof word === "string")
+      : typeof body.word === "string"
+        ? [body.word]
+        : [];
+    if (words.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 words（要加 / 要删的词，至少一个）。"));
+    }
+    const actorId = actorOf(request);
+    const result =
+      action === "add"
+        ? await writers.addRuleKeywords({ groupId: group, words, actorId })
+        : await writers.removeRuleKeywords({ groupId: group, words, actorId });
+    return { ...result, ok: true };
+  });
+
+  /** 恢复继承（字段级）：`POST /api/rules/reset-fields { group, fields }`。 */
+  app.post("/api/rules/reset-fields", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const group = typeof body.group === "string" ? body.group.trim() : "";
+    if (group.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 group（群 ID；全局用 __default__）。"));
+    }
+    const fields = Array.isArray(body.fields)
+      ? body.fields.filter((field): field is string => typeof field === "string")
+      : [];
+    if (fields.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 fields（要恢复继承的字段名，至少一个）。"));
+    }
+    const result = await writers.resetRuleFields({
+      groupId: group,
+      fields,
+      actorId: actorOf(request),
+    });
+    return { ok: true, ...result };
+  });
+
+  /** 恢复继承（整群）：`POST /api/rules/reset { group }` —— 不可逆，界面要二次确认。 */
+  app.post("/api/rules/reset", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const group = typeof body.group === "string" ? body.group.trim() : "";
+    if (group.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 group（群 ID；全局用 __default__）。"));
+    }
+    const result = await writers.resetRuleGroup({
+      groupId: group,
+      actorId: actorOf(request),
+    });
+    return { ok: true, ...result };
+  });
+
+  /** 别名表（平台超管 240）：`GET /api/aliases`。 */
+  app.get("/api/aliases", async (request, reply) => {
+    if (!(await allowPlatformRead(request, reply, "GET /api/aliases"))) {
+      return reply;
+    }
+    const reader = options.readers?.aliases;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "别名服务未启用（只读巡检模式 / 未装配）。"));
+    }
+    return { aliases: await reader() };
+  });
+
+  /** 新增 / 覆盖别名：`PUT /api/aliases { alias, target }`（平台超管 240）。 */
+  app.put("/api/aliases", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const alias = typeof body.alias === "string" ? body.alias.trim() : "";
+    const target = typeof body.target === "string" ? body.target.trim() : "";
+    if (alias.length === 0 || target.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 alias 与 target（都得是非空字符串）。"));
+    }
+    const result = await writers.setAlias({
+      alias,
+      target,
+      actorId: actorOf(request),
+    });
+    return { ...result, ok: true };
+  });
+
+  /** 删除别名：`DELETE /api/aliases/:alias`（平台超管 240）。 */
+  app.delete("/api/aliases/:alias", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { alias } = request.params as { alias: string };
+    const result = await writers.removeAlias({
+      alias: alias.trim(),
+      actorId: actorOf(request),
+    });
+    return { ...result, ok: result.ok };
   });
 
   /** 只读状态（E1-c）：入口给数据库与迁移信息，server 补版本 / 运行时长 / 会话数。 */

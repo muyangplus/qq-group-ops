@@ -28,7 +28,10 @@ import type { ActivityExportService } from "../services/activityExport.js";
 import type { AppealService } from "../services/appeals.js";
 import type { AuditLogStore } from "../services/audit.js";
 import type { BlacklistService } from "../services/blacklist.js";
-import { parseRuleSetting } from "../services/commands/support.js";
+import {
+  RULE_KEYWORD_MAX_LENGTH,
+  parseRuleSetting,
+} from "../services/commands/support.js";
 import {
   DIST_BROKEN_DIR,
   readRollbackNotice,
@@ -42,6 +45,13 @@ import type { JoinRequestSyncService } from "../services/joinAuditSync.js";
 import type { MigrationResult } from "../db/migrate.js";
 import type { ModerationNotifier } from "../services/moderationNotifier.js";
 import type { NotifyTopicLevelStore } from "../services/notifyTopics.js";
+import type { ClassAliasService } from "../services/classAliases.js";
+import {
+  CLASS_ALIAS_KIND_LABELS,
+  type ClassAliasKind,
+} from "../services/classAliases.js";
+import type { GroupConfigOverride } from "../services/groupConfigCore.js";
+import { RULE_FIELD_LABELS } from "../services/commands/support.js";
 import type { NotifyChannel } from "../services/notifyTopics.js";
 import type { NotificationService } from "../services/notifications.js";
 import {
@@ -74,7 +84,11 @@ import type {
   AdminApiDeliveryItem,
   AdminApiDeniedInput,
   AdminApiHealthView,
+  AdminApiAliasItem,
+  AdminApiAliasResult,
   AdminApiNotifyTopic,
+  AdminApiRuleKeywordsResult,
+  AdminApiRuleResetResult,
   AdminApiNotifyLevelResult,
   AdminApiNotifyTestResult,
   AdminApiPendingItem,
@@ -168,6 +182,8 @@ export interface AdminApiBackendDeps {
   moderationNotifier?: ModerationNotifier | undefined;
   /** 通知话题门槛存储（`/api/notify/levels` 的读写都走它，与 `/notify level` 同一份数据）。 */
   notifyTopics?: NotifyTopicLevelStore | undefined;
+  /** 班级 / 学院 / 专业别名表（`/api/aliases` 的读写都走它，与 `/alias` 同一份数据）。 */
+  classAliases?: ClassAliasService | undefined;
   /** 审计导出（`/api/audit/export.csv`，与指令层 `/export audit` 同一实现）。 */
   exportService?: ExportService | undefined;
 }
@@ -422,6 +438,40 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
       (topic) => deps.notifications?.topicLevel(topic) ?? 0,
     );
 
+  /**
+   * 规则写入的公共前置：门槛（本群 130 / 全局 240，与指令层 `canManageRules` 同口径）+ 群 id 非空。
+   *
+   * 关键词增删与「恢复继承」都必须先过它，免得三处各写一遍门槛。
+   */
+  const requireRuleTarget = (actorId: string, rawGroupId: string): string => {
+    const groupId = rawGroupId.trim();
+    if (groupId.length === 0) {
+      throw badRequest("缺少 group（群 ID；全局用 __default__）。");
+    }
+    if (groupId === DEFAULT_GROUP_ID) {
+      requireGlobalSuperAdmin(actorId, "修改全局规则");
+    } else {
+      requireGroupAdmin(actorId, groupId, "修改群规则");
+    }
+    return groupId;
+  };
+
+  const requireClassAliases = (): ClassAliasService => {
+    const service = deps.classAliases;
+    if (!service) {
+      throw unavailable("别名服务未启用（内存模式 / 只读巡检）。");
+    }
+    return service;
+  };
+
+  /** 别名表视图（读端点与写端点返回体共用）。 */
+  const aliasItems = (): AdminApiAliasItem[] =>
+    (deps.classAliases?.list() ?? []).map((alias) => ({
+      alias: alias.alias,
+      target: alias.target,
+      kind: alias.kind,
+    }));
+
   const requireAppeals = (): AppealService => {
     const service = deps.appeals;
     if (!service) {
@@ -568,6 +618,8 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     },
 
     notifyTopics: notifyTopicViews,
+
+    aliases: async () => aliasItems(),
 
     activities: async () =>
       deps.activity.listAllActivities().map((activity) => activityItem(activity.activityId)),
@@ -1407,6 +1459,212 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
           : `测试卡没发出去：${result.text}（先私聊机器人一次，建立会话）`,
       };
     },
+
+    // ------------------------------------------------- 规则关键词 / 恢复继承
+
+    addRuleKeywords: async (input) => {
+      const groupId = requireRuleTarget(input.actorId, input.groupId);
+      const config = deps.configStore.get(groupId);
+      const added: string[] = [];
+      const skipped: Array<{ word: string; reason: string }> = [];
+      for (const raw of input.words) {
+        const word = raw.trim();
+        // 逐词按指令层 `/rules add keyword` 的同一套规则校验（trim / 空 / 超长 / 重复）
+        if (word.length === 0) {
+          skipped.push({ word: raw, reason: "空词" });
+          continue;
+        }
+        if (word.length > RULE_KEYWORD_MAX_LENGTH) {
+          skipped.push({ word, reason: `超过 ${RULE_KEYWORD_MAX_LENGTH} 字` });
+          continue;
+        }
+        if (config.keywords.includes(word) || added.includes(word)) {
+          skipped.push({ word, reason: "已存在" });
+          continue;
+        }
+        added.push(word);
+      }
+      if (added.length > 0) {
+        deps.configStore.setOverride({
+          groupId,
+          keywords: [...config.keywords, ...added],
+        });
+      }
+      const keywords = [...deps.configStore.get(groupId).keywords];
+      const message = summarizeKeywordChange("添加", added, skipped, keywords.length);
+      appendAudit({
+        groupId,
+        actorId: input.actorId,
+        action: "admin_api:rule_keywords",
+        status: added.length > 0 ? AuditStatus.Executed : AuditStatus.Rejected,
+        reason: truncate(
+          `加词=${added.join(",") || "（无）"} 跳过=${skipped.length}`,
+          160,
+        ),
+      });
+      log.info("admin api added rule keywords", {
+        groupId,
+        actorId: input.actorId,
+        added: added.length,
+        skipped: skipped.length,
+      });
+      return { keywords, added, removed: [], skipped, message };
+    },
+
+    removeRuleKeywords: async (input) => {
+      const groupId = requireRuleTarget(input.actorId, input.groupId);
+      const config = deps.configStore.get(groupId);
+      const removed: string[] = [];
+      const skipped: Array<{ word: string; reason: string }> = [];
+      for (const raw of input.words) {
+        const word = raw.trim();
+        if (word.length === 0) {
+          skipped.push({ word: raw, reason: "空词" });
+          continue;
+        }
+        if (!config.keywords.includes(word)) {
+          // 与指令层一致：删不存在的词要明确报「不存在」，不静默成功
+          skipped.push({ word, reason: "不存在" });
+          continue;
+        }
+        removed.push(word);
+      }
+      if (removed.length > 0) {
+        const removedSet = new Set(removed);
+        deps.configStore.setOverride({
+          groupId,
+          keywords: config.keywords.filter((word) => !removedSet.has(word)),
+        });
+      }
+      const keywords = [...deps.configStore.get(groupId).keywords];
+      const message = summarizeKeywordChange("删除", removed, skipped, keywords.length);
+      appendAudit({
+        groupId,
+        actorId: input.actorId,
+        action: "admin_api:rule_keywords",
+        status: removed.length > 0 ? AuditStatus.Executed : AuditStatus.Rejected,
+        reason: truncate(
+          `删词=${removed.join(",") || "（无）"} 跳过=${skipped.length}`,
+          160,
+        ),
+      });
+      log.info("admin api removed rule keywords", {
+        groupId,
+        actorId: input.actorId,
+        removed: removed.length,
+        skipped: skipped.length,
+      });
+      return { keywords, added: [], removed, skipped, message };
+    },
+
+    resetRuleFields: async (input) => {
+      const groupId = requireRuleTarget(input.actorId, input.groupId);
+      const known = new Set(Object.keys(RULE_FIELD_LABELS));
+      const unknown = input.fields.filter((field) => !known.has(field));
+      if (unknown.length > 0) {
+        throw badRequest(`未知规则字段：${unknown.join(", ")}`);
+      }
+      deps.configStore.clearFields(
+        groupId,
+        input.fields as Array<keyof GroupConfigOverride>,
+      );
+      const overriddenFields = [...deps.configStore.overriddenFields(groupId)].sort();
+      appendAudit({
+        groupId,
+        actorId: input.actorId,
+        action: "admin_api:rule_reset",
+        status: AuditStatus.Executed,
+        reason: `恢复继承（字段）：${input.fields.join(",")}`,
+      });
+      log.info("admin api reset rule fields", {
+        groupId,
+        actorId: input.actorId,
+        fields: input.fields,
+      });
+      return {
+        groupId,
+        scope: "fields",
+        fields: [...input.fields],
+        overriddenFields,
+        message: `已恢复 ${input.fields.length} 个字段的继承（这些字段回落到全局默认）。`,
+      };
+    },
+
+    resetRuleGroup: async (input) => {
+      const groupId = requireRuleTarget(input.actorId, input.groupId);
+      deps.configStore.removeOverride(groupId);
+      appendAudit({
+        groupId,
+        actorId: input.actorId,
+        action: "admin_api:rule_reset",
+        status: AuditStatus.Executed,
+        reason: "恢复继承（整群重置）",
+      });
+      log.warn("admin api reset rule group", {
+        groupId,
+        actorId: input.actorId,
+      });
+      return {
+        groupId,
+        scope: "all",
+        fields: [],
+        overriddenFields: [],
+        message:
+          groupId === DEFAULT_GROUP_ID
+            ? "全局规则已恢复种子默认（所有字段）。"
+            : "本群全部覆盖已清空，所有字段回落到全局默认。",
+      };
+    },
+
+    // ---------------------------------------------------------- 别名表（240）
+
+    setAlias: async (input) => {
+      requireGlobalSuperAdmin(input.actorId, "维护别名表");
+      const service = requireClassAliases();
+      let saved;
+      try {
+        saved = service.set(input.alias, input.target);
+      } catch (error) {
+        throw badRequest(error instanceof Error ? error.message : String(error));
+      }
+      appendAudit({
+        groupId: "",
+        actorId: input.actorId,
+        action: "admin_api:alias_set",
+        status: AuditStatus.Executed,
+        reason: `别名 ${saved.alias} → ${saved.target}（${saved.kind}）`,
+      });
+      log.info("admin api set alias", {
+        alias: saved.alias,
+        target: saved.target,
+        actorId: input.actorId,
+      });
+      return {
+        ok: true,
+        message: `已保存别名「${saved.alias}」→「${saved.target}」（${aliasKindLabel(saved.kind)}）。`,
+        aliases: aliasItems(),
+      };
+    },
+
+    removeAlias: async (input) => {
+      requireGlobalSuperAdmin(input.actorId, "维护别名表");
+      const service = requireClassAliases();
+      const removed = service.remove(input.alias);
+      appendAudit({
+        groupId: "",
+        actorId: input.actorId,
+        action: "admin_api:alias_remove",
+        status: removed ? AuditStatus.Executed : AuditStatus.Rejected,
+        reason: removed ? `删除别名 ${input.alias}` : `别名不存在：${input.alias}`,
+      });
+      return {
+        ok: removed,
+        message: removed
+          ? `已删除别名「${input.alias}」。`
+          : `别名表里没有「${input.alias}」。`,
+        aliases: aliasItems(),
+      };
+    },
   };
 }
 
@@ -1456,6 +1714,30 @@ export function buildNotifyTopicViews(
       groupScopes,
     };
   });
+}
+
+/** 别名类型的展示名（与机器人 `/alias` 卡片同一套文案）。 */
+function aliasKindLabel(kind: string): string {
+  return CLASS_ALIAS_KIND_LABELS[kind as ClassAliasKind] ?? kind;
+}
+
+/** 关键词批量增删的人话摘要：说清「加了几个、跳过几个以及为什么跳过」。 */
+function summarizeKeywordChange(
+  verb: string,
+  changed: readonly string[],
+  skipped: readonly { word: string; reason: string }[],
+  total: number,
+): string {
+  const parts = [`已${verb} ${changed.length} 个关键词`];
+  if (skipped.length > 0) {
+    parts.push(
+      `跳过 ${skipped.length} 个（${skipped
+        .map((item) => `${item.word}：${item.reason}`)
+        .join("；")}）`,
+    );
+  }
+  parts.push(`当前共 ${total} 条`);
+  return `${parts.join("，")}。`;
 }
 
 /** 话题名是否是已知话题（与指令层同一个判据，只是这里不做类型收窄）。 */

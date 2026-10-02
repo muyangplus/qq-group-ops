@@ -47,7 +47,7 @@ async function signOut(): Promise<void> {
       <RouterLink :to="{ name: 'blacklist' }">黑名单</RouterLink>
       <RouterLink :to="{ name: 'rules' }">规则</RouterLink>
       <RouterLink :to="{ name: 'activities' }">活动</RouterLink>
-      <!-- 状态 / 配置 / 投递是平台级信息：非平台超管看不到入口（服务端也会 403） -->
+      <!-- 状态 / 配置 / 通知 / 投递 / 别名是平台级信息：非平台超管看不到入口（服务端也会 403） -->
       <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'status' }">
         状态
       </RouterLink>
@@ -59,6 +59,9 @@ async function signOut(): Promise<void> {
       </RouterLink>
       <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'settings' }">
         配置
+      </RouterLink>
+      <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'aliases' }">
+        别名
       </RouterLink>
     </nav>
     <nav class="topbar-right">

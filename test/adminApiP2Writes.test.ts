@@ -12,6 +12,8 @@ import { ActivityExportService } from "../src/services/activityExport.js";
 import { AppealService } from "../src/services/appeals.js";
 import { AuditLogStore } from "../src/services/audit.js";
 import { BlacklistService } from "../src/services/blacklist.js";
+import { ClassAliasService } from "../src/services/classAliases.js";
+import { MemberRoster } from "../src/services/memberRoster.js";
 import { GroupConfigStore, DEFAULT_GROUP_ID } from "../src/services/groupConfig.js";
 import { JoinApprovalService } from "../src/services/joinApproval.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
@@ -36,6 +38,8 @@ interface Harness {
   blacklist: BlacklistService;
   appeals: AppealService;
   permissions: PermissionService;
+  configStore: GroupConfigStore;
+  classAliases: ClassAliasService;
 }
 
 function harness(): Harness {
@@ -55,6 +59,26 @@ function harness(): Harness {
     queue: writeQueue,
   });
   const appeals = new AppealService({ queue: writeQueue });
+  const classAliases = new ClassAliasService();
+  // 别名类型判定依赖班级库（线上来自 class:index）；测试里给一份最小索引
+  classAliases.setRoster(
+    MemberRoster.fromIndex({
+      classes: ["材化2211", "环境类2214"],
+      majors: ["材料化学", "环境工程"],
+      classInfo: {
+        材化2211: {
+          major: "材料化学",
+          college: "化学与生命科学学院",
+          year: "2022",
+        },
+        环境类2214: {
+          major: "环境工程",
+          college: "环境科学与工程学院",
+          year: "2022",
+        },
+      },
+    }),
+  );
   const backend = createAdminApiBackend({
     permissions,
     auditLog,
@@ -74,8 +98,19 @@ function harness(): Harness {
     punishments,
     blacklist,
     appeals,
+    classAliases,
   });
-  return { backend, api, auditLog, punishments, blacklist, appeals, permissions };
+  return {
+    backend,
+    api,
+    auditLog,
+    punishments,
+    blacklist,
+    appeals,
+    permissions,
+    configStore,
+    classAliases,
+  };
 }
 
 /** 建一条处罚（带禁言，便于验证撤销效果）。 */
@@ -439,6 +474,154 @@ describe("管理 API P2：通知门槛与测试推送", () => {
     const failed = await h.backend.sendNotifyTest({ userId: "mod" });
     expect(failed.ok).toBe(false);
     expect(failed.message).toContain("没发出去");
+  });
+});
+
+describe("管理 API P2：规则关键词与恢复继承", () => {
+  it("加词：逐词校验（空 / 超长 / 重复跳过并如实报告），成功写审计", async () => {
+    const h = harness();
+
+    const result = await h.backend.addRuleKeywords({
+      groupId: "g1",
+      words: ["广告", " 刷屏 ", "", "广告", "x".repeat(60)],
+      actorId: "admin",
+    });
+
+    // 只有「广告」「刷屏」真的加进去了（trim + 去重，与指令层同一套规则）
+    expect(result.added).toEqual(["广告", "刷屏"]);
+    expect(result.keywords).toEqual(["刷屏", "广告"]);
+    expect(result.skipped.map((item) => item.reason)).toEqual([
+      "空词",
+      "已存在",
+      "超过 50 字",
+    ]);
+    expect(result.message).toContain("已添加 2 个");
+    expect(h.configStore.get("g1").keywords).toEqual(["刷屏", "广告"]);
+    const audit = h.auditLog
+      .all()
+      .find((row) => row.action === "admin_api:rule_keywords");
+    expect(audit?.actorId).toBe("admin");
+    expect(audit?.groupId).toBe("g1");
+  });
+
+  it("删词：不存在的词进 skipped（不静默成功）", async () => {
+    const h = harness();
+    await h.backend.addRuleKeywords({
+      groupId: "g1",
+      words: ["广告"],
+      actorId: "admin",
+    });
+
+    const result = await h.backend.removeRuleKeywords({
+      groupId: "g1",
+      words: ["广告", "从没有过的词"],
+      actorId: "admin",
+    });
+
+    expect(result.removed).toEqual(["广告"]);
+    expect(result.keywords).toEqual([]);
+    expect(result.skipped).toEqual([{ word: "从没有过的词", reason: "不存在" }]);
+    expect(result.message).toContain("不存在");
+  });
+
+  it("恢复字段继承 / 整群重置：覆盖字段列表如实返回；门槛同 /rules", async () => {
+    const h = harness();
+    await h.backend.updateRule("g1", "keywords", "广告,刷屏", "admin");
+    await h.backend.updateRule("g1", "warning", "请勿发广告", "admin");
+
+    const fields = await h.backend.resetRuleFields({
+      groupId: "g1",
+      fields: ["keywords"],
+      actorId: "admin",
+    });
+
+    expect(fields.scope).toBe("fields");
+    expect(fields.fields).toEqual(["keywords"]);
+    expect(fields.overriddenFields).not.toContain("keywords");
+    expect(fields.overriddenFields).toContain("warningMessage");
+    expect(h.configStore.get("g1").keywords).toEqual(
+      h.configStore.default.keywords,
+    );
+
+    const all = await h.backend.resetRuleGroup({ groupId: "g1", actorId: "admin" });
+    expect(all.scope).toBe("all");
+    expect(all.overriddenFields).toEqual([]);
+    expect(
+      h.auditLog.all().filter((row) => row.action === "admin_api:rule_reset"),
+    ).toHaveLength(2);
+  });
+
+  it("未知字段 / 没权限改全局规则都明确报错", async () => {
+    const h = harness();
+
+    await expect(
+      h.backend.resetRuleFields({
+        groupId: "g1",
+        fields: ["noSuchField"],
+        actorId: "admin",
+      }),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+    // 全局规则只有平台超管能改（与指令层 canManageRules 同口径）
+    await expect(
+      h.backend.addRuleKeywords({
+        groupId: "__default__",
+        words: ["广告"],
+        actorId: "admin",
+      }),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+  });
+});
+
+describe("管理 API P2：别名表", () => {
+  it("只有平台超管能改；写入后回整表", async () => {
+    const h = harness();
+
+    await expect(
+      h.backend.setAlias({
+        alias: "环工2214",
+        target: "环境类2214",
+        actorId: "op1",
+      }),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+
+    const saved = await h.backend.setAlias({
+      alias: "环工2214",
+      target: "环境类2214",
+      actorId: "boss",
+    });
+
+    expect(saved.ok).toBe(true);
+    expect(saved.aliases).toHaveLength(1);
+    expect(saved.aliases[0]).toMatchObject({
+      alias: "环工2214",
+      target: "环境类2214",
+    });
+    expect(
+      h.auditLog.all().some((row) => row.action === "admin_api:alias_set"),
+    ).toBe(true);
+  });
+
+  it("删除：不存在时 ok=false 且如实说明（不静默成功）", async () => {
+    const h = harness();
+    await h.backend.setAlias({
+      alias: "化生学院",
+      target: "化学与生命科学学院",
+      actorId: "boss",
+    });
+
+    const removed = await h.backend.removeAlias({
+      alias: "化生学院",
+      actorId: "boss",
+    });
+    expect(removed.ok).toBe(true);
+    expect(removed.aliases).toEqual([]);
+
+    const missing = await h.backend.removeAlias({
+      alias: "化生学院",
+      actorId: "boss",
+    });
+    expect(missing.ok).toBe(false);
+    expect(missing.message).toContain("没有");
   });
 });
 
