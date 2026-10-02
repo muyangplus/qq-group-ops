@@ -22,6 +22,7 @@
     "web:install": "pnpm --dir web install",
     "web:dev": "pnpm --dir web run dev",
     "web:build": "pnpm --dir web run build",
+    "web:test": "pnpm --dir web run test",
     "web:typecheck": "pnpm --dir web run typecheck"
   },
   "devDependencies": {

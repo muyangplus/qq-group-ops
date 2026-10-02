@@ -360,6 +360,7 @@ function formatTime(value: string): string {
             <!-- 改字段：字段表与写法完全复用指令层 `/activity set`（所以 `clear` 也能用） -->
             <template v-if="canManage(item.groupId) && settingFields.length > 0">
               <select
+                :id="`activity-field-${item.code}`"
                 v-model="editFields[item.code]"
                 :disabled="busyCode === item.code"
                 title="选择要改的字段（与 /activity set 同一份字段表）"
@@ -374,12 +375,14 @@ function formatTime(value: string): string {
                 </option>
               </select>
               <input
+                :id="`activity-value-${item.code}`"
                 v-model="editValues[item.code]"
                 :disabled="busyCode === item.code"
                 :placeholder="settingFieldOf(item)?.hint ?? '先选字段'"
                 title="新值；写法与 /activity set 一致（清空写 clear）"
               />
               <button
+                :id="`activity-field-save-${item.code}`"
                 type="button"
                 :disabled="busyCode === item.code || !editFields[item.code]"
                 :title="

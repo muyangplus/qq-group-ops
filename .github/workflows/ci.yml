@@ -43,5 +43,10 @@ jobs:
       - name: Install web dependencies
         run: pnpm --dir web install --frozen-lockfile
 
+      # 组件测试（jsdom + @vue/test-utils）先跑：前端逻辑错误在这里就红，
+      # 不用等到扫源码的契约守卫（根 `pnpm test`）猜
+      - name: Test web
+        run: pnpm web:test
+
       - name: Typecheck & build web
         run: pnpm web:build

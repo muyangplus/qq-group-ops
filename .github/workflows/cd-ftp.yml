@@ -75,6 +75,10 @@ jobs:
       - name: Install web dependencies
         run: pnpm --dir web install --frozen-lockfile
 
+      # 组件测试也在门禁里：前端逻辑错误不该靠「发完再看」发现（根 `pnpm test` 只跑契约守卫）
+      - name: Test web
+        run: pnpm web:test
+
       - name: Build web（类型检查 + vite build）
         run: pnpm web:build
 

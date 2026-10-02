@@ -223,16 +223,18 @@ describe("CI/CD 工作流审计", () => {
     // 前端是独立依赖：门禁里必须真的装 + 构建（`pnpm web:build` 内含 vue-tsc），
     // 否则 web/dist 要么不存在、要么是上一次的旧产物
     expect(commands).toContain("pnpm --dir web install");
+    expect(commands).toContain("pnpm web:test");
     expect(commands).toContain("pnpm web:build");
     // 上传/下载的产物路径要带上 web/dist，否则部署任务里没有这份文件可组包
     expect(cdWorkflow!.text).toContain("web/dist/");
   });
 
-  it("CI 也构建前端（前端坏了在 push / PR 阶段就红）", () => {
+  it("CI 也构建前端、跑组件测试（前端坏了在 push / PR 阶段就红）", () => {
     const ciWorkflow = workflows.find((workflow) => workflow.name.startsWith("ci"));
     expect(ciWorkflow, "缺少 ci-*.yml 工作流").toBeDefined();
     const commands = runCommands(ciWorkflow!);
     expect(commands).toContain("pnpm --dir web install");
+    expect(commands).toContain("pnpm web:test");
     expect(commands).toContain("pnpm web:build");
   });
 
