@@ -132,7 +132,8 @@ export class ExportService {
   }
 }
 
-function renderCsv(headers: readonly string[], rows: readonly (readonly string[])[]): string {
+/** CSV 渲染（报表模块也用它，保证转义口径一致）。 */
+export function renderCsv(headers: readonly string[], rows: readonly (readonly string[])[]): string {
   return [headers, ...rows]
     .map((row) => row.map(csvEscape).join(","))
     .join("\n")

@@ -14,6 +14,7 @@ import NotifyView from "@/views/NotifyView.vue";
 import PendingView from "@/views/PendingView.vue";
 import PunishmentsView from "@/views/PunishmentsView.vue";
 import RulesView from "@/views/RulesView.vue";
+import ReportsView from "@/views/ReportsView.vue";
 import SettingsView from "@/views/SettingsView.vue";
 import StatusView from "@/views/StatusView.vue";
 
@@ -38,6 +39,8 @@ export const router = createRouter({
     // 别名表是平台级数据（只给平台超管 240）：入口在超管那组导航里
     { path: "/aliases", name: "aliases", component: AliasesView },
     { path: "/activities", name: "activities", component: ActivitiesView },
+    // 报表（E5）：平台超管看全量，其余人看本群（页面里选自己 ≥130 的群）
+    { path: "/reports", name: "reports", component: ReportsView },
     { path: "/status", name: "status", component: StatusView },
     { path: "/settings", name: "settings", component: SettingsView },
     { path: "/login", name: "login", component: LoginView },

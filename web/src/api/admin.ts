@@ -163,6 +163,67 @@ export interface AdminApiActivityUpdateResult {
 
 export type AdminApiActivityAction = "open" | "close" | "cancel";
 
+/** 报表：每天一行（含 0 行，时序连续）。 */
+export interface AdminApiReportDailyPoint {
+  /** 本地日期 `YYYY-MM-DD`。 */
+  date: string;
+  events: number;
+  approvals: number;
+  rejections: number;
+  expired: number;
+  punishments: number;
+  registrations: number;
+  deliveries: number;
+}
+
+export interface AdminApiReportTotals {
+  events: number;
+  approvals: number;
+  rejections: number;
+  expired: number;
+  punishments: number;
+  registrations: number;
+  waitlist: number;
+  deliveries: number;
+  deliveryFailed: number;
+  newActivities: number;
+  openActivities: number;
+}
+
+export interface AdminApiReportGroupRow {
+  groupId: string;
+  group: AdminApiEntityRef;
+  events: number;
+  approvals: number;
+  rejections: number;
+  punishments: number;
+  registrations: number;
+  deliveries: number;
+}
+
+export interface AdminApiReportActivityRow {
+  code: string;
+  title: string;
+  status: string;
+  registered: number;
+  /** 期间新增报名数（报表核心指标）。 */
+  registeredInRange: number;
+  waitlist: number;
+  capacity?: number;
+  full: boolean;
+  createdAt: string;
+}
+
+/** 统计报表（`GET /api/reports`）：四块口径见 docs/DECISIONS.md 的 ADR-0059。 */
+export interface AdminApiReportsView {
+  range: { days: number; from: string; to: string };
+  group?: AdminApiEntityRef;
+  groups: AdminApiReportGroupRow[];
+  daily: AdminApiReportDailyPoint[];
+  totals: AdminApiReportTotals;
+  activities: AdminApiReportActivityRow[];
+}
+
 /** 处罚记录（`/api/punishments`，只读）。 */
 export interface AdminApiPunishmentItem {
   recordId: string;
@@ -779,4 +840,26 @@ export const adminApi = {
     api.del<AdminApiActivityWriteResult>(
       `/api/activities/${encodeURIComponent(code)}/groups/${encodeURIComponent(group)}`,
     ),
+
+  /** 统计报表（E5）：平台超管不传 `group` 看全量，其余人必须带自己 ≥130 的群。 */
+  reports: (params: {
+    group?: string | undefined;
+    days?: number | undefined;
+  } = {}): Promise<AdminApiReportsView> =>
+    api.get<AdminApiReportsView>(`/api/reports${query(params)}`),
+
+  /**
+   * 报表 CSV 是**下载**：同源链接直接带会话 cookie。
+   * 默认脱敏（群只出展示标签）；`full=1` 会多一列内部群 ID，只有平台超管能下。
+   */
+  reportsExportUrl: (params: {
+    group?: string | undefined;
+    days?: number | undefined;
+    full?: boolean | undefined;
+  } = {}): string =>
+    `/api/reports/export.csv${query({
+      group: params.group,
+      days: params.days,
+      full: params.full === true ? "1" : undefined,
+    })}`,
 };

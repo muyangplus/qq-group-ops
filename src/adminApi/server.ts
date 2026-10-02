@@ -10,6 +10,8 @@ import { getLogger, type Logger } from "../core/logger.js";
 import type { AdminTokenRepository } from "../db/adminTokenRepository.js";
 import { DEFAULT_GROUP_ID } from "../services/groupConfig.js";
 import { ACTIVITY_SETTING_FIELDS } from "../services/activitySettings.js";
+import { normalizeReportDays } from "./reports.js";
+import type { AdminApiReportsView } from "./reports.js";
 import { adminLoginUrl, machineTokenAllows, type AdminApiConfig, type AdminApiMachineToken } from "./config.js";
 import type { AdminApiEntityRef } from "./entityRef.js";
 import { AdminApiRequestError } from "./errors.js";
@@ -19,6 +21,13 @@ import type {
 } from "./settings.js";
 
 export type { AdminApiSettingItem, AdminApiSettingsView };
+export type {
+  AdminApiReportActivityRow,
+  AdminApiReportDailyPoint,
+  AdminApiReportGroupRow,
+  AdminApiReportTotals,
+  AdminApiReportsView,
+} from "./reports.js";
 import { WindowRateLimiter } from "./rateLimit.js";
 import type { AdminApiPermissionsView } from "./permissions.js";
 import { SessionStore, type AdminSession } from "./session.js";
@@ -451,6 +460,13 @@ export interface AdminApiReaders {
   health?: (() => Promise<AdminApiHealthView>) | undefined;
   /** 别名表（`/api/aliases`，平台超管 240）。 */
   aliases?: (() => Promise<AdminApiAliasItem[]>) | undefined;
+  /** 统计报表（E5）：按天/按群聚合，只读巡检模式没有内存态，不装配 → 503。 */
+  reports?:
+    | ((options: {
+        group?: string | undefined;
+        days: number;
+      }) => Promise<AdminApiReportsView>)
+    | undefined;
 }
 
 /** 通过 / 拒绝入群申请后的回执。 */
@@ -679,6 +695,15 @@ export interface AdminApiWriters {
   }): Promise<AdminApiAliasResult>;
   /** 删除别名（平台超管 240）；不存在时按「没这条」如实回。 */
   removeAlias(input: { alias: string; actorId: string }): Promise<AdminApiAliasResult>;
+  /**
+   * 导出统计报表 CSV（E5）：本群 130 拿**脱敏**长表（群只出展示标签），
+   * `full=1`（追加内部群 ID 列）与不带 `group=` 的全量都要平台超管 240，
+   * 两种都写 `admin_api:report_export` 审计（与审计导出口径一致）。
+   */
+  exportReportsCsv(
+    actorId: string,
+    options: { group?: string | undefined; days: number; full: boolean },
+  ): Promise<AdminApiReportCsvResult>;
 }
 
 export interface AdminApiActivityItem {
@@ -719,6 +744,14 @@ export interface AdminApiActivityUpdateResult {
   /** 改动后的人话值。 */
   after: string;
   message: string;
+}
+
+/** 报表 CSV 的回执（与审计导出同一形状：文件名 / 内容 / 行数 / 是否含内部 ID）。 */
+export interface AdminApiReportCsvResult {
+  filename: string;
+  csv: string;
+  rows: number;
+  full: boolean;
 }
 
 export interface AdminApiNotifyTopic {
@@ -1821,6 +1854,85 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     fields: ACTIVITY_SETTING_FIELDS,
   }));
 
+  /**
+   * 统计报表（E5）：按天 / 按群聚合的四块（群活跃 / 审核量 / 活动报名 / 通知投递）。
+   *
+   * 门槛：平台超管 240 可不带 `group=` 看全量；其余人必须带 `?group=`（缺参数 400）
+   * 且本群 ≥130 —— 报表是「管理动作的汇总」，与名单导出一个档。
+   * 只读巡检模式没有内存态（审计 / 处罚 / 活动都在进程里）→ 503。
+   */
+  app.get("/api/reports", async (request, reply) => {
+    const reader = options.readers?.reports;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(
+          errorBody(
+            "unavailable",
+            "统计报表数据源未装配（只读巡检模式 / 未装配）。",
+          ),
+        );
+    }
+    const query = request.query as Record<string, unknown>;
+    const group = queryString(query.group);
+    const days = parseReportDays(query.days);
+
+    const scope = scopeOf(await readAccessOf(request));
+    if (scope) {
+      if (group === undefined) {
+        return reply
+          .code(400)
+          .send(
+            errorBody(
+              "bad_request",
+              "需要 ?group=<群 ID>：只有平台超级管理员能看全量报表。",
+            ),
+          );
+      }
+      if (
+        !(await allowGroupRead(
+          request,
+          reply,
+          "GET /api/reports",
+          group,
+          PermissionLevel.GroupAdmin,
+        ))
+      ) {
+        return reply;
+      }
+    }
+    return reader({ ...(group !== undefined ? { group } : {}), days });
+  });
+
+  /**
+   * 报表 CSV（E5）：与页面同一份装配，输出长表（`section,metric,bucket,group,value`）。
+   *
+   * 本群 130 拿**脱敏**长表（群只出展示标签）；`?full=1`（追加内部群 ID 列）与不带
+   * `group=` 的全量都要平台 240，两种都写 `admin_api:report_export` 审计。
+   */
+  app.get("/api/reports/export.csv", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const query = request.query as Record<string, unknown>;
+    const group = queryString(query.group);
+    const result = await writers.exportReportsCsv(actorOf(request), {
+      ...(group !== undefined ? { group } : {}),
+      days: parseReportDays(query.days),
+      full: queryString(query.full) === "1",
+    });
+    reply.header("content-type", "text/csv; charset=utf-8");
+    reply.header(
+      "content-disposition",
+      `attachment; filename="${result.filename}"`,
+    );
+    // BOM：与审计导出一致，Excel 直开不乱码
+    return reply.send(`\uFEFF${result.csv}`);
+  });
+
   // ------------------------------------------------------------------ 写端点（E1-d）
   //
   // 统一形状：取路径 / 请求体参数 → 调 `writers` → 原样序列化领域层回执。
@@ -2281,6 +2393,13 @@ function positiveQueryInt(value: unknown, fallback: number): number {
   const parsed =
     typeof value === "string" ? Number.parseInt(value, 10) : Number.NaN;
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** `?days=` 的解析：缺失 / 非法一律回默认值，合法值夹到 `1..90`（口径见 reports.ts）。 */
+function parseReportDays(value: unknown): number {
+  const parsed =
+    typeof value === "string" ? Number.parseInt(value, 10) : Number.NaN;
+  return normalizeReportDays(Number.isFinite(parsed) ? parsed : undefined);
 }
 
 function hasCsrfHeader(request: FastifyRequest): boolean {

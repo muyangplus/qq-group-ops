@@ -29,6 +29,7 @@ import {
   activitySettingField,
   describeActivitySetting,
 } from "../services/activitySettings.js";
+import { buildAdminApiReports, buildReportsCsv } from "./reports.js";
 import type { ActivityExportService } from "../services/activityExport.js";
 import type { AppealService } from "../services/appeals.js";
 import type { AuditLogStore } from "../services/audit.js";
@@ -101,6 +102,8 @@ import type {
   AdminApiProfileSummary,
   AdminApiPunishmentItem,
   AdminApiReaders,
+  AdminApiReportCsvResult,
+  AdminApiReportsView,
   AdminApiRulesView,
   AdminApiStatusExtra,
   AdminApiSettingsView,
@@ -569,6 +572,38 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     };
   };
 
+  /**
+   * 统计报表的**数据装配**：读端点与 CSV 导出共用一份，保证两边口径一致。
+   *
+   * 只读巡检模式没有内存态（审计 / 处罚 / 活动都在进程里），这里直接回 503。
+   */
+  const collectReports = async (options: {
+    group?: string | undefined;
+    days: number;
+  }): Promise<AdminApiReportsView> => {
+    const repository = deps.notificationDeliveries;
+    if (!repository) {
+      throw unavailable("统计报表数据源未装配（只读巡检模式 / 缺少数据库）。");
+    }
+    const activities = deps.activity.listAllActivities();
+    return buildAdminApiReports({
+      now: new Date(),
+      days: options.days,
+      ...(options.group !== undefined ? { groupId: options.group } : {}),
+      audit: deps.auditLog.all(),
+      punishments: deps.punishments?.listAll() ?? [],
+      activities,
+      registrations: activities.flatMap((activity) =>
+        deps.activity.listRegistrations(activity.activityId),
+      ),
+      waitlist: activities.flatMap((activity) =>
+        deps.activity.listWaitlist(activity.activityId),
+      ),
+      deliveries: await repository.findAll(),
+      entities,
+    });
+  };
+
   return {
     // ---------------------------------------------------------------- 只读
 
@@ -716,6 +751,8 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         )
         .map(deliveryItem);
     },
+
+    reports: async (options) => collectReports(options),
 
     health: async (): Promise<AdminApiHealthView> => {
       const memory = process.memoryUsage();
@@ -1158,6 +1195,50 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         filename: `audit-${groupId ?? "all"}.csv`,
         csv,
         rows: records.length,
+        full: options.full,
+      };
+    },
+
+    /**
+     * 统计报表 CSV（E5）：与页面同一份装配（`collectReports`），只是输出成长表。
+     *
+     * 门槛：本群 130 拿**脱敏**长表；`full=1`（追加内部群 ID 列）与不带 `group=` 的
+     * 全量都要平台 240 —— CSV 会落到下载目录，暴露面比页面大一档。
+     */
+    exportReportsCsv: async (actorId, options) => {
+      const groupId = options.group;
+      if (groupId === undefined) {
+        requireGlobalSuperAdmin(actorId, "导出全量报表");
+      } else {
+        requireGroupAdmin(actorId, groupId, "导出报表");
+      }
+      if (options.full) {
+        requireGlobalSuperAdmin(actorId, "导出含内部群 ID 的报表");
+      }
+      const view = await collectReports({
+        ...(groupId !== undefined ? { group: groupId } : {}),
+        days: options.days,
+      });
+      const csv = buildReportsCsv(view, { full: options.full });
+      const rows = csv.trimEnd().split("\n").length - 1;
+      appendAudit({
+        groupId: groupId ?? "",
+        actorId,
+        action: "admin_api:report_export",
+        status: AuditStatus.Executed,
+        reason: `导出统计报表 天数=${view.range.days} 含内部群ID=${options.full ? "是" : "否"} 行=${rows}`,
+      });
+      log.info("admin api exported reports csv", {
+        groupId: groupId ?? "all",
+        actorId,
+        days: view.range.days,
+        full: options.full,
+        rows,
+      });
+      return {
+        filename: `report-${groupId ?? "all"}-${view.range.days}d.csv`,
+        csv,
+        rows,
         full: options.full,
       };
     },

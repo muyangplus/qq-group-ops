@@ -1414,6 +1414,194 @@ describe("管理 API HTTP 层", () => {
     await bare.close();
   });
 
+  it("统计报表：平台超管可看全量，其他人必须带 group 且本群 130；只读巡检 503", async () => {
+    const tokens = memoryTokens();
+    const calls: Array<{ group?: string; days: number }> = [];
+    const REPORTS_VIEW = {
+      range: {
+        days: 7,
+        from: "2026-09-26T00:00:00.000Z",
+        to: "2026-10-02T12:00:00.000Z",
+      },
+      groups: [],
+      daily: [],
+      totals: {
+        events: 0,
+        approvals: 0,
+        rejections: 0,
+        expired: 0,
+        punishments: 0,
+        registrations: 0,
+        waitlist: 0,
+        deliveries: 0,
+        deliveryFailed: 0,
+        newActivities: 0,
+        openActivities: 0,
+      },
+      activities: [],
+    };
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "test",
+      readAccessOf: async (userId: string) =>
+        userId === "boss"
+          ? { platformLevel: 240, groups: [] }
+          : { platformLevel: 0, groups: [{ groupId: "g1", level: userId === "mod" ? 120 : 130 }] },
+      readers: {
+        pending: async () => [],
+        rules: async (groupId: string) => ({ groupId, override: null, settings: [] }),
+        notifyTopics: async () => [],
+        activities: async () => [],
+        reports: async (options) => {
+          calls.push(options);
+          return REPORTS_VIEW;
+        },
+      },
+    }).app;
+
+    const login = async (userId: string): Promise<string> => {
+      const { token } = await tokens.issue({ userId, ttlMs: 60_000 });
+      const response = await app.inject({
+        method: "POST",
+        url: "/auth/token",
+        headers: { "x-admin-request": "1" },
+        payload: { token },
+      });
+      return cookieOf(response);
+    };
+
+    // 平台超管：不传 group = 全量，days 会被夹到 1–90
+    const boss = await login("boss");
+    const all = await app.inject({
+      method: "GET",
+      url: "/api/reports?days=30",
+      headers: { cookie: boss },
+    });
+    expect(all.statusCode).toBe(200);
+    expect(all.json()).toMatchObject({ range: { days: 7 } });
+    expect(calls).toEqual([{ days: 30 }]);
+
+    // 非超管：缺 group 直接 400（与 /api/audit 同口径）
+    const admin = await login("admin");
+    const missingGroup = await app.inject({
+      method: "GET",
+      url: "/api/reports",
+      headers: { cookie: admin },
+    });
+    expect(missingGroup.statusCode).toBe(400);
+
+    const byGroup = await app.inject({
+      method: "GET",
+      url: "/api/reports?group=g1&days=365",
+      headers: { cookie: admin },
+    });
+    expect(byGroup.statusCode).toBe(200);
+    // 年这种越界值被夹到上限，不会把聚合拖死
+    expect(calls[1]).toEqual({ group: "g1", days: 90 });
+
+    // 本群审核员 120：看得了审计，但看不了报表（报表要 130）
+    const mod = await login("mod");
+    const denied = await app.inject({
+      method: "GET",
+      url: "/api/reports?group=g1",
+      headers: { cookie: mod },
+    });
+    expect(denied.statusCode).toBe(403);
+    await app.close();
+
+    // 只读巡检模式没有内存态 → 503
+    const bareTokens = memoryTokens();
+    const bare = buildAdminApiServer({
+      config: CONFIG,
+      tokens: bareTokens,
+      version: "test",
+    }).app;
+    const bareToken = await bareTokens.issue({ userId: "boss", ttlMs: 60_000 });
+    const bareLogin = await bare.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: bareToken.token },
+    });
+    const bareResponse = await bare.inject({
+      method: "GET",
+      url: "/api/reports",
+      headers: { cookie: cookieOf(bareLogin) },
+    });
+    expect(bareResponse.statusCode).toBe(503);
+    await bare.close();
+  });
+
+  it("报表 CSV：带 BOM 下载、参数透传；只读巡检 503", async () => {
+    const tokens = memoryTokens();
+    const calls: Array<{ actorId: string; group?: string; days: number; full: boolean }> = [];
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "test",
+      writers: {
+        exportReportsCsv: async (actorId, options) => {
+          calls.push({
+            actorId,
+            ...(options.group !== undefined ? { group: options.group } : {}),
+            days: options.days,
+            full: options.full,
+          });
+          return {
+            filename: "report-g1-30d.csv",
+            csv: "section,metric,bucket,group,value\ntotal,events,,群g1,3\n",
+            rows: 1,
+            full: options.full,
+          };
+        },
+      },
+    }).app;
+    const { token } = await tokens.issue({ userId: "admin", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const cookie = cookieOf(login);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/reports/export.csv?group=g1&days=30",
+      headers: { cookie },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/csv");
+    expect(response.headers["content-disposition"]).toContain("report-g1-30d.csv");
+    expect(response.body.startsWith("\uFEFF")).toBe(true);
+    expect(calls).toEqual([
+      { actorId: "admin", group: "g1", days: 30, full: false },
+    ]);
+    await app.close();
+
+    const bareTokens = memoryTokens();
+    const bare = buildAdminApiServer({
+      config: CONFIG,
+      tokens: bareTokens,
+      version: "test",
+    }).app;
+    const bareToken = await bareTokens.issue({ userId: "admin", ttlMs: 60_000 });
+    const bareLogin = await bare.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: bareToken.token },
+    });
+    const bareResponse = await bare.inject({
+      method: "GET",
+      url: "/api/reports/export.csv?group=g1",
+      headers: { cookie: cookieOf(bareLogin) },
+    });
+    expect(bareResponse.statusCode).toBe(503);
+    await bare.close();
+  });
+
   it("机器令牌：Bearer + scope（read 读 / write 写 / 缺 scope 403 / 假令牌 401）", async () => {
     const tokens = memoryTokens();
     const config = loadAdminApiConfig({

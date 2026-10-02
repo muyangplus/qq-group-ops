@@ -116,6 +116,8 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
       "/api/appeals",
       "/api/notify/deliveries",
       "/api/join/sync",
+      // E5 统计报表
+      "/api/reports",
     ]) {
       expect(source, `缺少端点 ${endpoint}`).toContain(endpoint);
     }
@@ -294,6 +296,7 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
       "AuditView",
       "RulesView",
       "ActivitiesView",
+      "ReportsView",
       "StatusView",
       "SettingsView",
       "LoginView",
@@ -344,5 +347,30 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     expect(source).toContain("adminApi.activitySettingFields");
     expect(source).toContain("adminApi.updateActivityField");
     expect(source).toContain("clear");
+  });
+
+  it("报表页（E5）：四块聚合 + 两档 CSV，全量只有超管能选", () => {
+    const source = read("views/ReportsView.vue");
+    const api = read("api/admin.ts");
+    const app = read("App.vue");
+
+    expect(source).toContain("adminApi.reports");
+    expect(source).toContain("adminApi.reportsExportUrl");
+    // 门槛：非超管要选自己 ≥130 的群（服务端同口径）
+    expect(source).toContain("GROUP_ADMIN_LEVEL");
+    expect(source).toContain("session.isSuperAdmin");
+    expect(source).toContain("全部群");
+    // 口径写进页面，避免把「管理事件量」误读成发言量
+    expect(source).toContain("ADR-0059");
+    expect(source).toContain("不是发言量");
+    // 四块都要有
+    for (const block of ["群活跃", "审核量", "活动报名", "通知投递"]) {
+      expect(source, `缺少 ${block}`).toContain(block);
+    }
+    // CSV：脱敏 + 含内部群 ID 两份，都是同源下载链接
+    expect(api).toContain("/api/reports");
+    expect(api).toContain("/api/reports/export.csv");
+    expect(source).toContain("full");
+    expect(app).toContain("reports");
   });
 });
