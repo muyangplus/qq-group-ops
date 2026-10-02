@@ -109,6 +109,14 @@
   - 目标接受 openid / 已绑定的 QQ号（群接受内部群 ID / 群号），与指令层同一套映射；
   - 成功写 `admin_api:perm_grant` / `admin_api:perm_revoke` 审计（`targetUserId` 记当事人）。
 
+- **管理后台新增「身份」页（P3，只读）**：一张表列「QQ号 ↔ openid」，一张表列「群号 ↔ 群 ID」，
+  每条还能看到**首次绑定 / 最近改绑时间**（数据直接来自 `identity_bindings`，
+  顺手让仓储把 `created_at` / `updated_at` 一起选出来）；带一个前端过滤框（按群号 / QQ号 / openid）。
+  - **只读，没有任何写操作**：绑定 / 改绑 / 解绑仍然只在机器人里用 `/bind`（代绑任意主体要 240）——
+    这是 [docs/ADMIN-BACKEND.md](docs/ADMIN-BACKEND.md) §4 早就定下的能力边界，不是漏做；
+  - 门槛：平台超管 240（身份映射是平台级数据）；纯内存 / 老库没有时间戳时如实显示「—」；
+  - 只读巡检进程也装配（它本来就读同一批表）。
+
 ### 变更
 
 - **前端有了组件测试底座**（`pnpm web:test`）：`web/` 自己的 vitest（jsdom + `@vue/test-utils`，
