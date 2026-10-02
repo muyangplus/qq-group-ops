@@ -37,6 +37,14 @@ async function signOut(): Promise<void> {
     <RouterLink class="brand" :to="{ name: 'dashboard' }">
       qq-group-ops 管理后台
     </RouterLink>
+    <nav v-if="session.signedIn" class="tabs">
+      <RouterLink :to="{ name: 'dashboard' }">概览</RouterLink>
+      <RouterLink :to="{ name: 'pending' }">待审批</RouterLink>
+      <!-- 状态看板是平台级信息：非平台超管看不到入口（服务端也会 403） -->
+      <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'status' }">
+        状态
+      </RouterLink>
+    </nav>
     <nav class="topbar-right">
       <span v-if="session.signedIn" class="who">
         {{ session.identity?.userId }}

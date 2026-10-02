@@ -4,12 +4,11 @@ import { onUnauthorized } from "@/api/client";
 import { useSessionStore } from "@/stores/session";
 import DashboardView from "@/views/DashboardView.vue";
 import LoginView from "@/views/LoginView.vue";
+import PendingView from "@/views/PendingView.vue";
+import StatusView from "@/views/StatusView.vue";
 
 /**
- * 路由表与登录守卫（E2-a 建脚手架，E2-b 补会话保持）。
- *
- * 页面按计划逐项落地：E2-c 补状态看板 / 待审批 / 审计 / 规则 / 活动五个页面，
- * 现在只有登录页与一个占位看板，先把「登录 → 会话 → 路由」这条链路跑通。
+ * 路由表与登录守卫（E2-a 建脚手架，E2-b 补会话保持，E2-c 逐页落地）。
  *
  * 守卫只做**体验**：进来先问一次 `/auth/me`，没会话就带去登录页并记下原地址；
  * 能不能干活一律由服务端判（只读有逐路由门槛，写端点按本群 130 / 平台 240）。
@@ -18,6 +17,8 @@ export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: "/", name: "dashboard", component: DashboardView },
+    { path: "/pending", name: "pending", component: PendingView },
+    { path: "/status", name: "status", component: StatusView },
     { path: "/login", name: "login", component: LoginView },
     { path: "/:pathMatch(.*)*", name: "not-found", redirect: "/" },
   ],
