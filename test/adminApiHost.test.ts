@@ -47,6 +47,9 @@ const backend: AdminApiBackend = {
   notifyTopics: async () => [],
   activities: async () => [],
   permissionsOf: async () => ({ platformLevel: 240, groups: [] }),
+  auditDenied: () => {
+    // 本文件不关心审计
+  },
   approveJoin: async (requestId) => ({
     requestId,
     groupId: "g1",

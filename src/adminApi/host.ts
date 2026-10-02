@@ -46,6 +46,9 @@ export async function startAdminApiHost(
     readers: backend,
     writers: backend,
     permissionsOf: (userId) => backend.permissionsOf(userId),
+    // 只读门槛（E1-g）：与 `/auth/me` 用同一份权限画像；拒绝写审计
+    readAccessOf: (userId) => backend.permissionsOf(userId),
+    auditDenied: (input) => backend.auditDenied(input),
   });
 
   await server.app.listen({ host: config.host, port: config.port });

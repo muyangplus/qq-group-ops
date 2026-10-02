@@ -1,8 +1,14 @@
-import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import Fastify, {
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+} from "fastify";
 import { timingSafeEqual } from "node:crypto";
 
+import { PermissionLevel, PlatformLevel } from "../core/enums.js";
 import { getLogger, type Logger } from "../core/logger.js";
 import type { AdminTokenRepository } from "../db/adminTokenRepository.js";
+import { DEFAULT_GROUP_ID } from "../services/groupConfig.js";
 import { adminLoginUrl, machineTokenAllows, type AdminApiConfig, type AdminApiMachineToken } from "./config.js";
 import { AdminApiRequestError } from "./errors.js";
 import { WindowRateLimiter } from "./rateLimit.js";
@@ -51,6 +57,29 @@ export interface AdminApiServerOptions {
   writers?: AdminApiWriters | undefined;
   /** 权限画像（E2-d）：给 `/auth/me` 附带，前端据此隐藏入口（服务端仍强校验）。 */
   permissionsOf?: ((userId: string) => Promise<AdminApiPermissionsView>) | undefined;
+  /**
+   * 只读端点的门槛（E1-g）：取该账号的只读范围。未装配时按「已登录管理员」全量放行
+   * （只读巡检模式与单元测试走这条路），装配后每个只读端点都按下面的口径裁剪或 403。
+   */
+  readAccessOf?: ((userId: string) => Promise<AdminApiReadAccess>) | undefined;
+  /** 只读权限被拒时写审计（E1-b 第 9 条）；未装配时只留日志。 */
+  auditDenied?: ((input: AdminApiDeniedInput) => void) | undefined;
+}
+
+/** 只读范围：平台档 + 各群的生效档位（`describePermissions` 的输出形状）。 */
+export interface AdminApiReadAccess {
+  platformLevel: number;
+  groups: Array<{ groupId: string; level: number }>;
+}
+
+/** 权限拒绝的审计输入（只读端点与写端点共用一种形状）。 */
+export interface AdminApiDeniedInput {
+  actorId: string;
+  /** 路由模板，例如 `GET /api/audit`。 */
+  route: string;
+  reason: string;
+  /** 相关群；平台级动作为空串。 */
+  groupId: string;
 }
 
 export interface AdminApiAuditRecord {
@@ -360,8 +389,90 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     };
   });
 
+  // ------------------------------------------------------------------ 只读端点（E1-c）
+  //
+  // 只读门槛（E1-g）：平台级信息要平台超管 240；群级数据按「本群档位」裁剪或拒绝
+  // （审核员 120 = 能看，群管理员 130 = 能改）。机器令牌（运维自己配的服务凭据）视为
+  // 平台级只读；未装配 `readAccessOf` 时全量放行（只读巡检模式与单测）。
+
+  /** 审计 actor：会话用户；机器令牌用 `machine:<前缀>`（完整令牌不进日志 / 数据库）。 */
+  const actorOf = (request: FastifyRequest): string =>
+    request.adminSession?.userId ?? request.adminMachineActor ?? "unknown";
+
+  /** 取本次请求的只读范围；`undefined` = 不限制（机器令牌 / 未装配）。 */
+  const readAccessOf = async (
+    request: FastifyRequest,
+  ): Promise<AdminApiReadAccess | undefined> => {
+    if (request.adminMachineScopes !== undefined || !options.readAccessOf) {
+      return undefined;
+    }
+    const userId = request.adminSession?.userId;
+    return userId ? await options.readAccessOf(userId) : undefined;
+  };
+
+  const levelIn = (access: AdminApiReadAccess, groupId: string): number =>
+    access.groups.find((group) => group.groupId === groupId)?.level ?? 0;
+
+  /** 平台超管（或未装配）→ 不裁剪；否则返回裁剪依据。 */
+  const scopeOf = (
+    access: AdminApiReadAccess | undefined,
+  ): AdminApiReadAccess | undefined =>
+    access && access.platformLevel < PlatformLevel.GlobalSuperAdmin
+      ? access
+      : undefined;
+
+  const denyRead = (
+    request: FastifyRequest,
+    route: string,
+    reason: string,
+    groupId = "",
+  ): void => {
+    const actorId = actorOf(request);
+    log.warn("admin api read denied", { actorId, route, reason, groupId });
+    options.auditDenied?.({ actorId, route, reason, groupId });
+  };
+
+  /** 平台级只读端点：非平台超管 403（返回 false = 已回过响应）。 */
+  const allowPlatformRead = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    route: string,
+  ): Promise<boolean> => {
+    const access = await readAccessOf(request);
+    if (!access || access.platformLevel >= PlatformLevel.GlobalSuperAdmin) {
+      return true;
+    }
+    denyRead(request, route, "需要平台超级管理员（240）");
+    await reply
+      .code(403)
+      .send(errorBody("forbidden", "权限不足：需要平台超级管理员。"));
+    return false;
+  };
+
+  /** 群级只读端点：本群档位不够 403（返回 false = 已回过响应）。 */
+  const allowGroupRead = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    route: string,
+    groupId: string,
+    required: number,
+  ): Promise<boolean> => {
+    const access = await readAccessOf(request);
+    if (!access || levelIn(access, groupId) >= required) {
+      return true;
+    }
+    denyRead(request, route, `需要本群档位 ${required}`, groupId);
+    await reply
+      .code(403)
+      .send(errorBody("forbidden", "权限不足：本群权限不够。"));
+    return false;
+  };
+
   /** 只读状态（E1-c）：入口给数据库与迁移信息，server 补版本 / 运行时长 / 会话数。 */
-  app.get("/api/status", async () => {
+  app.get("/api/status", async (request, reply) => {
+    if (!(await allowPlatformRead(request, reply, "GET /api/status"))) {
+      return reply;
+    }
     const extra = options.statusProvider ? await options.statusProvider() : undefined;
     return {
       version: options.version ?? "unknown",
@@ -373,7 +484,7 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     };
   });
 
-  /** 只读审计记录（E1-c）：按群 / 操作人 / 动作过滤 + 分页。 */
+  /** 只读审计记录（E1-c）：按群 / 操作人 / 动作过滤 + 分页；全量只有平台超管能看。 */
   app.get("/api/audit", async (request, reply) => {
     const reader = options.auditReader;
     if (!reader) {
@@ -387,6 +498,32 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     const group = queryString(query.group);
     const actor = queryString(query.actor);
     const action = queryString(query.action);
+
+    const scope = scopeOf(await readAccessOf(request));
+    if (scope) {
+      // 非平台超管：必须指明群，且按该群档位判定（与 `/audit` 一样是审核员 120 起）
+      if (group === undefined) {
+        return reply
+          .code(400)
+          .send(
+            errorBody(
+              "bad_request",
+              "需要 ?group=<群 ID>：只有平台超级管理员能查全量审计。",
+            ),
+          );
+      }
+      if (
+        !(await allowGroupRead(
+          request,
+          reply,
+          "GET /api/audit",
+          group,
+          PermissionLevel.Moderator,
+        ))
+      ) {
+        return reply;
+      }
+    }
 
     const all = await reader.list();
     const filtered = all.filter(
@@ -404,7 +541,12 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     };
   });
 
-  /** 待审批入群申请（E1-c）：状态为 pending，可按群过滤 + 分页。 */
+  /**
+   * 待审批入群申请（E1-c）：状态为 pending，可按群过滤 + 分页。
+   *
+   * 非平台超管只看得到**自己够审核员（120）的群**（与指令层 `/pending` 同口径）；
+   * 通过 / 拒绝按钮另外要群管理员 130（由写端点判定）。
+   */
   app.get("/api/pending", async (request, reply) => {
     const readers = options.readers;
     if (!readers) {
@@ -417,9 +559,19 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     const pageSize = Math.min(positiveQueryInt(query.pageSize, 50), 200);
     const group = queryString(query.group);
 
+    const scope = scopeOf(await readAccessOf(request));
     const all = await readers.pending();
+    const visible =
+      scope === undefined
+        ? all
+        : all.filter(
+            (item) =>
+              levelIn(scope, item.groupId) >= PermissionLevel.Moderator,
+          );
     const filtered =
-      group === undefined ? all : all.filter((item) => item.groupId === group);
+      group === undefined
+        ? visible
+        : visible.filter((item) => item.groupId === group);
     const start = (page - 1) * pageSize;
     return {
       total: filtered.length,
@@ -429,7 +581,12 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     };
   });
 
-  /** 某个群的规则覆盖（E1-c）：只读原始覆盖行，生效值合并逻辑在机器人侧。 */
+  /**
+   * 某个群的规则覆盖（E1-c）：只读原始覆盖行 + 合并后的生效值。
+   *
+   * `group` 用**内部群 ID**（`/auth/me` 给的就是它），不接受 `#群短码`；
+   * 全局规则（`__default__`）只有平台超管能读，单群要审核员 120（与 `/rules` 查看口径一致）。
+   */
   app.get("/api/rules", async (request, reply) => {
     const readers = options.readers;
     if (!readers) {
@@ -441,23 +598,41 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     if (group === undefined) {
       return reply
         .code(400)
-        .send(errorBody("bad_request", "需要 ?group=<群ID 或 #群短码>。"));
+        .send(errorBody("bad_request", "需要 ?group=<群 ID>。"));
+    }
+    if (group === DEFAULT_GROUP_ID) {
+      if (!(await allowPlatformRead(request, reply, "GET /api/rules"))) {
+        return reply;
+      }
+    } else if (
+      !(await allowGroupRead(
+        request,
+        reply,
+        "GET /api/rules",
+        group,
+        PermissionLevel.Moderator,
+      ))
+    ) {
+      return reply;
     }
     return readers.rules(group);
   });
 
-  /** 通知话题概览（E1-c）：默认门槛与订阅人数，供后台展示。 */
-  app.get("/api/notify/topics", async (_request, reply) => {
+  /** 通知话题概览（E1-c）：默认门槛与订阅人数，供后台展示；话题门槛是平台级配置。 */
+  app.get("/api/notify/topics", async (request, reply) => {
     const readers = options.readers;
     if (!readers) {
       return reply
         .code(503)
         .send(errorBody("unavailable", "数据源未装配（缺少数据库）。"));
     }
+    if (!(await allowPlatformRead(request, reply, "GET /api/notify/topics"))) {
+      return reply;
+    }
     return { topics: await readers.notifyTopics() };
   });
 
-  /** 活动列表（E1-c）：可选按群 / 状态过滤 + 分页。 */
+  /** 活动列表（E1-c）：可选按群 / 状态过滤 + 分页；非平台超管只看得见自己的群（120 起）。 */
   app.get("/api/activities", async (request, reply) => {
     const readers = options.readers;
     if (!readers) {
@@ -471,8 +646,15 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     const group = queryString(query.group);
     const status = queryString(query.status);
 
+    const scope = scopeOf(await readAccessOf(request));
     const all = await readers.activities();
-    const filtered = all.filter(
+    const visible =
+      scope === undefined
+        ? all
+        : all.filter(
+            (item) => levelIn(scope, item.groupId) >= PermissionLevel.Moderator,
+          );
+    const filtered = visible.filter(
       (item) =>
         (group === undefined || item.groupId === group) &&
         (status === undefined || item.status === status),
@@ -491,10 +673,6 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
   // 统一形状：取路径 / 请求体参数 → 调 `writers` → 原样序列化领域层回执。
   // 权限判据（本群群管理员 130 / 平台超管 240）、领域服务调用与审计都在 writer 里；
   // writer 抛 `AdminApiRequestError` 时由下面的 errorHandler 映射成 400/403/404/409。
-
-  /** 审计 actor：会话用户；机器令牌用 `machine:<前缀>`（完整令牌不进日志 / 数据库）。 */
-  const actorOf = (request: FastifyRequest): string =>
-    request.adminSession?.userId ?? request.adminMachineActor ?? "unknown";
 
   /** 通过入群申请（复用 `JoinApprovalService`，官方接口成功后才落地本地状态）。 */
   app.post("/api/pending/:requestId/approve", async (request, reply) => {

@@ -28,6 +28,7 @@ import {
 import type {
   AdminApiActivityItem,
   AdminApiAuditRecord,
+  AdminApiDeniedInput,
   AdminApiNotifyTopic,
   AdminApiPendingItem,
   AdminApiReaders,
@@ -67,6 +68,8 @@ export interface AdminApiBackend extends AdminApiReaders, AdminApiWriters {
   status(): Promise<AdminApiStatusExtra>;
   audit(): Promise<AdminApiAuditRecord[]>;
   permissionsOf(userId: string): Promise<AdminApiPermissionsView>;
+  /** 只读权限被拒时写一条审计（E1-g / E1-b 第 9 条）。 */
+  auditDenied(input: AdminApiDeniedInput): void;
 }
 
 /**
@@ -254,6 +257,22 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         ...deps.configStore.listOverrideSummaries().map((row) => row.groupId),
       ]);
       return describePermissions(deps.permissions, userId, [...groupIds]);
+    },
+
+    auditDenied: (input: AdminApiDeniedInput): void => {
+      appendAudit({
+        groupId: input.groupId,
+        actorId: input.actorId,
+        action: "admin_api:denied",
+        status: AuditStatus.Rejected,
+        reason: `${input.route} ${input.reason}`,
+      });
+      log.warn("admin api access denied", {
+        actorId: input.actorId,
+        route: input.route,
+        reason: input.reason,
+        groupId: input.groupId,
+      });
     },
 
     // ---------------------------------------------------------------- 写

@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
+
 import { getLogger } from "../core/logger.js";
+import { AuditStatus } from "../core/enums.js";
 import { loadSettings } from "../config.js";
 import { connectPersistence } from "../persistence.js";
 import { buildNotifyTopicViews } from "./backend.js";
@@ -7,7 +10,7 @@ import {
   describePermissions,
   loadAdminApiPermissions,
 } from "./permissions.js";
-import { buildAdminApiServer } from "./server.js";
+import { buildAdminApiServer, type AdminApiReadAccess } from "./server.js";
 
 /**
  * 管理 API 的**只读巡检入口**（E1，认证方案 B2；E1-d 起降级为只读）。
@@ -35,6 +38,24 @@ async function main(): Promise<void> {
       "管理 API 需要数据库：DATABASE_URL=memory 时无法签发/兑换登录令牌。",
     );
   }
+
+  // 权限画像（E2-d）：与机器人共用两轴模型；每次请求重新加载（授权表很小）。
+  // 群集合 = 授权行里的群 ∪ 有规则覆盖的群（这台进程没有内存态的群列表）。
+  const viewFor = async (userId: string): Promise<AdminApiReadAccess> => {
+    const permissions = await loadAdminApiPermissions(persistence.permissions);
+    if (!permissions) {
+      return { platformLevel: 0, groups: [] };
+    }
+    const [grants, configs] = await Promise.all([
+      persistence.permissions.findAll(),
+      persistence.groupConfigs.findAll(),
+    ]);
+    const groupIds = [
+      ...grants.map((grant) => grant.groupId).filter((groupId) => groupId.length > 0),
+      ...configs.map((row) => row.groupId),
+    ];
+    return describePermissions(permissions, userId, groupIds);
+  };
 
   const server = buildAdminApiServer({
     config,
@@ -120,23 +141,21 @@ async function main(): Promise<void> {
         }));
       },
     },
-    // 权限画像（E2-d）：与机器人共用两轴模型；每次请求重新加载（授权表很小）
-    permissionsOf: async (userId: string) => {
-      const permissions = await loadAdminApiPermissions(persistence.permissions);
-      if (!permissions) {
-        return { platformLevel: 0, groups: [] };
-      }
-      const [grants, configs] = await Promise.all([
-        persistence.permissions.findAll(),
-        persistence.groupConfigs.findAll(),
-      ]);
-      const groupIds = [
-        ...grants
-          .map((grant) => grant.groupId)
-          .filter((groupId) => groupId.length > 0),
-        ...configs.map((row) => row.groupId),
-      ];
-      return describePermissions(permissions, userId, groupIds);
+    // 权限画像（E2-d）与只读门槛（E1-g）共用同一份视图
+    permissionsOf: (userId: string) => viewFor(userId),
+    // 只读巡检模式也按同一套门槛：能登进来不等于能看全量数据
+    readAccessOf: (userId: string) => viewFor(userId),
+    // 只读巡检进程没有内存态审计存储，直接写审计表
+    auditDenied: (input) => {
+      persistence.audit.append({
+        recordId: randomUUID(),
+        groupId: input.groupId,
+        actorId: input.actorId,
+        action: "admin_api:denied",
+        status: AuditStatus.Rejected,
+        reason: `${input.route} ${input.reason}`,
+        createdAt: new Date(),
+      });
     },
   });
 
