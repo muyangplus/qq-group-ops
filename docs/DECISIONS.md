@@ -1293,3 +1293,20 @@
   （内容没变 → FTP 不上传 → 版本号不变 → 不重启，同版本重复部署需手动 `/restart`）；
   也不改变「重启时机由宽限期决定」这一条。
 
+- **事故与修正（2026-10-02，v0.24.0 发布时）**：第一版实现让两段共用一个同步状态文件名
+  （`.ftp-deploy-sync-state.json`，存在 `server-dir` 里）。这个 Action 的**删除动作正是由该状态文件
+  驱动的**（「上次传过、这次本地没有」→ 从服务器删掉），于是两段互相把对方的文件判成该删：
+  第一段删了 `package.json`，第二段（本地只有 `package.json`）删了 `dist/`、`scripts/`、`web/`、
+  `pnpm-lock.yaml`。真机上确实发生了：机器人进程还活着（内存里跑 0.23.2），但磁盘上 `dist/` 没了、
+  管理前台 404，而且 `scripts/respawn.mjs` 也没了 → 之后任何自我重启都会失败（`--check` 起不来，
+  重启会被中止；连「回滚上一次快照」也救不了，因为那条路要先备份现场目录，而目录已经不存在）。
+  修正：两段各用**自己的** `state-name`（`ftp-sync-state-code.json` / `ftp-sync-state-marker.json`），
+  并显式写 `dangerous-clean-slate: false`；`test/workflows.test.ts` 增加断言 ——
+  **所有 FTP 步骤必须显式声明 `state-name` 且互不相同**。
+  恢复手段记录备查：用**单段上传时代的 tag**（`v0.23.2`）触发 `workflow_dispatch` ——
+  那个版本的 workflow 一次传全套、不删东西，几分钟就把 `dist/` / `scripts/` / `web/dist` /
+  `pnpm-lock.yaml` 补齐（本次就是这么恢复的；期间机器人一次都没重启，进程内的「待重启」因为
+  版本号被写回 0.23.2 而自动清掉）。
+- **教训**：把「上传顺序」当成协议的一部分之前，必须先确认工具自己的状态机怎么工作 ——
+  这个 Action 是**双向同步**（带「上次传了什么」的记忆），不是单向 put。
+

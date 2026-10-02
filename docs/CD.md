@@ -74,6 +74,16 @@ package.json          # 版本标记：最后落地（见下）
 代价是多一次 FTP 会话；若第二段失败，job 会变红，而服务器上是「新代码 + 旧版本号」——
 不会重启，旧进程继续服务，重跑一次发布即可。
 
+> ⚠️ **两段必须各用自己的 `state-name`**（当前是 `ftp-sync-state-code.json` 与
+> `ftp-sync-state-marker.json`），并保持 `dangerous-clean-slate: false`。
+> 这个 Action 是**双向同步**：它的删除动作由「上次传了什么」的状态文件驱动，
+> 两段共用一份状态时会把对方的文件判成「本地没有 → 从服务器删掉」——
+> 2026-10-02 的 v0.24.0 发布就这么删掉过服务器上的 `dist/` / `scripts/` / `web/` / `pnpm-lock.yaml`
+> （机器人靠内存继续跑，但管理前台 404、任何重启都会失败）。`test/workflows.test.ts` 已把
+> 「所有 FTP 步骤必须显式声明 `state-name` 且互不相同」钉成断言。
+> 恢复办法（记着备用）：用**单段上传时代的 tag**（`v0.23.2`）跑一次 `workflow_dispatch`，
+> 那份 workflow 一次传全套、不删东西。
+
 **不上服务器**：
 
 - `src/`、`tsconfig.json`：生产运行不需要（`dist` 自包含）；服务器上要改代码请改仓库再走一次发布；

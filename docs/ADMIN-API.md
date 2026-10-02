@@ -184,7 +184,48 @@
 **E1 退出条件**：未登录访问任何 `/api/*` → 401；越权 → 403 且有审计；
 写操作全部能在 `/api/audit` 查到（actor 是登录账号 / 机器令牌前缀）；`ADMIN_API_ENABLED=false` 时完全不监听端口。
 
-### E1-h 运维面：周期任务监测与配置（P2）
+### E1-i 只读补齐：处罚 / 黑名单 / 申诉 / 投递 / 运维（P1，0.24.2 起）
+
+> 目标：**先把「看得清」闭环**（见 [ADMIN-BACKEND.md](./ADMIN-BACKEND.md) §3 P1）。
+> 全部只读、全部走与指令层相同的领域服务，因此门槛、排序、字段含义天然一致。
+
+33. `GET /api/punishments?group=&status=&page=&pageSize=`：处罚记录。带**短码**（`#ABC123`）、
+    被处罚人 / 执行者的展示信息、动作摘要（用词与卡片一致：`撤回消息 + 禁言 600 秒`）、
+    触发原文（未保留则空串）、执行结果与状态（`active` / `released`）。
+    门槛：平台超管 240 可**不传 group 看全量**（`listAll()`，指令层没有跨群列表，这条是管理面专用）；
+    其余人必须带 `group=` 且本群 ≥120；
+34. `GET /api/blacklist?group=`：本群一组 + 全局一组。**全局那组只有平台 240 拿得到**，
+    否则 `globalVisible: false`（界面据此说明「权限不够」，而不是显示成「全局没人」）；
+    本群列表 ≥120（与 `/blacklist` 一致）；
+35. `GET /api/appeals?group=&status=`：申诉队列。每条给申诉人 / 处理人展示信息、关联处罚短码、
+    处理备注，以及 `holdRemainingMinutes`（`APPEAL_HOLD_MINUTES` 减已等待分钟）与 `overdue`；
+    视图另外给 `holdMinutes` 与 `pendingCount`。门槛与处罚相同（全量要 240，否则本群 ≥120）；
+36. `GET /api/notify/deliveries?group=&status=&page=&pageSize=`：通知投递记录（谁收到了 / 失败原因 /
+    降级说明），响应额外给**按状态汇总** `counts`（一眼看「失败多少」）。
+    门槛与处罚相同 —— 排查「我说了怎么没通知」是审核员级别的只读需求；
+37. `GET /api/health`（平台超管 240）：把 `/status proc` 的内容接进后台 ——
+    **进程**（运行版本 vs 磁盘版本、启动时间、Node / pid / 内存、运行模式）、
+    **写队列**（待写 / 失败 / 最近错误）、**数据库**（driver + 迁移问题明细）、
+    **通知**（订阅人数 / 投递条数）、**模块健康**（全部模块的 state 与降级原因）、
+    **恢复现场**（`data/restart-failed.json`、`data/rollback-notice.json`、`data/dist-broken/` 是否存在）。
+    只读巡检进程没有这些内存态 → 503；
+38. `POST /api/join/sync { group }`：同步官方入群申请队列（与指令层 `/sync` **同一个服务**）。
+    **写但幂等**、门槛是**本群审核员 120**（不是 130 —— 它只把官方队列拉下来，不改变任何人的状态），
+    写审计 `admin_api:join_sync`；返回 `fetched` / `pending` / 人话 `message`；
+39. `GET /api/audit/export.csv?group=&full=`：审计记录 CSV（与 `/export audit` 同一实现）。
+    默认**脱敏**（actor / target 只留首字符）、本群要 130；**`full=1` 要平台 240**
+    （指令层的导出永远脱敏，这一步更进一步，所以单独抬高 —— CSV 会落到下载目录）；
+    两种都写审计（领域层 `export_audit_records` + 管理面 `admin_api:audit_export`），响应带 UTF-8 BOM；
+40. **`/api/pending` 附申请人资料摘要**：每项多一个可选 `profile`
+    （姓名 / 学号（**中间打码**）/ 班级 / 学院 / 年级），没有填过资料时不带这个字段。
+    完整学号只在名单导出的 `?full=1`（有门槛 + 审计）里出现。
+
+**P1 的能力边界**：以上端点**只有机器人进程内那个监听口**装配（只读巡检模式回 503）——
+它们都依赖内存态服务（处罚 / 黑名单 / 申诉 / 通知计数 / 模块健康表）；
+写操作（处罚动作 / 黑名单增删 / 申诉复核 / 活动增删改）**仍只在机器人里做**，
+见 ADMIN-BACKEND.md §3 的 P2。
+
+### E1-g 只读端点的逐路由门槛（P1）
 
 30. `GET /api/tasks`（平台超管 240）：**周期任务监测列表** —— 统一扫描周期 + 每个任务的
     节拍 / 上次执行 / 下次最早执行 / 是否因依赖模块降级被整轮跳过，外加部署监测的「待重启」
@@ -215,6 +256,11 @@
 | `GET /api/audit` | 平台超管 240 拿全量；其余必须带 `?group=<群>`（缺参数 400）且本群 ≥120 |
 | `GET /api/pending` | 按**本群 ≥120 裁剪**（与 `/pending` 一致；通过 / 拒绝仍要 130）|
 | `GET /api/activities` | 按**本群 ≥120 裁剪**（带报名人数的管理视图）|
+| `GET /api/punishments`、`GET /api/appeals`、`GET /api/notify/deliveries` | 平台超管 240 拿全量；其余必须带 `?group=<群>`（缺参数 400）且本群 ≥120 |
+| `GET /api/blacklist?group=` | 本群那组 ≥120；**全局那组只有平台 240**（拿不到时 `globalVisible: false`）|
+| `GET /api/health` | 平台超管 240（进程 / 队列 / 模块健康 / 恢复现场）|
+| `POST /api/join/sync`（写但幂等） | 本群**审核员 120**（与 `/sync` 一致：只拉官方队列，不改用户状态）|
+| `GET /api/audit/export.csv` | 本群 130（脱敏）；`?full=1` 与不带 `group=` 的**全量**要平台 240 |
 
 - **不报错、只裁剪**：列表类端点（待审批 / 活动）对够不着的群直接少返回，而不是整条 403 ——
   多群管理员看到的自然是自己那几行；
