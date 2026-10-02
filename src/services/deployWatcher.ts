@@ -53,6 +53,16 @@ export interface DeployWatcherOptions {
   stableChecks?: number;
   runningVersion: () => string;
   onDiskVersion: () => string;
+  /**
+   * 当前 `dist/` 的构建指纹（`core/buildInfo.ts` 的 `distFingerprint`）。
+   *
+   * 传了就启用「**产物内容真的变了**才算新部署」的判据：版本号变了但指纹没变 → 说明这份进程
+   * 已经跑着最新代码（典型场景是它在「新代码已落地、`package.json` 还没落地」的上传窗口里启动过），
+   * 此时**不再排一次重启**。不传 / 指纹读不到 → 退回纯版本号判据。
+   */
+  fingerprint?: (() => string | undefined) | undefined;
+  /** 进程启动时的构建指纹；缺省 = 构造时取一次（`main.ts` 会在同一处显式传入）。 */
+  bootFingerprint?: string | undefined;
   /** 收件人（全部全局超管）。 */
   recipients: () => readonly string[];
   /** 私信投递。 */
@@ -74,6 +84,11 @@ export interface DeployWatcherOptions {
  * 的版本 ≠ 进程启动时固化的版本」作为信号，并要求**连续 N 轮稳定**才认定上传完成
  * （压掉传到一半就当新版的窗口）。
  *
+ * 判据补充（0.23.3）：版本号只是「CD 跑过」的标记，**是否值得重启要看产物内容** ——
+ * 进程可能在「新代码已落地、`package.json` 还没落地」的窗口里启动过，那种情况下它已经跑着
+ * 最新代码，可随后落地的版本号仍会被当成新部署，宽限期到点就白跳一次重启。所以传了
+ * `fingerprint` 时，指纹没变就不再排重启（真机报「一次部署跳两次」即此）。
+ *
  * 行为：
  * - 稳定窗口通过 → 私信全部全局超管一张卡：「当前 → 新版本，计划 X 后自动重启」+ 「取消自动重启 / 立即重启」；
  * - 宽限期内没人取消 → 走既有自我重启路径（`requestRestart`，reason=`deploy`）；
@@ -91,6 +106,9 @@ export class DeployWatcher implements DeployControl {
   private readonly stableChecks: number;
   private readonly runningVersion: () => string;
   private readonly onDiskVersion: () => string;
+  private readonly fingerprint: (() => string | undefined) | undefined;
+  /** 进程启动时的构建指纹（本进程加载的就是这份产物）。 */
+  private readonly bootFingerprint: string | undefined;
   private readonly recipients: () => readonly string[];
   private readonly notify: (userId: string, card: RichMessage) => Promise<void>;
   private readonly requestRestart: DeployWatcherOptions["requestRestart"];
@@ -102,6 +120,8 @@ export class DeployWatcher implements DeployControl {
   private pendingState: DeployPending | undefined;
   /** 用户取消过的目标版本（同一个不再提醒）。 */
   private cancelledVersion: string | undefined;
+  /** 已经判定为「版本号变了但构建没变」的目标版本（免得每轮都记一条日志）。 */
+  private matchedVersion: string | undefined;
   private timer: unknown;
   private running = false;
 
@@ -113,6 +133,9 @@ export class DeployWatcher implements DeployControl {
     this.stableChecks = Math.max(1, options.stableChecks ?? DEFAULT_DEPLOY_STABLE_CHECKS);
     this.runningVersion = options.runningVersion;
     this.onDiskVersion = options.onDiskVersion;
+    this.fingerprint = options.fingerprint;
+    this.bootFingerprint =
+      options.bootFingerprint ?? options.fingerprint?.();
     this.recipients = options.recipients;
     this.notify = options.notify;
     this.requestRestart = options.requestRestart;
@@ -176,9 +199,21 @@ export class DeployWatcher implements DeployControl {
           current,
         });
       }
-      this.pendingState = undefined;
-      this.streakVersion = undefined;
-      this.streak = 0;
+      this.resetStreak();
+      return;
+    }
+
+    // 版本号变了：再确认**产物内容**是不是真的变了。没变 → 这份进程已经跑着最新代码，
+    // 不该为一次「上传窗口里启动」白跳一次重启（见 options.fingerprint 的说明）。
+    if (this.buildUnchanged()) {
+      if (this.matchedVersion !== target) {
+        this.matchedVersion = target;
+        log.info("version changed but build unchanged, no restart needed", {
+          current,
+          target,
+        });
+      }
+      this.resetStreak();
       return;
     }
 
@@ -347,6 +382,27 @@ export class DeployWatcher implements DeployControl {
   /** 当前是否生效：开关为真且检查周期为正（热配置，随时可能变）。 */
   private active(): boolean {
     return valueOf(this.enabledProvider) && valueOf(this.checkIntervalMs) > 0;
+  }
+
+  /** 清掉待重启状态与稳定计数（「没有新东西可加载」时统一走这里）。 */
+  private resetStreak(): void {
+    this.pendingState = undefined;
+    this.streakVersion = undefined;
+    this.streak = 0;
+  }
+
+  /**
+   * `dist/` 内容与启动时一致 → 没有新代码可加载。
+   *
+   * 判据不可用（没传 `fingerprint`、`dist/` 读不到、或启动时就没取到指纹）时返回 `false`，
+   * 即**退回版本号判据**：宁可按老口径多提醒一次，也不能因为拿不到指纹就漏掉真部署。
+   */
+  private buildUnchanged(): boolean {
+    if (!this.fingerprint || this.bootFingerprint === undefined) {
+      return false;
+    }
+    const now = this.fingerprint();
+    return now !== undefined && now === this.bootFingerprint;
   }
 }
 

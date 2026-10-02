@@ -9,13 +9,13 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import { appVersion } from "../core/buildInfo.js";
+import { appVersion, DIST_DIR } from "../core/buildInfo.js";
 import { getLogger } from "../core/logger.js";
 
 const log = getLogger("dist-snapshot");
 
-/** 运行产物目录（CD 上传的就是它）。 */
-export const DIST_DIR = "dist";
+/** 运行产物目录（CD 上传的就是它）；常量与构建指纹共用一处（`core/buildInfo.ts`）。 */
+export { DIST_DIR };
 
 /** 「上一次启动成功」的构建快照：新版本自检不过时，助手从这里回滚。 */
 export const DIST_BACKUP_DIR = "data/dist-backup";

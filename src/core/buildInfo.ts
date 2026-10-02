@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 
 import { getLogger } from "./logger.js";
 
@@ -45,6 +47,57 @@ export function captureRunningVersion(version: string = appVersion()): string {
 
 export function runningVersionOf(): string {
   return capturedVersion ?? appVersion();
+}
+
+/** 运行产物目录（CD 上传的就是它）；指纹只看它，不看版本号文件。 */
+export const DIST_DIR = "dist";
+
+/**
+ * `dist/` 的构建指纹（**内容**哈希）：产物内容真的变了才会变。
+ *
+ * 为什么要它：部署监测原本只看「磁盘 `package.json` 版本 ≠ 进程启动时固化的版本」。
+ * FTP 逐文件上传没有「传完」信号，进程完全可能在「新代码已经落地、`package.json` 还没落地」
+ * 的窗口里启动（CD 上传途中重启、或上传没完就手动重启）—— 那种情况下这份进程**跑的已经是最新
+ * 代码**，可随后落地的版本号仍会被当成一次新部署，于是宽限期到点又白跳一次重启（真机报过：
+ * 一次部署跳两次）。有了指纹就能把「版本号变了」与「代码真的换了」分开。
+ *
+ * 实现口径：
+ * - 只哈希相对路径 + 每个文件的 sha1（**不用 mtime**：CD 重传同内容会改 mtime，那是假信号）；
+ * - `dist/` 不存在（源码直跑 `pnpm dev`）或读不动 → 返回 `undefined`，调用方**退回版本号判据**；
+ * - 指纹只是判据优化，任何异常都只记日志，绝不让部署监测失效。
+ */
+export function distFingerprint(dir: string = DIST_DIR): string | undefined {
+  try {
+    const files = listFiles(dir);
+    if (files.length === 0) {
+      return undefined;
+    }
+    const hash = createHash("sha1");
+    for (const file of files) {
+      hash.update(file);
+      hash.update("\0");
+      hash.update(createHash("sha1").update(readFileSync(join(dir, file))).digest("hex"));
+      hash.update("\n");
+    }
+    return hash.digest("hex");
+  } catch (error) {
+    log.debug("dist fingerprint unavailable", { dir, error: String(error) });
+    return undefined;
+  }
+}
+
+/** 递归列出目录下所有文件（相对路径，正斜杠分隔，已排序）。 */
+function listFiles(dir: string, prefix = ""): string[] {
+  const names: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const relative = prefix.length > 0 ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      names.push(...listFiles(join(dir, entry.name), relative));
+    } else if (entry.isFile()) {
+      names.push(relative);
+    }
+  }
+  return names.sort();
 }
 
 export function appVersion(): string {

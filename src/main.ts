@@ -48,7 +48,7 @@ import type {
   RestartRequestHandler,
   RestartRequestInfo,
 } from "./services/restart.js";
-import { appVersion, captureRunningVersion, onDiskVersion, runningVersionOf } from "./core/buildInfo.js";
+import { appVersion, captureRunningVersion, distFingerprint, onDiskVersion, runningVersionOf } from "./core/buildInfo.js";
 import { encodeCallback } from "./services/callbackData.js";
 import { spawnRespawnHelper } from "./services/respawn.js";
 import { sendWelcome } from "./services/welcome.js";
@@ -119,6 +119,9 @@ async function main(): Promise<void> {
   // 先把「本进程运行的版本」固化下来：部署监测要拿它和磁盘版本比
   // （`appVersion()` 读磁盘，部署后会变成新版本，不固化就永远不会触发自动重启）。
   captureRunningVersion();
+  // 同一刻固化「这份进程加载的产物内容」：只看版本号会在「新代码已落地、package.json 还没落地」
+  // 的上传窗口里白跳一次重启，指纹能把「版本号变了」与「代码真的换了」分开（见 distFingerprint）。
+  const bootFingerprint = distFingerprint();
   configureLogging({
     level: settings.logLevel,
     file: settings.logFile,
@@ -145,6 +148,8 @@ async function main(): Promise<void> {
     delayMs: () => runtime.platform.get("deployRestartDelayMinutes") * 60_000,
     runningVersion: runningVersionOf,
     onDiskVersion,
+    fingerprint: () => distFingerprint(),
+    ...(bootFingerprint !== undefined ? { bootFingerprint } : {}),
     recipients: () => runtime.permissions.listSuperAdmins(),
     notify: async (userId, card) => {
       await runtime.notifications.sendPrivateCard(userId, card);
