@@ -108,6 +108,7 @@ export const ADMIN_API_ROUTE_SCOPES: readonly AdminApiRouteScope[] = [
   { method: "GET", url: "/api/aliases", scope: "read:alias" },
   { method: "GET", url: "/api/reports", scope: "read:reports" },
   { method: "GET", url: "/api/reports/export.csv", scope: "read:reports" },
+  { method: "GET", url: "/api/permissions", scope: "read:perm" },
   { method: "GET", url: "/api/activities", scope: "read:activity" },
   { method: "GET", url: "/api/activities/fields", scope: "read:activity" },
   { method: "GET", url: "/api/activities/:code/export.csv", scope: "read:activity" },
@@ -136,6 +137,7 @@ export const ADMIN_API_ROUTE_SCOPES: readonly AdminApiRouteScope[] = [
   { method: "DELETE", url: "/api/aliases/:alias", scope: "write:alias" },
   { method: "PUT", url: "/api/settings", scope: "write:settings" },
   { method: "DELETE", url: "/api/settings/:key", scope: "write:settings" },
+  { method: "POST", url: "/api/permissions", scope: "write:perm" },
 ];
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);

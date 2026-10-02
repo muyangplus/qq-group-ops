@@ -524,6 +524,8 @@ export function createRuntime(
         notifyTopics,
         // P2 写：别名表与 `/alias` 同一份数据
         classAliases,
+        // P3 写：权限授予 / 撤销与 `/perm` 同一份数据（QQ号 / #短码 → openid 也要解析）
+        identityMap,
         database: dependencies.databaseDriver,
         migrationIssues: dependencies.migration?.issues.length,
       })

@@ -224,6 +224,46 @@ export interface AdminApiReportsView {
   activities: AdminApiReportActivityRow[];
 }
 
+/** 权限成员（一条授权指向的人）。 */
+export interface AdminApiPermissionMember {
+  userId: string;
+  user: AdminApiEntityRef;
+}
+
+/** 一个角色在某个范围内的成员（全局超管没有群）。 */
+export interface AdminApiPermissionRoleList {
+  role: string;
+  roleLabel: string;
+  members: AdminApiPermissionMember[];
+}
+
+export interface AdminApiPermissionGroupSummary {
+  groupId: string;
+  group: AdminApiEntityRef;
+}
+
+/** 权限总览（`GET /api/permissions`，平台超管 240）。 */
+export interface AdminApiPermissionGrantsView {
+  groups: AdminApiPermissionGroupSummary[];
+  /** 全局角色（当前只有 `super`）。 */
+  global: AdminApiPermissionRoleList[];
+  group?: { group: AdminApiEntityRef; roles: AdminApiPermissionRoleList[] };
+}
+
+/** 授予 / 撤销的回执（`POST /api/permissions`）。 */
+export interface AdminApiPermissionChangeResult {
+  action: "grant" | "revoke";
+  role: string;
+  roleLabel: string;
+  group?: AdminApiEntityRef;
+  target: AdminApiEntityRef;
+  /** 是否真的改动了（重复授予 / 撤销本来就没有的授权 → false）。 */
+  changed: boolean;
+  /** 改完之后该角色的成员（界面直接替换）。 */
+  members: AdminApiPermissionMember[];
+  message: string;
+}
+
 /** 处罚记录（`/api/punishments`，只读）。 */
 export interface AdminApiPunishmentItem {
   recordId: string;
@@ -862,4 +902,20 @@ export const adminApi = {
       days: params.days,
       full: params.full === true ? "1" : undefined,
     })}`,
+
+  /** 权限总览（平台超管 240）：全局超管 + 选定群的三个群内角色。 */
+  permissions: (params: { group?: string | undefined } = {}): Promise<AdminApiPermissionGrantsView> =>
+    api.get<AdminApiPermissionGrantsView>(`/api/permissions${query(params)}`),
+
+  /** 授予 / 撤销角色（平台超管 240）：与指令层 `/perm` 同一个服务。 */
+  setPermission: (input: {
+    action: "grant" | "revoke";
+    role: string;
+    group?: string | undefined;
+    userId: string;
+  }): Promise<{ ok: boolean } & AdminApiPermissionChangeResult> =>
+    api.post<{ ok: boolean } & AdminApiPermissionChangeResult>(
+      "/api/permissions",
+      input,
+    ),
 };

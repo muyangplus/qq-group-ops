@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { loadAdminApiConfig } from "../src/adminApi/config.js";
+import { forbidden } from "../src/adminApi/errors.js";
 import { WindowRateLimiter } from "../src/adminApi/rateLimit.js";
 import {
   ADMIN_SESSION_COOKIE,
@@ -1599,6 +1600,161 @@ describe("管理 API HTTP 层", () => {
       headers: { cookie: cookieOf(bareLogin) },
     });
     expect(bareResponse.statusCode).toBe(503);
+    await bare.close();
+  });
+
+  it("权限：总览与授予 / 撤销都要平台超管 240；参数校验与只读巡检", async () => {
+    const tokens = memoryTokens();
+    const reads: Array<{ group?: string }> = [];
+    const writes: Array<Record<string, unknown>> = [];
+    const GRANTS_VIEW = {
+      groups: [{ groupId: "g1", group: groupRef("g1") }],
+      global: [
+        { role: "super", roleLabel: "全局超级管理员", members: [] },
+      ],
+    };
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "test",
+      readAccessOf: async (userId: string) =>
+        userId === "boss"
+          ? { platformLevel: 240, groups: [] }
+          : { platformLevel: 0, groups: [{ groupId: "g1", level: 140 }] },
+      readers: {
+        pending: async () => [],
+        rules: async (groupId: string) => ({ groupId, override: null, settings: [] }),
+        notifyTopics: async () => [],
+        activities: async () => [],
+        permissions: async (options) => {
+          reads.push(options);
+          return GRANTS_VIEW;
+        },
+      },
+      writers: {
+        setPermission: async (input) => {
+          writes.push({ ...input });
+          // 真实实现里门槛在领域层（requireGlobalSuperAdmin）：这里同样抛出，测 403 映射
+          if (input.actorId !== "boss") {
+            throw forbidden("权限不足：需要平台超级管理员（240）。");
+          }
+          return {
+            action: input.action,
+            role: input.role,
+            roleLabel: "审核员",
+            group: groupRef("g1"),
+            target: groupRef("g1"),
+            changed: true,
+            members: [],
+            message: "已授予。",
+          };
+        },
+      },
+    }).app;
+
+    const login = async (userId: string): Promise<string> => {
+      const { token } = await tokens.issue({ userId, ttlMs: 60_000 });
+      const response = await app.inject({
+        method: "POST",
+        url: "/auth/token",
+        headers: { "x-admin-request": "1" },
+        payload: { token },
+      });
+      return cookieOf(response);
+    };
+
+    const boss = await login("boss");
+    const bossHeaders = { cookie: boss, "x-admin-request": "1" };
+
+    const view = await app.inject({
+      method: "GET",
+      url: "/api/permissions?group=g1",
+      headers: { cookie: boss },
+    });
+    expect(view.statusCode).toBe(200);
+    expect(view.json()).toMatchObject({ groups: [{ groupId: "g1" }] });
+    expect(reads).toEqual([{ group: "g1" }]);
+
+    // 本群超管（140）也不是平台超管：看不了权限表
+    const groupSuper = await login("gsuper");
+    const deniedRead = await app.inject({
+      method: "GET",
+      url: "/api/permissions",
+      headers: { cookie: groupSuper },
+    });
+    expect(deniedRead.statusCode).toBe(403);
+
+    const granted = await app.inject({
+      method: "POST",
+      url: "/api/permissions",
+      headers: bossHeaders,
+      payload: { action: "grant", role: "moderator", group: "g1", userId: "u1" },
+    });
+    expect(granted.statusCode).toBe(200);
+    expect(writes).toEqual([
+      { action: "grant", role: "moderator", group: "g1", userId: "u1", actorId: "boss" },
+    ]);
+
+    const deniedWrite = await app.inject({
+      method: "POST",
+      url: "/api/permissions",
+      headers: { cookie: groupSuper, "x-admin-request": "1" },
+      payload: { action: "grant", role: "moderator", group: "g1", userId: "u1" },
+    });
+    expect(deniedWrite.statusCode).toBe(403);
+
+    const badAction = await app.inject({
+      method: "POST",
+      url: "/api/permissions",
+      headers: bossHeaders,
+      payload: { action: "add", role: "moderator", group: "g1", userId: "u1" },
+    });
+    expect(badAction.statusCode).toBe(400);
+
+    const missingRole = await app.inject({
+      method: "POST",
+      url: "/api/permissions",
+      headers: bossHeaders,
+      payload: { action: "grant", group: "g1", userId: "u1" },
+    });
+    expect(missingRole.statusCode).toBe(400);
+
+    const missingUser = await app.inject({
+      method: "POST",
+      url: "/api/permissions",
+      headers: bossHeaders,
+      payload: { action: "grant", role: "moderator", group: "g1" },
+    });
+    expect(missingUser.statusCode).toBe(400);
+    await app.close();
+
+    // 只读巡检：两个端点都没有数据源
+    const bareTokens = memoryTokens();
+    const bare = buildAdminApiServer({
+      config: CONFIG,
+      tokens: bareTokens,
+      version: "test",
+    }).app;
+    const bareToken = await bareTokens.issue({ userId: "boss", ttlMs: 60_000 });
+    const bareLogin = await bare.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: bareToken.token },
+    });
+    const bareGet = await bare.inject({
+      method: "GET",
+      url: "/api/permissions",
+      headers: { cookie: cookieOf(bareLogin) },
+    });
+    expect(bareGet.statusCode).toBe(503);
+    const barePost = await bare.inject({
+      method: "POST",
+      url: "/api/permissions",
+      headers: { cookie: cookieOf(bareLogin), "x-admin-request": "1" },
+      payload: { action: "grant", role: "moderator", group: "g1", userId: "u1" },
+    });
+    expect(barePost.statusCode).toBe(503);
     await bare.close();
   });
 

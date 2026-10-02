@@ -15,6 +15,7 @@ import PendingView from "@/views/PendingView.vue";
 import PunishmentsView from "@/views/PunishmentsView.vue";
 import RulesView from "@/views/RulesView.vue";
 import ReportsView from "@/views/ReportsView.vue";
+import PermissionsView from "@/views/PermissionsView.vue";
 import SettingsView from "@/views/SettingsView.vue";
 import StatusView from "@/views/StatusView.vue";
 
@@ -41,6 +42,8 @@ export const router = createRouter({
     { path: "/activities", name: "activities", component: ActivitiesView },
     // 报表（E5）：平台超管看全量，其余人看本群（页面里选自己 ≥130 的群）
     { path: "/reports", name: "reports", component: ReportsView },
+    // 权限（P3）：改的是判定权限的表，只有平台超管（240）能用
+    { path: "/permissions", name: "permissions", component: PermissionsView },
     { path: "/status", name: "status", component: StatusView },
     { path: "/settings", name: "settings", component: SettingsView },
     { path: "/login", name: "login", component: LoginView },

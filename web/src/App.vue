@@ -65,6 +65,10 @@ async function signOut(): Promise<void> {
       <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'aliases' }">
         别名
       </RouterLink>
+      <!-- 权限是「权限的权限」：只有平台超管能看到入口（服务端也会 403） -->
+      <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'permissions' }">
+        权限
+      </RouterLink>
     </nav>
     <nav class="topbar-right">
       <span v-if="session.signedIn" class="who">

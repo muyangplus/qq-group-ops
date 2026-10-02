@@ -51,6 +51,16 @@ import type { JoinAuditService, JoinRequest } from "../services/joinAudit.js";
 import type { JoinRequestSyncService } from "../services/joinAuditSync.js";
 import type { MigrationResult } from "../db/migrate.js";
 import type { ModerationNotifier } from "../services/moderationNotifier.js";
+import type { IdentityMapService } from "../services/identityMap.js";
+import {
+  PERMISSION_ROLE_LABELS,
+  PERMISSION_ROLES,
+  grantPermissionRole,
+  isGlobalPermissionRole,
+  listPermissionRole,
+  revokePermissionRole,
+  type PermissionRole,
+} from "../services/permissionRoles.js";
 import type { NotifyTopicLevelStore } from "../services/notifyTopics.js";
 import type { ClassAliasService } from "../services/classAliases.js";
 import {
@@ -99,6 +109,10 @@ import type {
   AdminApiNotifyLevelResult,
   AdminApiNotifyTestResult,
   AdminApiPendingItem,
+  AdminApiPermissionChangeResult,
+  AdminApiPermissionGrantsView,
+  AdminApiPermissionMember,
+  AdminApiPermissionRoleList,
   AdminApiProfileSummary,
   AdminApiPunishmentItem,
   AdminApiReaders,
@@ -205,6 +219,8 @@ export interface AdminApiBackendDeps {
   notifyTopics?: NotifyTopicLevelStore | undefined;
   /** 班级 / 学院 / 专业别名表（`/api/aliases` 的读写都走它，与 `/alias` 同一份数据）。 */
   classAliases?: ClassAliasService | undefined;
+  /** 身份映射（`/api/permissions` 把 QQ号 / #短码 解析成 openid）。 */
+  identityMap?: IdentityMapService | undefined;
   /** 审计导出（`/api/audit/export.csv`，与指令层 `/export audit` 同一实现）。 */
   exportService?: ExportService | undefined;
 }
@@ -604,6 +620,30 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     });
   };
 
+  /** 权限成员：`userId` + 展示信息。 */
+  const permissionMember = (userId: string): AdminApiPermissionMember => ({
+    userId,
+    user: entities.user(userId),
+  });
+
+  /** 权限目标（人）：openid / 已绑定的 QQ号 / #短码；认不出来就原样当 openid。 */
+  const resolvePermissionUser = (raw: string | undefined): string => {
+    const value = (raw ?? "").trim();
+    if (value.length === 0) {
+      throw badRequest("需要 userId（openid / 已绑定的 QQ号 / #短码）。");
+    }
+    return deps.identityMap?.resolveUserId(value) ?? value;
+  };
+
+  /** 权限目标（群）：内部群 ID / #群短码 / 群号；认不出来按内部群 ID 原样。 */
+  const resolvePermissionGroup = (raw: string | undefined): string => {
+    const value = (raw ?? "").trim();
+    if (value.length === 0) {
+      throw badRequest("群角色需要 group（内部群 ID / #群短码 / 群号）。");
+    }
+    return deps.identityMap?.resolveGroupId(value) ?? value;
+  };
+
   return {
     // ---------------------------------------------------------------- 只读
 
@@ -753,6 +793,46 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     },
 
     reports: async (options) => collectReports(options),
+
+    permissions: async (options) => {
+      const service = deps.permissions;
+      const granted = service.listGrantedGroups();
+      const groupIds = [
+        ...new Set([
+          ...granted,
+          ...(options.group !== undefined ? [options.group] : []),
+        ]),
+      ].sort();
+      const roleList = (
+        role: PermissionRole,
+        groupId?: string,
+      ): AdminApiPermissionRoleList => ({
+        role,
+        roleLabel: PERMISSION_ROLE_LABELS[role],
+        members: listPermissionRole(service, role, groupId).map(
+          permissionMember,
+        ),
+      });
+      return {
+        groups: groupIds.map((groupId) => ({
+          groupId,
+          group: entities.group(groupId),
+        })),
+        global: [roleList("super")],
+        ...(options.group !== undefined
+          ? {
+              group: {
+                group: entities.group(options.group),
+                roles: [
+                  roleList("group_super", options.group),
+                  roleList("group_admin", options.group),
+                  roleList("moderator", options.group),
+                ],
+              },
+            }
+          : {}),
+      };
+    },
 
     health: async (): Promise<AdminApiHealthView> => {
       const memory = process.memoryUsage();
@@ -1240,6 +1320,90 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         csv,
         rows,
         full: options.full,
+      };
+    },
+
+    /**
+     * 授予 / 撤销角色（平台超管 240）：与指令层 `/perm grant|revoke` **同一个 `PermissionService`**。
+     *
+     * 与指令层的差别只有两处（都是管理面独有的护栏）：
+     * - 管理员**不能撤销自己的全局超管**（浏览器里点一下就把自己锁死，没有回滚入口）；
+     * - 撤销一个本来就没有的授权时**如实回 `changed: false`**（审计记 rejected），
+     *   而不是像卡片那样统一说「已更新权限」。
+     */
+    setPermission: async (input) => {
+      requireGlobalSuperAdmin(input.actorId, "配置权限");
+      const action = input.action;
+      if (action !== "grant" && action !== "revoke") {
+        throw badRequest("action 只能是 grant / revoke。");
+      }
+      const role = input.role.trim();
+      if (!PERMISSION_ROLES.includes(role as PermissionRole)) {
+        throw badRequest(
+          `未知角色：${role || "（空）"}（可用：${PERMISSION_ROLES.join(" / ")}）。`,
+        );
+      }
+      const typedRole = role as PermissionRole;
+      const groupId = isGlobalPermissionRole(typedRole)
+        ? undefined
+        : resolvePermissionGroup(input.group);
+      const userId = resolvePermissionUser(input.userId);
+      if (action === "revoke" && typedRole === "super" && userId === input.actorId) {
+        throw badRequest(
+          "不能撤销自己的全局超级管理员：改完你就没有权限再改回来了（要让另一个超管来撤）。",
+        );
+      }
+      const before = listPermissionRole(deps.permissions, typedRole, groupId);
+      const had = before.includes(userId);
+      if (action === "grant") {
+        grantPermissionRole(deps.permissions, typedRole, groupId, userId);
+      } else {
+        try {
+          revokePermissionRole(deps.permissions, typedRole, groupId, userId);
+        } catch (error) {
+          // 领域层的护栏（例如「不能撤销最后一个超级管理员」）原话给界面
+          throw badRequest(error instanceof Error ? error.message : String(error));
+        }
+      }
+      const changed = action === "grant" ? !had : had;
+      const roleLabel = PERMISSION_ROLE_LABELS[typedRole];
+      const scopeLabel =
+        groupId === undefined ? "全局" : entities.group(groupId).label;
+      const target = entities.user(userId);
+      appendAudit({
+        groupId: groupId ?? "",
+        actorId: input.actorId,
+        action: action === "grant" ? "admin_api:perm_grant" : "admin_api:perm_revoke",
+        status: changed ? AuditStatus.Executed : AuditStatus.Rejected,
+        reason: `${roleLabel}（${scopeLabel}）${action === "grant" ? "授予" : "撤销"} ${
+          target.label
+        }${changed ? "" : "（未改动：本来就是这个状态）"}`,
+      });
+      log.warn("admin api changed permission", {
+        action,
+        role: typedRole,
+        groupId: groupId ?? "all",
+        userId,
+        actorId: input.actorId,
+        changed,
+      });
+      return {
+        action,
+        role: typedRole,
+        roleLabel,
+        ...(groupId !== undefined ? { group: entities.group(groupId) } : {}),
+        target,
+        changed,
+        members: listPermissionRole(deps.permissions, typedRole, groupId).map(
+          permissionMember,
+        ),
+        message: changed
+          ? action === "grant"
+            ? `已授予 ${target.label} ${roleLabel}（${scopeLabel}）。`
+            : `已撤销 ${target.label} 的 ${roleLabel}（${scopeLabel}）。`
+          : action === "grant"
+            ? `${target.label} 本来就有 ${roleLabel}（${scopeLabel}），未改动。`
+            : `${target.label} 本来就没有 ${roleLabel}（${scopeLabel}），未改动。`,
       };
     },
 

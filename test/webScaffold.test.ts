@@ -118,6 +118,8 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
       "/api/join/sync",
       // E5 统计报表
       "/api/reports",
+      // P3 权限授予 / 撤销
+      "/api/permissions",
     ]) {
       expect(source, `缺少端点 ${endpoint}`).toContain(endpoint);
     }
@@ -297,6 +299,7 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
       "RulesView",
       "ActivitiesView",
       "ReportsView",
+      "PermissionsView",
       "StatusView",
       "SettingsView",
       "LoginView",
@@ -372,5 +375,26 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     expect(api).toContain("/api/reports/export.csv");
     expect(source).toContain("full");
     expect(app).toContain("reports");
+  });
+
+  it("权限页（P3）：只有平台超管能用，改权限要二次确认", () => {
+    const source = read("views/PermissionsView.vue");
+    const api = read("api/admin.ts");
+    const app = read("App.vue");
+
+    expect(source).toContain("adminApi.permissions");
+    expect(source).toContain("adminApi.setPermission");
+    expect(source).toContain("ModalDialog");
+    // 门槛 240（与指令层 /perm 一致）；非超管连请求都不发
+    expect(source).toContain("session.isSuperAdmin");
+    expect(source).toContain("需要平台超管（240）");
+    // 管理面独有的护栏：不能撤销自己的全局超管
+    expect(source).toContain("不能撤销自己的全局超管");
+    // 四种角色都在页面上
+    for (const role of ["super", "group_super", "group_admin", "moderator"]) {
+      expect(source, `缺少角色 ${role}`).toContain(role);
+    }
+    expect(api).toContain("/api/permissions");
+    expect(app).toContain("permissions");
   });
 });

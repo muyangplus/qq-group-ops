@@ -22,6 +22,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["src/**/*.spec.ts"],
+    // 补 jsdom 缺的原生 dialog 行为（ModalDialog 用它），其余什么都不动
+    setupFiles: ["src/test/setup.ts"],
     restoreMocks: true,
   },
 });

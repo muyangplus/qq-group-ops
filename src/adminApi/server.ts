@@ -474,6 +474,12 @@ export interface AdminApiReaders {
         days: number;
       }) => Promise<AdminApiReportsView>)
     | undefined;
+  /** 权限授权总览（`GET /api/permissions`，平台超管 240）。 */
+  permissions?:
+    | ((options: {
+        group?: string | undefined;
+      }) => Promise<AdminApiPermissionGrantsView>)
+    | undefined;
 }
 
 /** 通过 / 拒绝入群申请后的回执。 */
@@ -711,6 +717,18 @@ export interface AdminApiWriters {
     actorId: string,
     options: { group?: string | undefined; days: number; full: boolean },
   ): Promise<AdminApiReportCsvResult>;
+  /**
+   * 授予 / 撤销角色（**平台超管 240**，与指令层 `/perm` 同一个 `PermissionService`）：
+   * 这是「权限的权限」，所以门槛最高、界面必须二次确认并展示「改完谁失去了什么」。
+   * 额外一条护栏：**不能撤销自己的全局超管**（改完就没权限改回来了，要让别人撤）。
+   */
+  setPermission(input: {
+    action: "grant" | "revoke";
+    role: string;
+    group?: string | undefined;
+    userId: string;
+    actorId: string;
+  }): Promise<AdminApiPermissionChangeResult>;
 }
 
 export interface AdminApiActivityItem {
@@ -759,6 +777,49 @@ export interface AdminApiReportCsvResult {
   csv: string;
   rows: number;
   full: boolean;
+}
+
+/** 权限成员（一条授权指向的人；展示信息走 `AdminApiEntityRef`）。 */
+export interface AdminApiPermissionMember {
+  userId: string;
+  user: AdminApiEntityRef;
+}
+
+/** 一个角色在某个范围内的成员（全局超管没有群）。 */
+export interface AdminApiPermissionRoleList {
+  role: string;
+  roleLabel: string;
+  members: AdminApiPermissionMember[];
+}
+
+/** 有授权（或本次查询指定）的群，用于「权限」页的群选择器。 */
+export interface AdminApiPermissionGroupSummary {
+  groupId: string;
+  group: AdminApiEntityRef;
+}
+
+/** 权限总览（`GET /api/permissions`，平台超管 240）。 */
+export interface AdminApiPermissionGrantsView {
+  /** 有任何群内授权的群；选了群时至少包含该群。 */
+  groups: AdminApiPermissionGroupSummary[];
+  /** 全局角色（当前只有 `super`）。 */
+  global: AdminApiPermissionRoleList[];
+  /** 选了群时的三个群内角色。 */
+  group?: { group: AdminApiEntityRef; roles: AdminApiPermissionRoleList[] };
+}
+
+/** 授予 / 撤销的回执（`POST /api/permissions`，平台超管 240）。 */
+export interface AdminApiPermissionChangeResult {
+  action: "grant" | "revoke";
+  role: string;
+  roleLabel: string;
+  group?: AdminApiEntityRef | undefined;
+  target: AdminApiEntityRef;
+  /** 是否真的改动了（重复授予 / 撤销本来就没有的授权 → `false`）。 */
+  changed: boolean;
+  /** 改完之后该角色在范围内的成员（界面直接替换）。 */
+  members: AdminApiPermissionMember[];
+  message: string;
 }
 
 export interface AdminApiNotifyTopic {
@@ -1940,6 +2001,76 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     );
     // BOM：与审计导出一致，Excel 直开不乱码
     return reply.send(`\uFEFF${result.csv}`);
+  });
+
+  /**
+   * 权限总览（`GET /api/permissions?group=`，**平台超管 240**）。
+   *
+   * 与指令层 `/perm list` 同一份数据（`PermissionService`）：全局超管 + 选定群的
+   * 群超管 / 群管理员 / 审核员；`groups` 是「有任何群内授权的群」，给页面做选择器。
+   */
+  app.get("/api/permissions", async (request, reply) => {
+    const reader = options.readers?.permissions;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "权限数据源未装配（只读巡检模式）。"));
+    }
+    if (!(await allowPlatformRead(request, reply, "GET /api/permissions"))) {
+      return reply;
+    }
+    const query = request.query as Record<string, unknown>;
+    const group = queryString(query.group);
+    return reader({ ...(group !== undefined ? { group } : {}), });
+  });
+
+  /**
+   * 授予 / 撤销角色：`POST /api/permissions { action, role, group?, userId }`（**平台超管 240**）。
+   *
+   * `action` = `grant` / `revoke`；`role` = `super` / `group_super` / `group_admin` / `moderator`
+   * （`super` 不带群，其余三个必须带）。与指令层 `/perm` 同源；界面必须二次确认并展示
+   * 「改完谁失去了什么」——回执里的 `members` 就是改完之后该角色的名单。
+   */
+  app.post("/api/permissions", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const action = typeof body.action === "string" ? body.action.trim() : "";
+    if (action !== "grant" && action !== "revoke") {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "action 只能是 grant / revoke。"));
+    }
+    const role = typeof body.role === "string" ? body.role.trim() : "";
+    if (role.length === 0) {
+      return reply
+        .code(400)
+        .send(
+          errorBody(
+            "bad_request",
+            "需要 role（super / group_super / group_admin / moderator）。",
+          ),
+        );
+    }
+    const group = typeof body.group === "string" ? body.group.trim() : "";
+    const userId = typeof body.userId === "string" ? body.userId.trim() : "";
+    if (userId.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 userId（openid / QQ号 / #短码）。"));
+    }
+    const result = await writers.setPermission({
+      action,
+      role,
+      ...(group.length > 0 ? { group } : {}),
+      userId,
+      actorId: actorOf(request),
+    });
+    return { ok: true, ...result };
   });
 
   // ------------------------------------------------------------------ 写端点（E1-d）

@@ -307,6 +307,28 @@ export class PermissionService {
     return [...(this.moderatorIds.get(groupId) ?? [])].sort();
   }
 
+  /**
+   * 所有**有任何群内授权**的群（群超管 / 群管理员 / 审核员三张表的键并集）。
+   *
+   * 管理后台的「权限」页要列「哪些群有人在管」，这个并集就是那份清单；
+   * 只读，不改任何状态。
+   */
+  public listGrantedGroups(): string[] {
+    const groups = new Set<string>();
+    for (const bucket of [
+      this.groupSuperAdminIds,
+      this.groupAdminIds,
+      this.moderatorIds,
+    ]) {
+      for (const [groupId, members] of bucket) {
+        if (members.size > 0) {
+          groups.add(groupId);
+        }
+      }
+    }
+    return [...groups].sort();
+  }
+
   public ensure(allowed: boolean, message = "permission denied"): void {
     if (!allowed) {
       throw new PermissionDeniedError(message);

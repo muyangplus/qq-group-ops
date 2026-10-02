@@ -4,6 +4,11 @@ import {
   describeLevel,
 } from "../../core/enums.js";
 import { getLogger } from "../../core/logger.js";
+import {
+  grantPermissionRole,
+  revokePermissionRole,
+  type PermissionRole,
+} from "../permissionRoles.js";
 import { renderCard } from "../cardTemplate.js";
 import type { AdminCommandContext } from "./context.js";
 import { syncCard } from "./reviewCommands.js";
@@ -163,26 +168,12 @@ export function grantRole(
   role: string,
   targetUserId: string,
 ): void {
-  if (role === "super" || role === "超管") {
-    ctx.permissions.grantSuperAdmin(targetUserId);
-    return;
-  }
-  if (!groupId) {
-    throw new Error("group_openid is required");
-  }
-  if (GROUP_SUPER_ROLES.has(role)) {
-    ctx.permissions.grantGroupSuperAdmin(groupId, targetUserId);
-    return;
-  }
-  if (role === "admin" || role === "管理员") {
-    ctx.permissions.grantGroupAdmin(groupId, targetUserId);
-    return;
-  }
-  if (role === "mod" || role === "审核员") {
-    ctx.permissions.grantModerator(groupId, targetUserId);
-    return;
-  }
-  throw new Error(`未知角色：${role}`);
+  grantPermissionRole(
+    ctx.permissions,
+    resolveRole(role),
+    groupId,
+    targetUserId,
+  );
 }
 
 export function revokeRole(
@@ -191,24 +182,32 @@ export function revokeRole(
   role: string,
   targetUserId: string,
 ): void {
+  revokePermissionRole(
+    ctx.permissions,
+    resolveRole(role),
+    groupId,
+    targetUserId,
+  );
+}
+
+/**
+ * 指令层的角色写法（含中文别名）→ 规范角色。
+ *
+ * 别名表放在这里（而不是共享模块）是因为它属于**指令层的输入习惯**：
+ * 管理 API 只收规范角色，`/perm` 才需要认 `超管` / `gsuper` / `管理员` / `审核员`。
+ */
+function resolveRole(role: string): PermissionRole {
   if (role === "super" || role === "超管") {
-    ctx.permissions.revokeSuperAdmin(targetUserId);
-    return;
-  }
-  if (!groupId) {
-    throw new Error("group_openid is required");
+    return "super";
   }
   if (GROUP_SUPER_ROLES.has(role)) {
-    ctx.permissions.revokeGroupSuperAdmin(groupId, targetUserId);
-    return;
+    return "group_super";
   }
   if (role === "admin" || role === "管理员") {
-    ctx.permissions.revokeGroupAdmin(groupId, targetUserId);
-    return;
+    return "group_admin";
   }
   if (role === "mod" || role === "审核员") {
-    ctx.permissions.revokeModerator(groupId, targetUserId);
-    return;
+    return "moderator";
   }
   throw new Error(`未知角色：${role}`);
 }
