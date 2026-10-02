@@ -137,6 +137,13 @@ async function main(): Promise<void> {
    */
   let restartHandler: RestartRequestHandler | undefined;
   /**
+   * 统一计时调度器（`SCAN_INTERVAL_MS` 驱动全部周期任务）。
+   *
+   * 它比 `runtime` **晚创建**（假模式直接 return、压根不建），而管理 API 的监听口在
+   * `runtime` 里就起好了 —— 所以这里只放一个可空引用，`/api/tasks` 进来时现取。
+   */
+  let schedulerRef: TickScheduler | undefined;
+  /**
    * 部署监测（P0）：检测到「磁盘版本 ≠ 运行版本」并稳定若干轮后，
    * 通知全部全局超管并计划自动重启。这里的闭包引用后面才创建的 `runtime`，
    * 但真正执行都在启动之后，所以是安全的。
@@ -161,6 +168,9 @@ async function main(): Promise<void> {
     {
       onRestartRequested: (info) => restartHandler?.(info),
       deploy: deployWatcher,
+      // 周期任务监测（管理 API `/api/tasks`）：调度器在下面才创建，所以这里传「取值函数」，
+      // 请求进来时现取（见 `RuntimeDependencies.tickTasks`）。
+      tickTasks: () => schedulerRef?.snapshot(),
       // 整份持久化对象直接透传：RuntimeRepositories 是它的结构化子集。
       // 逐个列举键会漏 —— 0.23.0 就这么漏过 privacy 与 adminTokens（`/data` 与 `/admin login`
       // 在真机上直接报「未装配」）；现在装配只发生在 createRepositories() 一处。
@@ -263,6 +273,7 @@ async function main(): Promise<void> {
   const scheduler = new TickScheduler({
     intervalMs: () => runtime.platform.get("scanIntervalMs"),
   });
+  schedulerRef = scheduler;
   runtime.platform.onChange((key) => {
     if (key === "scanIntervalMs") {
       scheduler.restart();

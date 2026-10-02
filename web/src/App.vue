@@ -43,9 +43,12 @@ async function signOut(): Promise<void> {
       <RouterLink :to="{ name: 'audit' }">审计</RouterLink>
       <RouterLink :to="{ name: 'rules' }">规则</RouterLink>
       <RouterLink :to="{ name: 'activities' }">活动</RouterLink>
-      <!-- 状态看板是平台级信息：非平台超管看不到入口（服务端也会 403） -->
+      <!-- 状态看板与配置是平台级信息：非平台超管看不到入口（服务端也会 403） -->
       <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'status' }">
         状态
+      </RouterLink>
+      <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'settings' }">
+        配置
       </RouterLink>
     </nav>
     <nav class="topbar-right">

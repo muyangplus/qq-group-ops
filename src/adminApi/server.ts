@@ -10,7 +10,14 @@ import { getLogger, type Logger } from "../core/logger.js";
 import type { AdminTokenRepository } from "../db/adminTokenRepository.js";
 import { DEFAULT_GROUP_ID } from "../services/groupConfig.js";
 import { adminLoginUrl, machineTokenAllows, type AdminApiConfig, type AdminApiMachineToken } from "./config.js";
+import type { AdminApiEntityRef } from "./entityRef.js";
 import { AdminApiRequestError } from "./errors.js";
+import type {
+  AdminApiSettingItem,
+  AdminApiSettingsView,
+} from "./settings.js";
+
+export type { AdminApiSettingItem, AdminApiSettingsView };
 import { WindowRateLimiter } from "./rateLimit.js";
 import type { AdminApiPermissionsView } from "./permissions.js";
 import { SessionStore, type AdminSession } from "./session.js";
@@ -46,6 +53,18 @@ export interface AdminApiServerOptions {
    * 会话数等本进程信息由 server 自己补。
    */
   statusProvider?: (() => Promise<AdminApiStatusExtra> | AdminApiStatusExtra) | undefined;
+  /**
+   * 周期任务监测（`/api/tasks`，平台级只读）：统一扫描周期 + 每个任务的上次/下次执行。
+   *
+   * 只读巡检模式（`pnpm admin:api`）没有调度器，不装配 → 该端点回 503 并说明原因。
+   */
+  tasksProvider?: (() => AdminApiTasksView | undefined) | undefined;
+  /**
+   * 配置视图（`/api/settings`）：可改的热改项 + `.env` 只读项（密钥类不回传值）。
+   *
+   * 只读巡检进程没有内存态配置存储，不装配 → 该端点回 503。
+   */
+  settingsProvider?: (() => AdminApiSettingsView | undefined) | undefined;
   /** 审计记录读取器（E1-c `/api/audit`）；未装配时该端点回 503。 */
   auditReader?: AdminApiAuditReader | undefined;
   /** 只读数据源（E1-c）：待审批与规则覆盖。未装配时对应端点回 503。 */
@@ -78,6 +97,39 @@ export interface AdminApiReadAccess {
   groups: Array<{ groupId: string; level: number }>;
 }
 
+/** 周期任务监测里的一个任务（`/api/tasks`）。 */
+export interface AdminApiTaskItem {
+  name: string;
+  /** 自己的工作间隔（毫秒）；`0` = 每轮都跑。 */
+  minIntervalMs: number;
+  /** 启动时那一次是否也跑（`false` = 等一个周期才上场）。 */
+  runOnStart: boolean;
+  /** 依赖模块是否可用；`false` = 这一轮会被整轮跳过（降级闸门）。 */
+  enabled: boolean;
+  /** 上次执行时刻（ISO）；从没跑过缺省。 */
+  lastRunAt?: string | undefined;
+  /** 下次最早可能执行的时刻（ISO）；调度器停着时缺省。 */
+  nextRunAt?: string | undefined;
+}
+
+/** 周期任务监测视图（`/api/tasks`）：统一节拍 + 全部任务 + 部署监测的待重启状态。 */
+export interface AdminApiTasksView {
+  /** 统一扫描周期（毫秒）；`0` = 所有周期任务都停着。 */
+  intervalMs: number;
+  /** 定时器是否在跑。 */
+  started: boolean;
+  tasks: AdminApiTaskItem[];
+  /** 待生效的部署（发现新版本、宽限期内）；没有就不带这个字段。 */
+  deploy?:
+    | {
+        targetVersion: string;
+        currentVersion: string;
+        detectedAt: string;
+        deadlineAt: string;
+      }
+    | undefined;
+}
+
 /** 权限拒绝的审计输入（只读端点与写端点共用一种形状）。 */
 export interface AdminApiDeniedInput {
   actorId: string;
@@ -90,12 +142,19 @@ export interface AdminApiDeniedInput {
 
 export interface AdminApiAuditRecord {
   recordId: string;
+  /** 内部群 id（过滤器用的就是它）；展示请用 `group`。 */
   groupId: string;
+  /** 操作人内部 id；展示请用 `actor`。 */
   actorId: string;
   action: string;
   status: string;
   reason: string;
   createdAt: string;
+  /** 操作对象（处罚 / 审批的目标）；平台级动作没有。 */
+  targetUserId?: string | undefined;
+  group: AdminApiEntityRef;
+  actor: AdminApiEntityRef;
+  target?: AdminApiEntityRef | undefined;
 }
 
 /** 审计数据源：入口用仓储实现（`persistence.audit.findAll()`）。 */
@@ -106,15 +165,23 @@ export interface AdminApiAuditReader {
 /** 待审批申请（`/api/pending`）。 */
 export interface AdminApiPendingItem {
   requestId: string;
+  /** 内部群 id（过滤器用的就是它）；展示请用 `group`。 */
   groupId: string;
+  /** 申请人内部 openid；展示请用 `applicant`。 */
   userId: string;
   reason: string;
   createdAt: string;
+  group: AdminApiEntityRef;
+  applicant: AdminApiEntityRef;
+  /** 申请短码（`#XXXXXX`）：一律有（申请卡发送时就分配了）。 */
+  request: AdminApiEntityRef;
 }
 
 /** 某个群的规则覆盖（`/api/rules`）：原始覆盖行，合并生效值的逻辑在机器人侧。 */
 export interface AdminApiRulesView {
   groupId: string;
+  /** 群展示信息（群号 → 短码 → 截断 id）；全局默认群的 `officialId` 是 `__default__`。 */
+  group: AdminApiEntityRef;
   /** `group_configs` + `group_settings` 合并出的**覆盖字段**（没有覆盖时为 null）。 */
   override: Record<string, unknown> | null;
   /** `group_settings` 的键值覆盖（关键词等扩展字段）。 */
@@ -204,6 +271,19 @@ export interface AdminApiWriters {
     actorId: string,
     options: { full: boolean },
   ): Promise<AdminApiCsvExport>;
+  /**
+   * 改一项**热改配置**（平台级，240）。
+   *
+   * 走的仍然是机器人 `/config` 那一套（`PlatformSettingsStore.set`：校验 → 落库 → 立即生效），
+   * 管理 API 只是把它搬到网页上；密钥类 `.env` 项不在可改范围内（只读展示）。
+   */
+  updateSetting(
+    key: string,
+    value: string,
+    actorId: string,
+  ): Promise<AdminApiSettingItem>;
+  /** 把一项热改配置恢复成 `.env` 默认值（只有确实覆盖过才动库）。 */
+  clearSetting(key: string, actorId: string): Promise<AdminApiSettingItem>;
 }
 
 export interface AdminApiActivityItem {
@@ -211,11 +291,13 @@ export interface AdminApiActivityItem {
   /** 活动短码（展示用）。 */
   code: string;
   title: string;
+  /** 内部群 id（过滤器用的就是它）；展示请用 `group`。 */
   groupId: string;
   status: string;
   capacity?: number | undefined;
   registered: number;
   createdAt: string;
+  group: AdminApiEntityRef;
 }
 
 export interface AdminApiNotifyTopic {
@@ -479,6 +561,98 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
       .send(errorBody("forbidden", "权限不足：本群权限不够。"));
     return false;
   };
+
+  /**
+   * 周期任务监测（`/api/tasks`）：统一扫描周期 + 每个任务的上次/下次执行 + 部署监测的待重启状态。
+   *
+   * 门槛与 `/api/status` 一致（平台超管 240）：这是运维面板，会暴露内部节拍与降级情况。
+   * 只读巡检进程没有调度器 → 503 并说明「去机器人进程那口看」。
+   */
+  app.get("/api/tasks", async (request, reply) => {
+    if (!(await allowPlatformRead(request, reply, "GET /api/tasks"))) {
+      return reply;
+    }
+    const view = options.tasksProvider?.();
+    if (!view) {
+      return reply
+        .code(503)
+        .send(
+          errorBody(
+            "unavailable",
+            "本进程没有周期任务调度器（只读巡检模式 / 未装配）：请用机器人进程内的管理监听口查看。",
+          ),
+        );
+    }
+    return view;
+  });
+
+
+  /**
+   * 配置视图（`/api/settings`）：可改的热改项（含当前生效值与来源）+ `.env` 只读项。
+   *
+   * 门槛与 `/api/status` 一致（平台超管 240）。密钥类 `.env` 项**只回「配没配」**，
+   * 值永远不经过浏览器。
+   */
+  app.get("/api/settings", async (request, reply) => {
+    if (!(await allowPlatformRead(request, reply, "GET /api/settings"))) {
+      return reply;
+    }
+    const view = options.settingsProvider?.();
+    if (!view) {
+      return reply
+        .code(503)
+        .send(
+          errorBody(
+            "unavailable",
+            "本进程没有内存态配置存储（只读巡检模式 / 未装配）：请用机器人进程内的管理监听口查看。",
+          ),
+        );
+    }
+    return view;
+  });
+
+  /** 改一项热改配置（平台级 240）：校验 → 落库 → 立即生效，并写审计。 */
+  app.put("/api/settings", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const key = typeof body.key === "string" ? body.key.trim() : "";
+    if (key.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 key（配置项名，见 GET /api/settings）。"));
+    }
+    if (typeof body.value !== "string" && typeof body.value !== "number" && typeof body.value !== "boolean") {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "value 必须是字符串 / 数字 / 布尔。"));
+    }
+    const item = await writers.updateSetting(key, String(body.value), actorOf(request));
+    return { ok: true, setting: item };
+  });
+
+  /** 把一项热改配置恢复成 `.env` 默认值（平台级 240）。 */
+  app.delete("/api/settings/:key", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { key } = request.params as { key: string };
+    const trimmed = key.trim();
+    if (trimmed.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要配置项名。"));
+    }
+    const item = await writers.clearSetting(trimmed, actorOf(request));
+    return { ok: true, setting: item };
+  });
 
   /** 只读状态（E1-c）：入口给数据库与迁移信息，server 补版本 / 运行时长 / 会话数。 */
   app.get("/api/status", async (request, reply) => {

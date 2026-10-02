@@ -3,7 +3,13 @@ import { describe, expect, it } from "vitest";
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { AdminApiRequestError } from "../src/adminApi/errors.js";
 import { createAdminApiBackend } from "../src/adminApi/backend.js";
-import { ActivityStatus, JoinRequestStatus } from "../src/core/enums.js";
+import { loadSettings } from "../src/config.js";
+import { PlatformSettingsStore } from "../src/services/platformSettings.js";
+import {
+  createAdminApiEntities,
+  type AdminApiEntities,
+} from "../src/adminApi/entityRef.js";
+import { ActivityStatus, AuditStatus, JoinRequestStatus } from "../src/core/enums.js";
 import { ActivityService } from "../src/services/activity.js";
 import { ActivityExportService } from "../src/services/activityExport.js";
 import { AuditLogStore } from "../src/services/audit.js";
@@ -21,7 +27,9 @@ import type { AdminApiBackend } from "../src/adminApi/backend.js";
  */
 
 /** 超管 `boss` 在任意群都够用；`op1` 只是群 g1 的管理员。 */
-function harness(): {
+function harness(options: {
+  entities?: AdminApiEntities | undefined;
+} = {}): {
   api: FakeQQOfficialAPI;
   auditLog: AuditLogStore;
   joinAudit: JoinAuditService;
@@ -65,6 +73,7 @@ function harness(): {
     activity,
     activityExport,
     database: "memory",
+    ...(options.entities !== undefined ? { entities: options.entities } : {}),
   });
   return { api, auditLog, joinAudit, configStore, activity, permissions, backend };
 }
@@ -144,8 +153,280 @@ describe("createAdminApiBackend：入群审批", () => {
   });
 });
 
-describe("createAdminApiBackend：规则写回", () => {
-  it("群管理员改本群字段：覆盖生效、审计带字段名", async () => {
+describe("createAdminApiBackend：展示层（群号 / QQ号 / 短码）", () => {
+  /** 只读列表里「人念得出来的名字」优先：绑定号 → 短码 → 截断 id。 */
+  function displayHarness(): ReturnType<typeof harness> {
+    return harness({
+      entities: createAdminApiEntities({
+        qqOf: (userId) => ({ boss: "10001", u1: "10002" })[userId],
+        groupNumberOf: (groupId) => ({ g1: "50001" })[groupId],
+        shortCodeOf: (kind, targetId) =>
+          kind === "join_request" && targetId === "r1" ? "ABC123" : undefined,
+      }),
+    });
+  }
+
+  it("待审批：群出群号、申请人出 QQ 号、申请出短码，长码留在 officialId", async () => {
+    const { joinAudit, backend } = displayHarness();
+    joinAudit.submit("g1", "u1", "想加入", "r1");
+
+    const [item] = await backend.pending();
+
+    expect(item?.group).toEqual({
+      kind: "group",
+      officialId: "g1",
+      label: "50001",
+      externalId: "50001",
+    });
+    expect(item?.applicant).toEqual({
+      kind: "user",
+      officialId: "u1",
+      label: "10002",
+      externalId: "10002",
+    });
+    expect(item?.request).toEqual({
+      kind: "request",
+      officialId: "r1",
+      label: "#ABC123",
+      shortCode: "#ABC123",
+    });
+    // 原始字段仍是完整官方 id（过滤器/写端点要继续用它）
+    expect(item?.groupId).toBe("g1");
+    expect(item?.userId).toBe("u1");
+  });
+
+  it("审计：群 / 操作人 / 操作对象三份展示信息，绑定号优先", async () => {
+    const { api, joinAudit, backend } = displayHarness();
+    joinAudit.submit("g1", "u1", "想加入", "r1");
+    await backend.approveJoin("r1", "boss");
+    expect(api.joinRequestReviews).toHaveLength(1);
+
+    const record = (await backend.audit()).find(
+      (row) => row.action === "admin_api:approve_join",
+    );
+
+    expect(record?.group.label).toBe("50001");
+    expect(record?.actor.label).toBe("10001");
+    expect(record?.target?.label).toBe("10002");
+    // 完整官方 id 一直是可用值（前端详情行用它）
+    expect(record?.group.officialId).toBe("g1");
+    expect(record?.target?.officialId).toBe("u1");
+  });
+
+  it("平台级动作（groupId 为空）：群展示信息仍给得出来，不炸", async () => {
+    const { auditLog, backend } = displayHarness();
+    auditLog.append({
+      recordId: "a1",
+      groupId: "",
+      actorId: "boss",
+      action: "export_audit_records",
+      status: AuditStatus.Executed,
+      reason: "",
+      createdAt: new Date("2026-10-02T00:00:00.000Z"),
+    });
+
+    const [record] = await backend.audit();
+
+    expect(record?.group.officialId).toBe("");
+    expect(record?.actor.label).toBe("10001");
+    expect(record?.target).toBeUndefined();
+  });
+
+  it("规则视图带上群的展示信息", async () => {
+    const { backend } = displayHarness();
+
+    const view = await backend.rules("g1");
+
+    expect(view.group.label).toBe("50001");
+    expect(view.group.officialId).toBe("g1");
+  });
+});
+
+describe("createAdminApiBackend：周期任务监测（/api/tasks）", () => {
+  it("没装配调度器时返回 undefined（端点据此回 503，而不是给空列表）", () => {
+    const { backend } = harness();
+
+    expect(backend.tasks()).toBeUndefined();
+  });
+
+  it("装配后原样透传任务状态，并把部署监测的待重启一起带上", () => {
+    const backend = createAdminApiBackend({
+      permissions: new PermissionService({ superAdminIds: new Set(["boss"]) }),
+      auditLog: new AuditLogStore(),
+      joinAudit: new JoinAuditService(new AuditLogStore()),
+      joinApproval: new JoinApprovalService(
+        new FakeQQOfficialAPI(),
+        new JoinAuditService(new AuditLogStore()),
+        new GroupConfigStore({ groupId: DEFAULT_GROUP_ID }),
+      ),
+      configStore: new GroupConfigStore({ groupId: DEFAULT_GROUP_ID }),
+      activity: new ActivityService(),
+      activityExport: new ActivityExportService({ profiles: { get: () => undefined } }),
+      tickTasks: () => ({
+        intervalMs: 60_000,
+        started: true,
+        tasks: [
+          {
+            name: "retention",
+            minIntervalMs: 86_400_000,
+            runOnStart: true,
+            enabled: false,
+            lastRunAt: "2026-10-01T00:00:00.000Z",
+            nextRunAt: "2026-10-02T00:00:00.000Z",
+          },
+        ],
+      }),
+      deploy: {
+        pending: () => ({
+          targetVersion: "0.24.0",
+          currentVersion: "0.23.2",
+          detectedAt: "2026-10-02T00:00:00.000Z",
+          deadlineAt: "2026-10-02T00:10:00.000Z",
+        }),
+        cancel: () => false,
+        restartNow: () => false,
+      },
+    });
+
+    expect(backend.tasks()).toEqual({
+      intervalMs: 60_000,
+      started: true,
+      tasks: [
+        {
+          name: "retention",
+          minIntervalMs: 86_400_000,
+          runOnStart: true,
+          enabled: false,
+          lastRunAt: "2026-10-01T00:00:00.000Z",
+          nextRunAt: "2026-10-02T00:00:00.000Z",
+        },
+      ],
+      deploy: {
+        targetVersion: "0.24.0",
+        currentVersion: "0.23.2",
+        detectedAt: "2026-10-02T00:00:00.000Z",
+        deadlineAt: "2026-10-02T00:10:00.000Z",
+      },
+    });
+  });
+});
+
+describe("createAdminApiBackend：配置页（/api/settings）", () => {
+  function settingsHarness(): {
+    backend: AdminApiBackend;
+    auditLog: AuditLogStore;
+    platform: PlatformSettingsStore;
+  } {
+    const auditLog = new AuditLogStore();
+    const platform = new PlatformSettingsStore(
+      loadSettings({ SCAN_INTERVAL_MS: "60000" }),
+    );
+    const permissions = new PermissionService({
+      superAdminIds: new Set(["boss"]),
+    });
+    const joinAudit = new JoinAuditService(new AuditLogStore());
+    const backend = createAdminApiBackend({
+      permissions,
+      auditLog,
+      joinAudit,
+      joinApproval: new JoinApprovalService(
+        new FakeQQOfficialAPI(),
+        joinAudit,
+        new GroupConfigStore({ groupId: DEFAULT_GROUP_ID }),
+      ),
+      configStore: new GroupConfigStore({ groupId: DEFAULT_GROUP_ID }),
+      activity: new ActivityService(),
+      activityExport: new ActivityExportService({
+        profiles: { get: () => undefined },
+      }),
+      platform,
+    });
+    return { backend, auditLog, platform };
+  }
+
+  it("没装配配置存储时 settings() 返回 undefined（端点回 503）", () => {
+    const { backend } = harness();
+
+    expect(backend.settings()).toBeUndefined();
+  });
+
+  it("超管改一项：立即生效、来源变 override、审计记下旧值→新值", async () => {
+    const { backend, auditLog, platform } = settingsHarness();
+
+    const item = await backend.updateSetting("scanIntervalMs", "30000", "boss");
+
+    expect(item).toMatchObject({
+      key: "scanIntervalMs",
+      value: 30_000,
+      source: "override",
+    });
+    expect(platform.get("scanIntervalMs")).toBe(30_000);
+    const record = auditLog
+      .all()
+      .find((row) => row.action === "admin_api:setting_update");
+    expect(record?.actorId).toBe("boss");
+    expect(record?.groupId).toBe("");
+    expect(record?.reason).toContain("60000 → 30000");
+  });
+
+  it("值不合法 / 键名不存在：回 400，不落库也不写审计", async () => {
+    const { backend, auditLog, platform } = settingsHarness();
+
+    await expect(
+      backend.updateSetting("scanIntervalMs", "abc", "boss"),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+    // 超出范围（扫描周期上限 3600000）
+    await expect(
+      backend.updateSetting("scanIntervalMs", "3600001", "boss"),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+    await expect(
+      backend.updateSetting("noSuchKey", "1", "boss"),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+
+    expect(platform.get("scanIntervalMs")).toBe(60_000);
+    expect(auditLog.all()).toHaveLength(0);
+  });
+
+  it("非平台超管改配置：403 且写一条拒绝审计", async () => {
+    const { backend, auditLog, platform } = settingsHarness();
+
+    await expect(
+      backend.updateSetting("scanIntervalMs", "30000", "op1"),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+
+    expect(platform.get("scanIntervalMs")).toBe(60_000);
+    expect(auditLog.all().map((row) => row.action)).toContain("admin_api:denied");
+  });
+
+  it("恢复默认值：回到 .env 值、来源变 env、写审计", async () => {
+    const { backend, auditLog, platform } = settingsHarness();
+    await backend.updateSetting("scanIntervalMs", "30000", "boss");
+
+    const item = await backend.clearSetting("scanIntervalMs", "boss");
+
+    expect(item).toMatchObject({ value: 60_000, source: "env" });
+    expect(platform.get("scanIntervalMs")).toBe(60_000);
+    expect(auditLog.all().map((row) => row.action)).toContain(
+      "admin_api:setting_clear",
+    );
+  });
+
+  it("配置视图：可改项 + `.env` 只读项，密钥不回传值", async () => {
+    const { backend } = settingsHarness();
+
+    const view = backend.settings();
+
+    expect(view?.settings.some((item) => item.key === "scanIntervalMs")).toBe(
+      true,
+    );
+    expect(view?.env.some((item) => item.key === "EVENT_MODE")).toBe(true);
+    expect(view?.env.every((item) => item.secret || item.value !== "***")).toBe(
+      true,
+    );
+  });
+});
+
+describe("createAdminApiBackend：规则写回", () => {  it("群管理员改本群字段：覆盖生效、审计带字段名", async () => {
     const { auditLog, configStore, backend } = harness();
 
     const result = await backend.updateRule("g1", "warning", "本群新文案", "op1");
@@ -303,7 +584,14 @@ describe("createAdminApiBackend：权限画像与状态", () => {
 
     const op1 = await backend.permissionsOf("op1");
     expect(op1.platformLevel).toBe(0);
-    expect(op1.groups).toEqual([{ groupId: "g1", level: 130 }]);
+    // 没注入展示层解析器时退回「官方 id 自己当展示文本」（完整 id 仍在 officialId 里）
+    expect(op1.groups).toEqual([
+      {
+        groupId: "g1",
+        level: 130,
+        group: { kind: "group", officialId: "g1", label: "g1" },
+      },
+    ]);
 
     const stranger = await backend.permissionsOf("nobody");
     expect(stranger.groups).toEqual([]);

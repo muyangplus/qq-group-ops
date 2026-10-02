@@ -174,6 +174,28 @@ export class ShortCodeService {
     return `${SHORT_CODE_PREFIX}${this.codeFor(kind, targetId)}`;
   }
 
+  /**
+   * **只查不生成**：已经有短码就返回（不含 `#`），没有就 `undefined`。
+   *
+   * 给「只读展示」用（管理 API 的列表页）：`codeFor()` 会顺手造码并入库，而列一页审计
+   * 会给一堆历史 actor 造假码，把短码表撑脏。展示端拿不到码就退回截断后的官方 id。
+   */
+  public existingCode(
+    kind: ShortCodeKind,
+    targetId: string,
+  ): string | undefined {
+    return this.codeByTarget.get(targetKeyOf(kind, targetId));
+  }
+
+  /** 只查不生成，带 `#` 前缀（见 `existingCode`）。 */
+  public existingLabel(
+    kind: ShortCodeKind,
+    targetId: string,
+  ): string | undefined {
+    const code = this.existingCode(kind, targetId);
+    return code === undefined ? undefined : `${SHORT_CODE_PREFIX}${code}`;
+  }
+
   /** 解析用户输入的短码；不是短码或查不到时返回 undefined。 */
   public resolve(
     input: string,

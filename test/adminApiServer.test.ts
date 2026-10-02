@@ -17,6 +17,23 @@ import type { AdminTokenRepository } from "../src/db/adminTokenRepository.js";
  * 令牌只能用一次；限流生效。日志不带凭据由 server 层保证（这里只断言响应行为）。
  */
 
+/** 展示层字段（E2-e）：HTTP 层测试只关心响应形状，给最小可用的 ref（真值由后端解析）。 */
+const groupRef = (groupId: string) => ({
+  kind: "group" as const,
+  officialId: groupId,
+  label: groupId,
+});
+const userRef = (userId: string) => ({
+  kind: "user" as const,
+  officialId: userId,
+  label: userId,
+});
+const requestRef = (requestId: string) => ({
+  kind: "request" as const,
+  officialId: requestId,
+  label: requestId,
+});
+
 const CONFIG = loadAdminApiConfig({
   ADMIN_API_ENABLED: "true",
   ADMIN_API_SESSION_SECRET: "y".repeat(40),
@@ -213,6 +230,81 @@ describe("管理 API HTTP 层", () => {
     await app.close();
   });
 
+  it("/api/tasks 需要平台超管；只读巡检（没调度器）回 503", async () => {
+    const tokens = memoryTokens();
+    const view = {
+      intervalMs: 60_000,
+      started: true,
+      tasks: [
+        {
+          name: "deploy-watcher",
+          minIntervalMs: 60_000,
+          runOnStart: true,
+          enabled: true,
+          lastRunAt: "2026-10-02T00:00:00.000Z",
+          nextRunAt: "2026-10-02T00:01:00.000Z",
+        },
+      ],
+      deploy: {
+        targetVersion: "0.24.0",
+        currentVersion: "0.23.2",
+        detectedAt: "2026-10-02T00:00:00.000Z",
+        deadlineAt: "2026-10-02T00:10:00.000Z",
+      },
+    };
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "test",
+      tasksProvider: () => view,
+    }).app;
+
+    const unauth = await app.inject({ method: "GET", url: "/api/tasks" });
+    expect(unauth.statusCode).toBe(401);
+
+    const { token } = await tokens.issue({ userId: "op1", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const cookie = cookieOf(login);
+
+    const ok = await app.inject({
+      method: "GET",
+      url: "/api/tasks",
+      headers: { cookie },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({
+      intervalMs: 60_000,
+      started: true,
+      tasks: [{ name: "deploy-watcher", enabled: true }],
+      deploy: { targetVersion: "0.24.0", currentVersion: "0.23.2" },
+    });
+
+    await app.close();
+
+    // 只读巡检进程没有调度器 → 明确回 503，而不是给一份空列表（空列表会被误读成「没有任务」）
+    const bare = buildAdminApiServer({ config: CONFIG, tokens }).app;
+    const bareToken = await tokens.issue({ userId: "op2", ttlMs: 60_000 });
+    const bareLogin = await bare.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: bareToken.token },
+    });
+    const bareResponse = await bare.inject({
+      method: "GET",
+      url: "/api/tasks",
+      headers: { cookie: cookieOf(bareLogin) },
+    });
+    expect(bareResponse.statusCode).toBe(503);
+    expect(bareResponse.json().message).toContain("周期任务调度器");
+    await bare.close();
+  });
+
   it("/api/status 需要登录，返回只读状态", async () => {
     const { app, tokens } = build();
     const unauth = await app.inject({ method: "GET", url: "/api/status" });
@@ -254,6 +346,8 @@ describe("管理 API HTTP 层", () => {
             status: "executed",
             reason: "",
             createdAt: "2026-10-01T00:00:00.000Z",
+            group: groupRef(index % 2 === 0 ? "g1" : "g2"),
+            actor: userRef(index === 0 ? "op1" : "op2"),
           })),
       },
     }).app;
@@ -323,9 +417,13 @@ describe("管理 API HTTP 层", () => {
             userId: `u${index}`,
             reason: "想加入",
             createdAt: "2026-10-01T00:00:00.000Z",
+            group: groupRef(index < 3 ? "g1" : "g2"),
+            applicant: userRef(`u${index}`),
+            request: requestRef(`r${index}`),
           })),
         rules: async (groupId: string) => ({
           groupId,
+          group: groupRef(groupId),
           override: null,
           settings: [],
         }),

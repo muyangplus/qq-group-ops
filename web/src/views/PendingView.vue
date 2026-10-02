@@ -3,7 +3,9 @@ import { computed, onMounted, ref } from "vue";
 
 import { adminApi, type AdminApiPendingItem } from "@/api/admin";
 import { ApiError } from "@/api/client";
+import EntityLabel from "@/components/EntityLabel.vue";
 import ModalDialog from "@/components/ModalDialog.vue";
+import { entityLabel } from "@/lib/entity";
 import { GROUP_ADMIN_LEVEL, useSessionStore } from "@/stores/session";
 
 /**
@@ -37,6 +39,16 @@ const totalPages = computed(() =>
 const groupOptions = computed(() =>
   (session.identity?.permissions?.groups ?? []).map((group) => group.groupId),
 );
+
+/** 群展示文本（群号 → 短码 → 完整 id），`groupId` 仍是发给后端的内部 id。 */
+function groupLabel(groupId: string): string {
+  return session.groupLabelIn(groupId);
+}
+
+/** 操作回执里也别再露 openid：优先绑定号 / 短码，退回 `userId`。 */
+function applicantLabel(item: AdminApiPendingItem): string {
+  return entityLabel(item.applicant, item.userId);
+}
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -80,7 +92,7 @@ async function confirmApprove(): Promise<void> {
   busy.value = true;
   try {
     const result = await adminApi.approveJoin(item.requestId);
-    notice.value = `${result.message}（${item.userId}）`;
+    notice.value = `${result.message}（${applicantLabel(item)}）`;
     approveTarget.value = null;
     await load();
   } catch (err) {
@@ -98,7 +110,7 @@ async function confirmReject(): Promise<void> {
   busy.value = true;
   try {
     const result = await adminApi.rejectJoin(item.requestId, rejectReason.value);
-    notice.value = `${result.message}（${item.userId}）`;
+    notice.value = `${result.message}（${applicantLabel(item)}）`;
     rejectTarget.value = null;
     await load();
   } catch (err) {
@@ -128,7 +140,7 @@ function formatTime(value: string): string {
       <select id="group-filter" v-model="groupFilter" @change="goto(1)">
         <option value="">（我够权限的全部群）</option>
         <option v-for="groupId in groupOptions" :key="groupId" :value="groupId">
-          {{ groupId }}
+          {{ groupLabel(groupId) }}
         </option>
       </select>
       <button type="button" class="link" :disabled="loading" @click="load">
@@ -149,15 +161,18 @@ function formatTime(value: string): string {
         <div class="row">
           <div class="row-main">
             <div class="row-title">
-              <code>{{ item.groupId }}</code>
+              <!-- `EntityLabel` 的实体属性名叫 `entity`：Vue 3 把 `ref` 当保留属性，`:ref` 传不进去 -->
+              <EntityLabel :entity="item.group" :fallback="item.groupId" />
               <span class="hint">{{ formatTime(item.createdAt) }}</span>
             </div>
             <div class="hint">
-              申请人 <code>{{ item.userId }}</code>
+              申请人 <EntityLabel :entity="item.applicant" :fallback="item.userId" />
               <span v-if="item.reason"> · 理由：{{ item.reason }}</span>
               <span v-else> · 未填写理由</span>
             </div>
-            <div class="hint">申请 ID <code>{{ item.requestId }}</code></div>
+            <div class="hint">
+              申请 <EntityLabel :entity="item.request" :fallback="item.requestId" />
+            </div>
           </div>
           <div class="row-actions">
             <button
@@ -206,8 +221,8 @@ function formatTime(value: string): string {
       @confirm="confirmApprove"
     >
       <p v-if="approveTarget" class="hint">
-        申请人 <code>{{ approveTarget.userId }}</code> · 群
-        <code>{{ approveTarget.groupId }}</code>
+        申请人 <EntityLabel :entity="approveTarget.applicant" :fallback="approveTarget.userId" /> · 群
+        <EntityLabel :entity="approveTarget.group" :fallback="approveTarget.groupId" />
       </p>
       <p class="hint">
         会先调官方审批接口，成功后才改本地状态；群里没有任何回执。
@@ -224,8 +239,8 @@ function formatTime(value: string): string {
       @confirm="confirmReject"
     >
       <p v-if="rejectTarget" class="hint">
-        申请人 <code>{{ rejectTarget.userId }}</code> · 群
-        <code>{{ rejectTarget.groupId }}</code>
+        申请人 <EntityLabel :entity="rejectTarget.applicant" :fallback="rejectTarget.userId" /> · 群
+        <EntityLabel :entity="rejectTarget.group" :fallback="rejectTarget.groupId" />
       </p>
       <label for="reject-reason">拒绝理由（留空 = 用默认文案）</label>
       <input

@@ -8,6 +8,7 @@ import DashboardView from "@/views/DashboardView.vue";
 import LoginView from "@/views/LoginView.vue";
 import PendingView from "@/views/PendingView.vue";
 import RulesView from "@/views/RulesView.vue";
+import SettingsView from "@/views/SettingsView.vue";
 import StatusView from "@/views/StatusView.vue";
 
 /**
@@ -25,6 +26,7 @@ export const router = createRouter({
     { path: "/rules", name: "rules", component: RulesView },
     { path: "/activities", name: "activities", component: ActivitiesView },
     { path: "/status", name: "status", component: StatusView },
+    { path: "/settings", name: "settings", component: SettingsView },
     { path: "/login", name: "login", component: LoginView },
     { path: "/:pathMatch(.*)*", name: "not-found", redirect: "/" },
   ],

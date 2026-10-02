@@ -15,6 +15,20 @@ const CONFIG = loadAdminApiConfig({
   ADMIN_API_SESSION_SECRET: "p".repeat(40),
 });
 
+/**
+ * 群展示信息的期望值：`describePermissions` 会给每个群附一份 `AdminApiEntityRef`。
+ *
+ * 这里**不传解析器**，口径就是「官方 id 自己当展示文本」；真值解析（群号 / 短码）
+ * 由 `test/adminApiEntityRef.test.ts` 与 `test/adminApiBackend.test.ts` 覆盖。
+ */
+function groupRef(groupId: string): {
+  kind: "group";
+  officialId: string;
+  label: string;
+} {
+  return { kind: "group", officialId: groupId, label: groupId };
+}
+
 function memoryTokens(): AdminTokenRepository {
   let issued = 0;
   return {
@@ -46,8 +60,8 @@ describe("describePermissions", () => {
     expect(view.platformLevel).toBe(240);
     // 平台 240 折算成群内 140（本群超管）
     expect(view.groups).toEqual([
-      { groupId: "g1", level: 140 },
-      { groupId: "g2", level: 140 },
+      { groupId: "g1", level: 140, group: groupRef("g1") },
+      { groupId: "g2", level: 140, group: groupRef("g2") },
     ]);
   });
 
@@ -59,7 +73,9 @@ describe("describePermissions", () => {
     const view = describePermissions(permissions, "admin", ["g1", "g2"]);
 
     expect(view.platformLevel).toBe(0);
-    expect(view.groups).toEqual([{ groupId: "g1", level: 130 }]);
+    expect(view.groups).toEqual([
+      { groupId: "g1", level: 130, group: groupRef("g1") },
+    ]);
   });
 
   it("普通成员：没有任何权限", () => {

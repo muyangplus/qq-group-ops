@@ -103,6 +103,8 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
 
     for (const endpoint of [
       "/api/status",
+      "/api/tasks",
+      "/api/settings",
       "/api/pending",
       "/api/audit",
       "/api/rules",
@@ -110,11 +112,12 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     ]) {
       expect(source, `缺少端点 ${endpoint}`).toContain(endpoint);
     }
-    // 写端点：审批 / 拒绝 / 活动状态（动作拼在路径尾）
+    // 写端点：审批 / 拒绝 / 活动状态（动作拼在路径尾）/ 恢复配置默认值
     expect(source).toContain("/approve");
     expect(source).toContain("/reject");
     expect(source).toContain("/api/activities/");
     expect(source).toContain("AdminApiActivityAction");
+    expect(source).toContain("clearSetting");
   });
 
   it("待审批页：列表 + 二次确认弹窗 + 按 130 禁用按钮", () => {
@@ -133,9 +136,24 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     const app = read("App.vue");
 
     expect(view).toContain("adminApi.status");
+    // 周期任务监测（/api/tasks）挂在同一个平台级页面上
+    expect(view).toContain("adminApi.tasks");
     expect(view).toContain("session.isSuperAdmin");
     // 导航里的「状态」入口同样只在超管时出现
     expect(app).toContain('v-if="session.isSuperAdmin"');
+  });
+
+  it("配置页：只有热改项可写，`.env` 只读；同样只给平台超管", () => {
+    const view = read("views/SettingsView.vue");
+    const app = read("App.vue");
+
+    expect(view).toContain("adminApi.settings");
+    expect(view).toContain("adminApi.updateSetting");
+    expect(view).toContain("adminApi.clearSetting");
+    expect(view).toContain("session.isSuperAdmin");
+    // 密钥类不回显：页面上必须明说
+    expect(view).toContain("已配置");
+    expect(app).toContain("settings");
   });
 
   it("路由表已挂上已落地的页面", () => {
@@ -148,6 +166,7 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
       "RulesView",
       "ActivitiesView",
       "StatusView",
+      "SettingsView",
       "LoginView",
     ]) {
       expect(source).toContain(view);

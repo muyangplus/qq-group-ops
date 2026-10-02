@@ -8,8 +8,8 @@
 export class AdminApiRequestError extends Error {
   public constructor(
     /** 直接返回给调用方的 HTTP 状态码。 */
-    public readonly statusCode: 400 | 403 | 404 | 409,
-    /** 机器可读的错误码（`forbidden` / `bad_request` / `not_found` / `conflict`）。 */
+    public readonly statusCode: 400 | 403 | 404 | 409 | 503,
+    /** 机器可读的错误码（`forbidden` / `bad_request` / `not_found` / `conflict` / `unavailable`）。 */
     public readonly errorCode: string,
     message: string,
   ) {
@@ -36,4 +36,9 @@ export function notFound(message: string): AdminApiRequestError {
 /** 状态冲突（409）：例如别人已经处理过这条申请。 */
 export function conflict(message: string): AdminApiRequestError {
   return new AdminApiRequestError(409, "conflict", message);
+}
+
+/** 本进程没有这项能力（503）：例如只读巡检进程里没有内存态配置存储。 */
+export function unavailable(message: string): AdminApiRequestError {
+  return new AdminApiRequestError(503, "unavailable", message);
 }

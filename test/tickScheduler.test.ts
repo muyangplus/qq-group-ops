@@ -212,6 +212,75 @@ describe("TickScheduler", () => {
     expect(started).toBe(1);
   });
 
+  it("快照：给出每个任务的上次/下次执行与降级状态（只读，不触发任务）", async () => {
+    const { scheduler, advance } = create();
+    let enabled = true;
+    const runs: string[] = [];
+    scheduler.register({
+      name: "fast",
+      run: () => {
+        runs.push("fast");
+      },
+    });
+    scheduler.register({
+      name: "slow",
+      minIntervalMs: 10_000,
+      run: () => {
+        runs.push("slow");
+      },
+    });
+    scheduler.register({
+      name: "degraded",
+      enabled: () => enabled,
+      run: () => {
+        runs.push("degraded");
+      },
+    });
+    scheduler.start();
+
+    // 还没跑过：没有上次执行时间
+    const before = scheduler.snapshot();
+    expect(before.intervalMs).toBe(1_000);
+    expect(before.started).toBe(true);
+    expect(before.tasks.map((task) => task.name)).toEqual([
+      "fast",
+      "slow",
+      "degraded",
+    ]);
+    expect(before.tasks.every((task) => task.lastRunAt === undefined)).toBe(true);
+
+    await scheduler.runOnce();
+    expect(runs).toEqual(["fast", "slow", "degraded"]);
+
+    // 打开 / 关闭降级闸门都如实反映（快照本身不该触发任务）
+    enabled = false;
+    advance(1_000);
+    const after = scheduler.snapshot();
+    const byName = new Map(after.tasks.map((task) => [task.name, task]));
+    expect(byName.get("fast")).toMatchObject({
+      minIntervalMs: 0,
+      enabled: true,
+      lastRunAt: new Date(0).toISOString(),
+    });
+    expect(byName.get("slow")?.minIntervalMs).toBe(10_000);
+    // 下一轮扫描在 now + intervalMs（= 2000）；slow 自己还没到点（0 + 10s），两者取较晚者
+    expect(byName.get("slow")?.nextRunAt).toBe(new Date(10_000).toISOString());
+    expect(byName.get("fast")?.nextRunAt).toBe(new Date(2_000).toISOString());
+    expect(byName.get("degraded")?.enabled).toBe(false);
+    expect(runs).toEqual(["fast", "slow", "degraded"]);
+  });
+
+  it("快照：调度器停着（SCAN_INTERVAL_MS=0）时 started=false 且没有下次时间", () => {
+    const { scheduler } = create(0);
+    scheduler.register({ name: "retention", minIntervalMs: 60_000, run: () => undefined });
+
+    const state = scheduler.snapshot();
+
+    expect(state.intervalMs).toBe(0);
+    expect(state.started).toBe(false);
+    expect(state.tasks[0]?.nextRunAt).toBeUndefined();
+  });
+
   it("待审批 TTL 任务：每轮检查，过期申请立刻从 /pending 消失", async () => {
     const auditLog = new JoinAuditService();
     auditLog.submit("g1", "u1", "待审批", "pending");

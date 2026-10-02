@@ -20,7 +20,15 @@ import type { JoinAuditService, JoinRequest } from "../services/joinAudit.js";
 import { NOTIFY_TOPIC_META } from "../services/notifyTopics.js";
 import type { PermissionService } from "../services/permissions.js";
 import type { ShortCodeService } from "../services/shortCodes.js";
-import { badRequest, conflict, forbidden, notFound } from "./errors.js";
+import type { TickSchedulerState } from "../services/tickScheduler.js";
+import type { DeployControl } from "../services/deployWatcher.js";
+import type { PlatformSettingsStore } from "../services/platformSettings.js";
+import { badRequest, conflict, forbidden, notFound, unavailable } from "./errors.js";
+import {
+  createAdminApiEntities,
+  type AdminApiEntities,
+} from "./entityRef.js";
+import { buildSettingsView, toSettingItem } from "./settings.js";
 import {
   describePermissions,
   type AdminApiPermissionsView,
@@ -34,6 +42,8 @@ import type {
   AdminApiReaders,
   AdminApiRulesView,
   AdminApiStatusExtra,
+  AdminApiSettingsView,
+  AdminApiTasksView,
   AdminApiWriters,
 } from "./server.js";
 
@@ -56,6 +66,29 @@ export interface AdminApiBackendDeps {
   groupSettings?: GroupSettingsRepository | undefined;
   /** 短码表：写端点接受 `#申请短码` 形式的路径参数。 */
   shortCodes?: ShortCodeService | undefined;
+  /**
+   * 展示层解析器（群号 / QQ号 → 短码 → 截断 id）。
+   *
+   * 不传时列表只回官方 id 自己当展示文本（只读巡检模式、单测里常见），
+   * 传了就按用户口径优先出绑定号，完整长码留给详情行。
+   */
+  entities?: AdminApiEntities | undefined;
+  /**
+   * 周期任务状态的取值函数（`/api/tasks`）。
+   *
+   * 调度器在 `main.ts` 里**晚于运行时创建**（先起监听口、再建调度器），所以这里只能惰性取；
+   * 没装配（只读巡检模式）时 `/api/tasks` 回 503。
+   */
+  tickTasks?: (() => TickSchedulerState | undefined) | undefined;
+  /** 部署监测控制面：把「发现新版本、宽限期内」的状态一并展示在监测列表里。 */
+  deploy?: DeployControl | undefined;
+  /**
+   * 热改配置存储（`/api/settings` 的读写都走它）。
+   *
+   * 这是机器人 `/config` 用的**同一个**入口（校验 → 落库 → 立即生效），
+   * 管理 API 不另造配置通路；没装配（只读巡检模式）时该端点回 503。
+   */
+  platform?: PlatformSettingsStore | undefined;
   /** 数据库类型（`/api/status`）。 */
   database?: string | undefined;
   /** 启动期迁移问题数（`/api/status`）。 */
@@ -68,6 +101,10 @@ export interface AdminApiBackend extends AdminApiReaders, AdminApiWriters {
   status(): Promise<AdminApiStatusExtra>;
   audit(): Promise<AdminApiAuditRecord[]>;
   permissionsOf(userId: string): Promise<AdminApiPermissionsView>;
+  /** 周期任务监测（`/api/tasks`）；没有调度器时返回 `undefined` → 端点回 503。 */
+  tasks(): AdminApiTasksView | undefined;
+  /** 配置视图（`/api/settings`）；没有内存态配置存储时返回 `undefined` → 端点回 503。 */
+  settings(): AdminApiSettingsView | undefined;
   /** 只读权限被拒时写一条审计（E1-g / E1-b 第 9 条）。 */
   auditDenied(input: AdminApiDeniedInput): void;
 }
@@ -93,6 +130,8 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     action: string;
     status: AuditStatus;
     reason: string;
+    /** 操作对象（审批的申请人等）：写进 `target_user_id`，后台「审计」页才有「操作对象」列。 */
+    targetUserId?: string | undefined;
   }): void => {
     deps.auditLog.append({
       recordId: randomUUID(),
@@ -101,8 +140,29 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
       action: input.action,
       status: input.status,
       reason: input.reason,
+      ...(input.targetUserId !== undefined
+        ? { targetUserId: input.targetUserId }
+        : {}),
       createdAt: now(),
     });
+  };
+
+  /**
+   * 展示层解析器：没注入就退回「官方 id 自己当文本（过长则截断）」。
+   *
+   * 兜底那支是给只读巡检模式与单测用的（它们可能没有绑定表/短码表），
+   * 保证任何情况下都不会因为「查不到展示名」而少返回字段。
+   */
+  const entities: AdminApiEntities =
+    deps.entities ?? createAdminApiEntities();
+
+  /** 热改配置存储：没装配就明确回 503（只读巡检进程没有内存态配置）。 */
+  const requirePlatform = (): PlatformSettingsStore => {
+    const platform = deps.platform;
+    if (!platform) {
+      throw unavailable("本进程没有内存态配置存储：请用机器人进程内的管理监听口改配置。");
+    }
+    return platform;
   };
 
   const requireGroupAdmin = (
@@ -184,6 +244,7 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
       ...(activity.capacity !== undefined ? { capacity: activity.capacity } : {}),
       registered: deps.activity.listRegistrations(activity.activityId).length,
       createdAt: activity.createdAt.toISOString(),
+      group: entities.group(activity.groupId),
     };
   };
 
@@ -207,6 +268,16 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
           status: record.status,
           reason: record.reason,
           createdAt: record.createdAt.toISOString(),
+          group: entities.group(record.groupId),
+          // 操作人可能是机器人自己（actorId = "bot"）或机器令牌（`machine:xxx`），
+          // 它们没有绑定号也没有短码，展示层会自动退回截断后的 id。
+          actor: entities.user(record.actorId),
+          ...(record.targetUserId !== undefined
+            ? {
+                targetUserId: record.targetUserId,
+                target: entities.user(record.targetUserId),
+              }
+            : {}),
         })),
 
     pending: async (): Promise<AdminApiPendingItem[]> =>
@@ -218,6 +289,9 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
           userId: request.userId,
           reason: request.reason,
           createdAt: request.createdAt.toISOString(),
+          group: entities.group(request.groupId),
+          applicant: entities.user(request.userId),
+          request: entities.request(request.requestId),
         })),
 
     rules: async (groupId: string): Promise<AdminApiRulesView> => {
@@ -231,6 +305,7 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         : [];
       return {
         groupId,
+        group: entities.group(groupId),
         override:
           (override as unknown as Record<string, unknown> | undefined) ?? null,
         settings,
@@ -256,7 +331,35 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         ...deps.permissions.listModeratedGroups(userId),
         ...deps.configStore.listOverrideSummaries().map((row) => row.groupId),
       ]);
-      return describePermissions(deps.permissions, userId, [...groupIds]);
+      return describePermissions(deps.permissions, userId, [...groupIds], entities);
+    },
+
+    tasks: (): AdminApiTasksView | undefined => {
+      const state = deps.tickTasks?.();
+      if (!state) {
+        return undefined;
+      }
+      const pending = deps.deploy?.pending();
+      return {
+        intervalMs: state.intervalMs,
+        started: state.started,
+        tasks: state.tasks,
+        ...(pending !== undefined
+          ? {
+              deploy: {
+                targetVersion: pending.targetVersion,
+                currentVersion: pending.currentVersion,
+                detectedAt: pending.detectedAt,
+                deadlineAt: pending.deadlineAt,
+              },
+            }
+          : {}),
+      };
+    },
+
+    settings: (): AdminApiSettingsView | undefined => {
+      const platform = deps.platform;
+      return platform ? buildSettingsView(platform) : undefined;
     },
 
     auditDenied: (input: AdminApiDeniedInput): void => {
@@ -291,6 +394,7 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         action: "admin_api:approve_join",
         status: AuditStatus.Executed,
         reason: `来源=管理后台 申请=${request.requestId}`,
+        targetUserId: request.userId,
       });
       log.info("admin api approved join request", {
         groupId: request.groupId,
@@ -322,6 +426,7 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         reason: `来源=管理后台 申请=${request.requestId}${
           trimmed.length > 0 ? ` 理由=${trimmed}` : ""
         }`,
+        targetUserId: request.userId,
       });
       log.info("admin api rejected join request", {
         groupId: request.groupId,
@@ -455,6 +560,64 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         rows,
         full: options.full,
       };
+    },
+
+    updateSetting: async (key, value, actorId) => {
+      requireGlobalSuperAdmin(actorId, "改平台配置");
+      const platform = requirePlatform();
+      const trimmed = key.trim();
+      const before = platform.valueOf(trimmed);
+      const result = await platform.set(trimmed, value);
+      if (!result.ok) {
+        // 校验失败（键名不存在 / 值不合法）：不写审计、不落库，把中文原因回给界面
+        throw badRequest(result.error);
+      }
+      const item = toSettingItem(result.view);
+      appendAudit({
+        groupId: "",
+        actorId,
+        action: "admin_api:setting_update",
+        status: AuditStatus.Executed,
+        reason:
+          before === undefined
+            ? `配置 ${item.key} = ${item.display}`
+            : `配置 ${item.key}：${String(before)} → ${item.display}`,
+      });
+      log.info("admin api updated platform setting", {
+        key: item.key,
+        actorId,
+        source: item.source,
+      });
+      return item;
+    },
+
+    clearSetting: async (key, actorId) => {
+      requireGlobalSuperAdmin(actorId, "恢复平台配置");
+      const platform = requirePlatform();
+      const trimmed = key.trim();
+      const cleared = await platform.clear(trimmed);
+      if (!cleared.ok) {
+        throw badRequest(cleared.error ?? "恢复默认值失败。");
+      }
+      const view = platform
+        .list()
+        .find((item) => item.definition.key === trimmed);
+      if (!view) {
+        throw badRequest(`没有叫「${trimmed}」的可改配置项`);
+      }
+      const item = toSettingItem(view);
+      appendAudit({
+        groupId: "",
+        actorId,
+        action: "admin_api:setting_clear",
+        status: AuditStatus.Executed,
+        reason: `配置 ${item.key} 恢复 .env 默认值（现为 ${item.display}）`,
+      });
+      log.info("admin api cleared platform setting", {
+        key: item.key,
+        actorId,
+      });
+      return item;
     },
   };
 }

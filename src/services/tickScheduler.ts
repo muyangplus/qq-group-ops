@@ -39,6 +39,38 @@ export interface TickSchedulerOptions {
 }
 
 /**
+ * 一个周期任务的**当前状态**（给管理后台的「监测」页看）。
+ *
+ * 口径：全部按「调用这一刻」的实际取值算 —— `minIntervalMs` / `enabled` 都可能是热配置或
+ * 依赖模块健康度，缓存一份旧的只会误导排查。
+ */
+export interface TickTaskState {
+  name: string;
+  /** 自己的工作间隔（毫秒）；`<= 0` = 每轮都跑。 */
+  minIntervalMs: number;
+  /** 启动时那一次是否也跑。 */
+  runOnStart: boolean;
+  /** 依赖模块是否可用（`enabled` 闸门）；`false` = 整轮跳过、且不更新上次执行时间。 */
+  enabled: boolean;
+  /** 上次执行时刻（ISO）；从没跑过为 `undefined`。 */
+  lastRunAt: string | undefined;
+  /**
+   * 下次**最早**可能执行的时刻（ISO）：`lastRunAt + minIntervalMs` 与「下一轮扫描」取较晚者；
+   * 每轮都跑的任务就是下一轮扫描时刻。`minIntervalMs <= 0` 也是下一轮扫描时刻。
+   */
+  nextRunAt: string | undefined;
+}
+
+/** 调度器整体状态（周期任务监测列表的头部）。 */
+export interface TickSchedulerState {
+  /** 统一扫描周期（毫秒）；`<= 0` = 所有周期任务都停着。 */
+  intervalMs: number;
+  /** 定时器是否在跑（`SCAN_INTERVAL_MS` 为 0 时是 false）。 */
+  started: boolean;
+  tasks: TickTaskState[];
+}
+
+/**
  * 统一计时任务调度器：**全项目只跑一个定时器**。
  *
  * 设计要点（用户口径：一个扫描周期配置驱动所有周期检查）：
@@ -92,6 +124,43 @@ export class TickScheduler {
 
   public get started(): boolean {
     return this.running;
+  }
+
+  /**
+   * 当前状态快照（管理后台「周期任务监测」用）。
+   *
+   * 只读、无副作用：不触发任何任务，也不改 `lastRun`。所有值都按**调用这一刻**取，
+   * 免得把「热配置改过 / 模块刚降级」的状态缓存成旧值误导排查。
+   */
+  public snapshot(now: number = this.clock()): TickSchedulerState {
+    const intervalMs = valueOf(this.intervalMs);
+    // 下一轮扫描：定时器在跑就按当前节拍推，停着就没有「下次」
+    const nextTick = this.running && intervalMs > 0 ? now + intervalMs : undefined;
+    return {
+      intervalMs,
+      started: this.running,
+      tasks: this.tasks.map((task) => {
+        const min = Math.max(0, valueOf(task.minIntervalMs ?? 0));
+        const lastRun = this.lastRun.get(task.name);
+        const dueAt =
+          lastRun !== undefined && min > 0 ? lastRun + min : undefined;
+        const next =
+          dueAt === undefined
+            ? nextTick
+            : nextTick === undefined
+              ? dueAt
+              : Math.max(dueAt, nextTick);
+        return {
+          name: task.name,
+          minIntervalMs: min,
+          runOnStart: task.runOnStart !== false,
+          enabled: task.enabled ? task.enabled() : true,
+          lastRunAt:
+            lastRun === undefined ? undefined : new Date(lastRun).toISOString(),
+          nextRunAt: next === undefined ? undefined : new Date(next).toISOString(),
+        };
+      }),
+    };
   }
 
   /**

@@ -7,6 +7,7 @@ import {
   type AdminApiActivityItem,
 } from "@/api/admin";
 import { ApiError } from "@/api/client";
+import EntityLabel from "@/components/EntityLabel.vue";
 import { GROUP_ADMIN_LEVEL, useSessionStore } from "@/stores/session";
 
 /**
@@ -35,6 +36,11 @@ const groupOptions = computed(() =>
 const totalPages = computed(() =>
   Math.max(1, Math.ceil(total.value / pageSize.value)),
 );
+
+/** 群下拉的**展示文本**；`option` 的 `value` 仍是内部 `groupId`（过滤器要发给后端）。 */
+function groupLabel(groupId: string): string {
+  return session.groupLabelIn(groupId);
+}
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "草稿",
@@ -109,7 +115,7 @@ function formatTime(value: string): string {
       <select id="activity-group" v-model="groupFilter" @change="goto(1)">
         <option value="">（我够权限的全部群）</option>
         <option v-for="groupId in groupOptions" :key="groupId" :value="groupId">
-          {{ groupId }}
+          {{ groupLabel(groupId) }}
         </option>
       </select>
       <label for="activity-status">状态</label>
@@ -140,7 +146,8 @@ function formatTime(value: string): string {
               <span class="badge">{{ STATUS_LABEL[item.status] ?? item.status }}</span>
             </div>
             <div class="hint">
-              群 <code>{{ item.groupId }}</code> · 报名
+              <!-- `EntityLabel` 的实体属性名叫 `entity`：Vue 3 把 `ref` 当保留属性，`:ref` 传不进去 -->
+              群 <EntityLabel :entity="item.group" :fallback="item.groupId" /> · 报名
               {{ item.registered }}<span v-if="item.capacity"> / {{ item.capacity }}</span>
               · 创建于 {{ formatTime(item.createdAt) }}
             </div>

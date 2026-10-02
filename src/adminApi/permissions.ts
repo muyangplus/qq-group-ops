@@ -1,13 +1,14 @@
 import { PermissionLevel } from "../core/enums.js";
 import type { PermissionRepository } from "../db/permissionRepository.js";
 import { PermissionService } from "../services/permissions.js";
+import type { AdminApiEntities, AdminApiEntityRef } from "./entityRef.js";
 
 /** 管理 API 视角的权限画像（E2-d 用它决定界面显示什么）。 */
 export interface AdminApiPermissionsView {
   /** 平台档：`240` = 全局超管；`0` = 没有平台角色。 */
   platformLevel: number;
   /** 有权限的群（群内档 130/140，或平台档折算后的生效档）。 */
-  groups: Array<{ groupId: string; level: number }>;
+  groups: Array<{ groupId: string; level: number; group: AdminApiEntityRef }>;
 }
 
 /**
@@ -36,18 +37,43 @@ export async function loadAdminApiPermissions(
  *
  * **只列出能真正干事的群**（审核员 120 及以上）：普通成员是 110，列出来只会让界面噪声变大。
  * `groupIds` 由调用方从授权行与群配置里收集（API 进程没有内存态的群列表）。
+ *
+ * `entities` 传了就顺带给出每个群的展示信息（群号 → 短码 → 截断 id），
+ * 前端的选择器/表格据此显示人念得出来的名字；不传时只回官方 id 的自引用。
  */
 export function describePermissions(
   permissions: PermissionService,
   userId: string,
   groupIds: readonly string[],
+  entities?: AdminApiEntities | undefined,
 ): AdminApiPermissionsView {
-  const groups: Array<{ groupId: string; level: number }> = [];
+  const groups: Array<{
+    groupId: string;
+    level: number;
+    group: AdminApiEntityRef;
+  }> = [];
   for (const groupId of [...new Set(groupIds)].sort()) {
     const level = permissions.levelFor(userId, groupId);
     if (level >= PermissionLevel.Moderator) {
-      groups.push({ groupId, level });
+      groups.push({ groupId, level, group: refOfGroup(entities, groupId) });
     }
   }
   return { platformLevel: permissions.globalLevelOf(userId), groups };
+}
+
+/**
+ * 没有解析器时的兜底：官方 id 自己当展示文本（`/auth/me` 在只读巡检模式下
+ * 可能拿不到绑定表，界面至少还能显示完整 id）。
+ */
+function refOfGroup(
+  entities: AdminApiEntities | undefined,
+  groupId: string,
+): AdminApiEntityRef {
+  return (
+    entities?.group(groupId) ?? {
+      kind: "group",
+      officialId: groupId,
+      label: groupId,
+    }
+  );
 }

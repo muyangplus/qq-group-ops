@@ -1,6 +1,8 @@
 import { defineStore } from "pinia";
 
+import type { AdminApiEntityRef } from "@/api/admin";
 import { api, ApiError } from "@/api/client";
+import { groupLabel } from "@/lib/entity";
 
 /**
  * 登录会话与权限画像（E2-a，与机器人同一套两轴模型）。
@@ -12,7 +14,12 @@ export interface AdminPermissions {
   /** 平台档：`240` = 全局超管；`0` = 没有平台角色。 */
   platformLevel: number;
   /** 能真正干事的群（群内档 120 起，或平台档折算后的生效档）。 */
-  groups: Array<{ groupId: string; level: number }>;
+  groups: Array<{
+    groupId: string;
+    level: number;
+    /** 展示信息：群号 → 短码 → 截断 id（老响应 / 巡检模式可能没有）。 */
+    group?: AdminApiEntityRef;
+  }>;
 }
 
 export interface AdminIdentity {
@@ -62,6 +69,20 @@ export const useSessionStore = defineStore("session", {
             (group) => group.groupId === groupId,
           )?.level ?? 0;
         return Math.max(own, folded);
+      };
+    },
+    /**
+     * 某群的展示文本（群号 → 短码 → 完整 id）。
+     *
+     * `/auth/me` 把展示信息一起给了，所以选择器和表格不必自己截断 id；
+     * 老响应缺 `group` 时退回完整 id，至少不显示空白。
+     */
+    groupLabelIn(state): (groupId: string) => string {
+      return (groupId: string): string => {
+        const ref = state.identity?.permissions?.groups.find(
+          (group) => group.groupId === groupId,
+        )?.group;
+        return groupLabel(ref, groupId);
       };
     },
   },

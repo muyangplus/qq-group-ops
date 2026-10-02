@@ -23,6 +23,11 @@ const reviewable = computed(() =>
 const manageable = computed(() =>
   groups.value.filter((group) => group.level >= GROUP_ADMIN_LEVEL),
 );
+
+/** 群的展示文本（群号 → 短码 → 完整 id），内部 `groupId` 只放在 `title` 里备用。 */
+function groupLabel(groupId: string): string {
+  return session.groupLabelIn(groupId);
+}
 </script>
 
 <template>
@@ -45,7 +50,8 @@ const manageable = computed(() =>
           </span>
           <ul v-else class="groups">
             <li v-for="group in manageable" :key="group.groupId">
-              <code>{{ group.groupId }}</code> · 档位 {{ group.level }}
+              <code :title="group.groupId">{{ groupLabel(group.groupId) }}</code> · 档位
+              {{ group.level }}
             </li>
           </ul>
         </dd>

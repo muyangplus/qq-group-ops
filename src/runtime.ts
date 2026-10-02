@@ -95,6 +95,7 @@ import { PrivacyService } from "./services/privacy.js";
 import { AdminApiLinkService } from "./adminApi/loginLink.js";
 import { loadAdminApiConfig, type AdminApiConfig } from "./adminApi/config.js";
 import { createAdminApiBackend } from "./adminApi/backend.js";
+import { createAdminApiEntities } from "./adminApi/entityRef.js";
 import { backupDatabase } from "./services/dbBackup.js";
 import { HealthRegistry } from "./services/health.js";
 import {
@@ -103,6 +104,7 @@ import {
   ShortCodeService,
 } from "./services/shortCodes.js";
 import { TestMenuService } from "./services/testMenu.js";
+import type { TickSchedulerState } from "./services/tickScheduler.js";
 import { UserProfileService } from "./services/userProfiles.js";
 import { ClassAliasService } from "./services/classAliases.js";
 
@@ -225,6 +227,13 @@ export interface RuntimeDependencies {
   onRestartRequested?: RestartRequestHandler | undefined;
   /** 部署监测（新版本自动重启）的控制面；由 `main.ts` 构造后注入。 */
   deploy?: DeployControl | undefined;
+  /**
+   * 周期任务状态的取值函数（管理 API 的 `/api/tasks`）。
+   *
+   * 为什么是函数：调度器在 `main.ts` 里**晚于本运行时创建**（先起监听口、再建调度器），
+   * 所以只能等请求进来时再取。
+   */
+  tickTasks?: (() => TickSchedulerState | undefined) | undefined;
   /** 启动期迁移的非致命问题（`main.ts` 从 persistence 透传，供 `/status proc` 展示）。 */
   migration?: MigrationResult | undefined;
   /** 数据库类型（`sqlite` / `postgres` / `memory`）：管理 API 的 `/api/status` 展示用。 */
@@ -476,6 +485,18 @@ export function createRuntime(
         notificationSubscriptions: repositories.notificationSubscriptions,
         groupSettings: repositories.groupSettings,
         shortCodes,
+        // 展示层（E2-e）：列表/选择器优先出群号与 QQ 号，其次短码，完整长码留给详情行。
+        // 短码**只查不造** —— 列一页审计不该顺手给历史 actor 发码。
+        entities: createAdminApiEntities({
+          qqOf: (userId) => identityMap.getQq(userId),
+          groupNumberOf: (groupId) => identityMap.getGroupNumber(groupId),
+          shortCodeOf: (kind, targetId) =>
+            shortCodes.existingCode(kind, targetId),
+        }),
+        tickTasks: dependencies.tickTasks,
+        deploy: dependencies.deploy,
+        // 配置页（E2-f）：读写都走机器人 `/config` 用的那一套热改存储，不另造通路
+        platform,
         database: dependencies.databaseDriver,
         migrationIssues: dependencies.migration?.issues.length,
       })

@@ -59,7 +59,7 @@ function parseBody(text: string): unknown {
 }
 
 async function request<T>(
-  method: "GET" | "POST" | "PUT",
+  method: "GET" | "POST" | "PUT" | "DELETE",
   path: string,
   body?: unknown,
   options: RequestOptions = {},
@@ -105,4 +105,6 @@ export const api = {
     request<T>("POST", path, body),
   put: <T>(path: string, body?: unknown): Promise<T> =>
     request<T>("PUT", path, body),
+  /** 删除（例如把一项配置恢复成 `.env` 默认值）；同样要带 CSRF 头。 */
+  del: <T>(path: string): Promise<T> => request<T>("DELETE", path),
 };

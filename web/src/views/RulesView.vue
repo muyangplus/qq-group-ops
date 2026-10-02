@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 
 import { adminApi, type AdminApiRulesView } from "@/api/admin";
 import { ApiError } from "@/api/client";
+import EntityLabel from "@/components/EntityLabel.vue";
 import ModalDialog from "@/components/ModalDialog.vue";
 import { GROUP_ADMIN_LEVEL, useSessionStore } from "@/stores/session";
 
@@ -60,6 +61,16 @@ const canEdit = computed(
 const isGlobal = computed(() => groupId.value === "__default__");
 const overrideFields = computed(() =>
   view.value?.override ? Object.keys(view.value.override).sort() : [],
+);
+
+/** 群选择器的展示文本：`__default__` →「全局默认」，其余走群号 → 短码（`value` 仍是内部 id）。 */
+function groupLabel(id: string): string {
+  return id === "__default__" ? "全局默认" : session.groupLabelIn(id);
+}
+
+/** 页面顶部「当前群」的正文文本。 */
+const currentGroupName = computed((): string =>
+  groupId.value === "" ? "" : groupLabel(groupId.value),
 );
 
 async function load(): Promise<void> {
@@ -151,8 +162,9 @@ async function confirmUpdate(): Promise<void> {
     <div class="toolbar">
       <label for="rules-group">群</label>
       <select id="rules-group" v-model="groupId">
-        <option v-for="id in groups" :key="id" :value="id">{{ id }}</option>
-        <option v-if="session.isSuperAdmin" value="__default__">全局规则</option>
+        <!-- 文本是展示名，value 仍是内部 id（`__default__` = 全局默认规则） -->
+        <option v-for="id in groups" :key="id" :value="id">{{ groupLabel(id) }}</option>
+        <option v-if="session.isSuperAdmin" value="__default__">全局默认（平台超管）</option>
       </select>
       <button type="button" class="link" :disabled="loading" @click="load">
         刷新
@@ -161,6 +173,10 @@ async function confirmUpdate(): Promise<void> {
         只读（改规则需要本群群管理员 130{{ isGlobal ? " / 平台超管 240" : "" }}）
       </span>
     </div>
+
+    <p v-if="groupId !== ''" class="hint">
+      当前群 <EntityLabel :entity="view?.group" :fallback="currentGroupName" />
+    </p>
 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="notice" class="ok">{{ notice }}</p>
@@ -230,7 +246,7 @@ async function confirmUpdate(): Promise<void> {
       @confirm="confirmUpdate"
     >
       <p class="hint">
-        {{ groupId }} · 字段 <code>{{ field.trim() }}</code>
+        {{ currentGroupName }} · 字段 <code>{{ field.trim() }}</code>
       </p>
       <p class="diff">
         <span class="before">{{ diff?.before }}</span>

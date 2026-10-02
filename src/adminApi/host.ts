@@ -44,6 +44,8 @@ export async function startAdminApiHost(
     // 管理前台静态资源（默认 web/dist；目录不存在会自动跳过）
     webRoot: config.webDir,
     statusProvider: () => backend.status(),
+    tasksProvider: () => backend.tasks(),
+    settingsProvider: () => backend.settings(),
     auditReader: { list: () => backend.audit() },
     readers: backend,
     writers: backend,

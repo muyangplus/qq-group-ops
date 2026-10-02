@@ -373,3 +373,46 @@ button.chip {
   margin: 0;
   padding-left: 18px;
 }
+
+/* 实体展示（E2-e）：正文出「群号 / QQ号 → 短码」，完整官方长码收进折叠的「详情」里 */
+.entity {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.entity-label {
+  white-space: nowrap;
+}
+
+.entity-details {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.entity-details summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.entity-details dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 10px;
+  margin: 4px 0 0;
+  max-width: 42ch;
+}
+
+.entity-details dt {
+  white-space: nowrap;
+}
+
+.entity-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
