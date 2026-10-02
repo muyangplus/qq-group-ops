@@ -7,8 +7,16 @@
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-10-02
+
 ### 修复
 
+- **两个管理 API 入口抢端口时给出可操作提示**：机器人进程内的监听口（读写）与
+  `pnpm admin:api`（只读巡检）都用 `ADMIN_API_PORT`（默认 8787），同时启动时后起的必然
+  `EADDRINUSE`。以前机器人侧只有一句「监听失败」+「改端口或停掉旧进程」——**看不出端口上现在
+  服务的是谁**（若占着的是只读巡检进程，写操作其实已经 503）；巡检侧则直接把
+  `listen EADDRINUSE` 抛出来退出。现在两侧都按「谁在尝试起」给出结论与下一步，巡检侧失败时
+  还会先关掉连接再退出（退出码 1）。
 - **仓储漏接：`/data` 与管理 API 在真机进程里没装上**：`main.ts` 是按类型逐个列举仓储键
   传给运行时的，漏了 `privacy` 与 `adminTokens`（`Persistence` 接口自己也漏声明白 `privacy`），
   于是 `/data delete|anonymize|export` 报「功能未装配」、`ADMIN_API_ENABLED=true` 也起不来监听口。
