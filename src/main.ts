@@ -26,6 +26,7 @@ import { retryWithBackoff } from "./core/retry.js";
 import { loadEnvFile } from "./env.js";
 import { attachGateway } from "./gatewayRunner.js";
 import { startAdminApiHost, type AdminApiHost } from "./adminApi/host.js";
+import { describeListenFailure } from "./adminApi/listenFailure.js";
 import { connectPersistence, type Persistence } from "./persistence.js";
 import { createRuntime, toRuntimeRepositories, type Runtime } from "./runtime.js";
 import { escapeCardText, renderCard } from "./services/cardTemplate.js";
@@ -954,7 +955,12 @@ async function startAdminApiIfEnabled(
   } catch (error) {
     log.error("管理 API 监听失败（机器人继续运行）", {
       error: error instanceof Error ? error.message : String(error),
-      hint: "端口可能被占用；改 ADMIN_API_PORT 或先停掉旧进程。",
+      hint: describeListenFailure({
+        error,
+        host: source.config.host,
+        port: source.config.port,
+        who: "in-process",
+      }),
     });
     return undefined;
   }

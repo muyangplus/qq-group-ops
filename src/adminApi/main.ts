@@ -7,6 +7,7 @@ import { loadEnvFile } from "../env.js";
 import { connectPersistence } from "../persistence.js";
 import { buildNotifyTopicViews } from "./backend.js";
 import { adminLoginUrl, loadAdminApiConfig } from "./config.js";
+import { describeListenFailure } from "./listenFailure.js";
 import {
   describePermissions,
   loadAdminApiPermissions,
@@ -183,7 +184,23 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
-  await server.app.listen({ host: config.host, port: config.port });
+  // 监听失败要说清「谁占了端口、写操作还能不能用」，别只丢一句 EADDRINUSE 就退出
+  try {
+    await server.app.listen({ host: config.host, port: config.port });
+  } catch (error) {
+    log.error("管理 API 监听失败，已退出", {
+      error: error instanceof Error ? error.message : String(error),
+      hint: describeListenFailure({
+        error,
+        host: config.host,
+        port: config.port,
+        who: "inspect",
+      }),
+    });
+    await shutdown("listen-failed");
+    process.exitCode = 1;
+    return;
+  }
   log.info("admin api listening", {
     host: config.host,
     port: config.port,
