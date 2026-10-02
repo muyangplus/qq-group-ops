@@ -132,10 +132,11 @@ rand := strings.NewReader(seed[:ed25519.SeedSize])    // 取前 32 字节
 `webhook url validation answered` / `webhook request rejected: bad signature` 一起发出来 ——
 派生算法与握手签名内容都固定按官方实现（`WEBHOOK_KEY_DERIVATION` / `WEBHOOK_SIGN_CONTENT` 两个逃生舱已删除）。
 
-## 管理 API 进程（`pnpm admin:api`）
+## 管理 API（`ADMIN_API_ENABLED`）
 
-与机器人**分开**的一个进程，默认**关闭**、默认只监听 `127.0.0.1`（设计与认证见 [ADMIN-API.md](./ADMIN-API.md)，
-配置项见 [CONFIGURATION.md](./CONFIGURATION.md) 的「管理 API」一节）。开启与部署：
+**默认关闭**；打开后它是**机器人进程内的第二个 Fastify 监听口**（默认 `127.0.0.1:8787`），
+与 webhook 端口互不相干，所以「webhook 必须对外」与「管理面只在回环」可以同时成立。
+设计与认证见 [ADMIN-API.md](./ADMIN-API.md)，配置项见 [CONFIGURATION.md](./CONFIGURATION.md) 的「管理 API」一节。
 
 ```bash
 # .env
@@ -145,50 +146,24 @@ ADMIN_API_PORT=8787
 ADMIN_API_SESSION_SECRET=<32 字符以上的随机串>
 ADMIN_API_PUBLIC_BASE_URL=https://ops.example.com
 ADMIN_API_COOKIE_SECURE=true  # 挂了 TLS 反代才开
+```
 
-pnpm build && pnpm admin:api   # 启动（CD 产物已含 dist/，无需重新构建）
+**不需要第二个进程单元** —— 端口随机器人一起起停。systemd / compose 都不用改，
+只要 `.env` 里有上面几项、并且机器人连了数据库（`DATABASE_URL=memory` 时没有令牌表，
+监听口会被跳过并记一条 `管理 API 已开启但没有数据库，跳过监听口`）：
+
+```bash
+pnpm build && pnpm start            # 机器人起，管理 API 的监听口跟着起
 curl -s http://127.0.0.1:8787/healthz   # 健康检查：{"ok":true,"version":…}
 ```
 
-systemd（与机器人服务并列，两个 unit 各管一个进程）：
+- 端口被占用只记 `管理 API 监听失败（机器人继续运行）` 并继续跑机器人 —— 管理面是旁路能力，
+  不该拖垮收消息；改 `ADMIN_API_PORT` 或先停掉旧进程；
+- `node dist/main.js --check`（启动自检）**不占端口**：自检只做初始化。
 
-```ini
-# /etc/systemd/system/qqops-admin-api.service
-[Unit]
-Description=qq-group-ops admin API
-After=network.target
-
-[Service]
-Type=simple
-User=qqops
-WorkingDirectory=/opt/qq-group-ops
-EnvironmentFile=/opt/qq-group-ops/.env
-ExecStart=/usr/bin/node dist/adminApi/main.js
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-docker compose（同一份镜像，换入口；与机器人 service 共用 `.env` 与数据卷）：
-
-```yaml
-services:
-  bot:
-    build: .
-    command: node dist/main.js
-    env_file: .env
-    volumes: ["./data:/app/data"]
-    restart: unless-stopped
-  admin-api:
-    build: .
-    command: node dist/adminApi/main.js
-    env_file: .env
-    volumes: ["./data:/app/data"]
-    ports: ["127.0.0.1:8787:8787"]   # 只发布到宿主机回环
-    restart: unless-stopped
-```
+`pnpm admin:api`（`dist/adminApi/main.js`）是**只读巡检入口**：独立进程、只读仓储，
+适合「不想重启机器人、只想看状态 / 审计」的场景；它不装配写端点（审批 / 规则 / 活动 / 导出
+一律回 503），写操作一律走机器人进程内那个监听口。
 
 反向代理只需要转发一个前缀（同源部署时管理后台的静态资源也走这里）：
 
@@ -205,13 +180,22 @@ location / {
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| `/healthz` 连不上 | `ADMIN_API_ENABLED` 没开、进程没起、或端口被占用（看启动日志 `admin api listening`） |
+| `/healthz` 连不上 | `ADMIN_API_ENABLED` 没开、端口被占用、或纯内存模式（看启动日志 `admin api listening (in-process)` / `管理 API 监听失败`） |
 | 登录 401 `invalid_token` | 令牌已用过 / 超过 10 分钟 TTL / 复制时漏字符 —— 重新 `/admin login` 或 `pnpm admin:token --user=<openid>` |
 | 登录 403 `csrf` | 页面之外的调用忘了带 `X-Admin-Request: 1` |
+| 写端点 503 `unavailable` | 连到了只读巡检模式（`pnpm admin:api`）的端口；改用机器人进程内的监听口 |
+| 写端点 403 `forbidden` | 该操作要的权限不够（审批 / 规则 / 活动要**本群群管理员 130**，全局规则要**平台超管 240**；`/api/audit` 里也有一条 `admin_api:denied`） |
+| 写端点 409 `conflict` | 这条入群申请已经被别人处理过（群管理后台 / 另一位管理员） |
 | 429 `rate_limited` | 兑换端点每分钟 10 次、会话每分钟 `ADMIN_API_RATE_LIMIT_PER_MINUTE`（默认 60） |
-| 接口 503 | 管理 API 连着内存模式（没有数据库），或该数据源未装配 |
-| 想立刻踢掉所有人 | 换 `ADMIN_API_SESSION_SECRET` 并重启管理 API（会话与 cookie 签名一起失效） |
+| 接口 503 | 连着内存模式（没有数据库），或该数据源未装配 |
+| 想立刻踢掉所有人 | 重启机器人（会话只在内存里）或换 `ADMIN_API_SESSION_SECRET` |
 
+## 活动卡片（§B3）
+
+活动卡片是 Markdown + 内嵌按钮，与入群申请共用三级降级（富消息 → 纯文本 → 回执）。
+**成员卡**（发到群里的那张）：
+
+```text
 ## 迎新晚会
 材料学院迎新联欢，欢迎参加。
 

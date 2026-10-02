@@ -856,8 +856,10 @@ pnpm db:up     # docker compose --profile postgres up -d db
 
 ## 管理 API（E1，默认关闭）
 
-与机器人**分开**的进程（`pnpm admin:api`），认证是「机器人私信一次性令牌 + 会话 cookie」，
-只用 `.env` 配置、**不进 `/config` 热改**（核心安全项）。设计见 [ADMIN-API.md](./ADMIN-API.md)。
+默认关闭；开启后是**机器人进程内的第二个回环监听口**（默认 `127.0.0.1:8787`，不占 webhook 端口，
+也不需要第二个进程单元）。认证是「机器人私信一次性令牌 + 会话 cookie」，只用 `.env` 配置、
+**不进 `/config` 热改**（核心安全项）。`pnpm admin:api` 是只读巡检入口（写端点回 503）。
+设计见 [ADMIN-API.md](./ADMIN-API.md)，部署与排障见 [OPERATIONS.md](./OPERATIONS.md)。
 
 | 变量 | 必填 | 说明 |
 |---|---|---|

@@ -36,9 +36,10 @@
 ④ POST /auth/token 兑换 → 校验（未用过 + 未过期 + 在有效期内）→ 标记已用 → 种会话 cookie
 ```
 
-**令牌必须落库，不能只放内存**——这是 B2 的关键实现细节：签发方是**机器人进程**或 `pnpm admin:token`
-（CLI），兑换方是**独立的管理 API 进程**，三者是不同进程，内存里互相看不见；
-落库顺带解决了「重启后链接还有效」和「跨进程一次性」这两件事。
+**令牌必须落库，不能只放内存**——这是 B2 的关键实现细节：签发方是**机器人进程**
+（`/admin login`）或 `pnpm admin:token`（CLI），兑换方是**管理 API**
+（E1-d 起通常就是机器人进程内的那个回环监听口，也可以是只读巡检进程），
+内存里互相看不见；落库顺带解决了「重启后链接还有效」和「跨进程一次性」这两件事。
 表：`admin_api_tokens(token_hash PK, user_id, created_at, expires_at, used_at)`，
 `token_hash = sha256(明文令牌)`，兑换时 `used_at IS NULL` 才通过并立刻写下 `used_at`（一次性）。
 
@@ -77,19 +78,31 @@
 `pnpm admin:api`（`src/adminApi/main.ts`）**保留但降级为只读巡检模式**：不注册写端点，
 用于"不想重启机器人、只想看状态 / 审计"的场景；写操作一律走机器人进程里的那个监听口。
 
+**落地形态（E1-d）**：
+
+| 入口 | 进程 | 读端点 | 写端点 | 用在什么时候 |
+|---|---|---|---|---|
+| 机器人内监听口（`ADMIN_API_ENABLED=true`） | 机器人进程，`127.0.0.1:8787` | ✅ 走内存态服务 | ✅ 走领域服务 | 默认；写操作只有这里能做 |
+| `pnpm admin:api` | 独立进程，默认同一个回环地址 | ✅ 直读仓储（没有内存态） | ❌ 回 503 | 机器人不方便重启时的巡检 |
+
+两条都要求数据库：`DATABASE_URL=memory` 时没有令牌表（签不出、兑不了），机器人侧会跳过监听口
+并记一条日志。监听口随机器人一起起停，**不需要第二个 systemd / compose 单元**（见
+[OPERATIONS.md](./OPERATIONS.md)）；端口被占只记错误、不影响机器人收消息。
+
 ## 3. 分阶段计划（与 TODO 的 E1-a…E2-e 一一对应）
 
-> **进度（2026-09-29）**：E1-a 配置 / 会话 / 限流 / 令牌表与仓储 / HTTP 层 ✅；
+> **进度（2026-10-02）**：E1-a 配置 / 会话 / 限流 / 令牌表与仓储 / HTTP 层 ✅；
 > E1-b 身份映射 + `/admin login` + `pnpm admin:token` + `/auth/me` 权限画像 ✅；
-> E1-c 六个只读端点 ✅；E1-e 机器 token ✅；E1-f 可观测与运维文档 ✅；
-> **E1-d 写端点 + 进程模型调整进行中**（同进程第二回环监听口 → 四个写端点）；
+> E1-c 六个只读端点 ✅；E1-d 进程模型（同进程第二回环监听口）+ 四个写端点 ✅；
+> E1-e 机器 token ✅；E1-f 可观测与运维文档 ✅；**E1-g 只读端点的逐路由门槛未做**（见 §3 的 E1-g）；
 > E2-a…e 未开始。逐项勾选见 [../TODO.md](../TODO.md) §2 的 E1 / E2。
 
 ### E1-a 骨架与安全底座（P0）
 
-1. `src/adminApi/`：`main.ts`（进程入口）+ `server.ts`（Fastify 装配）+ `config.ts` / `session.ts` /
-   `rateLimit.ts` / `tokens.ts`（令牌仓储）；`/healthz` 不鉴权，只回 `{ ok, version, uptime }`
-   （不暴露群 / 用户信息）；
+1. `src/adminApi/`：`host.ts`（同进程回环监听口，E1-d）+ `backend.ts`（接到真实服务图的读 + 写后端，
+   E1-d）+ `server.ts`（Fastify 装配）+ `main.ts`（只读巡检进程入口）+ `config.ts` / `session.ts` /
+   `rateLimit.ts` / `errors.ts` / `db/adminTokenRepository.ts`（令牌表仓储）；
+   `/healthz` 不鉴权，只回 `{ ok, version, uptime }`（不暴露群 / 用户信息）；
 2. 配置项进 `.env.example`：`ADMIN_API_ENABLED` / `ADMIN_API_HOST` / `ADMIN_API_PORT` /
    `ADMIN_API_SESSION_SECRET` / `ADMIN_API_COOKIE_SECURE` / `ADMIN_API_PUBLIC_BASE_URL` /
    `ADMIN_API_TOKEN_TTL_MINUTES` / `ADMIN_API_ALLOWED_OPENIDS`（可选）/
@@ -124,36 +137,60 @@
 14. `GET /api/activities` + `GET /api/activities/:code`（名单默认脱敏：不含学号，`?full=1` 需群 130 且写审计）；
 15. `GET /api/notify/topics`：话题门槛与各群订阅计数。
 
-### E1-d 写端点（P2，与 E2 一起做）
+### E1-d 写端点与进程模型（P2，与 E2 一起做）
 
-16. `POST /api/pending/:code/approve`、`POST /api/pending/:code/reject { reason }`（复用 `JoinApprovalService`）；
-17. `PUT /api/rules { group, field, value }`（复用 `parseRuleSetting`，非法值整体拒绝）；
-18. `POST /api/activities/:code/open|close|cancel`；`GET /api/activities/:code/export.csv`（脱敏 + 审计）。
+16. `POST /api/pending/:requestId/approve`、`POST /api/pending/:requestId/reject { reason }`
+    —— 复用 `JoinApprovalService`（先官方接口、后本地状态）；路径参数同时接受完整 `request_id`
+    与 `#申请短码`；申请不存在 → 404，已被别人处理 → 409，越权 → 403（三者都写审计）；
+17. `PUT /api/rules { group, field, value }` —— 复用 `parseRuleSetting`，非法值整体拒绝（400）、
+    不留半套状态；`group = __default__` 写全局规则（要平台超管 240），其余要本群群管理员 130；
+    读端点 `GET /api/rules` 额外给了合并全局默认后的 `effective`（只读巡检模式没有内存态，不提供）；
+18. `POST /api/activities/:code/open|close|cancel`（`ActivityService`）；
+    `GET /api/activities/:code/export.csv` **默认脱敏**（清空学号 / 班级 / 学院），
+    `?full=1` 才带隐私列 —— 两种都要求本群 130 且都写审计，响应带 UTF-8 BOM 便于 Excel 直开；
+19. **进程模型**：管理 API 作为机器人进程内的第二个 Fastify 监听口（`src/adminApi/host.ts`），
+    读写都与指令层共用同一份服务图（`src/adminApi/backend.ts`：审批 / 规则 / 活动都调领域服务，
+    审计读 `auditLog.all()`）；`pnpm admin:api` 降级为只读巡检。
+
+权限判据与指令层**同一口径**（不新造一套）：审批 / 活动 / 群规则要本群 130，全局规则要平台 240；
+越权与「值不合法」都会先写一条 `admin_api:denied` / `admin_api:rule_update`（`status = rejected`）
+再回错，便于事后在 `/api/audit` 里区分「谁试过但没成功」。
 
 ### E1-e 机器调用的 token（P2）
 
-19. **机器调用 token**（与一次性登录令牌分开，长时有效、按 scope 限定）：`ADMIN_API_TOKENS`
+20. **机器调用 token**（与一次性登录令牌分开，长时有效、按 scope 限定）：`ADMIN_API_TOKENS`
     （`token:scope`，如 `read` / `read:pending`，可配过期），`Authorization: Bearer`，
     用 `crypto.timingSafeEqual` 比较，日志里只打 token 前缀。
+    机器令牌可以走写端点（要 `write` scope），审计 actor 记 `machine:<前 8 位>`，**完整令牌不进日志 / 审计**。
 
 ### E1-f 可观测性与运维（P1）
 
-20. 请求日志：结构化一行（路由 / 状态 / 耗时 / actor / requestId），**不打凭据与 cookie**；
-21. `/status proc` 增加「管理 API：启用 / 监听地址 / 当前会话数」；
-22. 部署文档：systemd 与 docker compose 两种单元示例，写进 [OPERATIONS.md](./OPERATIONS.md) / [CD.md](./CD.md)。
+21. 请求日志：结构化一行（路由 / 状态 / 耗时 / actor / requestId），**不打凭据与 cookie**；
+22. **管理 API 的「启用 / 监听地址 / 当前会话数」**：不在 `/status proc`（那是机器人在群里能看到的诊断），
+    而是分散在更合适的三个地方 —— 启用与地址看启动日志 `admin api listening (in-process)` 与
+    `/admin status`；会话数看 `GET /api/status` 的 `sessions`（只有登录后能读到）。写进运维文档；
+23. 部署文档：[OPERATIONS.md](./OPERATIONS.md) 的「管理 API」一节（同进程起停 + 只读巡检 + 排障速查）。
 
-**E1 退出条件**：未登录访问任何 `/api/*` → 401；越权 → 403 且有审计；连续失败登录被锁定；
-写操作全部能在 `/audit` 查到（actor 是登录账号）；`ADMIN_API_ENABLED=false` 时完全不监听端口。
+**E1 退出条件**：未登录访问任何 `/api/*` → 401；越权 → 403 且有审计；
+写操作全部能在 `/api/audit` 查到（actor 是登录账号 / 机器令牌前缀）；`ADMIN_API_ENABLED=false` 时完全不监听端口。
+
+### E1-g 只读端点的逐路由门槛（P1，待做）
+
+24. 现在**会话 = 已登录的管理员**：签发端已经收窄到平台超管（`ADMIN_API_ALLOWED_OPENIDS` 可再收窄），
+    但任何一个登录者都能读全部 `/api/*`。E1-b 第 9 条想要的「每个路由声明门槛、统一前置钩子判定、
+    失败写审计」还没做，做法也已定：`/api/audit` 要平台 240 或「按群过滤 + 本群 130」、
+    `/api/pending` 只回自己够权限的群（240 全量）、`/api/notify/topics` 要平台 240。
+    在补齐之前，**不要把管理 API 登录资格发给不该看全量数据的人**。
 
 ### E2-a…E2-e 管理后台（P3）
 
-23. **E2-a 脚手架**：`web/`（Vite + Vue 3 + TS + vue-router + pinia），`pnpm web:dev` / `pnpm web:build`；
+25. **E2-a 脚手架**：`web/`（Vite + Vue 3 + TS + vue-router + pinia），`pnpm web:dev` / `pnpm web:build`；
     开发期 vite proxy 到管理 API；产物 `web/dist` 不进 `dist/`（CD 默认不发）；
-24. **E2-b 登录与会话**：登录页 + `GET /auth/me` 保持会话，401 自动跳登录；
-25. **E2-c 页面**：状态看板 / 待审批（通过 · 拒绝 + 二次确认）/ 审计查询（过滤 + 分页）/ 规则编辑（字段级，提交前给 diff）/
+26. **E2-b 登录与会话**：登录页 + `GET /auth/me` 保持会话，401 自动跳登录；
+27. **E2-c 页面**：状态看板 / 待审批（通过 · 拒绝 + 二次确认）/ 审计查询（过滤 + 分页）/ 规则编辑（字段级，提交前给 diff）/
     活动列表与开关；
-26. **E2-d 权限呈现**：按登录账号的两轴权限隐藏或禁用入口（**服务端仍然强校验**，前端只做体验）；
-27. **E2-e 交付**：管理 API 静态托管 `web/dist`（同源，省掉 CORS）或独立 nginx；CD 加一步（默认不发）。
+28. **E2-d 权限呈现**：按登录账号的两轴权限隐藏或禁用入口（**服务端仍然强校验**，前端只做体验）；
+29. **E2-e 交付**：管理 API 静态托管 `web/dist`（同源，省掉 CORS）或独立 nginx；CD 加一步（默认不发）。
 
 **E2 退出条件**：能在后台完成一次入群审批、改一个规则字段、并查到对应的审计记录；
 所有入口在权限不足时不可用（且直接调 API 也会被拒）。

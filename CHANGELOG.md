@@ -20,6 +20,18 @@
 
 ### 新增
 
+- **管理 API 写端点（E1-d）**：管理面现在能完成「审批入群 / 改规则 / 开关活动 / 导出名单」四类操作，
+  全部走与指令层**同一个领域服务入口**，因此不存在两份内存态互相覆盖的问题：
+  - `POST /api/pending/:requestId/approve`、`POST /api/pending/:requestId/reject { reason }`
+    （复用入群审批：先官方接口、成功后才改本地状态；路径参数也接受 `#申请短码`）；
+  - `PUT /api/rules { group, field, value }`（复用 `/rules set` 的解析，非法值整体拒绝、不留半套；
+    `group = __default__` 改全局规则）；
+  - `POST /api/activities/:code/open|close|cancel`；
+  - `GET /api/activities/:code/export.csv`：**默认脱敏**（清空学号 / 班级 / 学院），`?full=1` 才带隐私列，
+    带 UTF-8 BOM 便于 Excel 直接打开。
+  权限判据与指令层一致（审批 / 活动 / 群规则要本群群管理员 130，全局规则要平台超管 240），
+  越权（403）、参数非法（400）、对象不存在（404）、已被别人处理（409）都会写一条审计再回错误；
+  每个成功的写操作也留一条 `admin_api:*` 审计（actor = 登录账号，机器令牌记 `machine:<前 8 位>`）。
 - **管理 API 机器令牌（E1-e）**：`ADMIN_API_TOKENS` 配置 `token:scope1|scope2[:到期ISO时间]`
   （`read` / `write` / `*`），请求带 `Authorization: Bearer <token>` 即可调用，按方法校验 scope
   （缺 scope 403），不涉及 cookie 所以不需要 CSRF 头；令牌用常量时间比较、限流按令牌前缀计数。
@@ -28,7 +40,8 @@
   `/admin status` 看管理 API 是否开启。机器人不可用时在服务器终端用
   `pnpm admin:token --user=<openid>` 应急签发。默认只有平台超管（240）能签发，
   可用 `ADMIN_API_ALLOWED_OPENIDS` 收窄；`/help admin` 有完整说明。
-- **管理 API 骨架（E1-a）**：与机器人分开的进程（`pnpm admin:api`，默认关闭、默认只监听 `127.0.0.1`），
+- **管理 API 骨架（E1-a）**：与机器人分开的进程（`pnpm admin:api`，默认关闭、默认只监听 `127.0.0.1`；
+  运行形态后来按 E1-d 改成机器人进程内的回环监听口，见「变更」），
   认证是**机器人私信一次性令牌 + 会话 cookie**：`/admin login`（下一步接线）或 `pnpm admin:token`
   签发的令牌**只存 `sha256`**、一次性（兑换即写 `used_at`）、默认 10 分钟 TTL；兑换后种
   `HttpOnly + SameSite=Strict` 会话 cookie，写操作要 `X-Admin-Request: 1`（CSRF），
@@ -51,6 +64,13 @@
 
 ### 变更
 
+- **管理 API 改成机器人进程内的第二个回环监听口（E1-d）**：打开 `ADMIN_API_ENABLED` 后管理面随机器人
+  一起起停（默认 `127.0.0.1:8787`，不占 webhook 端口，**不需要第二个 systemd / compose 单元**），
+  读写都落在同一份服务图上；端口被占用只记错误、不影响机器人收消息，启动自检（`--check`）不占端口。
+  `pnpm admin:api` 保留但降级为**只读巡检模式**（独立进程、直读仓储，写端点一律回 503），
+  适合「不想重启机器人、只想看状态 / 审计」。
+- **`/data` 匿名化范围补上管理 API 登录令牌**：`admin_api_tokens` 的行也换 `user_id` 并顺手标记为已用
+  （占位 id 兑不出会话）。
 - **入群申请卡的拒绝理由改为自定义**：去掉两个预置拒因按钮（`回答错误` / `班级姓名`），卡片换成
   「同意 / 拒绝 / 自定义理由」三个按钮：
   - 「拒绝」一键按默认文案（`请正确回答问题。`）拒绝，仍带二次确认弹窗；
