@@ -1,6 +1,7 @@
-import { mkdirSync, mkdtempSync, existsSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, rmSync, writeFileSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { describe, expect, it } from "vitest";
 
@@ -65,6 +66,94 @@ describe("dbBackup", () => {
       const result = backupDatabase({ driver: "sqlite", path });
       expect(result.ok).toBe(true);
       expect(result.path).toContain("db_");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * 备份 / 恢复演练（D8-a）：上面那些用例只证明「文件被拷了」，这里证明**拷出来的东西真能恢复**。
+ *
+ * 演练的是**热库**现场（连接没关、WAL 里还有未 checkpoint 的提交）——这正是 `/migrate`
+ * 执行前的真实形态，也是「只拷 `.db`」会踩坑的场景。
+ */
+describe("备份 → 恢复演练（D8-a）", () => {
+  const at = new Date(2026, 8, 29, 12, 0, 0);
+
+  /** 造一个「已 checkpoint 一行 + WAL 里还压着新行」的热库。 */
+  function makeHotDatabase(source: string): DatabaseSync {
+    const db = new DatabaseSync(source);
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, note TEXT)");
+    db.exec("INSERT INTO t (id, note) VALUES (1, '已落盘')");
+    // 强制把上面这次提交并进主库文件，再写一行 —— 新行只存在于 WAL 里
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    db.exec("INSERT INTO t (id, note) VALUES (2, '还在 WAL 里')");
+    return db;
+  }
+
+  it("热库备份后把原库删掉，用备份（.db + -wal）恢复能拿回全部数据", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qqops-restore-"));
+    const source = join(dir, "qq-group-ops.db");
+    try {
+      const db = makeHotDatabase(source);
+      // 连接保持打开：WAL / SHM 还在，这就是备份的真实现场
+      const backup = backupSqliteDatabase(source, at);
+      db.close();
+
+      expect(backup.ok).toBe(true);
+      const backupPath = backup.path!;
+      expect(existsSync(backupPath)).toBe(true);
+      expect(existsSync(`${backupPath}-wal`)).toBe(true);
+
+      // 灾难：原库连 WAL / SHM 一起没了
+      rmSync(source, { force: true });
+      rmSync(`${source}-wal`, { force: true });
+      rmSync(`${source}-shm`, { force: true });
+
+      // 恢复：把备份原样拷回去（OPERATIONS.md 的备份 / 恢复一节就是这个动作）
+      cpSync(backupPath, source);
+      for (const suffix of ["-wal", "-shm"]) {
+        if (existsSync(`${backupPath}${suffix}`)) {
+          cpSync(`${backupPath}${suffix}`, `${source}${suffix}`);
+        }
+      }
+
+      const restored = new DatabaseSync(source);
+      expect(restored.prepare("SELECT id, note FROM t ORDER BY id").all()).toEqual([
+        { id: 1, note: "已落盘" },
+        { id: 2, note: "还在 WAL 里" },
+      ]);
+      expect(restored.prepare("PRAGMA integrity_check").get()).toMatchObject({
+        integrity_check: "ok",
+      });
+      restored.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("只拷 .db 会丢掉还在 WAL 里的提交（所以 -wal 必须一起拷）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qqops-restore-"));
+    const source = join(dir, "qq-group-ops.db");
+    try {
+      const db = makeHotDatabase(source);
+      const backup = backupSqliteDatabase(source, at);
+      db.close();
+      expect(backup.ok).toBe(true);
+
+      // 把备份的 .db **单独**放到一个干净目录：身边没有 -wal，等于「只拷了 .db」
+      const soloDir = join(dir, "solo");
+      mkdirSync(soloDir, { recursive: true });
+      const solo = join(soloDir, "solo.db");
+      cpSync(backup.path!, solo);
+
+      const opened = new DatabaseSync(solo);
+      expect(opened.prepare("SELECT id FROM t ORDER BY id").all()).toEqual([
+        { id: 1 },
+      ]);
+      opened.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
