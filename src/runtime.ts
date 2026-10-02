@@ -516,6 +516,8 @@ export function createRuntime(
         exportService,
         // P2 写：申诉结论要私信申诉人（与指令层同一个 ModerationNotifier）
         moderationNotifier,
+        // P2 写：话题门槛的读写都走 `/notify level` 同一份存储
+        notifyTopics,
         database: dependencies.databaseDriver,
         migrationIssues: dependencies.migration?.issues.length,
       })

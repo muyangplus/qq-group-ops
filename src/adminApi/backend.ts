@@ -41,8 +41,13 @@ import type { JoinAuditService, JoinRequest } from "../services/joinAudit.js";
 import type { JoinRequestSyncService } from "../services/joinAuditSync.js";
 import type { MigrationResult } from "../db/migrate.js";
 import type { ModerationNotifier } from "../services/moderationNotifier.js";
+import type { NotifyTopicLevelStore } from "../services/notifyTopics.js";
+import type { NotifyChannel } from "../services/notifyTopics.js";
 import type { NotificationService } from "../services/notifications.js";
-import { NOTIFY_TOPIC_META } from "../services/notifyTopics.js";
+import {
+  NOTIFY_CHANNELS,
+  NOTIFY_TOPIC_META,
+} from "../services/notifyTopics.js";
 import type { PermissionService } from "../services/permissions.js";
 import type { PunishmentService } from "../services/punishments.js";
 import { readRestartFailure } from "../services/restartNotice.js";
@@ -70,6 +75,8 @@ import type {
   AdminApiDeniedInput,
   AdminApiHealthView,
   AdminApiNotifyTopic,
+  AdminApiNotifyLevelResult,
+  AdminApiNotifyTestResult,
   AdminApiPendingItem,
   AdminApiProfileSummary,
   AdminApiPunishmentItem,
@@ -159,6 +166,8 @@ export interface AdminApiBackendDeps {
   joinSync?: JoinRequestSyncService | undefined;
   /** 申诉结论的私信通道（与指令层同一套 `ModerationNotifier`）。 */
   moderationNotifier?: ModerationNotifier | undefined;
+  /** 通知话题门槛存储（`/api/notify/levels` 的读写都走它，与 `/notify level` 同一份数据）。 */
+  notifyTopics?: NotifyTopicLevelStore | undefined;
   /** 审计导出（`/api/audit/export.csv`，与指令层 `/export audit` 同一实现）。 */
   exportService?: ExportService | undefined;
 }
@@ -398,6 +407,21 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     return service;
   };
 
+  const requireNotifications = (): NotificationService => {
+    const service = deps.notifications;
+    if (!service) {
+      throw unavailable("推送服务未启用（内存模式 / 只读巡检）。");
+    }
+    return service;
+  };
+
+  /** 话题视图（含当前门槛与订阅计数）：`/api/notify/topics` 与写端点返回体共用。 */
+  const notifyTopicViews = async (): Promise<AdminApiNotifyTopic[]> =>
+    buildNotifyTopicViews(
+      (await deps.notificationSubscriptions?.findAll()) ?? [],
+      (topic) => deps.notifications?.topicLevel(topic) ?? 0,
+    );
+
   const requireAppeals = (): AppealService => {
     const service = deps.appeals;
     if (!service) {
@@ -543,10 +567,7 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
       };
     },
 
-    notifyTopics: async () =>
-      buildNotifyTopicViews(
-        (await deps.notificationSubscriptions?.findAll()) ?? [],
-      ),
+    notifyTopics: notifyTopicViews,
 
     activities: async () =>
       deps.activity.listAllActivities().map((activity) => activityItem(activity.activityId)),
@@ -1306,6 +1327,86 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         message,
       };
     },
+
+    setNotifyLevel: async (input) => {
+      requireGlobalSuperAdmin(input.actorId, "改话题门槛");
+      const notifications = requireNotifications();
+      if (!deps.notifyTopics) {
+        throw unavailable(
+          "通知话题门槛存储未装配（内存模式 / 只读巡检）：门槛改不了。",
+        );
+      }
+      const topic = input.topic.trim();
+      if (!isNotifyChannelName(topic)) {
+        throw badRequest(
+          `未知话题：${topic}。可用：${NOTIFY_CHANNELS.join(" / ")}`,
+        );
+      }
+      const before = notifications.topicLevel(topic);
+      try {
+        notifications.setTopicLevel(topic, input.level);
+      } catch (error) {
+        // 数值范围由领域服务判定（与指令层同一套错误文案），原样回给界面
+        throw badRequest(error instanceof Error ? error.message : String(error));
+      }
+      const after = notifications.topicLevel(topic);
+      const message = `已把「${NOTIFY_TOPIC_META[topic].label}」的门槛从 ${describeNotifyLevel(before)} 改为 ${describeNotifyLevel(after)}。`;
+      appendAudit({
+        groupId: "",
+        actorId: input.actorId,
+        action: "admin_api:notify_level",
+        status: AuditStatus.Executed,
+        reason: `话题=${topic} ${before} → ${after}`,
+      });
+      log.info("admin api set notify level", {
+        topic,
+        actorId: input.actorId,
+        before,
+        after,
+      });
+      return { topics: await notifyTopicViews(), message };
+    },
+
+    resetNotifyLevels: async (actorId) => {
+      requireGlobalSuperAdmin(actorId, "恢复话题门槛");
+      const notifications = requireNotifications();
+      notifications.resetTopicLevels();
+      appendAudit({
+        groupId: "",
+        actorId,
+        action: "admin_api:notify_level_reset",
+        status: AuditStatus.Executed,
+        reason: "所有话题门槛恢复默认",
+      });
+      log.info("admin api reset notify levels", { actorId });
+      return {
+        topics: await notifyTopicViews(),
+        message: "所有话题门槛已恢复默认。",
+      };
+    },
+
+    sendNotifyTest: async (input) => {
+      const notifications = requireNotifications();
+      const result = await notifications.sendTestCard(
+        input.userId,
+        input.groupId,
+      );
+      appendAudit({
+        groupId: input.groupId ?? "",
+        actorId: input.userId,
+        action: "admin_api:notify_test",
+        status: result.ok ? AuditStatus.Executed : AuditStatus.Rejected,
+        reason: result.ok ? "给自己发测试卡" : `测试卡发送失败：${truncate(result.text, 100)}`,
+      });
+      return {
+        ok: result.ok,
+        message: result.ok
+          ? input.groupId
+            ? `已把测试卡私信发给你（示例群：${input.groupId}）。`
+            : "已把测试卡私信发给你。"
+          : `测试卡没发出去：${result.text}（先私聊机器人一次，建立会话）`,
+      };
+    },
   };
 }
 
@@ -1328,6 +1429,8 @@ const PUNISH_ACTION_NOTES: Record<
  */
 export function buildNotifyTopicViews(
   rows: readonly { userId: string; scope: string }[],
+  /** 当前生效门槛（`NotificationService.topicLevel`）；不传就只回默认值。 */
+  levelOf?: ((topic: NotifyChannel) => number) | undefined,
 ): AdminApiNotifyTopic[] {
   return Object.entries(NOTIFY_TOPIC_META).map(([topic, meta]) => {
     const prefix = `${topic}:`;
@@ -1346,11 +1449,26 @@ export function buildNotifyTopicViews(
     return {
       topic,
       label: meta.label,
+      hint: meta.hint,
       defaultLevel: meta.defaultLevel,
+      level: levelOf ? levelOf(topic as NotifyChannel) : meta.defaultLevel,
       allScope,
       groupScopes,
     };
   });
+}
+
+/** 话题名是否是已知话题（与指令层同一个判据，只是这里不做类型收窄）。 */
+function isNotifyChannelName(value: string): value is NotifyChannel {
+  return (NOTIFY_CHANNELS as readonly string[]).includes(value);
+}
+
+/** 门槛数值的人话（与指令层 `/notify level` 的展示口径一致：`-1` = 不限）。 */
+function describeNotifyLevel(level: number): string {
+  if (level <= 0) {
+    return "不限";
+  }
+  return `门槛 ${level}`;
 }
 
 /** 审计理由里的自由文本压成单行并截断（审计表不该被一坨长值撑爆）。 */

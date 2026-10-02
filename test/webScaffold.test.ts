@@ -183,6 +183,22 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     expect(appeals).toContain("私信");
   });
 
+  it("通知页：门槛（240，二次确认）+ 测试推送（只发自己）+ 订阅口径说明", () => {
+    const view = read("views/NotifyView.vue");
+    const router = read("router.ts");
+
+    expect(view).toContain("adminApi.notifyTopics");
+    expect(view).toContain("adminApi.setNotifyLevel");
+    expect(view).toContain("adminApi.resetNotifyLevels");
+    expect(view).toContain("adminApi.sendNotifyTest");
+    expect(view).toContain("ModalDialog");
+    // 门槛是全局的、只有平台超管能改；订阅是个人偏好，仍在机器人里改
+    expect(view).toContain("session.isSuperAdmin");
+    expect(view).toContain("全局");
+    expect(view).toContain("机器人");
+    expect(router).toContain("NotifyView");
+  });
+
   it("待审批页：申请人资料摘要 + 同步官方队列（120 起）", () => {
     const source = read("views/PendingView.vue");
 

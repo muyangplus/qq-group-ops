@@ -704,6 +704,89 @@ describe("管理 API HTTP 层", () => {
     await bare.close();
   });
 
+  it("通知门槛与测试推送：写端点要 CSRF，改门槛要整数，测试只发自己", async () => {
+    const tokens = memoryTokens();
+    const topics = [
+      {
+        topic: "join",
+        label: "入群申请",
+        hint: "有新的待处理入群申请时私信你",
+        defaultLevel: 130,
+        level: 130,
+        allScope: 1,
+        groupScopes: 0,
+      },
+    ];
+    const calls: Array<Record<string, unknown>> = [];
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      writers: {
+        setNotifyLevel: async (input) => {
+          calls.push({ kind: "level", ...input });
+          return { topics, message: "已改门槛" };
+        },
+        resetNotifyLevels: async (actorId) => {
+          calls.push({ kind: "reset", actorId });
+          return { topics, message: "已恢复默认" };
+        },
+        sendNotifyTest: async (input) => {
+          calls.push({ kind: "test", ...input });
+          return { ok: true, message: "已把测试卡私信发给你。" };
+        },
+      },
+    }).app;
+    const { token } = await tokens.issue({ userId: "mod", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const cookie = cookieOf(login);
+
+    // 写方法缺 CSRF → 403
+    const noCsrf = await app.inject({
+      method: "PUT",
+      url: "/api/notify/levels",
+      headers: { cookie },
+      payload: { topic: "join", level: 130 },
+    });
+    expect(noCsrf.statusCode).toBe(403);
+
+    // 非整数门槛 → 400
+    const badLevel = await app.inject({
+      method: "PUT",
+      url: "/api/notify/levels",
+      headers: { cookie, "x-admin-request": "1" },
+      payload: { topic: "join", level: "半开" },
+    });
+    expect(badLevel.statusCode).toBe(400);
+
+    // 正常改：actor 来自会话
+    const ok = await app.inject({
+      method: "PUT",
+      url: "/api/notify/levels",
+      headers: { cookie, "x-admin-request": "1" },
+      payload: { topic: "join", level: 140 },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({ ok: true, message: "已改门槛" });
+
+    // 测试推送：收件人取会话 userId，**不接受请求体指定别人**
+    const test = await app.inject({
+      method: "POST",
+      url: "/api/notify/test",
+      headers: { cookie, "x-admin-request": "1" },
+      payload: { userId: "someone-else" },
+    });
+    expect(test.statusCode).toBe(200);
+    expect(calls).toContainEqual({ kind: "test", userId: "mod" });
+    expect(calls.some((call) => call["userId"] === "someone-else")).toBe(false);
+
+    await app.close();
+  });
+
   it("/api/status 需要登录，返回只读状态", async () => {
     const { app, tokens } = build();
     const unauth = await app.inject({ method: "GET", url: "/api/status" });

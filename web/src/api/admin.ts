@@ -211,6 +211,31 @@ export interface AdminApiJoinSyncResult {
   message: string;
 }
 
+/** 通知话题（`/api/notify/topics`）：默认 / 当前门槛与订阅计数。 */
+export interface AdminApiNotifyTopic {
+  topic: string;
+  label: string;
+  /** 一句话说明这个话题什么时候推（与机器人卡片同一份文案）。 */
+  hint: string;
+  /** 全局默认门槛。 */
+  defaultLevel: number;
+  /** **当前生效**门槛（`/notify level` 改的就是它）。 */
+  level: number;
+  allScope: number;
+  groupScopes: number;
+}
+
+/** 改门槛 / 恢复默认的返回：人话摘要 + 全部话题的新状态（界面整体替换）。 */
+export interface AdminApiNotifyLevelResult {
+  topics: AdminApiNotifyTopic[];
+  message: string;
+}
+
+export interface AdminApiNotifyTestResult {
+  ok: boolean;
+  message: string;
+}
+
 /** 通知投递记录（`/api/notify/deliveries`，只读）。 */
 export interface AdminApiDeliveryItem {
   groupId: string;
@@ -408,6 +433,32 @@ export const adminApi = {
     status?: string | undefined;
   } = {}): Promise<AdminApiDeliveriesView> =>
     api.get<AdminApiDeliveriesView>(`/api/notify/deliveries${query(params)}`),
+
+  /** 通知话题（只读）：当前门槛 + 订阅计数 + 说明文案。 */
+  notifyTopics: (): Promise<AdminApiNotifyTopic[]> =>
+    api.get<AdminApiNotifyTopic[]>("/api/notify/topics"),
+
+  /** 改某个话题的门槛（平台超管 240；与 `/notify level` 同一份存储）。 */
+  setNotifyLevel: (
+    topic: string,
+    level: number,
+  ): Promise<{ ok: boolean } & AdminApiNotifyLevelResult> =>
+    api.put<{ ok: boolean } & AdminApiNotifyLevelResult>("/api/notify/levels", {
+      topic,
+      level,
+    }),
+
+  /** 所有话题门槛恢复默认（平台超管 240）。 */
+  resetNotifyLevels: (): Promise<{ ok: boolean } & AdminApiNotifyLevelResult> =>
+    api.post<{ ok: boolean } & AdminApiNotifyLevelResult>(
+      "/api/notify/levels/reset",
+    ),
+
+  /** 给自己发一张测试卡（自助；测私聊推送通道是否通）。 */
+  sendNotifyTest: (
+    group?: string,
+  ): Promise<{ ok: boolean; result: AdminApiNotifyTestResult }> =>
+    api.post("/api/notify/test", group === undefined ? {} : { group }),
 
   /** 同步官方入群申请队列（写但幂等；本群 120）。 */
   syncJoinRequests: (group: string): Promise<AdminApiJoinSyncResult> =>

@@ -9,6 +9,7 @@ import BlacklistView from "@/views/BlacklistView.vue";
 import DashboardView from "@/views/DashboardView.vue";
 import DeliveriesView from "@/views/DeliveriesView.vue";
 import LoginView from "@/views/LoginView.vue";
+import NotifyView from "@/views/NotifyView.vue";
 import PendingView from "@/views/PendingView.vue";
 import PunishmentsView from "@/views/PunishmentsView.vue";
 import RulesView from "@/views/RulesView.vue";
@@ -31,6 +32,7 @@ export const router = createRouter({
     { path: "/blacklist", name: "blacklist", component: BlacklistView },
     { path: "/appeals", name: "appeals", component: AppealsView },
     { path: "/deliveries", name: "deliveries", component: DeliveriesView },
+    { path: "/notify", name: "notify", component: NotifyView },
     { path: "/rules", name: "rules", component: RulesView },
     { path: "/activities", name: "activities", component: ActivitiesView },
     { path: "/status", name: "status", component: StatusView },

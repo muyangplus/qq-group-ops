@@ -51,6 +51,9 @@ async function signOut(): Promise<void> {
       <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'status' }">
         状态
       </RouterLink>
+      <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'notify' }">
+        通知
+      </RouterLink>
       <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'deliveries' }">
         投递
       </RouterLink>

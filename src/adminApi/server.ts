@@ -589,6 +589,23 @@ export interface AdminApiWriters {
     actorId: string;
     note?: string | undefined;
   }): Promise<AdminApiAppealDecisionResult>;
+  /**
+   * 改话题门槛（平台超管 240；与指令层 `/notify level <话题> <数值>` 同一份存储）。
+   *
+   * 门槛是**全局一套**，改一次所有群生效 —— 这是它必须 240 的原因。
+   */
+  setNotifyLevel(input: {
+    topic: string;
+    level: number;
+    actorId: string;
+  }): Promise<AdminApiNotifyLevelResult>;
+  /** 所有话题门槛恢复默认（平台超管 240）。 */
+  resetNotifyLevels(actorId: string): Promise<AdminApiNotifyLevelResult>;
+  /** 给自己发一张测试卡（自助；测的是私聊推送通道，不依赖具体群）。 */
+  sendNotifyTest(input: {
+    userId: string;
+    groupId?: string | undefined;
+  }): Promise<AdminApiNotifyTestResult>;
 }
 
 export interface AdminApiActivityItem {
@@ -608,12 +625,30 @@ export interface AdminApiActivityItem {
 export interface AdminApiNotifyTopic {
   topic: string;
   label: string;
+  /** 一句话说明这个话题什么时候推（来自 `NOTIFY_TOPIC_META`，与机器人卡片同一份文案）。 */
+  hint: string;
   /** 全局默认门槛（实际门槛可能被 `__default__.notifyTopicLevels` 覆盖）。 */
   defaultLevel: number;
+  /** **当前生效**门槛（`/notify level` 改的就是它）。 */
+  level: number;
   /** 订「全部群」的人数。 */
   allScope: number;
   /** 按具体群订阅的行数（同一人可订多个群）。 */
   groupScopes: number;
+}
+
+/** 通知话题门槛的写结果（P2 写）。 */
+export interface AdminApiNotifyLevelResult {
+  /** 改完之后**全部**话题的当前状态（与只读视图同一形状，界面直接整体替换）。 */
+  topics: AdminApiNotifyTopic[];
+  /** 人话摘要（改了哪个、从多少到多少）。 */
+  message: string;
+}
+
+/** 「给自己发测试卡」的结果。 */
+export interface AdminApiNotifyTestResult {
+  ok: boolean;
+  message: string;
 }
 
 /** 入口能提供、server 自己算不出来的那部分状态。 */
@@ -1221,6 +1256,82 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     );
     // BOM：没有它 Excel 会按本地编码猜，中文列名直接乱码
     return reply.send(`\uFEFF${result.csv}`);
+  });
+
+  /**
+   * 改话题门槛：`PUT /api/notify/levels { topic, level }`（平台超管 240）。
+   *
+   * 数值口径与指令层一致：`-1` = 不限、`110`–`140` 群内轴、`210`–`240` 平台轴。
+   */
+  app.put("/api/notify/levels", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const topic = typeof body.topic === "string" ? body.topic.trim() : "";
+    if (topic.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 topic（话题名，见 GET /api/notify/topics）。"));
+    }
+    const rawLevel =
+      typeof body.level === "number"
+        ? body.level
+        : typeof body.level === "string" && /^-?\d+$/u.test(body.level)
+          ? Number.parseInt(body.level, 10)
+          : undefined;
+    if (rawLevel === undefined || !Number.isInteger(rawLevel)) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "level 必须是整数（-1 = 不限、110–140 群内档、210–240 平台档）。"));
+    }
+    const result = await writers.setNotifyLevel({
+      topic,
+      level: rawLevel,
+      actorId: actorOf(request),
+    });
+    return { ok: true, ...result };
+  });
+
+  /** 所有话题门槛恢复默认：`POST /api/notify/levels/reset`（平台超管 240）。 */
+  app.post("/api/notify/levels/reset", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const result = await writers.resetNotifyLevels(actorOf(request));
+    return { ok: true, ...result };
+  });
+
+  /**
+   * 给自己发测试卡：`POST /api/notify/test { group? }`（任何登录管理员都能用）。
+   *
+   * **只发给自己**（收件人取会话里的 userId，不接受请求体指定），所以不需要额外门槛：
+   * 它既不打扰别人，也不泄漏任何数据。私信发不出去时返回 `ok: false` 与原因。
+   */
+  app.post("/api/notify/test", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const userId = actorOf(request);
+    if (userId.length === 0) {
+      return reply.code(401).send(errorBody("unauthorized", "需要登录。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const group = queryString(body.group);
+    const result = await writers.sendNotifyTest({
+      userId,
+      ...(group !== undefined ? { groupId: group } : {}),
+    });
+    return { ok: result.ok, result };
   });
 
   /** 只读状态（E1-c）：入口给数据库与迁移信息，server 补版本 / 运行时长 / 会话数。 */

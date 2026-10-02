@@ -15,6 +15,8 @@ import { BlacklistService } from "../src/services/blacklist.js";
 import { GroupConfigStore, DEFAULT_GROUP_ID } from "../src/services/groupConfig.js";
 import { JoinApprovalService } from "../src/services/joinApproval.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
+import { NotificationService } from "../src/services/notifications.js";
+import { NotifyTopicLevelStore } from "../src/services/notifyTopics.js";
 import { PermissionService } from "../src/services/permissions.js";
 import { PlatformSettingsStore } from "../src/services/platformSettings.js";
 import { PunishmentService } from "../src/services/punishments.js";
@@ -294,6 +296,149 @@ describe("管理 API P2：黑名单增删", () => {
     expect(
       h.auditLog.all().some((row) => row.action === "admin_api:blacklist_remove"),
     ).toBe(true);
+  });
+});
+
+describe("管理 API P2：通知门槛与测试推送", () => {
+  function notifyHarness(): Harness & {
+    notifications: NotificationService;
+    notifyTopics: NotifyTopicLevelStore;
+  } {
+    const h = harness();
+    const subscriptions = [
+      { userId: "u1", scope: "join:__all__" },
+      { userId: "u1", scope: "punish:g1" },
+    ];
+    const queue = new WriteQueue();
+    const notifyTopics = new NotifyTopicLevelStore(
+      {
+        async findAll() {
+          return [];
+        },
+        async save() {
+          // 测试不需要落库
+        },
+        async remove() {
+          // 测试不需要删行
+        },
+      },
+      queue,
+    );
+    const notifications = new NotificationService(h.api, h.permissions, {
+      // 与运行时同一份装配：门槛存储既给推送服务（判门槛）也给管理后端（改门槛）
+      notifyTopics,
+      subscriptions: {
+        async findAll() {
+          return subscriptions;
+        },
+        async save() {
+          // 测试不需要写订阅
+        },
+        async remove() {
+          // 测试不需要删订阅
+        },
+      },
+      deliveries: {
+        async findAll() {
+          return [];
+        },
+        async save() {
+          // 测试不需要写投递
+        },
+        async deleteOlderThan() {
+          // 测试不需要清理
+        },
+      },
+    });
+    const backend = createAdminApiBackend({
+      permissions: h.permissions,
+      auditLog: h.auditLog,
+      joinAudit: h.joinAudit,
+      joinApproval: new JoinApprovalService(
+        h.api,
+        h.joinAudit,
+        new GroupConfigStore({ groupId: DEFAULT_GROUP_ID }),
+      ),
+      configStore: new GroupConfigStore({ groupId: DEFAULT_GROUP_ID }),
+      activity: new ActivityService(),
+      activityExport: new ActivityExportService({
+        profiles: { get: () => undefined },
+      }),
+      notifications,
+      notifyTopics,
+      notificationSubscriptions: {
+        async findAll() {
+          return subscriptions;
+        },
+      } as never,
+    });
+    return { ...h, backend, notifications, notifyTopics };
+  }
+
+  it("改门槛：平台超管才行；写审计；返回的视图带当前门槛与订阅计数", async () => {
+    const h = notifyHarness();
+
+    await expect(
+      h.backend.setNotifyLevel({ topic: "join", level: 130, actorId: "mod" }),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+
+    const result = await h.backend.setNotifyLevel({
+      topic: "join",
+      level: 140,
+      actorId: "boss",
+    });
+
+    expect(result.message).toContain("入群申请");
+    const join = result.topics.find((topic) => topic.topic === "join");
+    expect(join).toMatchObject({ level: 140, allScope: 1, groupScopes: 0 });
+    // 提示文案与订阅计数都在（界面直接用，不需要再取一次）
+    expect(join?.hint).toBeTruthy();
+    expect(h.notifications.topicLevel("join")).toBe(140);
+    expect(
+      h.auditLog.all().some((row) => row.action === "admin_api:notify_level"),
+    ).toBe(true);
+  });
+
+  it("未知话题 / 非法数值都明确报错", async () => {
+    const h = notifyHarness();
+
+    await expect(
+      h.backend.setNotifyLevel({ topic: "nope", level: 130, actorId: "boss" }),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+    await expect(
+      h.backend.setNotifyLevel({ topic: "join", level: 999, actorId: "boss" }),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+  });
+
+  it("恢复默认：写审计", async () => {
+    const h = notifyHarness();
+    await h.backend.setNotifyLevel({ topic: "join", level: 140, actorId: "boss" });
+
+    const result = await h.backend.resetNotifyLevels("boss");
+
+    expect(result.message).toContain("恢复默认");
+    expect(
+      h.auditLog
+        .all()
+        .some((row) => row.action === "admin_api:notify_level_reset"),
+    ).toBe(true);
+  });
+
+  it("测试推送只发给自己：失败时把原因带回来", async () => {
+    const h = notifyHarness();
+
+    const ok = await h.backend.sendNotifyTest({ userId: "mod" });
+    expect(ok.ok).toBe(true);
+    expect(
+      h.auditLog.all().some((row) => row.action === "admin_api:notify_test"),
+    ).toBe(true);
+
+    h.api.failPrivateRichMessages = true;
+    h.api.failPrivateKeyboardMessages = true;
+    h.api.failPrivateMessages = true;
+    const failed = await h.backend.sendNotifyTest({ userId: "mod" });
+    expect(failed.ok).toBe(false);
+    expect(failed.message).toContain("没发出去");
   });
 });
 
