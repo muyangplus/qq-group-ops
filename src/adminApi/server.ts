@@ -14,6 +14,7 @@ import { AdminApiRequestError } from "./errors.js";
 import { WindowRateLimiter } from "./rateLimit.js";
 import type { AdminApiPermissionsView } from "./permissions.js";
 import { SessionStore, type AdminSession } from "./session.js";
+import { registerWebUi } from "./webUi.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -49,6 +50,11 @@ export interface AdminApiServerOptions {
   auditReader?: AdminApiAuditReader | undefined;
   /** 只读数据源（E1-c）：待审批与规则覆盖。未装配时对应端点回 503。 */
   readers?: AdminApiReaders | undefined;
+  /**
+   * 管理前台静态资源目录（E2-e）：给了就由本服务托管 `web/dist`（`/`、`/login` 等页面），
+   * 目录不存在时自动跳过；留空/不传则完全交给 nginx 等外部托管。
+   */
+  webRoot?: string | undefined;
   /**
    * 写端点（E1-d）：审批 / 规则 / 活动状态 / 名单导出。未装配时对应端点回 503。
    *
@@ -321,6 +327,12 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     const route = (request.routeOptions?.url ?? request.url).split("?")[0] ?? "";
     // 公开端点：健康检查与令牌兑换
     if (route === "/healthz" || route === "/auth/token") {
+      return;
+    }
+    // 只守**我们自己的接口**。其它路径（`/`、`/login`、静态资源…）不是管理 API 的职责：
+    // 以前这里一律 401「请先登录」，结果是「把 /login 反代到 8787」这种配错
+    // 在浏览器里表现为「登录页要求先登录」，极难排查。现在直接落到 404 处理器。
+    if (!isAdminApiRoute(route)) {
       return;
     }
     const session = sessions.touch(
@@ -800,8 +812,22 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     return { ok: true };
   });
 
+  // 管理前台静态资源（E2-e）：默认 `web/dist`（目录不存在就跳过）。
+  // 挂在这里而不是更早：让 API 路由先注册，静态处理器只兜「不是接口」的路径。
+  const webRoot = options.webRoot?.trim();
+  if (webRoot !== undefined && webRoot.length > 0) {
+    registerWebUi(app, { root: webRoot, logger: log });
+  }
+
   app.setNotFoundHandler(async (_request, reply) =>
-    reply.code(404).send(errorBody("not_found", "没有这个接口。")),
+    reply.code(404).send(
+      errorBody(
+        "not_found",
+        "管理 API 没有这个接口。管理后台页面（`/`、`/login` 等）默认由本服务托管 web/dist；" +
+          "如果这里是 404，多半是没部署前端或 ADMIN_API_WEB_DIR 留空了 ——" +
+          "把整个域名反代到这个端口是对的做法，页面由本服务提供。",
+      ),
+    ),
   );
   app.setErrorHandler(async (error, _request, reply) => {
     // 领域层给的判定（权限不足 / 参数非法 / 不存在 / 已被处理）：按原状态码回，不打日志噪声
@@ -840,6 +866,22 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
 
 function errorBody(code: string, message: string): { error: string; message: string } {
   return { error: code, message };
+}
+
+/**
+ * 这个路径是不是管理 API 自己的接口（需要鉴权的那部分）。
+ *
+ * 约定：`/api/*` + `/auth/me` + `/auth/logout`。`/healthz` 与 `/auth/token` 是公开端点，
+ * 在钩子里已经提前返回；其余路径一律当作「不是这个服务的」，交给 404 处理器 ——
+ * 这样把 `/login` 之类的页面路径反代到管理 API 时会得到一句诚实的 404，而不是
+ * 「请先登录」那种误导性的 401。
+ */
+export function isAdminApiRoute(route: string): boolean {
+  return (
+    route.startsWith("/api/") ||
+    route === "/auth/me" ||
+    route === "/auth/logout"
+  );
 }
 
 function queryString(value: unknown): string | undefined {

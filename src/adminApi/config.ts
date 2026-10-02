@@ -26,6 +26,12 @@ export interface AdminApiConfig {
    * 用于拼登录链接；本机临时排查可以留空（那就只给"粘贴令牌"的用法）。
    */
   publicBaseUrl: string;
+  /**
+   * 管理前台静态资源目录（默认 `web/dist`；**显式留空 = 不由机器人托管**，交给 nginx 等）。
+   *
+   * 目录不存在（没构建 / 没部署前端）时自动跳过，接口行为不受影响。
+   */
+  webDir: string;
   /** 一次性令牌有效期（默认 10 分钟；签发后必须在这个时间内兑换）。 */
   tokenTtlMs: number;
   /** 额外白名单：留空 = 允许所有**平台超管**（240）签发令牌。 */
@@ -64,6 +70,8 @@ export function loadAdminApiConfig(env: NodeJS.ProcessEnv = process.env): AdminA
     sessionTtlMs: positiveInt(env.ADMIN_API_SESSION_TTL_MINUTES, 720) * 60 * 1000,
     cookieSecure: parseBoolean(env.ADMIN_API_COOKIE_SECURE) ?? false,
     publicBaseUrl: (env.ADMIN_API_PUBLIC_BASE_URL ?? "").trim(),
+    // `undefined`（没配过）用默认 `web/dist`；显式写成空串表示「不由机器人托管」
+    webDir: env.ADMIN_API_WEB_DIR === undefined ? "web/dist" : env.ADMIN_API_WEB_DIR.trim(),
     tokenTtlMs: positiveInt(env.ADMIN_API_TOKEN_TTL_MINUTES, 10) * 60 * 1000,
     allowedOpenIds: (env.ADMIN_API_ALLOWED_OPENIDS ?? "")
       .split(",")

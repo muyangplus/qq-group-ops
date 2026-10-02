@@ -74,6 +74,8 @@ async function main(): Promise<void> {
     tokens: persistence.adminTokens,
     version: process.env.npm_package_version ?? "unknown",
     uptimeMs: () => Math.round(process.uptime() * 1000),
+    // 只读巡检模式也能把管理前台托管起来（同一个 ADMIN_API_WEB_DIR 开关）
+    webRoot: config.webDir,
     // 只读状态（E1-c）：数据库类型 + 启动期迁移问题数（问题详情在机器人侧 /status proc）
     statusProvider: async () => ({
       database: persistence.driver,
