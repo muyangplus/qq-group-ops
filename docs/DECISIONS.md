@@ -1213,3 +1213,51 @@
   **能力边界**：指纹只覆盖 `dist/`，前端 `web/dist` 变了不需要重启（从磁盘直接读）；
   指纹是一次启动只取一次的基线，进程运行期间 `dist/` 被就地改动仍会被认成新部署（符合预期）。
 
+
+## ADR-0056：管理后台「展示层」与「配置页」的口径
+
+- 状态：已实现（未发版，见 CHANGELOG `[Unreleased]`）
+- 背景：真机用过管理后台后反馈两条 ——「前端不友好：完整官方长码应该作为详细信息的一条，
+  选择 / 交互优先出 bind 的原始 QQ / 群号，其次是短码」，以及「可配置 .env 项目」。
+  此前 `/api/audit`、`/api/pending` 直接把内部 id（32 位十六进制 `group_openid` / 用户 openid、
+  200+ 字符的 `join_request_id`）摊在表格里：认不出是谁、列宽被撑坏，审计还缺「操作对象」字段
+  （库里明明有 `target_user_id`，映射时被丢掉了）。另一半问题是「后台能不能改配置」——
+  改密钥类配置等于把线上凭据交给浏览器，风险与收益完全不成比例。
+- 决策：
+  1. **展示信息由服务端算一次**：新增 `AdminApiEntityRef`（`kind` / `officialId` / `label` /
+     `externalId` / `shortCode`），优先级 `绑定号 → 短码 → 截断后的官方 id`；挂在
+     `/api/audit`、`/api/pending`、`/api/rules`、`/api/activities` 的每一项与 `/auth/me` 的
+     `groups[]` 上。前端只读 `label`，完整长码放 `officialId`（只在「详情」折叠区展示）。
+     原始 id 字段（`groupId` / `userId` / `actorId`）**保留**：过滤器与写端点还要用它；
+  2. **短码只查不造**：`ShortCodeService.existingCode()` 供展示路径用。`codeFor()` 会顺手造码
+     并入库，读端点（例如翻一页审计）不该给一堆历史 actor 发短码、把短码表撑脏；
+     拿不到码就用截断的官方 id 兜底；
+  3. **审计补 `targetUserId`**：管理面自己写的审计（审批 / 拒绝）带上操作对象，
+     映射层也把 `target_user_id` 透出来 —— 后台的「操作对象」列才有东西可显示；
+  4. **配置页只放开「既有热改项」**：读走 `PlatformSettingsStore.list()`，写走它的
+     `set()` / `clear()`（校验 → 落库 → 立即生效，与机器人 `/config` 是同一条通路），
+     写审计 `admin_api:setting_update` / `admin_api:setting_clear`（理由带旧值 → 新值），
+     校验失败回 400 且**不落库不写审计**；
+  5. **`.env` 只读，密钥类不回传值**：`GET /api/settings` 给 `.env` 项只回「配没配」；
+     形如 `*_SECRET` / `*_TOKEN` / `*_PASSWORD` / `*_KEY` 的值**永不出进程**。
+     要改这些只能登服务器改文件 + 重启 —— 后台不提供「改线上密钥」的能力；
+  6. **周期任务监测是平台级只读**（`GET /api/tasks`，240）：`TickScheduler.snapshot()` 只读快照，
+     不触发任务、不动 `lastRun`；只读巡检进程没有调度器时回 503 而不是空列表
+     （空列表会被误读成「没有任务」）。
+- 理由：展示口径属于**用户看得懂**的问题，必须由服务端算一次（前端各写一套截断一定会漂移）；
+  配置口径属于**风险**问题，所以「能改的」只包含本来就能热改、本来就有校验与审计的那批项，
+  其余一律只读。「只查不造短码」把「读端点有副作用」这条隐患从列表页摘掉。
+- 影响：`src/adminApi/entityRef.ts`（新增）、`src/adminApi/settings.ts`（新增）、
+  `src/adminApi/{backend,server,permissions,main}.ts`、`src/services/shortCodes.ts`
+  （`existingCode` / `existingLabel`）、`src/services/tickScheduler.ts`（`snapshot()`）、
+  `src/runtime.ts` / `src/main.ts`（惰性注入调度器快照与配置存储）、
+  `src/adminApi/errors.ts`（`unavailable` 503）；
+  前端 `web/src/components/EntityLabel.vue`、`web/src/lib/entity.ts`、`web/src/views/*`、
+  `web/src/views/SettingsView.vue`（新增）、`web/src/api/{admin,client}.ts`、`router.ts`、`App.vue`。
+  测试：`test/adminApiEntityRef.test.ts`、`test/adminApiSettings.test.ts`（含**漂移守卫**：
+  扫源码断言 `config.ts` / `adminApi/config.ts` 读的每个 env 键都出现在配置页的表里）、
+  `test/tickScheduler.test.ts`（快照）、`test/adminApi{Backend,Server,Permissions}.test.ts`（扩写）、
+  `test/webScaffold.test.ts`（端点 / 配置页 / 任务监测 / 路由表契约）。
+  **能力边界**：后台仍然**不**提供指令层的写操作（拉黑 / 处罚 / 活动增删改 / 通知发送 / 重启），
+  这些只在机器人里做；审计页的「操作人」过滤仍只接受完整 id（服务端按 `actorId` 精确匹配）。
+

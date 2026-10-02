@@ -184,6 +184,24 @@
 **E1 退出条件**：未登录访问任何 `/api/*` → 401；越权 → 403 且有审计；
 写操作全部能在 `/api/audit` 查到（actor 是登录账号 / 机器令牌前缀）；`ADMIN_API_ENABLED=false` 时完全不监听端口。
 
+### E1-h 运维面：周期任务监测与配置（P2）
+
+30. `GET /api/tasks`（平台超管 240）：**周期任务监测列表** —— 统一扫描周期 + 每个任务的
+    节拍 / 上次执行 / 下次最早执行 / 是否因依赖模块降级被整轮跳过，外加部署监测的「待重启」
+    （目标版本 / 当前版本 / 检测与计划重启时刻）。数据来自 `TickScheduler.snapshot()`
+    （只读、不触发任务、不更新 `lastRun`）；只读巡检进程没有调度器 → 503 并说明该去哪看。
+    与 `SCAN_INTERVAL_MS` 的关系：**全项目只有一个定时器**，每个任务只声明自己的最小间隔；
+31. `GET /api/settings`（平台超管 240）：可改的热改项（当前生效值 + 来源 `env` / `override`）
+    + `.env` 只读项。**密钥类（`*_SECRET` / `*_TOKEN` / `*_PASSWORD` / `*_KEY`）不回传值**，
+    只回「配没配」—— 值不经过浏览器（免得进缓存 / 截图）；
+32. `PUT /api/settings { key, value }`、`DELETE /api/settings/:key`（平台超管 240）：
+    改一项热改配置 / 恢复 `.env` 默认值。**走机器人 `/config` 的同一套存储**
+    （`PlatformSettingsStore.set` / `clear`：校验 → 落库 → 立即生效），不新造配置通路；
+    校验失败回 400（中文原因原样给界面，**不落库、不写审计**），成功写
+    `admin_api:setting_update` / `admin_api:setting_clear` 审计（理由里带旧值 → 新值）。
+    可改范围**只限** `SETTING_DEFINITIONS` 里的项：`.env` 的密钥 / 端口 / 数据库等仍然只能
+    登服务器改文件后重启 —— 后台不提供「改线上密钥」这种能力。
+
 ### E1-g 只读端点的逐路由门槛（P1）
 
 24. **每个只读端点都声明门槛**，由 HTTP 层统一判定（`readAccessOf` + `auditDenied` 两个注入点），
@@ -191,7 +209,7 @@
 
 | 端点 | 门槛 |
 |---|---|
-| `GET /api/status`、`GET /api/notify/topics` | 平台超管 240（平台级信息 / 全局话题门槛）|
+| `GET /api/status`、`GET /api/notify/topics`、`GET /api/tasks`、`GET /api/settings` | 平台超管 240（平台级信息 / 全局话题门槛 / 运维面板）|
 | `GET /api/rules?group=__default__` | 平台超管 240（全局规则）|
 | `GET /api/rules?group=<群>` | 本群审核员 120（与 `/rules` 查看口径一致）|
 | `GET /api/audit` | 平台超管 240 拿全量；其余必须带 `?group=<群>`（缺参数 400）且本群 ≥120 |
@@ -250,6 +268,16 @@
 
     两种方式都同源（会话 cookie 是 `SameSite=Strict`，跨源会把登录态吃掉）。
     本地开发用 `pnpm web:dev`（自带代理），想在本机看构建产物用 `pnpm --dir web run preview`。
+33. **E2-f 展示层与配置页**（✅ 已完成）：
+    - **展示口径**：列表与选择器**优先出绑定号（QQ号 / 群号），其次短码，完整官方长码只出现在「详情」里**。
+      服务端把这份信息算成 `AdminApiEntityRef`（`kind` / `officialId` / `label` / `externalId` /
+      `shortCode`），挂在 `/api/audit`、`/api/pending`、`/api/rules`、`/api/activities` 的每一项上，
+      以及 `/auth/me` 的 `groups[]` 上；前端只读 `label`，长码收进折叠区（`components/EntityLabel.vue`）。
+      **短码只查不造**（`ShortCodeService.existingCode`）：读端点不给历史 actor 现造短码；
+      审计记录补上 `targetUserId`（「操作对象」列）；审计页的时间统一成本地 `YYYY-MM-DD HH:MM:SS`；
+    - **配置页** `/settings`（平台超管）：可改项就地编辑（布尔用下拉）+「恢复默认」，
+      `.env` 只读项单独一张表（密钥类显示「已配置 / 未配置」）；沿用「非超管连请求都不发」的口径；
+    - **状态页** `/status` 除了原有只读状态，多了「周期任务监测」表格与「待生效的部署」区块。
 
 **E2 退出条件**：能在后台完成一次入群审批、改一个规则字段、并查到对应的审计记录；
 所有入口在权限不足时不可用（且直接调 API 也会被拒）。
