@@ -221,9 +221,33 @@
     完整学号只在名单导出的 `?full=1`（有门槛 + 审计）里出现。
 
 **P1 的能力边界**：以上端点**只有机器人进程内那个监听口**装配（只读巡检模式回 503）——
-它们都依赖内存态服务（处罚 / 黑名单 / 申诉 / 通知计数 / 模块健康表）；
-写操作（处罚动作 / 黑名单增删 / 申诉复核 / 活动增删改）**仍只在机器人里做**，
-见 ADMIN-BACKEND.md §3 的 P2。
+它们都依赖内存态服务（处罚 / 黑名单 / 申诉 / 通知计数 / 模块健康表）。
+
+### E1-j 写操作：处罚动作 / 黑名单 / 申诉复核（P2，0.24.2 起）
+
+> 三条口径（[ADMIN-BACKEND.md](./ADMIN-BACKEND.md) §1）：**与指令层同源**（同一个领域服务，
+> 所以通知话术、官方调用、连带效果都一致）、**不可逆动作要二次确认**（界面用 `ModalDialog`，
+> API 侧靠 `X-Admin-Request: 1` + 审计兜底）、**每条都写 `admin_api:*` 审计**。
+
+41. `POST /api/punishments/:code/release|mute|kick|blacklist`（本群 120；`blacklist` 的
+    `scope=global` 要平台 240）：处罚动作，与 `/punish release|mute|kick|blacklist` **同一个
+    `PunishmentService`**。`mute` 要 `seconds`（0 = 解除禁言）、`blacklist` 可带
+    `scope` / `reason`、`release` 可带 `note`。
+    成功后会**连带把该处罚下待处理的申诉判定为已通过**（指令层同样语义：处置即回应申诉），
+    响应里的 `acceptedAppeals` 是条数；不可逆动作（`kick` / `blacklist`）的后果在界面二次确认里写明
+    （`kick` 移出群、`blacklist` 默认同时移出群、`scope=global` 影响**所有已绑定群**）；
+42. `POST /api/blacklist { scope, group?, userId, reason? }`、`DELETE /api/blacklist/:userId?scope=&group=`：
+    黑名单增删，与 `/blacklist add|del` 同一服务。本群 120 / 全局 240；加入时**默认同时把人移出群**
+    （指令层既有行为），响应给 `kickedGroups`（全局可能是多个群）；
+43. `POST /api/appeals/:code/accept|reject`（本群 120）：申诉复核。
+    **`accept` = 撤销该处罚**（`PunishmentService.release`：逐项撤销禁言 / 拉黑等，
+    **撤回消息与移出群不可逆**）；`reject` 可带 `note`（留空用「已驳回」）。
+    两种结果都会**私信申诉人**（`ModerationNotifier`，与指令层同一条通道）；
+    已经处理过的申诉回 409（`conflict`），不存在回 404。
+
+**还没搬进后台的写操作**（[ADMIN-BACKEND.md](./ADMIN-BACKEND.md) §3 P2 余下部分，每条动手前先定口径）：
+活动创建 / 编辑 / 绑定群、规则关键词逐条增删与「恢复继承」、通知门槛调整与测试推送、别名表增删，
+以及 P3 的权限授予 / 撤销。
 
 ### E1-g 只读端点的逐路由门槛（P1）
 
@@ -261,6 +285,8 @@
 | `GET /api/health` | 平台超管 240（进程 / 队列 / 模块健康 / 恢复现场）|
 | `POST /api/join/sync`（写但幂等） | 本群**审核员 120**（与 `/sync` 一致：只拉官方队列，不改用户状态）|
 | `GET /api/audit/export.csv` | 本群 130（脱敏）；`?full=1` 与不带 `group=` 的**全量**要平台 240 |
+| `POST /api/punishments/:code/release\|mute\|kick`、`POST /api/appeals/:code/accept\|reject` | 本群**审核员 120**（与指令层一致）|
+| `POST /api/punishments/:code/blacklist`、`POST /api/blacklist`、`DELETE /api/blacklist/:userId` | 本群 120；**`scope=global` 要平台 240**（会影响所有绑定群）|
 
 - **不报错、只裁剪**：列表类端点（待审批 / 活动）对够不着的群直接少返回，而不是整条 403 ——
   多群管理员看到的自然是自己那几行；

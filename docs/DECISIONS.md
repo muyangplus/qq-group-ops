@@ -1310,3 +1310,45 @@
 - **教训**：把「上传顺序」当成协议的一部分之前，必须先确认工具自己的状态机怎么工作 ——
   这个 Action 是**双向同步**（带「上次传了什么」的记忆），不是单向 put。
 
+
+## ADR-0058：管理后台写操作与指令层**同源**，风险动作先"看得清"再做
+
+- 状态：已实现（未发版，见 CHANGELOG `[Unreleased]`；P2 的处罚 / 黑名单 / 申诉三条先落地）
+- 背景：管理后台的只读面（ADR-0056 / ADMIN-BACKEND §3 P1）做完后，下一步是把写操作搬上来。
+  写操作的风险与只读完全不是一个量级：误点一次可能把人踢出版、全局拉黑、或撤销一条处罚。
+  而机器人里这套动作已经有成熟语义（谁能做、做了什么通知、连带什么后果），
+  管理面**再写一遍**必然漂移。
+- 决策：
+  1. **一律调与指令层相同的领域服务**：处罚动作 → `PunishmentService.release/setMute/kick/blacklistUser`；
+     黑名单 → `BlacklistService.add/remove`；申诉复核 → `AppealService.decide` +
+     `PunishmentService.release`（通过 = 撤销处罚）+ `ModerationNotifier`（私信申诉人）。
+     因此**通知话术、官方接口调用、连带效果天然一致**，管理面只多一层「入口是浏览器」；
+  2. **门槛逐条与指令层对齐**：处罚动作 / 申诉复核 / 本群黑名单 = 本群审核员 120；
+     `scope=global` 的黑名单 = 平台超管 240。管理 API **不**擅自抬高或降低；
+  3. **连带效果照搬**：处罚动作成功后把该处罚下**待处理**的申诉判定为已通过
+     （`acceptByPunishment`，响应给 `acceptedAppeals` 条数）；通过申诉 = 撤销该处罚
+     （逐项撤销；**撤回消息与移出群不可逆**，文案里写明）；
+  4. **不可逆动作必须二次确认**：界面上 `移出群 / 拉黑 / 解除处罚 / 驳回申诉` 都走 `ModalDialog`，
+     文案写清后果（全局拉黑会把人从**所有已绑定群**移出）；API 侧靠全局的
+     `X-Admin-Request: 1` 校验 + 每条写 `admin_api:*` 审计兜底 ——
+     **不做「批量静默执行」这类便利**；
+  5. **审计可分辨来源**：管理面写的动作前缀统一 `admin_api:`（`punish_release` / `punish_mute` /
+     `punish_kick` / `punish_blacklist` / `blacklist_add` / `blacklist_remove` /
+     `appeal_accept` / `appeal_reject`），理由里带短码与关键参数，`targetUserId` 记当事人 ——
+     与群里点的同类动作能区分开；
+  6. **先只读、后写**：每条域先有只读页（P1）再有写按钮（P2）。理由不是流程洁癖：
+     只读页让「这条记录现在什么状态、谁做的」变成共识，写按钮才会被正确使用。
+- 理由：管理面的价值是「不用开 QQ 就能办事」，不是「给同一件事造第二套规则」。
+  同源 + 对齐门槛 + 二次确认 + 审计，这四条合起来才让「在浏览器里点一下」和「在群里发一条指令」
+  等价；缺任何一条都会出现「两边行为不一样」的坑。
+- 影响：`src/adminApi/{server,backend}.ts`（E1-j 的 4 个写端点 + `punish` / `addBlacklist` /
+  `removeBlacklist` / `decideAppeal`）、`src/adminApi/errors.ts`（复用 `conflict`）、
+  `src/runtime.ts`（把 `moderationNotifier` 注入管理后端，让申诉结论走同一条私信通道）；
+  前端 `PunishmentsView` / `BlacklistView` / `AppealsView` 加操作列与二次确认弹窗。
+  测试：`test/adminApiP2Writes.test.ts`（12 条：解除连带通过申诉 / 改时长 / 移出群 / 拉黑的本群与全局
+  权限 / 权限不足写拒绝审计 / 黑名单增删与「不在名单里」的语义 / 申诉通过与驳回 / 重复处理 409 /
+  不存在 404）、`test/adminApiServer.test.ts`（HTTP 层：缺 CSRF 403、非法 action 400、
+  缺 `seconds` 400、本群黑名单缺 `group` 400、只读巡检 503）。
+  **能力边界**：活动创建 / 编辑 / 绑定群、规则关键词逐条增删与「恢复继承」、通知门槛调整与测试推送、
+  别名表增删、权限授予 / 撤销**尚未搬上来**（仍在机器人里做）；后台的批量操作一律不支持。
+
