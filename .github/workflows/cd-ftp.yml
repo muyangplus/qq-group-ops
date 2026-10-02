@@ -3,6 +3,8 @@ name: CD · FTP 发布
 # 触发方式：在 GitHub 上把 tag 发布成 Release（release: published），或手动触发。
 # 上传内容是**运行产物**：dist/ + scripts/ + package.json + pnpm-lock.yaml + .env.example
 # （不含 src / docs / tsconfig / Dockerfile / test / data / logs / *.map）。
+# **两段式上传**：代码与清单先传，`package.json`（部署监测认的版本标记）最后单独传 ——
+# 这样「服务器上的版本号变了」才严格等于「代码已经全部就位」（ADR-0057）。
 # 注意：只推 tag 但不创建 Release **不会**触发本工作流；要改成 tag 推送即部署，
 # 把 `release:` 换成 `push: { tags: ["v*"] }`（两者都开会导致同一次发布跑两遍）。
 on:
@@ -119,12 +121,16 @@ jobs:
       # 只发布**运行产物**：dist（`node dist/main.js` 自包含）+ web/dist（管理前台静态资源，
       # 交给服务器上的 nginx 托管）+ scripts（class:index，纯 node 内置模块）+ 依赖清单。
       # 不传 src / docs / tsconfig / Dockerfile / test —— 生产机器不需要它们。
+      #
+      # **两段式**：`package.json` 是部署监测认的**版本标记**，要**最后**单独传（下一步）。
+      # 先传代码再传它，「版本号一变 = 代码已经全部就位」才成立；否则上传途中版本号就变了，
+      # 部署监测可能在半个构建上计时重启（ADR-0057）。
       - name: 准备部署目录（运行产物白名单）
         run: |
           set -eu
-          rm -rf dist-deploy
-          mkdir -p dist-deploy
-          for item in dist web/dist scripts package.json pnpm-lock.yaml .env.example; do
+          rm -rf dist-deploy dist-marker
+          mkdir -p dist-deploy dist-marker
+          for item in dist web/dist scripts pnpm-lock.yaml .env.example; do
             if [ -e "$item" ]; then
               mkdir -p "dist-deploy/$(dirname "$item")"
               cp -R "$item" "dist-deploy/$(dirname "$item")/"
@@ -132,9 +138,12 @@ jobs:
           done
           # 不传源码时 sourcemap 没有可对照的源文件，删掉省一半体积
           find dist-deploy -name '*.map' -type f -delete
-          echo "将上传以下顶层内容："
+          cp package.json dist-marker/package.json
+          echo "第一批（代码与清单）："
           find dist-deploy -maxdepth 1 -mindepth 1 -printf '%f\n' | sort
           du -sh dist-deploy
+          echo "第二批（版本标记，最后落地）："
+          find dist-marker -maxdepth 1 -mindepth 1 -printf '%f\n' | sort
 
       # 先校验配置齐全，避免半途失败留下半份文件；只打印非敏感信息。
       - name: 校验 FTP 配置
@@ -155,7 +164,8 @@ jobs:
           fi
           echo "目标：$FTP_SERVER  目录：$FTP_SERVER_DIR（凭据不回显）"
 
-      - name: 上传到 FTP
+      # 第一段：代码与依赖清单（不含版本标记）
+      - name: 上传运行产物（代码与清单）
         uses: SamKirkland/FTP-Deploy-Action@v4.4.0
         with:
           server: ${{ secrets.FTP_SERVER }}
@@ -186,6 +196,30 @@ jobs:
             **/test/**
             **/*.map
 
+      # 第二段：**版本标记最后落地**（ADR-0057）。
+      # 在它落地之前，服务器上的 package.json 还是旧版本号 → 部署监测不会在「传了一半」时触发；
+      # 它一落地，代码已经全在服务器上了，宽限期到点重启加载的就是完整构建。
+      # 这一步失败会让 job 变红：代码是新的但版本号还是旧的 → 不重启（旧进程继续服务），
+      # 重新跑一次发布即可（或下次版本更新时一并落地）。
+      - name: 上传版本标记 package.json（最后落地）
+        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ${{ vars.FTP_PROTOCOL || 'ftps' }}
+          port: ${{ vars.FTP_PORT || 21 }}
+          local-dir: ./dist-marker/
+          server-dir: ${{ vars.FTP_SERVER_DIR }}
+          dry-run: ${{ inputs.dry_run }}
+          timeout: 120000
+          log-level: verbose
+          exclude: |
+            **/.git*
+            **/node_modules/**
+            **/data/**
+            **/logs/**
+
       - name: 部署摘要（审计线索）
         run: |
           {
@@ -194,4 +228,7 @@ jobs:
             echo "- 目标：\`${{ vars.FTP_SERVER_DIR }}\`"
             echo "- 来源：\`${DEPLOY_REF}\`（commit \`${GITHUB_SHA}\`）"
             echo "- 协议：\`${{ vars.FTP_PROTOCOL || 'ftps' }}\`"
+            echo "- 顺序：代码与清单 → **版本标记 package.json 最后落地**（ADR-0057）"
+            echo "  于是「服务器上的版本号变了」严格意味着代码已经全部就位，"
+            echo "  部署监测不会在半份构建上计时重启。"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -161,19 +161,45 @@ describe("CI/CD 工作流审计", () => {
 
   it("only ships the runtime artifacts to the server", () => {
     const commands = runCommands(cdWorkflow!);
-    // 组包白名单就是「运行产物」这一份清单：多一个都算回归（源码/文档/构建配置不上服务器）
+    // 组包白名单就是「运行产物」这一份清单：多一个都算回归（源码/文档/构建配置不上服务器）。
+    // 注意这里**没有** package.json：它是版本标记，单独走第二段上传（见下一条用例）。
     const match = /for item in ([^;]+);/u.exec(commands);
     expect(match, "找不到组包白名单").not.toBeNull();
     expect(match![1]!.split(/\s+/u).filter(Boolean)).toEqual([
       "dist",
       "web/dist",
       "scripts",
-      "package.json",
       "pnpm-lock.yaml",
       ".env.example",
     ]);
     // sourcemap 在组包阶段被删除（没有 src 时无法对照）
     expect(commands).toContain("*.map");
+  });
+
+  it("版本标记 package.json 最后单独上传（部署监测靠它认「传完了」）", () => {
+    const commands = runCommands(cdWorkflow!);
+    // 只有一份白名单循环（一次组包），版本标记单独拷进第二段目录
+    expect([...commands.matchAll(/for item in /gu)]).toHaveLength(1);
+    expect(commands).toContain("cp package.json dist-marker/package.json");
+
+    const deploy = Object.values(jobsOf(cdWorkflow!.doc)).find((job) =>
+      stepsOf(job).some((step) => String(step.uses ?? "").includes("FTP-Deploy-Action")),
+    )!;
+    const ftpSteps = stepsOf(deploy).filter((step) =>
+      String(step.uses ?? "").includes("FTP-Deploy-Action"),
+    );
+    // 两段式：先代码与清单，再版本标记
+    expect(ftpSteps).toHaveLength(2);
+    const dirs = ftpSteps.map(
+      (step) => (step.with as Record<string, string>)["local-dir"],
+    );
+    expect(dirs).toEqual(["./dist-deploy/", "./dist-marker/"]);
+    // 顺序也要对：文件中标记那一段在后面（YAML 数组顺序就是执行顺序，这里再钉一道）
+    const text = cdWorkflow!.text;
+    expect(text.indexOf("local-dir: ./dist-deploy/")).toBeLessThan(
+      text.indexOf("local-dir: ./dist-marker/"),
+    );
+    expect(text).toContain("ADR-0057");
   });
 
   it("管理前台随 CD 一起发布：门禁先构建前端，产物路径覆盖 web/dist", () => {
