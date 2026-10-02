@@ -1370,3 +1370,43 @@
   **能力边界**：只剩 P3 的权限授予 / 撤销（`/perm`）尚未搬上来（仍在机器人里做）；
   后台的批量操作一律不支持。
 
+## ADR-0059：统计报表只用**已有记录**做聚合，不新增埋点
+
+- 状态：已实现（未发版，见 CHANGELOG `[Unreleased]`；E5 的**非 AI** 部分）
+- 背景：E5「统计报表」要做群活跃 / 审核量 / 活动报名 / 通知投递四块。最直接的做法是加一张
+  「事件埋点表」（每次消息 / 动作都写一行）再按天 rollup —— 但那是**为了报表给机器人加一条
+  只增不减的写入路径**：多一份存储、多一份保留策略、多一个失败点，而且历史不可回填。
+- 决策：
+  1. **只用已有记录聚合**：报表读的是已经在库、且各自有业务用途的数据 —— 审计（`audit`）、
+     入群审批动作（审批结果落审计）、处罚（`punishments`）、活动报名（`activity_registrations`）、
+     通知投递（`notification_deliveries`）。不为报表新增写入路径，也不回填历史；
+  2. **群活跃 = 每天「群内事件」合计** = 入群审批动作（通过 / 拒绝 / 超时）+ 处罚 + 活动报名 +
+     通知投递。它是**管理事件量**，不是发言量 —— 页面与本文都写清，避免误读；
+     将来若要「发言量」，那是另一个决定（要新增写入路径），不在本条内；
+  3. **审核量只统计审批结果**（审计里的 `approve_join_request` / `reject_join_request` /
+     `expire_join_request`）；**待处理不进报表**（要看实时队列去 `GET /api/pending`，
+     免得同一个数字在两处口径不同）；
+  4. **活动报名**把「本期新增」（`ActivityRegistration.createdAt` 落在窗口内）与「当前报名数」
+     分开给；候补与名额只给当前快照，不假装是历史；
+  5. **分桶按本地日**（`YYYY-MM-DD`），窗口含起点与今天；**没有事件的天补 0 行**，
+     图表与 CSV 都不会断档；天数夹在 1–90（默认 7）；
+  6. **门槛与导出**：平台超管 240 可不带 `group` 看全量；其余人必须带 `?group=`（缺参数 400）
+     且本群 ≥130。CSV 与页面同一份装配、走「脱敏 / 完整」两档：默认长表只出展示标签
+     （群号 / 短码），`full=1` 追加内部群 ID 列且要 240；两种都写 `admin_api:report_export` 审计；
+  7. **不做报表订阅 / 定时推送**：先只做「打开页面看 + 手动导出」；真有周期性需求时另开一条
+     （要定推送对象、频率与失败处理）。
+- 理由：报表是**读侧能力**，不该为了可用性把风险搬到写侧。已有记录里的时间戳与群归属足以支撑
+  这四块；缺的指标（发言量 / 消息量）宁可不给，也不用「悄悄多写一张表」来换。
+- 影响：`src/adminApi/reports.ts`（纯聚合 + CSV：`buildAdminApiReports` / `buildReportsCsv` /
+  `normalizeReportDays`）、`src/adminApi/server.ts`（`GET /api/reports`、
+  `GET /api/reports/export.csv` 与逐路由门槛）、`src/adminApi/backend.ts`（`collectReports`
+  让读端点与导出共用同一份装配）、`src/services/export.ts`（`renderCsv` 导出复用）；
+  前端 `web/src/views/ReportsView.vue` + `api/admin.ts` 的 `reports` / `reportsExportUrl`
+  与导航「报表」。
+  测试：`test/reports.test.ts`（9 条：天数夹取 / 0 行补全 / 群活跃口径 / 群过滤与全量排序 /
+  活动明细与满员 / 投递失败 / CSV 两档与转义）、`test/adminApiServer.test.ts`（HTTP：全量 240、
+  缺 group 400、本群 120 → 403、只读巡检 503、CSV 带 BOM 与参数透传）、
+  `web/src/views/ReportsView.spec.ts`（4 条组件测试）。
+  **能力边界**：不做发言量 / 消息量（需要新增写入路径）、不做订阅与定时推送、不做自定义维度
+  （先把四块的固定口径做对）。
+

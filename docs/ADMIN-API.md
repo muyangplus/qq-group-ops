@@ -300,6 +300,27 @@
 **还没搬进后台的写操作**：[ADMIN-BACKEND.md](./ADMIN-BACKEND.md) §3 的 P2 **已全部落地**，
 只剩 P3 的权限授予 / 撤销（`/perm`，见该文档 §3 P3）。
 
+### E1-l 统计报表：群活跃 / 审核量 / 活动报名 / 通知投递（E5 非 AI 部分）
+
+> 口径与理由见 [DECISIONS.md](./DECISIONS.md) 的 **ADR-0059**：**只用已有记录做聚合，不新增埋点**。
+> 因此「群活跃」是**管理事件量**（审批动作 + 处罚 + 活动报名 + 投递），不是发言量。
+
+54. `GET /api/reports?group=&days=`：四块报表。`days` 夹在 1–90（默认 7），按**本地日**分桶，
+    **没有事件的天补 0 行**；响应给 `range` / `groups`（按群合计，事件数倒序）/ `daily` /
+    `totals` / `activities`（按本期新增报名倒序，最多 20 条）。
+    - **群活跃** `events` = 通过 + 拒绝 + 超时 + 处罚 + 报名 + 投递（每天一行，页面按天画分布）；
+    - **审核量** = 审计里的 `approve_join_request` / `reject_join_request` / `expire_join_request`
+      （**待处理不进报表**：实时队列看 `GET /api/pending`）；
+    - **活动报名** = 本期新增 `registeredInRange` 与当前 `registered` / `waitlist` / `full` 分开给；
+    - **通知投递** = `notification_deliveries` 的 `deliveries` / `deliveryFailed`（失败明细在
+      `GET /api/notify/deliveries`）；
+    - 门槛：平台超管 240 可不带 `group=` 看全量；其余人必须带 `?group=`（缺参数 400）且本群 ≥130；
+55. `GET /api/reports/export.csv?group=&days=&full=`：与页面**同一份装配**的长表
+    （`section,metric,bucket,group,value`）。默认脱敏：群只出展示标签、不含内部群 ID，本群要 130；
+    `full=1` 追加 `group_id` 列且要平台 240；两种都写 `admin_api:report_export` 审计、都带 UTF-8 BOM。
+56. **只读巡检模式没有这四块的数据源**（审计 / 处罚 / 活动都在机器人进程的内存里）→ 503，
+    并说明去机器人进程内的监听口看。
+
 ### E1-g 只读端点的逐路由门槛（P1）
 
 30. `GET /api/tasks`（平台超管 240）：**周期任务监测列表** —— 统一扫描周期 + 每个任务的
@@ -344,6 +365,8 @@
 | `GET /api/aliases`、`PUT /api/aliases`、`DELETE /api/aliases/:alias` | 平台超管 240（别名表是全局配置）|
 | `POST /api/activities`、`POST /api/activities/:code/groups`、`DELETE /api/activities/:code/groups/:group`、`PUT /api/activities/:code` | 本群**群管理员 130**（与指令层 `create` / `bind` / `unbind` / `set` 一致；`code` 所属群决定判定对象）|
 | `GET /api/activities/fields` | **任意登录会话**（静态字段目录，不含任何数据）|
+| `GET /api/reports` | 平台超管 240 拿全量；其余必须带 `?group=<群>`（缺参数 400）且本群 ≥130 |
+| `GET /api/reports/export.csv` | 本群 130（脱敏长表）；`?full=1` 与不带 `group=` 的**全量**要平台 240 |
 
 - **不报错、只裁剪**：列表类端点（待审批 / 活动）对够不着的群直接少返回，而不是整条 403 ——
   多群管理员看到的自然是自己那几行；
@@ -388,6 +411,9 @@
       另加「新建活动（草稿）」表单、每行的发布群绑定 / 解绑与**改字段**（本群 130，见 E1-k）；
       每行列出当前发布群与截止时间，绑定数 > 1 时才给「解绑」（最后一行会回落到归属群）；
       改字段的字段清单来自 `GET /api/activities/fields`，写法与 `/activity set` 一致（含 `clear`）。
+    - **报表** `/reports`（E5，见 E1-l）：群选择（超管多一个「全部群 / 全量」）+ 近 7 / 30 / 90 天，
+      四块汇总（群活跃按天分布 / 审核量 / 活动报名 / 通知投递）+ 按群表；「导出 CSV」脱敏、
+      「导出完整 CSV」（超管）多一列内部群 ID；页面上写明「群活跃是管理事件量，不是发言量」。
 28. **E2-d 权限呈现**（✅ 已完成）：按 `/auth/me` 的两轴画像决定入口与可用性 ——
     非平台超管不显示「状态」入口、待审批 / 活动 / 规则的写按钮按本群 130 禁用、
     审计默认收敛到自己够权限的群；**全部只是体验**：服务端逐路由门槛（E1-g）与写端点判定
