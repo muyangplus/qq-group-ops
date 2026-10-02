@@ -20,6 +20,9 @@ export { DIST_DIR };
 /** 「上一次启动成功」的构建快照：新版本自检不过时，助手从这里回滚。 */
 export const DIST_BACKUP_DIR = "data/dist-backup";
 
+/** 被换下来的坏构建留证目录（存在就说明历史上回滚过一次）。 */
+export const DIST_BROKEN_DIR = "data/dist-broken";
+
 /** 与 `dist/` 一起回滚的元文件（版本号 / 依赖锁定）。 */
 export const DIST_BACKUP_FILES: readonly string[] = [
   "package.json",
@@ -140,21 +143,35 @@ export function restoreDistFromBackup(
   }
 }
 
-/** 读走回滚回执（读后删除，避免重复私信）。 */
-export function takeRollbackNotice(
+/** 读回滚回执但**不删除**（管理后台的运维只读视图用；机器人自己启动时用 `takeRollbackNotice`）。 */
+export function readRollbackNotice(
   file: string = ROLLBACK_NOTICE_FILE,
 ): RollbackNotice | undefined {
   try {
     if (!existsSync(file)) {
       return undefined;
     }
-    const parsed = JSON.parse(readFileSync(file, "utf8")) as RollbackNotice;
-    rmSync(file, { force: true });
-    return parsed;
+    return JSON.parse(readFileSync(file, "utf8")) as RollbackNotice;
   } catch (error) {
     log.warn("rollback notice unreadable", { error: describeError(error) });
     return undefined;
   }
+}
+
+/** 读走回滚回执（读后删除，避免重复私信）。 */
+export function takeRollbackNotice(
+  file: string = ROLLBACK_NOTICE_FILE,
+): RollbackNotice | undefined {
+  const notice = readRollbackNotice(file);
+  if (notice === undefined) {
+    return undefined;
+  }
+  try {
+    rmSync(file, { force: true });
+  } catch (error) {
+    log.warn("rollback notice not removed", { error: describeError(error) });
+  }
+  return notice;
 }
 
 /** 助手回滚成功后写回执（纯 JS 的 `scripts/respawn.mjs` 也会写同样的结构）。 */

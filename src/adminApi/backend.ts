@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 
 import {
   AuditStatus,
@@ -6,23 +7,49 @@ import {
   PermissionLevel,
   PlatformLevel,
 } from "../core/enums.js";
+import {
+  distFingerprint,
+  onDiskVersion,
+  processStartedAt,
+  runningVersionOf,
+} from "../core/buildInfo.js";
 import { getLogger } from "../core/logger.js";
 import type { AdminTokenRepository } from "../db/adminTokenRepository.js";
 import type { GroupSettingsRepository } from "../db/groupSettingsRepository.js";
+import type { NotificationDeliveryRepository } from "../db/notificationRepository.js";
 import type { NotificationSubscriptionRepository } from "../db/notificationRepository.js";
+import type { PunishmentRecord } from "../db/punishmentRepository.js";
+import type { AppealRecord } from "../db/appealRepository.js";
+import type { BlacklistEntry } from "../db/blacklistRepository.js";
+import type { NotificationDelivery } from "../db/notificationRepository.js";
+import type { WriteQueue } from "../db/writeQueue.js";
 import type { ActivityService } from "../services/activity.js";
 import type { ActivityExportService } from "../services/activityExport.js";
+import type { AppealService } from "../services/appeals.js";
 import type { AuditLogStore } from "../services/audit.js";
+import type { BlacklistService } from "../services/blacklist.js";
 import { parseRuleSetting } from "../services/commands/support.js";
+import {
+  DIST_BROKEN_DIR,
+  readRollbackNotice,
+} from "../services/distSnapshot.js";
+import type { ExportService } from "../services/export.js";
 import { DEFAULT_GROUP_ID, type GroupConfigStore } from "../services/groupConfig.js";
+import type { HealthRegistry } from "../services/health.js";
 import type { JoinApprovalService } from "../services/joinApproval.js";
 import type { JoinAuditService, JoinRequest } from "../services/joinAudit.js";
+import type { JoinRequestSyncService } from "../services/joinAuditSync.js";
+import type { MigrationResult } from "../db/migrate.js";
+import type { NotificationService } from "../services/notifications.js";
 import { NOTIFY_TOPIC_META } from "../services/notifyTopics.js";
 import type { PermissionService } from "../services/permissions.js";
+import type { PunishmentService } from "../services/punishments.js";
+import { readRestartFailure } from "../services/restartNotice.js";
 import type { ShortCodeService } from "../services/shortCodes.js";
 import type { TickSchedulerState } from "../services/tickScheduler.js";
 import type { DeployControl } from "../services/deployWatcher.js";
 import type { PlatformSettingsStore } from "../services/platformSettings.js";
+import type { UserProfileService } from "../services/userProfiles.js";
 import { badRequest, conflict, forbidden, notFound, unavailable } from "./errors.js";
 import {
   createAdminApiEntities,
@@ -35,10 +62,16 @@ import {
 } from "./permissions.js";
 import type {
   AdminApiActivityItem,
+  AdminApiAppealItem,
   AdminApiAuditRecord,
+  AdminApiBlacklistEntry,
+  AdminApiDeliveryItem,
   AdminApiDeniedInput,
+  AdminApiHealthView,
   AdminApiNotifyTopic,
   AdminApiPendingItem,
+  AdminApiProfileSummary,
+  AdminApiPunishmentItem,
   AdminApiReaders,
   AdminApiRulesView,
   AdminApiStatusExtra,
@@ -94,6 +127,37 @@ export interface AdminApiBackendDeps {
   /** 启动期迁移问题数（`/api/status`）。 */
   migrationIssues?: number | undefined;
   now?: (() => Date) | undefined;
+
+  // ---------------------------------------------------------- P1 只读补齐
+  /** 处罚记录（`/api/punishments`）；未装配时该端点回 503。 */
+  punishments?: PunishmentService | undefined;
+  /** 黑名单（`/api/blacklist`）。 */
+  blacklist?: BlacklistService | undefined;
+  /** 申诉（`/api/appeals`）。 */
+  appeals?: AppealService | undefined;
+  /** 申请人资料摘要（`/api/pending` 每项附带 `profile`）。 */
+  userProfiles?: UserProfileService | undefined;
+  /** 通知投递记录（`/api/notify/deliveries`）。 */
+  notificationDeliveries?: NotificationDeliveryRepository | undefined;
+  /** 通知服务：进程级投递 / 订阅计数（`/api/health`）。 */
+  notifications?: NotificationService | undefined;
+  /**
+   * 模块健康注册表（`/api/health` 的模块列表与降级原因）。
+   *
+   * 传取值函数而不是实例：健康表要引用几乎所有服务，**创建在管理后端之后**，
+   * 只能等请求进来时再取（与 `tickTasks` 同样的原因）。
+   */
+  health?: (() => HealthRegistry | undefined) | undefined;
+  /** 写队列（`/api/health` 的「待写数据库」计数与最近错误）。 */
+  writeQueue?: WriteQueue | undefined;
+  /** 启动期迁移详情（`/api/health`；`migrationIssues` 只是它的条数）。 */
+  migration?: MigrationResult | undefined;
+  /** 运行模式（`fake` / `official`）：`/api/health` 展示用。 */
+  mode?: string | undefined;
+  /** 申请队列同步（`POST /api/join/sync`，与指令层 `/sync` 同一服务）。 */
+  joinSync?: JoinRequestSyncService | undefined;
+  /** 审计导出（`/api/audit/export.csv`，与指令层 `/export audit` 同一实现）。 */
+  exportService?: ExportService | undefined;
 }
 
 /** 读 + 写：真实服务图上的管理 API 后端。 */
@@ -181,6 +245,162 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
       reason: `${action} 需要本群群管理员（130）`,
     });
     throw forbidden("权限不足：需要该群的群管理员或以上权限。");
+  };
+
+  /**
+   * 本群**审核员 120** 门槛：与指令层 `/sync` 一致（比审批低一档）。
+   *
+   * 为什么单独一个：同步申请队列只是「把官方队列拉下来」，不改变任何人的状态，
+   * 所以指令层给的就是 120；管理面照搬，不擅自抬高。
+   */
+  const requireGroupModerator = (
+    actorId: string,
+    groupId: string,
+    action: string,
+  ): void => {
+    if (deps.permissions.meetsInGroup(actorId, groupId, PermissionLevel.Moderator)) {
+      return;
+    }
+    appendAudit({
+      groupId,
+      actorId,
+      action: "admin_api:denied",
+      status: AuditStatus.Rejected,
+      reason: `${action} 需要本群审核员（120）`,
+    });
+    throw forbidden("权限不足：需要该群的审核员或以上权限。");
+  };
+
+  // ---------------------------------------------------------- P1 只读补齐：视图换算
+
+  /** 处罚记录 → API 形状（动作摘要的用词与指令层卡片一致）。 */
+  const punishmentItem = (
+    record: PunishmentRecord,
+  ): AdminApiPunishmentItem => ({
+    recordId: record.recordId,
+    code: codeLabel(record.recordId),
+    groupId: record.groupId,
+    group: entities.group(record.groupId),
+    userId: record.userId,
+    target: entities.user(record.userId),
+    actorId: record.actorId,
+    actor: entities.user(record.actorId),
+    source: record.source,
+    ruleReason: record.ruleReason,
+    messageExcerpt: record.messageExcerpt,
+    actions: punishmentActionsLabel(record.actions),
+    detail: record.detail,
+    status: record.status,
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  });
+
+  const blacklistItem = (entry: BlacklistEntry): AdminApiBlacklistEntry => ({
+    scope: entry.scope,
+    groupId: entry.groupId,
+    ...(entry.scope === "group"
+      ? { group: entities.group(entry.groupId) }
+      : {}),
+    userId: entry.userId,
+    user: entities.user(entry.userId),
+    reason: entry.reason,
+    actorId: entry.actorId,
+    actor: entities.user(entry.actorId),
+    source: entry.source,
+    createdAt: entry.createdAt.toISOString(),
+  });
+
+  /** 申诉记录 → API 形状；`holdMinutes` 用来算「还剩多少分钟超时转派」。 */
+  const appealItem = (
+    record: AppealRecord,
+    holdMinutes: number,
+  ): AdminApiAppealItem => {
+    const pending = record.status === "pending";
+    const elapsedMinutes = Math.floor(
+      (now().getTime() - record.createdAt.getTime()) / 60_000,
+    );
+    const remaining = holdMinutes - elapsedMinutes;
+    return {
+      appealId: record.appealId,
+      code: codeLabel(record.appealId),
+      punishmentId: record.punishmentId,
+      punishmentCode: codeLabel(record.punishmentId),
+      groupId: record.groupId,
+      group: entities.group(record.groupId),
+      userId: record.userId,
+      appellant: entities.user(record.userId),
+      reason: record.reason,
+      status: record.status,
+      reviewerId: record.reviewerId,
+      ...(record.reviewerId.length > 0
+        ? { reviewer: entities.user(record.reviewerId) }
+        : {}),
+      note: record.note,
+      createdAt: record.createdAt.toISOString(),
+      ...(record.reviewedAt !== undefined
+        ? { reviewedAt: record.reviewedAt.toISOString() }
+        : {}),
+      ...(pending ? { holdRemainingMinutes: remaining } : {}),
+      overdue: pending && holdMinutes > 0 && remaining < 0,
+    };
+  };
+
+  const deliveryItem = (row: NotificationDelivery): AdminApiDeliveryItem => ({
+    groupId: row.groupId,
+    group: entities.group(row.groupId),
+    requestId: row.requestId,
+    userId: row.userId,
+    recipient: entities.user(row.userId),
+    status: row.status,
+    detail: row.detail,
+    createdAt: row.createdAt.toISOString(),
+  });
+
+  /** 申请人资料摘要（学号脱敏；没填过资料就返回 undefined，界面显示「未填写」）。 */
+  const profileSummary = (
+    userId: string,
+  ): AdminApiProfileSummary | undefined => {
+    const profile = deps.userProfiles?.get(userId);
+    if (!profile) {
+      return undefined;
+    }
+    return {
+      name: profile.name,
+      studentId: maskStudentId(profile.studentId),
+      className: profile.className,
+      college: profile.college,
+      year: profile.year,
+    };
+  };
+
+  /**
+   * 处罚 / 申诉的「短码」就是它们自己的 `recordId`（模型里写死了 6 位随机码，
+   * 展示成 `#A1B2C3`），不需要经短码表。
+   */
+  const codeLabel = (recordId: string): string => `#${recordId}`;
+
+  const requirePunishments = (): PunishmentService => {
+    const service = deps.punishments;
+    if (!service) {
+      throw unavailable("处罚数据源未装配（只读巡检模式 / 缺少数据库）。");
+    }
+    return service;
+  };
+
+  const requireBlacklist = (): BlacklistService => {
+    const service = deps.blacklist;
+    if (!service) {
+      throw unavailable("黑名单数据源未装配（只读巡检模式 / 缺少数据库）。");
+    }
+    return service;
+  };
+
+  const requireAppeals = (): AppealService => {
+    const service = deps.appeals;
+    if (!service) {
+      throw unavailable("申诉数据源未装配（只读巡检模式 / 缺少数据库）。");
+    }
+    return service;
   };
 
   const requireGlobalSuperAdmin = (actorId: string, action: string): void => {
@@ -283,16 +503,20 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     pending: async (): Promise<AdminApiPendingItem[]> =>
       [...deps.joinAudit.listPending()]
         .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
-        .map((request) => ({
-          requestId: request.requestId,
-          groupId: request.groupId,
-          userId: request.userId,
-          reason: request.reason,
-          createdAt: request.createdAt.toISOString(),
-          group: entities.group(request.groupId),
-          applicant: entities.user(request.userId),
-          request: entities.request(request.requestId),
-        })),
+        .map((request) => {
+          const profile = profileSummary(request.userId);
+          return {
+            requestId: request.requestId,
+            groupId: request.groupId,
+            userId: request.userId,
+            reason: request.reason,
+            createdAt: request.createdAt.toISOString(),
+            group: entities.group(request.groupId),
+            applicant: entities.user(request.userId),
+            request: entities.request(request.requestId),
+            ...(profile !== undefined ? { profile } : {}),
+          };
+        }),
 
     rules: async (groupId: string): Promise<AdminApiRulesView> => {
       const override = deps.configStore
@@ -323,6 +547,145 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
 
     activities: async () =>
       deps.activity.listAllActivities().map((activity) => activityItem(activity.activityId)),
+
+    // ------------------------------------------------- P1 只读补齐（域数据）
+
+    punishments: async (options) => {
+      const service = requirePunishments();
+      const records =
+        options.group === undefined
+          ? service.listAll()
+          : service.listByGroup(options.group, Number.MAX_SAFE_INTEGER);
+      const filtered =
+        options.status === undefined
+          ? records
+          : records.filter((record) => record.status === options.status);
+      return filtered.map(punishmentItem);
+    },
+
+    blacklist: async (groupId, options) => {
+      const service = requireBlacklist();
+      return {
+        groupId,
+        group: entities.group(groupId),
+        entries: service.entriesForGroup(groupId).map(blacklistItem),
+        globalEntries: options.includeGlobal
+          ? service.globalEntries().map(blacklistItem)
+          : [],
+        globalVisible: options.includeGlobal,
+      };
+    },
+
+    appeals: async (options) => {
+      const service = requireAppeals();
+      const holdMinutes = deps.platform?.get("appealHoldMinutes") ?? 0;
+      const all = service
+        .listAll()
+        .filter(
+          (record) =>
+            options.group === undefined || record.groupId === options.group,
+        );
+      const filtered =
+        options.status === undefined
+          ? all
+          : all.filter((record) => record.status === options.status);
+      return {
+        items: filtered.map((record) => appealItem(record, holdMinutes)),
+        holdMinutes,
+        pendingCount: all.filter((record) => record.status === "pending").length,
+      };
+    },
+
+    deliveries: async (options) => {
+      const repository = deps.notificationDeliveries;
+      if (!repository) {
+        throw unavailable(
+          "投递记录数据源未装配（只读巡检模式 / 缺少数据库）。",
+        );
+      }
+      const rows = await repository.findAll();
+      return rows
+        .filter(
+          (row) => options.group === undefined || row.groupId === options.group,
+        )
+        .filter(
+          (row) => options.status === undefined || row.status === options.status,
+        )
+        .sort(
+          (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
+        )
+        .map(deliveryItem);
+    },
+
+    health: async (): Promise<AdminApiHealthView> => {
+      const memory = process.memoryUsage();
+      const queue = deps.writeQueue;
+      const notify = deps.notifications?.stats();
+      const failure = readRestartFailure();
+      const rollback = readRollbackNotice();
+      return {
+        process: {
+          runningVersion: runningVersionOf(),
+          diskVersion: onDiskVersion(),
+          uptimeMs: Math.round(process.uptime() * 1000),
+          startedAt: processStartedAt().toISOString(),
+          pid: process.pid,
+          node: process.version,
+          platform: process.platform,
+          arch: process.arch,
+          rss: memory.rss,
+          heapUsed: memory.heapUsed,
+          heapTotal: memory.heapTotal,
+          mode: deps.mode ?? "unknown",
+        },
+        database: {
+          driver: deps.database ?? "unknown",
+          migrationIssues: (deps.migration?.issues ?? []).map((issue) => ({
+            step: String(issue.step),
+            error: String(issue.error),
+          })),
+        },
+        queue: {
+          pending: queue?.pending ?? 0,
+          failures: queue?.failures ?? 0,
+          ...(queue?.lastError !== undefined
+            ? { lastError: queue.lastError }
+            : {}),
+        },
+        notify: {
+          subscribers: notify?.subscribers ?? 0,
+          deliveries: notify?.deliveries ?? 0,
+        },
+        modules: (deps.health?.()?.list() ?? []).map((status) => ({
+          key: status.key,
+          label: status.label,
+          state: status.state,
+          ...(status.error !== undefined ? { error: status.error } : {}),
+        })),
+        restart: {
+          ...(failure !== undefined
+            ? {
+                failure: {
+                  reason: failure.reason ?? "未知原因",
+                  ...(failure.at !== undefined ? { at: failure.at } : {}),
+                  ...(typeof failure.code === "number"
+                    ? { code: failure.code }
+                    : {}),
+                },
+              }
+            : {}),
+          ...(rollback !== undefined
+            ? {
+                rollback: {
+                  reason: String(rollback.reason),
+                  at: String(rollback.at),
+                },
+              }
+            : {}),
+          brokenBuild: existsSync(DIST_BROKEN_DIR),
+        },
+      };
+    },
 
     permissionsOf: async (userId: string): Promise<AdminApiPermissionsView> => {
       // 群集合 = 有授权行的群 ∪ 有规则覆盖的群；与只读巡检模式口径一致
@@ -619,6 +982,85 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
       });
       return item;
     },
+    syncJoinRequests: async (groupId, actorId) => {
+      const service = deps.joinSync;
+      if (!service) {
+        throw unavailable("申请队列同步未装配（只读巡检模式）。");
+      }
+      requireGroupModerator(actorId, groupId, "同步入群申请");
+      const fetched = await service.syncGroup(groupId);
+      const pending = deps.joinAudit
+        .listPending()
+        .filter((request) => request.groupId === groupId).length;
+      appendAudit({
+        groupId,
+        actorId,
+        action: "admin_api:join_sync",
+        status: AuditStatus.Executed,
+        reason: `同步官方申请 ${fetched.length} 条（当前待审批 ${pending} 条）`,
+      });
+      log.info("admin api synced join requests", {
+        groupId,
+        actorId,
+        fetched: fetched.length,
+        pending,
+      });
+      return {
+        groupId,
+        group: entities.group(groupId),
+        fetched: fetched.length,
+        pending,
+        message: `已同步 ${fetched.length} 条官方申请（当前待审批 ${pending} 条）。`,
+      };
+    },
+
+    exportAuditCsv: async (actorId, options) => {
+      const service = deps.exportService;
+      if (!service) {
+        throw unavailable("审计导出未装配（只读巡检模式）。");
+      }
+      const groupId = options.group;
+      if (groupId === undefined) {
+        requireGlobalSuperAdmin(actorId, "导出全量审计");
+      } else {
+        requireGroupAdmin(actorId, groupId, "导出审计记录");
+      }
+      // `full=1` = 导出**完整 openid**（不脱敏）：指令层 `/export audit` 永远脱敏、最多 50 条，
+      // 这里更进一步，所以单独抬到平台超管 240 —— CSV 会落到下载目录，暴露面比页面大一档。
+      if (options.full) {
+        requireGlobalSuperAdmin(actorId, "导出未脱敏审计记录");
+      }
+      const records = deps.auditLog
+        .all()
+        .filter((record) => groupId === undefined || record.groupId === groupId);
+      // 领域层自己按「本群 130」再校验一次（平台导出时 groupId=""，240 折算成 140 同样过），
+      // 并写一条 `export_audit_records` 审计 —— 与指令层 `/export audit` 同一实现。
+      const csv = service.exportAuditRecordsCsv(
+        actorId,
+        groupId ?? "",
+        records,
+        !options.full,
+      );
+      appendAudit({
+        groupId: groupId ?? "",
+        actorId,
+        action: "admin_api:audit_export",
+        status: AuditStatus.Executed,
+        reason: `导出审计 行=${records.length} 含隐私=${options.full ? "是" : "否"}`,
+      });
+      log.info("admin api exported audit csv", {
+        groupId: groupId ?? "all",
+        actorId,
+        rows: records.length,
+        full: options.full,
+      });
+      return {
+        filename: `audit-${groupId ?? "all"}.csv`,
+        csv,
+        rows: records.length,
+        full: options.full,
+      };
+    },
   };
 }
 
@@ -659,4 +1101,44 @@ export function buildNotifyTopicViews(
 function truncate(value: string, max: number): string {
   const compact = value.split("\n").join(" ").trim();
   return compact.length > max ? `${compact.slice(0, max)}…` : compact;
+}
+
+/**
+ * 处罚动作摘要（用词与指令层卡片一致：`messageGuard.ts` 的 `punishLabel`）。
+ *
+ * 顺序固定「撤回 → 禁言 → 移出群 → 拉黑」，空则「仅警告」——后台表格里一眼能比。
+ */
+function punishmentActionsLabel(
+  actions: PunishmentRecord["actions"],
+): string {
+  const parts: string[] = [];
+  if (actions.recalled) {
+    parts.push("撤回消息");
+  }
+  if (actions.muted) {
+    parts.push(`禁言 ${actions.muteDurationSeconds} 秒`);
+  }
+  if (actions.kicked) {
+    parts.push("移出群");
+  }
+  if (actions.blacklist === "global") {
+    parts.push("拉黑（全局）");
+  } else if (actions.blacklist === "group") {
+    parts.push("拉黑（本群）");
+  }
+  return parts.length > 0 ? parts.join(" + ") : "仅警告";
+}
+
+/**
+ * 学号脱敏：留前 4 位与后 2 位，中间打码（`2212***89`）。
+ *
+ * 为什么默认脱敏：审批要看的是「是不是本人 / 哪个班」，完整学号属于个人信息，
+ * 名单导出那条路（`?full=1`）已经有明确门槛与审计，列表页不必再摊一份。
+ */
+function maskStudentId(studentId: string): string {
+  const trimmed = studentId.trim();
+  if (trimmed.length <= 6) {
+    return "*".repeat(trimmed.length);
+  }
+  return `${trimmed.slice(0, 4)}${"*".repeat(trimmed.length - 6)}${trimmed.slice(-2)}`;
 }

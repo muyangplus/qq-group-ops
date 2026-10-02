@@ -277,6 +277,9 @@ export function createRuntime(
     writeQueue,
   );
   const api = instrumentQQOfficialAPI(createApi(settings), getLogger("runtime"));
+  /** 运行模式：有机器人凭据就是 official，否则 fake（管理 API 的运维页也要显示它）。 */
+  const mode: Runtime["mode"] =
+    settings.qqBotAppId && settings.qqBotClientSecret ? "official" : "fake";
   const richMessages = new RichMessageSender(api);
   const auditLog = new AuditLogStore(repositories.audit, writeQueue);
   const joinAudit = new JoinAuditService(
@@ -497,6 +500,20 @@ export function createRuntime(
         deploy: dependencies.deploy,
         // 配置页（E2-f）：读写都走机器人 `/config` 用的那一套热改存储，不另造通路
         platform,
+        // P1 只读补齐：处罚 / 黑名单 / 申诉 / 投递 / 运维状态（全部走各自领域服务）
+        punishments,
+        blacklist,
+        appeals,
+        userProfiles,
+        notificationDeliveries: repositories.notificationDeliveries,
+        notifications,
+        // 健康表创建在管理后端之后（它引用几乎所有服务），只能惰性取
+        health: () => health,
+        writeQueue,
+        migration: dependencies.migration,
+        mode,
+        joinSync,
+        exportService,
         database: dependencies.databaseDriver,
         migrationIssues: dependencies.migration?.issues.length,
       })
@@ -1186,7 +1203,7 @@ export function createRuntime(
     await writeQueue.flush();
   };
   return {
-    mode: settings.qqBotAppId && settings.qqBotClientSecret ? "official" : "fake",
+    mode,
     api,
     health,
     platform,

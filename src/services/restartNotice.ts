@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { getLogger } from "../core/logger.js";
@@ -11,6 +11,40 @@ const log = getLogger("restart-notice");
 
 /** 重启回执文件（相对启动目录，和 `data/` 下的库文件同居；gitignored）。 */
 export const RESTART_NOTICE_FILE = "data/restart-notice.json";
+
+/** 重启失败证据：自我重启助手在新进程起不来时写（`scripts/respawn.mjs` 同样的路径）。 */
+export const RESTART_FAILED_FILE = "data/restart-failed.json";
+
+/** 助手留下的失败证据（字段按需取；坏文件当没有）。 */
+export interface RestartFailureNotice {
+  reason?: string | undefined;
+  at?: string | undefined;
+  code?: number | undefined;
+  signal?: string | undefined;
+  oldPid?: number | undefined;
+  detail?: string | undefined;
+}
+
+/** 读重启失败证据但**不删除**（管理后台的运维只读视图用；留证文件本来就该留着）。 */
+export function readRestartFailure(
+  file: string = RESTART_FAILED_FILE,
+): RestartFailureNotice | undefined {
+  try {
+    if (!existsSync(file)) {
+      return undefined;
+    }
+    const parsed = JSON.parse(
+      readFileSync(file, "utf8"),
+    ) as RestartFailureNotice;
+    return typeof parsed === "object" && parsed !== null ? parsed : undefined;
+  } catch (error) {
+    log.warn("restart failure notice unreadable", {
+      file,
+      error: String(error),
+    });
+    return undefined;
+  }
+}
 
 /** 失败卡正文里内联的自检原文上限（完整内容走「自检结果」按钮）。 */
 export const PREFLIGHT_SUMMARY_INLINE_MAX = 300;

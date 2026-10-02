@@ -3,10 +3,14 @@ import { createRouter, createWebHistory } from "vue-router";
 import { onUnauthorized } from "@/api/client";
 import { useSessionStore } from "@/stores/session";
 import ActivitiesView from "@/views/ActivitiesView.vue";
+import AppealsView from "@/views/AppealsView.vue";
 import AuditView from "@/views/AuditView.vue";
+import BlacklistView from "@/views/BlacklistView.vue";
 import DashboardView from "@/views/DashboardView.vue";
+import DeliveriesView from "@/views/DeliveriesView.vue";
 import LoginView from "@/views/LoginView.vue";
 import PendingView from "@/views/PendingView.vue";
+import PunishmentsView from "@/views/PunishmentsView.vue";
 import RulesView from "@/views/RulesView.vue";
 import SettingsView from "@/views/SettingsView.vue";
 import StatusView from "@/views/StatusView.vue";
@@ -23,6 +27,10 @@ export const router = createRouter({
     { path: "/", name: "dashboard", component: DashboardView },
     { path: "/pending", name: "pending", component: PendingView },
     { path: "/audit", name: "audit", component: AuditView },
+    { path: "/punishments", name: "punishments", component: PunishmentsView },
+    { path: "/blacklist", name: "blacklist", component: BlacklistView },
+    { path: "/appeals", name: "appeals", component: AppealsView },
+    { path: "/deliveries", name: "deliveries", component: DeliveriesView },
     { path: "/rules", name: "rules", component: RulesView },
     { path: "/activities", name: "activities", component: ActivitiesView },
     { path: "/status", name: "status", component: StatusView },

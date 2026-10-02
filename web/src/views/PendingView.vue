@@ -1,12 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
-import { adminApi, type AdminApiPendingItem } from "@/api/admin";
+import {
+  adminApi,
+  type AdminApiPendingItem,
+  type AdminApiProfileSummary,
+} from "@/api/admin";
 import { ApiError } from "@/api/client";
 import EntityLabel from "@/components/EntityLabel.vue";
 import ModalDialog from "@/components/ModalDialog.vue";
 import { entityLabel } from "@/lib/entity";
-import { GROUP_ADMIN_LEVEL, useSessionStore } from "@/stores/session";
+import {
+  GROUP_ADMIN_LEVEL,
+  MODERATOR_LEVEL,
+  useSessionStore,
+} from "@/stores/session";
 
 /**
  * 待审批入群申请（E2-c）。
@@ -14,11 +22,22 @@ import { GROUP_ADMIN_LEVEL, useSessionStore } from "@/stores/session";
  * 口径与指令层一致（docs/ADMIN-API.md）：
  * - **列表**：服务端按「本群审核员 120 起」裁剪，前端再按群过滤；平台超管拿全量；
  * - **通过 / 拒绝**：要本群**群管理员 130**，前端据此禁用按钮（服务端仍会 403）；
+ * - **同步官方队列**：`POST /api/join/sync` 是群维度的幂等写，本群 120 起，前端据此禁用；
  * - 两个动作都**二次确认**；拒绝可以在弹窗里写自定义理由，留空 = 指令层同一份默认文案。
  */
+
+/**
+ * 列表项的本地扩展：`/api/pending` 现在会附带申请人资料摘要（学号已脱敏），
+ * 但 `api/admin.ts` 里的 `AdminApiPendingItem` 还没这个可选字段 —— 按约定不改那个文件，
+ * 所以在页面里交叉一个本地可选 `profile`（字段真到齐了就能直接删掉这层）。
+ */
+type PendingItem = AdminApiPendingItem & {
+  profile?: AdminApiProfileSummary | undefined;
+};
+
 const session = useSessionStore();
 
-const items = ref<AdminApiPendingItem[]>([]);
+const items = ref<PendingItem[]>([]);
 const total = ref(0);
 const page = ref(1);
 const pageSize = ref(20);
@@ -26,10 +45,11 @@ const groupFilter = ref("");
 const loading = ref(false);
 const error = ref("");
 const notice = ref("");
+const syncing = ref(false);
 
 /** 两个独立的弹窗目标：通过 / 拒绝各自一次确认，不共用状态。 */
-const approveTarget = ref<AdminApiPendingItem | null>(null);
-const rejectTarget = ref<AdminApiPendingItem | null>(null);
+const approveTarget = ref<PendingItem | null>(null);
+const rejectTarget = ref<PendingItem | null>(null);
 const rejectReason = ref("");
 const busy = ref(false);
 
@@ -46,8 +66,29 @@ function groupLabel(groupId: string): string {
 }
 
 /** 操作回执里也别再露 openid：优先绑定号 / 短码，退回 `userId`。 */
-function applicantLabel(item: AdminApiPendingItem): string {
+function applicantLabel(item: PendingItem): string {
   return entityLabel(item.applicant, item.userId);
+}
+
+/**
+ * 「申请人资料」列：后端只把填过的字段给出来，所以拼出来是「姓名 · 班级 · 学院 · 年级 · 学号」，
+ * 缺的字段直接跳过；一个字段都没有时说明这人在资料卡里什么都没填。
+ */
+function profileText(item: PendingItem): string {
+  const profile = item.profile;
+  if (!profile) {
+    return "";
+  }
+  return [
+    profile.name,
+    profile.className,
+    profile.college,
+    profile.year,
+    profile.studentId,
+  ]
+    .map((part) => part?.trim() ?? "")
+    .filter((part) => part.length > 0)
+    .join(" · ");
 }
 
 async function load(): Promise<void> {
@@ -74,11 +115,36 @@ function canDecide(groupId: string): boolean {
   return session.levelIn(groupId) >= GROUP_ADMIN_LEVEL;
 }
 
-function openApprove(item: AdminApiPendingItem): void {
+/** 同步官方队列是「本群 120 起的写」，界面按同一档位禁用（服务端仍会 403）。 */
+function canSync(groupId: string): boolean {
+  return session.levelIn(groupId) >= MODERATOR_LEVEL;
+}
+
+/** 同步是**群维度**的：没有「全部群」同步，所以必须先选一个具体群。 */
+async function sync(): Promise<void> {
+  const group = groupFilter.value;
+  if (group === "") {
+    error.value = "请先选择一个群：同步官方队列是群维度的，没有「全部群」同步。";
+    return;
+  }
+  syncing.value = true;
+  try {
+    const result = await adminApi.syncJoinRequests(group);
+    notice.value = result.message;
+    error.value = "";
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : String(err);
+  } finally {
+    syncing.value = false;
+  }
+}
+
+function openApprove(item: PendingItem): void {
   approveTarget.value = item;
 }
 
-function openReject(item: AdminApiPendingItem): void {
+function openReject(item: PendingItem): void {
   rejectTarget.value = item;
   rejectReason.value = "";
   busy.value = false;
@@ -146,8 +212,28 @@ function formatTime(value: string): string {
       <button type="button" class="link" :disabled="loading" @click="load">
         刷新
       </button>
+      <!-- 同步是群维度、不存在「全部群」：必须先选一个具体群，且本群要够 120 -->
+      <button
+        type="button"
+        :disabled="syncing || groupFilter === '' || !canSync(groupFilter)"
+        :title="
+          groupFilter === ''
+            ? '先选一个群：同步官方队列是群维度的'
+            : canSync(groupFilter)
+              ? '拉一次官方队列（幂等）'
+              : '需要该群的审核员（120）'
+        "
+        @click="sync"
+      >
+        {{ syncing ? "同步中…" : "同步官方队列" }}
+      </button>
       <span class="hint">共 {{ total }} 条</span>
     </div>
+
+    <p class="hint">
+      「申请人资料」里的学号是后端脱敏后的（保留头尾几位）；完整学号只在活动名单导出里给
+      （`?full=1`，需本群群管理员并写审计）。
+    </p>
 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="notice" class="ok">{{ notice }}</p>
@@ -169,6 +255,11 @@ function formatTime(value: string): string {
               申请人 <EntityLabel :entity="item.applicant" :fallback="item.userId" />
               <span v-if="item.reason"> · 理由：{{ item.reason }}</span>
               <span v-else> · 未填写理由</span>
+            </div>
+            <!-- 申请人资料：卡片里填过的字段（学号已脱敏），一列不落；空资料明说「未填写」 -->
+            <div class="hint">
+              资料：<span v-if="profileText(item)">{{ profileText(item) }}</span>
+              <span v-else>未填写</span>
             </div>
             <div class="hint">
               申请 <EntityLabel :entity="item.request" :fallback="item.requestId" />

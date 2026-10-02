@@ -110,6 +110,16 @@ export class AppealService {
     return this.all().filter((appeal) => appeal.status === "pending");
   }
 
+  /**
+   * 全部申诉（新 → 旧）。
+   *
+   * 指令层没有「全量申诉列表」（`/appeal` 只管自己那条），这条是给**管理后台**用的：
+   * 审核员要看「本群所有申诉（含已处理）」，平台超管要看全量。
+   */
+  public listAll(): AppealRecord[] {
+    return this.all();
+  }
+
   public listForUser(userId: string, limit = 10): AppealRecord[] {
     return this.all()
       .filter((appeal) => appeal.userId === userId)

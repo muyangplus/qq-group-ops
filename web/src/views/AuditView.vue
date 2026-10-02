@@ -161,6 +161,28 @@ function formatTime(value: string | number): string {
       <input v-model="actorFilter" type="text" placeholder="操作人（完整 id）" />
       <input v-model="actionFilter" type="text" placeholder="动作（如 data_delete）" />
       <button type="button" :disabled="loading" @click="search">查询</button>
+      <!--
+        导出走**同源下载链接**（靠 cookie 鉴权，所以用 <a> 而不是 fetch）：
+        默认那份是脱敏的（actor / target 只留首字符，与指令层 `/export audit` 同口径）；
+        「含完整 openid」那份更进一步 —— 服务端要求平台超管 240，而且两种都写审计。
+      -->
+      <a
+        class="link"
+        :href="adminApi.auditExportUrl({ group: groupFilter || undefined })"
+        title="导出当前筛选的 CSV（默认脱敏：actor / target 只留首字符）"
+      >
+        导出 CSV
+      </a>
+      <a
+        v-if="session.isSuperAdmin"
+        class="link"
+        :href="
+          adminApi.auditExportUrl({ group: groupFilter || undefined, full: true })
+        "
+        title="导出含完整 openid 的 CSV（要平台超管，会写审计）"
+      >
+        导出完整 CSV
+      </a>
       <span class="hint">共 {{ total }} 条</span>
     </div>
 

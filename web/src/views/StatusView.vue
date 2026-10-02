@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
-import { adminApi, type AdminApiStatus, type AdminApiTasksView } from "@/api/admin";
+import {
+  adminApi,
+  type AdminApiHealthView,
+  type AdminApiStatus,
+  type AdminApiTasksView,
+} from "@/api/admin";
 import { ApiError } from "@/api/client";
 import { useSessionStore } from "@/stores/session";
 
 /**
- * 状态看板（E2-c）：`GET /api/status` + 周期任务监测 `GET /api/tasks`。
+ * 状态看板（E2-c）：`GET /api/status` + 周期任务监测 `GET /api/tasks` + 运维只读 `GET /api/health`。
  *
  * 平台级信息，服务端要**平台超管 240**（见 docs/ADMIN-API.md 的 E1-g），
  * 所以非超管这里只显示一句说明、连请求都不发。
@@ -14,10 +19,19 @@ import { useSessionStore } from "@/stores/session";
 const session = useSessionStore();
 const status = ref<AdminApiStatus | null>(null);
 const tasks = ref<AdminApiTasksView | null>(null);
+const health = ref<AdminApiHealthView | null>(null);
 const loading = ref(false);
 const error = ref("");
 
 const allowed = computed(() => session.isSuperAdmin);
+
+/** 只读巡检模式（`pnpm admin:api`）没有调度器与内存态：那两个端点回 503，不该把整页打成错误。 */
+function nullOnUnavailable(err: unknown): null {
+  if (err instanceof ApiError && err.status === 503) {
+    return null;
+  }
+  throw err;
+}
 
 async function load(): Promise<void> {
   if (!allowed.value) {
@@ -25,18 +39,14 @@ async function load(): Promise<void> {
   }
   loading.value = true;
   try {
-    // 只读巡检模式（`pnpm admin:api`）没有调度器：那个端点回 503，不该把整页打成错误
-    const [next, nextTasks] = await Promise.all([
+    const [next, nextTasks, nextHealth] = await Promise.all([
       adminApi.status(),
-      adminApi.tasks().catch((err: unknown) => {
-        if (err instanceof ApiError && err.status === 503) {
-          return null;
-        }
-        throw err;
-      }),
+      adminApi.tasks().catch(nullOnUnavailable),
+      adminApi.health().catch(nullOnUnavailable),
     ]);
     status.value = next;
     tasks.value = nextTasks;
+    health.value = nextHealth;
     error.value = "";
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : String(err);
@@ -91,6 +101,12 @@ function cadence(minIntervalMs: number, scanIntervalMs: number): string {
     return `${minIntervalMs / 60_000} 分钟`;
   }
   return `${Math.round(minIntervalMs / 1000)} 秒`;
+}
+
+/** 字节数 → `128.0 MB` / `1.25 GB`（与机器人 `/status proc` 同一套写法）。 */
+function formatBytes(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`;
 }
 </script>
 
@@ -173,6 +189,110 @@ function cadence(minIntervalMs: number, scanIntervalMs: number): string {
       </template>
       <p v-else-if="status && !loading" class="hint">
         本进程没有周期任务调度器（只读巡检模式）：周期任务监测只在机器人进程内那口有。
+      </p>
+
+      <!-- 运维只读：把 `/status proc` 的内容搬进来（进程 / 写队列 / 模块健康 / 恢复现场） -->
+      <template v-if="health">
+        <h2 class="section-title">运维与恢复现场</h2>
+
+        <dl class="facts">
+          <dt>运行版本</dt>
+          <dd>
+            <code>v{{ health.process.runningVersion }}</code>
+            <!-- 磁盘版本更新但还没重启时，这两个值会不一样 —— 正是「有新版待重启」的信号 -->
+            <span v-if="health.process.diskVersion !== health.process.runningVersion">
+              <span class="badge">磁盘已是 v{{ health.process.diskVersion }}（待重启生效）</span>
+            </span>
+          </dd>
+          <dt>已运行</dt>
+          <dd>
+            {{ formatUptime(health.process.uptimeMs) }} · 启动于
+            {{ formatTime(health.process.startedAt) }}
+          </dd>
+          <dt>运行环境</dt>
+          <dd>
+            <code>{{ health.process.node }}</code> ·
+            {{ health.process.platform }}/{{ health.process.arch }} · pid
+            {{ health.process.pid }} · 模式 <code>{{ health.process.mode }}</code>
+          </dd>
+          <dt>内存</dt>
+          <dd>
+            {{ formatBytes(health.process.rss) }}（堆
+            {{ formatBytes(health.process.heapUsed) }} /
+            {{ formatBytes(health.process.heapTotal) }}）
+          </dd>
+          <dt>写队列</dt>
+          <dd>
+            {{ health.queue.pending }} 条待写 · {{ health.queue.failures }} 条失败
+            <span v-if="health.queue.lastError" class="error">
+              · 最近错误：{{ health.queue.lastError }}
+            </span>
+          </dd>
+          <dt>数据库</dt>
+          <dd><code>{{ health.database.driver }}</code></dd>
+          <dt>通知</dt>
+          <dd>
+            订阅 {{ health.notify.subscribers }} 人 · 投递记录
+            {{ health.notify.deliveries }} 条
+          </dd>
+        </dl>
+
+        <h3 class="row-title">模块健康</h3>
+        <p v-if="health.modules.length === 0" class="hint">没有可展示的模块状态。</p>
+        <table v-else class="table">
+          <thead>
+            <tr>
+              <th>模块</th>
+              <th>状态</th>
+              <th>错误</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="module in health.modules" :key="module.key">
+              <td><code>{{ module.key }}</code> {{ module.label }}</td>
+              <td>
+                <span v-if="module.state === 'ready'">正常</span>
+                <span v-else class="badge">{{ module.state }}</span>
+              </td>
+              <td class="reason">
+                <span v-if="module.error" class="error">{{ module.error }}</span>
+                <span v-else>—</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="hint">
+          模块降级后它负责的功能会停用（那一轮周期任务也会被整轮跳过）；
+          可以在机器人里用 <code>/status proc</code> 点「重试加载」把它拉回来，**不用重启**。
+        </p>
+
+        <h3 class="row-title">恢复现场</h3>
+        <dl class="facts">
+          <dt>最近重启失败</dt>
+          <dd>
+            <span v-if="health.restart.failure" class="error">
+              {{ health.restart.failure.reason }}（{{ formatTime(health.restart.failure.at) }}）
+            </span>
+            <span v-else>无（`data/restart-failed.json` 不存在）</span>
+          </dd>
+          <dt>最近回滚</dt>
+          <dd>
+            <span v-if="health.restart.rollback">
+              {{ health.restart.rollback.reason }}（{{ formatTime(health.restart.rollback.at) }}）
+            </span>
+            <span v-else>无（`data/rollback-notice.json` 不存在）</span>
+          </dd>
+          <dt>坏构建留证</dt>
+          <dd>
+            <span v-if="health.restart.brokenBuild" class="badge">
+              存在 data/dist-broken（历史上换过一次坏构建）
+            </span>
+            <span v-else>无</span>
+          </dd>
+        </dl>
+      </template>
+      <p v-else-if="status && !loading" class="hint">
+        本进程没有运行时状态（只读巡检模式）：运维区块只在机器人进程内那口有。
       </p>
 
       <button type="button" class="link" :disabled="loading" @click="load">

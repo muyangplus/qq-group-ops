@@ -140,6 +140,188 @@ export interface AdminApiDeniedInput {
   groupId: string;
 }
 
+/** 处罚记录（`/api/punishments`，P1 只读）：与指令层 `/punish list` 同一份数据。 */
+export interface AdminApiPunishmentItem {
+  /** 内部 id。 */
+  recordId: string;
+  /** 短码（含 `#`）：指令层说的「处罚短码」就是它。 */
+  code: string;
+  groupId: string;
+  group: AdminApiEntityRef;
+  /** 被处罚人 openid；展示用 `target`。 */
+  userId: string;
+  target: AdminApiEntityRef;
+  /** 执行者：`bot` / `bot:auto` / 审核员 userId；展示用 `actor`。 */
+  actorId: string;
+  actor: AdminApiEntityRef;
+  /** 来源：`keyword` / `manual` / `card`。 */
+  source: string;
+  ruleReason: string;
+  /** 触发消息原文（已压成单行并截断）；空串 = 未保留原文。 */
+  messageExcerpt: string;
+  /** 动作摘要（人看的）：`撤回+禁言 600 秒`、`警告` … */
+  actions: string;
+  /** 各动作执行结果（`recall+mute+warn`、`mute_failed` …）。 */
+  detail: string;
+  status: "active" | "released";
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 黑名单条目（`/api/blacklist`，P1 只读）。 */
+export interface AdminApiBlacklistEntry {
+  scope: "group" | "global";
+  /** `scope=global` 时为空串。 */
+  groupId: string;
+  /** `scope=global` 时不带。 */
+  group?: AdminApiEntityRef | undefined;
+  userId: string;
+  user: AdminApiEntityRef;
+  reason: string;
+  actorId: string;
+  actor: AdminApiEntityRef;
+  /** `manual` / `keyword` / `card`。 */
+  source: string;
+  createdAt: string;
+}
+
+/** 黑名单视图：本群一组、全局一组（非平台超管看不到全局那组）。 */
+export interface AdminApiBlacklistView {
+  groupId: string;
+  group: AdminApiEntityRef;
+  entries: AdminApiBlacklistEntry[];
+  globalEntries: AdminApiBlacklistEntry[];
+  /** `false` = 没给全局列表（权限不够），界面要说明而不是显示成「全局没人」。 */
+  globalVisible: boolean;
+}
+
+/** 申诉记录（`/api/appeals`，P1 只读）。 */
+export interface AdminApiAppealItem {
+  appealId: string;
+  /** 申诉短码（含 `#`）。 */
+  code: string;
+  /** 关联处罚的内部 id 与短码。 */
+  punishmentId: string;
+  punishmentCode: string;
+  groupId: string;
+  group: AdminApiEntityRef;
+  /** 申诉人（被处罚人）openid；展示用 `appellant`。 */
+  userId: string;
+  appellant: AdminApiEntityRef;
+  reason: string;
+  status: "pending" | "accepted" | "rejected";
+  /** 处理人；未处理为空串。 */
+  reviewerId: string;
+  reviewer?: AdminApiEntityRef | undefined;
+  note: string;
+  createdAt: string;
+  reviewedAt?: string | undefined;
+  /** 仅 `pending` 有意义：距离超时转派还有多少分钟（负数 = 已超时）。 */
+  holdRemainingMinutes?: number | undefined;
+  overdue: boolean;
+}
+
+export interface AdminApiAppealsView {
+  items: AdminApiAppealItem[];
+  /** 申诉超时转派的时限（`APPEAL_HOLD_MINUTES`）。 */
+  holdMinutes: number;
+  pendingCount: number;
+}
+
+/** 申请人资料摘要（`/api/pending` 每项附带；学号默认脱敏）。 */
+export interface AdminApiProfileSummary {
+  name: string;
+  /** 脱敏后的学号（中间几位用 `*`）。 */
+  studentId: string;
+  className: string;
+  college: string;
+  year: string;
+}
+
+/** 入群申请同步结果（`POST /api/join/sync`）。 */
+export interface AdminApiJoinSyncResult {
+  groupId: string;
+  group: AdminApiEntityRef;
+  /** 官方返回的申请条数。 */
+  fetched: number;
+  /** 同步后本群待审批条数。 */
+  pending: number;
+  message: string;
+}
+
+/** 通知投递记录的一条（`/api/notify/deliveries`，P1 只读）。 */
+export interface AdminApiDeliveryItem {
+  groupId: string;
+  group: AdminApiEntityRef;
+  /** 通知请求 id（一次通知一行）。 */
+  requestId: string;
+  /** 收件人 openid；展示用 `recipient`。 */
+  userId: string;
+  recipient: AdminApiEntityRef;
+  status: string;
+  /** 降级 / 失败说明（`text_fallback` 或错误信息）。 */
+  detail: string;
+  createdAt: string;
+}
+
+export interface AdminApiDeliveriesView {
+  total: number;
+  page: number;
+  pageSize: number;
+  items: AdminApiDeliveryItem[];
+  /** 按状态汇总（一眼看「失败多少」）。 */
+  counts: Array<{ status: string; count: number }>;
+}
+
+/** 运维只读（`/api/health`，P1）：把 `/status proc` 的内容接进后台。 */
+export interface AdminApiHealthView {
+  process: {
+    /** 本进程运行的版本（`runningVersionOf()`）。 */
+    runningVersion: string;
+    /** 磁盘上的版本（部署后可能已经更新）。 */
+    diskVersion: string;
+    uptimeMs: number;
+    startedAt: string;
+    pid: number;
+    node: string;
+    platform: string;
+    arch: string;
+    rss: number;
+    heapUsed: number;
+    heapTotal: number;
+    /** 运行模式：`official` / `fake`。 */
+    mode: string;
+  };
+  database: {
+    driver: string;
+    migrationIssues: Array<{ step: string; error: string }>;
+  };
+  queue: {
+    pending: number;
+    failures: number;
+    lastError?: string | undefined;
+  };
+  notify: {
+    subscribers: number;
+    deliveries: number;
+  };
+  modules: Array<{
+    key: string;
+    label: string;
+    state: string;
+    error?: string | undefined;
+  }>;
+  /** 恢复现场：最近一次重启失败 / 回滚留下的证据（只读，文件在就报）。 */
+  restart: {
+    failure?:
+      | { reason: string; at?: string | undefined; code?: number | undefined }
+      | undefined;
+    rollback?: { reason: string; at: string } | undefined;
+    /** `data/dist-broken/` 是否存在（说明历史上换过一次坏构建）。 */
+    brokenBuild: boolean;
+  };
+}
+
 export interface AdminApiAuditRecord {
   recordId: string;
   /** 内部群 id（过滤器用的就是它）；展示请用 `group`。 */
@@ -201,6 +383,34 @@ export interface AdminApiReaders {
   notifyTopics(): Promise<AdminApiNotifyTopic[]>;
   /** 活动列表（含报名人数；群卡片广播目标在机器人侧管理）。 */
   activities(): Promise<AdminApiActivityItem[]>;
+  /**
+   * P1 只读补齐（未装配时对应端点回 503；只读巡检模式下部分实现）。
+   *
+   * 口径统一：**平台超管不传 `group` 看全量，其余人必须带 `group` 且按本群档位判**。
+   */
+  punishments?:
+    | ((options: {
+        group?: string | undefined;
+        status?: string | undefined;
+      }) => Promise<AdminApiPunishmentItem[]>)
+    | undefined;
+  blacklist?:
+    | ((groupId: string, options: { includeGlobal: boolean }) => Promise<AdminApiBlacklistView>)
+    | undefined;
+  appeals?:
+    | ((options: {
+        group?: string | undefined;
+        status?: string | undefined;
+      }) => Promise<AdminApiAppealsView>)
+    | undefined;
+  deliveries?:
+    | ((options: {
+        group?: string | undefined;
+        status?: string | undefined;
+      }) => Promise<AdminApiDeliveryItem[]>)
+    | undefined;
+  /** 运维只读（`/api/health`）：只读巡检模式没有进程内状态，不装配。 */
+  health?: (() => Promise<AdminApiHealthView>) | undefined;
 }
 
 /** 通过 / 拒绝入群申请后的回执。 */
@@ -282,8 +492,22 @@ export interface AdminApiWriters {
     value: string,
     actorId: string,
   ): Promise<AdminApiSettingItem>;
-  /** 把一项热改配置恢复成 `.env` 默认值（只有确实覆盖过才动库）。 */
+  /**
+   * 把一项热改配置恢复成 `.env` 默认值（只有确实覆盖过才动库）。
+   */
   clearSetting(key: string, actorId: string): Promise<AdminApiSettingItem>;
+  /**
+   * 同步官方入群申请队列（与指令层 `/sync` 同一服务）。
+   *
+   * 门槛与 `/sync` 一致：**本群审核员 120**（不是 130）—— 它只把官方队列拉下来写进待审批，
+   * 不改变任何人的状态，所以比审批本身低一档。
+   */
+  syncJoinRequests(groupId: string, actorId: string): Promise<AdminApiJoinSyncResult>;
+  /** 导出审计记录 CSV（与 `/export audit` 同口径：本群 130；平台 240 可导出全量）。 */
+  exportAuditCsv(
+    actorId: string,
+    options: { group?: string | undefined; full: boolean },
+  ): Promise<AdminApiCsvExport>;
 }
 
 export interface AdminApiActivityItem {
@@ -652,6 +876,270 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     }
     const item = await writers.clearSetting(trimmed, actorOf(request));
     return { ok: true, setting: item };
+  });
+
+  /**
+   * 处罚记录（`/api/punishments`，P1 只读）：与 `/punish list` 同一份数据。
+   *
+   * 门槛：平台超管 240 不传 `group` 看全量；其余人必须带 `group=` 且本群 ≥120（与指令层一致）。
+   */
+  app.get("/api/punishments", async (request, reply) => {
+    const reader = options.readers?.punishments;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "处罚数据源未装配（只读巡检模式 / 缺少数据库）。"));
+    }
+    const query = request.query as Record<string, unknown>;
+    const group = queryString(query.group);
+    const status = queryString(query.status);
+    const scope = scopeOf(await readAccessOf(request));
+    if (scope) {
+      if (group === undefined) {
+        return reply
+          .code(400)
+          .send(
+            errorBody(
+              "bad_request",
+              "需要 ?group=<群 ID>：只有平台超级管理员能看全量处罚记录。",
+            ),
+          );
+      }
+      if (
+        !(await allowGroupRead(
+          request,
+          reply,
+          "GET /api/punishments",
+          group,
+          PermissionLevel.Moderator,
+        ))
+      ) {
+        return reply;
+      }
+    }
+    const all = await reader({
+      ...(group !== undefined ? { group } : {}),
+      ...(status !== undefined ? { status } : {}),
+    });
+    const page = positiveQueryInt(query.page, 1);
+    const pageSize = Math.min(positiveQueryInt(query.pageSize, 50), 200);
+    const start = (page - 1) * pageSize;
+    return {
+      total: all.length,
+      page,
+      pageSize,
+      items: all.slice(start, start + pageSize),
+    };
+  });
+
+  /**
+   * 黑名单（`/api/blacklist?group=`，P1 只读）：本群一组 + 全局一组。
+   *
+   * 门槛：本群列表 ≥120（与 `/blacklist` 一致）；**全局那组只有平台 240 能看到**，
+   * 看不到时返回 `globalVisible: false`（界面据此说明「权限不够」，而不是显示成「全局没人」）。
+   */
+  app.get("/api/blacklist", async (request, reply) => {
+    const reader = options.readers?.blacklist;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "黑名单数据源未装配（只读巡检模式 / 缺少数据库）。"));
+    }
+    const group = queryString((request.query as Record<string, unknown>).group);
+    if (group === undefined) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 ?group=<群 ID>（黑名单是群维度的）。"));
+    }
+    if (
+      !(await allowGroupRead(
+        request,
+        reply,
+        "GET /api/blacklist",
+        group,
+        PermissionLevel.Moderator,
+      ))
+    ) {
+      return reply;
+    }
+    const access = await readAccessOf(request);
+    const includeGlobal =
+      !access || access.platformLevel >= PlatformLevel.GlobalSuperAdmin;
+    return reader(group, { includeGlobal });
+  });
+
+  /** 申诉队列（`/api/appeals`，P1 只读）：门槛与 `/api/punishments` 相同。 */
+  app.get("/api/appeals", async (request, reply) => {
+    const reader = options.readers?.appeals;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "申诉数据源未装配（只读巡检模式 / 缺少数据库）。"));
+    }
+    const query = request.query as Record<string, unknown>;
+    const group = queryString(query.group);
+    const status = queryString(query.status);
+    const scope = scopeOf(await readAccessOf(request));
+    if (scope) {
+      if (group === undefined) {
+        return reply
+          .code(400)
+          .send(
+            errorBody(
+              "bad_request",
+              "需要 ?group=<群 ID>：只有平台超级管理员能看全量申诉。",
+            ),
+          );
+      }
+      if (
+        !(await allowGroupRead(
+          request,
+          reply,
+          "GET /api/appeals",
+          group,
+          PermissionLevel.Moderator,
+        ))
+      ) {
+        return reply;
+      }
+    }
+    return reader({
+      ...(group !== undefined ? { group } : {}),
+      ...(status !== undefined ? { status } : {}),
+    });
+  });
+
+  /**
+   * 通知投递记录（`/api/notify/deliveries`，P1 只读）：排查「我说了怎么没通知」。
+   *
+   * 门槛与处罚 / 申诉一致：平台 240 看全量，其余人带 `group=` 且本群 ≥120。
+   */
+  app.get("/api/notify/deliveries", async (request, reply) => {
+    const reader = options.readers?.deliveries;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(
+          errorBody("unavailable", "投递记录数据源未装配（只读巡检模式 / 缺少数据库）。"),
+        );
+    }
+    const query = request.query as Record<string, unknown>;
+    const group = queryString(query.group);
+    const status = queryString(query.status);
+    const scope = scopeOf(await readAccessOf(request));
+    if (scope) {
+      if (group === undefined) {
+        return reply
+          .code(400)
+          .send(
+            errorBody(
+              "bad_request",
+              "需要 ?group=<群 ID>：只有平台超级管理员能看全量投递记录。",
+            ),
+          );
+      }
+      if (
+        !(await allowGroupRead(
+          request,
+          reply,
+          "GET /api/notify/deliveries",
+          group,
+          PermissionLevel.Moderator,
+        ))
+      ) {
+        return reply;
+      }
+    }
+    const all = await reader({
+      ...(group !== undefined ? { group } : {}),
+      ...(status !== undefined ? { status } : {}),
+    });
+    const counts = new Map<string, number>();
+    for (const item of all) {
+      counts.set(item.status, (counts.get(item.status) ?? 0) + 1);
+    }
+    const page = positiveQueryInt(query.page, 1);
+    const pageSize = Math.min(positiveQueryInt(query.pageSize, 50), 200);
+    const start = (page - 1) * pageSize;
+    return {
+      total: all.length,
+      page,
+      pageSize,
+      items: all.slice(start, start + pageSize),
+      counts: [...counts.entries()]
+        .map(([status, count]) => ({ status, count }))
+        .sort((left, right) => right.count - left.count),
+    };
+  });
+
+  /**
+   * 运维只读（`/api/health`，P1）：进程细节 + 模块健康 + 写队列 + 迁移问题 + 恢复现场。
+   *
+   * 门槛与 `/api/status` 一致（平台超管 240）。只读巡检进程没有这些内存态 → 503。
+   */
+  app.get("/api/health", async (request, reply) => {
+    if (!(await allowPlatformRead(request, reply, "GET /api/health"))) {
+      return reply;
+    }
+    const reader = options.readers?.health;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(
+          errorBody(
+            "unavailable",
+            "本进程没有运行时状态（只读巡检模式 / 未装配）：请用机器人进程内的管理监听口查看。",
+          ),
+        );
+    }
+    return reader();
+  });
+
+  /** 同步官方入群申请队列（写但幂等）：与 `/sync` 同一服务，本群 120。 */
+  app.post("/api/join/sync", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const group = typeof body.group === "string" ? body.group.trim() : "";
+    if (group.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 group（群 ID；同步是群维度的）。"));
+    }
+    const result = await writers.syncJoinRequests(group, actorOf(request));
+    return { ok: true, ...result };
+  });
+
+  /**
+   * 审计记录导出（`/api/audit/export.csv`）：与 `/export audit` 同口径。
+   *
+   * 本群要 130（与指令层一致）、平台 240 可不带 `group=` 导出全量；
+   * `?full=1` 不脱敏（默认把 actor/target 的 openid 打码），两种都写审计。
+   */
+  app.get("/api/audit/export.csv", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const query = request.query as Record<string, unknown>;
+    const group = queryString(query.group);
+    const result = await writers.exportAuditCsv(actorOf(request), {
+      ...(group !== undefined ? { group } : {}),
+      full: queryString(query.full) === "1",
+    });
+    reply.header("content-type", "text/csv; charset=utf-8");
+    reply.header(
+      "content-disposition",
+      `attachment; filename="${result.filename}"`,
+    );
+    // BOM：没有它 Excel 会按本地编码猜，中文列名直接乱码
+    return reply.send(`\uFEFF${result.csv}`);
   });
 
   /** 只读状态（E1-c）：入口给数据库与迁移信息，server 补版本 / 运行时长 / 会话数。 */

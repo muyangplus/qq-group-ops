@@ -305,6 +305,210 @@ describe("管理 API HTTP 层", () => {
     await bare.close();
   });
 
+  it("P1 只读端点：门槛与「未装配回 503」都按口径", async () => {
+    // ① 未装配（只读巡检模式）：明确 503，而不是假装空列表
+    const bareTokens = memoryTokens();
+    const bare = buildAdminApiServer({ config: CONFIG, tokens: bareTokens }).app;
+    const bareToken = await bareTokens.issue({ userId: "op1", ttlMs: 60_000 });
+    const bareLogin = await bare.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: bareToken.token },
+    });
+    const bareCookie = cookieOf(bareLogin);
+    for (const url of [
+      "/api/punishments",
+      "/api/blacklist?group=g1",
+      "/api/appeals",
+      "/api/notify/deliveries",
+      "/api/health",
+    ]) {
+      const response = await bare.inject({
+        method: "GET",
+        url,
+        headers: { cookie: bareCookie },
+      });
+      expect(response.statusCode, url).toBe(503);
+    }
+    await bare.close();
+
+    // ② 装配了数据源 + 非平台超管：不传 group 一律 400（与 /api/audit 同一口径）
+    const tokens = memoryTokens();
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      readers: {
+        punishments: async () => [
+          {
+            recordId: "ABC123",
+            code: "#ABC123",
+            groupId: "g1",
+            group: groupRef("g1"),
+            userId: "u1",
+            target: userRef("u1"),
+            actorId: "mod",
+            actor: userRef("mod"),
+            source: "manual",
+            ruleReason: "广告",
+            messageExcerpt: "",
+            actions: "警告",
+            detail: "",
+            status: "active",
+            createdAt: "2026-10-02T00:00:00.000Z",
+            updatedAt: "2026-10-02T00:00:00.000Z",
+          },
+        ],
+        blacklist: async (groupId, options) => ({
+          groupId,
+          group: groupRef(groupId),
+          entries: [],
+          globalEntries: options.includeGlobal ? [] : [],
+          globalVisible: options.includeGlobal,
+        }),
+        appeals: async () => ({ items: [], holdMinutes: 15, pendingCount: 0 }),
+        deliveries: async () => [],
+        health: async () => ({
+          process: {
+            runningVersion: "0.24.1",
+            diskVersion: "0.24.1",
+            uptimeMs: 1000,
+            startedAt: "2026-10-02T00:00:00.000Z",
+            pid: 1,
+            node: "v24.0.0",
+            platform: "linux",
+            arch: "x64",
+            rss: 1,
+            heapUsed: 1,
+            heapTotal: 1,
+            mode: "fake",
+          },
+          database: { driver: "memory", migrationIssues: [] },
+          queue: { pending: 0, failures: 0 },
+          notify: { subscribers: 0, deliveries: 0 },
+          modules: [],
+          restart: { brokenBuild: false },
+        }),
+      },
+      readAccessOf: async (userId) => ({
+        platformLevel: userId === "boss" ? 240 : 0,
+        groups: [{ groupId: "g1", level: 120 }],
+      }),
+    }).app;
+    const readToken = await tokens.issue({ userId: "mod", ttlMs: 60_000 });
+    const readLogin = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: readToken.token },
+    });
+    const modCookie = cookieOf(readLogin);
+
+    for (const url of ["/api/punishments", "/api/appeals", "/api/notify/deliveries"]) {
+      const missing = await app.inject({
+        method: "GET",
+        url,
+        headers: { cookie: modCookie },
+      });
+      expect(missing.statusCode, url).toBe(400);
+    }
+    // 带上 group 且有 120：放行
+    const ok = await app.inject({
+      method: "GET",
+      url: "/api/punishments?group=g1",
+      headers: { cookie: modCookie },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({ total: 1 });
+    // 黑名单缺 group 也是 400（它是群维度）
+    const blacklistMissing = await app.inject({
+      method: "GET",
+      url: "/api/blacklist",
+      headers: { cookie: modCookie },
+    });
+    expect(blacklistMissing.statusCode).toBe(400);
+
+    // ③ 平台级运维端点：非 240 一律 403
+    const health = await app.inject({
+      method: "GET",
+      url: "/api/health",
+      headers: { cookie: modCookie },
+    });
+    expect(health.statusCode).toBe(403);
+
+    await app.close();
+  });
+
+  it("审计导出：本群 130 走 writers；没装配回 503；CSV 带 BOM", async () => {
+    const tokens = memoryTokens();
+    const calls: Array<{ actorId: string; group?: string; full: boolean }> = [];
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      writers: {
+        syncJoinRequests: async (groupId, actorId) => ({
+          groupId,
+          group: groupRef(groupId),
+          fetched: 0,
+          pending: 0,
+          message: `已同步 0 条（${actorId}）`,
+        }),
+        exportAuditCsv: async (actorId, options) => {
+          calls.push({
+            actorId,
+            ...(options.group !== undefined ? { group: options.group } : {}),
+            full: options.full,
+          });
+          return {
+            filename: `audit-${options.group ?? "all"}.csv`,
+            csv: "record_id\nr1\n",
+            rows: 1,
+            full: options.full,
+          };
+        },
+      },
+    }).app;
+    const { token } = await tokens.issue({ userId: "admin", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const cookie = cookieOf(login);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/audit/export.csv?group=g1",
+      headers: { cookie },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/csv");
+    expect(response.headers["content-disposition"]).toContain("audit-g1.csv");
+    expect(response.body.startsWith("\uFEFF")).toBe(true);
+    expect(calls).toEqual([{ actorId: "admin", group: "g1", full: false }]);
+    await app.close();
+
+    // 只读巡检模式不装配 writers → 503
+    const bareTokens = memoryTokens();
+    const bare = buildAdminApiServer({ config: CONFIG, tokens: bareTokens }).app;
+    const bareToken = await bareTokens.issue({ userId: "admin", ttlMs: 60_000 });
+    const bareLogin = await bare.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: bareToken.token },
+    });
+    const bareResponse = await bare.inject({
+      method: "GET",
+      url: "/api/audit/export.csv?group=g1",
+      headers: { cookie: cookieOf(bareLogin) },
+    });
+    expect(bareResponse.statusCode).toBe(503);
+    await bare.close();
+  });
+
   it("/api/status 需要登录，返回只读状态", async () => {
     const { app, tokens } = build();
     const unauth = await app.inject({ method: "GET", url: "/api/status" });

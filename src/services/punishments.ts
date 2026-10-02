@@ -124,6 +124,19 @@ export class PunishmentService {
     );
   }
 
+  /**
+   * 全部处罚记录（新 → 旧）。
+   *
+   * 指令层没有「跨群处罚列表」（`/punish list` 只看本群），这条是给**管理后台的平台超管视图**用的：
+   * 平台级排查「这条处罚是在哪个群做的」需要它。
+   */
+  public listAll(limit = Number.MAX_SAFE_INTEGER): PunishmentRecord[] {
+    return newestFirst(
+      this.records.values(),
+      (record) => record.createdAt.getTime(),
+    ).slice(0, limit);
+  }
+
   public listForUser(
     groupId: string,
     userId: string,

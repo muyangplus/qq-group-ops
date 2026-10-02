@@ -41,11 +41,18 @@ async function signOut(): Promise<void> {
       <RouterLink :to="{ name: 'dashboard' }">概览</RouterLink>
       <RouterLink :to="{ name: 'pending' }">待审批</RouterLink>
       <RouterLink :to="{ name: 'audit' }">审计</RouterLink>
+      <!-- 申诉 / 处罚 / 黑名单是「只读面」：有群权限（120 起）的人都能看 -->
+      <RouterLink :to="{ name: 'appeals' }">申诉</RouterLink>
+      <RouterLink :to="{ name: 'punishments' }">处罚</RouterLink>
+      <RouterLink :to="{ name: 'blacklist' }">黑名单</RouterLink>
       <RouterLink :to="{ name: 'rules' }">规则</RouterLink>
       <RouterLink :to="{ name: 'activities' }">活动</RouterLink>
-      <!-- 状态看板与配置是平台级信息：非平台超管看不到入口（服务端也会 403） -->
+      <!-- 状态 / 配置 / 投递是平台级信息：非平台超管看不到入口（服务端也会 403） -->
       <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'status' }">
         状态
+      </RouterLink>
+      <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'deliveries' }">
+        投递
       </RouterLink>
       <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'settings' }">
         配置

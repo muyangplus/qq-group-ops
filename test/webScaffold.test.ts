@@ -105,10 +105,17 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
       "/api/status",
       "/api/tasks",
       "/api/settings",
+      "/api/health",
       "/api/pending",
       "/api/audit",
       "/api/rules",
       "/api/activities",
+      // P1 只读补齐
+      "/api/punishments",
+      "/api/blacklist",
+      "/api/appeals",
+      "/api/notify/deliveries",
+      "/api/join/sync",
     ]) {
       expect(source, `缺少端点 ${endpoint}`).toContain(endpoint);
     }
@@ -118,6 +125,51 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     expect(source).toContain("/api/activities/");
     expect(source).toContain("AdminApiActivityAction");
     expect(source).toContain("clearSetting");
+    // 审计导出是**同源下载链接**（靠 cookie 鉴权），不是 fetch
+    expect(source).toContain("/api/audit/export.csv");
+  });
+
+  it("P1 只读页：处罚 / 黑名单 / 申诉 / 投递都挂上了，且都只读", () => {
+    const punishments = read("views/PunishmentsView.vue");
+    const blacklist = read("views/BlacklistView.vue");
+    const appeals = read("views/AppealsView.vue");
+    const deliveries = read("views/DeliveriesView.vue");
+    const router = read("router.ts");
+    const app = read("App.vue");
+
+    expect(punishments).toContain("adminApi.punishments");
+    expect(punishments).toContain("MODERATOR_LEVEL");
+    expect(blacklist).toContain("adminApi.blacklist");
+    // 全局那组看不到时要说明「权限不够」，而不是显示成「全局没人」
+    expect(blacklist).toContain("globalVisible");
+    expect(appeals).toContain("adminApi.appeals");
+    expect(appeals).toContain("holdRemainingMinutes");
+    // 复核仍然只在机器人里做：页面上要说清
+    expect(appeals).toContain("机器人");
+    expect(deliveries).toContain("adminApi.deliveries");
+    expect(deliveries).toContain("counts");
+
+    for (const name of ["PunishmentsView", "BlacklistView", "AppealsView", "DeliveriesView"]) {
+      expect(router, `路由缺 ${name}`).toContain(name);
+    }
+    expect(app).toContain("punishments");
+    expect(app).toContain("blacklist");
+  });
+
+  it("待审批页：申请人资料摘要 + 同步官方队列（120 起）", () => {
+    const source = read("views/PendingView.vue");
+
+    expect(source).toContain("profile");
+    expect(source).toContain("adminApi.syncJoinRequests");
+    expect(source).toContain("MODERATOR_LEVEL");
+  });
+
+  it("审计页：导出 CSV 的同源链接（完整那份只给平台超管）", () => {
+    const source = read("views/AuditView.vue");
+
+    expect(source).toContain("adminApi.auditExportUrl");
+    expect(source).toContain("full: true");
+    expect(source).toContain("session.isSuperAdmin");
   });
 
   it("待审批页：列表 + 二次确认弹窗 + 按 130 禁用按钮", () => {
