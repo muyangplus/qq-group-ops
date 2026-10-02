@@ -95,7 +95,8 @@
 > E1-b 身份映射 + `/admin login` + `pnpm admin:token` + `/auth/me` 权限画像 ✅；
 > E1-c 六个只读端点 ✅；E1-d 进程模型（同进程第二回环监听口）+ 四个写端点 ✅；
 > E1-e 机器 token ✅；E1-f 可观测与运维文档 ✅；**E1-g 只读端点的逐路由门槛 ✅（E1 收口）**；
-> E2-a…e 未开始。逐项勾选见 [../TODO.md](../TODO.md) §2 的 E1 / E2。
+> **E2-a 前台脚手架 ✅**（`web/`：Vite + Vue 3 + TS + vue-router + pinia，独立依赖）；
+> E2-b…e 进行中。逐项勾选见 [../TODO.md](../TODO.md) §2 的 E1 / E2。
 
 ### E1-a 骨架与安全底座（P0）
 
@@ -200,9 +201,17 @@
 
 ### E2-a…E2-e 管理后台（P3）
 
-25. **E2-a 脚手架**：`web/`（Vite + Vue 3 + TS + vue-router + pinia），`pnpm web:dev` / `pnpm web:build`；
-    开发期 vite proxy 到管理 API；产物 `web/dist` 不进 `dist/`（CD 默认不发）；
-26. **E2-b 登录与会话**：登录页 + `GET /auth/me` 保持会话，401 自动跳登录；
+25. **E2-a 脚手架**（✅ 已完成）：`web/`（Vite 7 + Vue 3 + TypeScript + vue-router + pinia），
+    根 `pnpm web:install` / `web:dev` / `web:typecheck` / `web:build`；开发期 vite proxy 把
+    `/api`、`/auth`、`/healthz` 转发到 `ADMIN_API_PROXY`（默认 `http://127.0.0.1:8787`），
+    浏览器看到同源地址，因此不涉及 CORS、`SameSite=Strict` 的 cookie 也能直接带上；
+    产物 `web/dist` 不进 `dist/`（CD 默认不发，`.gitignore` 覆盖）。
+    脚手架里已经带了**最小可用的登录链路**：`src/api/client.ts`（同源 + 写操作自动带
+    `X-Admin-Request: 1` + 统一 `ApiError`）、`src/stores/session.ts`（`/auth/me` / `/auth/token` /
+    `/auth/logout`，并用与后端同一套两轴折算提供 `isSuperAdmin` / `levelIn(group)`）、
+    登录页（支持私信链接的 `?token=` 预填）与占位看板。
+26. **E2-b 登录与会话保持**：登录页与 `?token=` 预填已随 E2-a 落地；这一项收尾到
+    「401 自动跳登录、会话过期提示、登录后回跳原页面」；
 27. **E2-c 页面**：状态看板 / 待审批（通过 · 拒绝 + 二次确认）/ 审计查询（过滤 + 分页）/ 规则编辑（字段级，提交前给 diff）/
     活动列表与开关；
 28. **E2-d 权限呈现**：按登录账号的两轴权限隐藏或禁用入口（**服务端仍然强校验**，前端只做体验）；

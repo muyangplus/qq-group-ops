@@ -13,6 +13,13 @@
 | 构建 + 启动 | `pnpm build && pnpm start`（`dist/` 不会自动更新） |
 | 班级索引 | `pnpm class:index`（读 `data/class.json`，输出 JSON + SQLite） |
 | 依赖漏洞审计 | `pnpm check:audit`（`pnpm audit --audit-level=high`；每周 CI 也自动跑，处置流程见 [SECURITY.md](./SECURITY.md)） |
+| 管理前台（首次） | `pnpm web:install`（只装 `web/` 自己那套依赖，根 `pnpm install` 不受影响） |
+| 管理前台开发 | `pnpm web:dev`（默认 http://127.0.0.1:5173，`/api`、`/auth`、`/healthz` 代理到 `ADMIN_API_PROXY`，默认 127.0.0.1:8787） |
+| 管理前台检查 / 构建 | `pnpm web:typecheck`（`vue-tsc`）、`pnpm web:build`（类型检查 + `vite build`，产物 `web/dist`，**不进 `dist/`**） |
+
+> 前端是**独立的一套依赖**：根 `pnpm install` 不装 Vue / Vite，`pnpm web:*` 都走 `pnpm --dir web`。
+> `web/pnpm-workspace.yaml` 是 pnpm 12 的**构建脚本白名单**（只放行 `esbuild`）——
+> 删掉它 `pnpm web:install` 会以 `ERR_PNPM_IGNORED_BUILDS` 失败。
 
 > 在受限沙箱/CI 里 `pnpm` 可能因锁文件或 store 权限失败，此时直接用 node 二进制：
 > `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`、
@@ -24,6 +31,8 @@
 src/
 ├── adapters/     官方 API 客户端、WebSocket 网关、事件映射（对外部世界只在这里）
 │                 qqOfficial.ts 只做 barrel：Types / Client / Payload 三个模块
+├── adminApi/     管理 API：config / session / rateLimit / server（HTTP 层）
+│                 host.ts（同进程回环监听口）+ backend.ts（接真实服务图）+ main.ts（只读巡检进程）
 ├── core/         领域无关的基础设施：日志、模型、枚举、instrumentation
 ├── db/           schema 与仓储（同一套 SQL 通过 Queryable 适配 SQLite / PostgreSQL）
 ├── services/     业务服务（权限、审核、活动、规则、推送、短码、别名、个人资料…）
@@ -31,6 +40,11 @@ src/
 ├── runtime.ts    依赖装配 + 回调 renderer 注册
 ├── gatewayRunner.ts / eventRouter.ts  事件 → 指令 → 回复
 └── main.ts       进程入口
+
+web/              管理后台（Vite + Vue 3 + TS，独立依赖，见 docs/ADMIN-API.md）
+├── src/api/      最小 HTTP 客户端（同源、写操作带 CSRF 头、统一抛 ApiError）
+├── src/stores/   pinia：会话与权限画像（两轴折算与后端一致）
+└── src/views/    页面（E2-c 逐项落地）
 
 test/
 ├── commands/     指令层用例（按域分文件）

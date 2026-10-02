@@ -7,13 +7,13 @@
 > **所有需要真实 QQ 群环境的条目统一收在最后一节 §4**（不再散落在各优先级里）：等有环境时照
 > [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md) 一次跑完并回填。
 >
-> 当前状态（2026-10-02）：测试 **135 文件 / 1077 用例**全绿；**0.22.1 已发版**
+> 当前状态（2026-10-02）：测试 **136 文件 / 1083 用例**全绿；**0.22.1 已发版**
 > （其后 `[Unreleased]` 又攒了：`/migrate` 弹窗文案压到 21 字 + 卡片弹窗文案统一裁剪兜底、
 > `/migrate` 执行前自动备份数据库、入群申请拒绝理由改为自定义、删掉遗留的 `/activity subscribe`、
 > 依赖审计脚本与每周 CI、`/data` 个人数据匿名化与导出、管理 API 骨架与登录链路、
-> 管理 API 写端点与同进程回环监听口、只读端点的逐路由门槛）。
+> 管理 API 写端点与同进程回环监听口、只读端点的逐路由门槛、管理前台脚手架）。
 > 已完成：A1–A5、B1–B3、B6–B11、C1–C3、C5–C6、C9、D1、D3、D5、D6、D7、D10、**E1 全部（a–g）**、
-> F1–F2、H1–H8、D9（0.19.0 起）。
+> **E2-a**、F1–F2、H1–H8、D9（0.19.0 起）。
 
 ## 1. 排期（从上往下做）
 
@@ -42,9 +42,15 @@
   机器人侧入口是 `/admin login` 与 `/help admin`。
 - [ ] **E2 Vue 3 + TypeScript 管理后台**（批次4 · Phase 2）：计划见
   [docs/ADMIN-API.md](./docs/ADMIN-API.md) 的 E2-a…E2-e。
-  - [ ] **E2-a 脚手架**：`web/`（Vite + Vue 3 + TS + vue-router + pinia），`pnpm web:dev` / `pnpm web:build`
-    （产物 `web/dist`，不进 `dist/`，CD 默认不发）；
-  - [ ] **E2-b 登录页与会话保持**：`GET /auth/me`，401 自动跳登录；
+  - [x] **E2-a 脚手架**：`web/`（Vite 7 + Vue 3 + TS + vue-router + pinia，**独立依赖**：
+    根 `pnpm install` 不装前端）；根入口 `pnpm web:install|dev|typecheck|build`；开发期 vite proxy
+    把 `/api`、`/auth`、`/healthz` 转到 `ADMIN_API_PROXY`（默认 `127.0.0.1:8787`）；
+    产物 `web/dist` 不进 `dist/`、CD 默认不发。脚手架里已带最小登录链路：
+    `api/client.ts`（同源 + 写操作自动带 CSRF 头 + 统一 `ApiError`）、`stores/session.ts`
+    （会话 + 两轴权限画像）、登录页（支持私信链接的 `?token=` 预填）、占位看板；
+    `web/pnpm-workspace.yaml` 是 pnpm 12 的构建脚本白名单（只放行 esbuild，删了装不上）。
+  - [ ] **E2-b 登录与会话保持**：登录页与 `?token=` 预填已随 E2-a 落地；**只剩** 401 自动跳登录、
+    会话过期提示、登录后回跳原页面；
   - [ ] **E2-c 页面**：状态看板 / 待审批（通过 · 拒绝 + 二次确认）/ 审计查询（过滤 + 分页）/
     规则编辑（字段级，提交前给 diff）/ 活动列表与开关；
   - [ ] **E2-d 权限呈现**：按两轴权限隐藏或禁用入口（服务端仍强校验，前端只做体验）；

@@ -20,6 +20,15 @@
 
 ### 新增
 
+- **管理前台脚手架（E2-a）**：`web/` 是一套**独立依赖**的 Vite 7 + Vue 3 + TypeScript +
+  vue-router + pinia 工程（`pnpm web:install` 只装它自己，根 `pnpm install` 不受影响），
+  根命令加 `web:install` / `web:dev` / `web:typecheck` / `web:build`，产物 `web/dist` 不进 `dist/`。
+  开发期 vite 把 `/api`、`/auth`、`/healthz` 代理到机器人进程内的回环监听口
+  （`ADMIN_API_PROXY`，默认 `127.0.0.1:8787`），因此浏览器看到同源地址、不涉及 CORS，
+  后端 `SameSite=Strict` 的会话 cookie 能直接带上。脚手架里已经跑通「登录 → 会话 → 路由」：
+  最小 HTTP 客户端（写操作自动带 `X-Admin-Request: 1`、统一抛 `ApiError`）、
+  pinia 会话 store（会话 + 权限画像 + 与后端同口径的两轴折算）、
+  登录页（支持私信链接里的 `?token=` 直接兑换）与占位看板。
 - **管理 API 只读端点的逐路由权限门槛（E1-g）**：以前「登录了就能读全量」，现在按口径判定，
   拒绝时写一条 `admin_api:denied` 审计：
   - 平台级（要**平台超管 240**）：`GET /api/status`、`GET /api/notify/topics`、`GET /api/rules?group=__default__`；

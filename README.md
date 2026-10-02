@@ -30,6 +30,7 @@
 | 类型检查 | TypeScript `tsc --noEmit` |
 | 构建 | TypeScript `tsc` |
 | HTTP 客户端 | 原生 `fetch` + 可替换 transport |
+| 管理前台 | Vite + Vue 3 + TypeScript（`web/`，独立依赖，见 [ADMIN-API.md](docs/ADMIN-API.md)） |
 | 数据库 | SQLite（默认，零配置）／ PostgreSQL 16（可选） |
 | 部署 | Docker Compose |
 | 许可证 | Apache-2.0 |
@@ -70,7 +71,7 @@
 
 ### 后续阶段
 
-- Web 管理后台
+- Web 管理后台（脚手架已落地：`pnpm web:dev`；页面在做）
 - 图片、文件与链接内容安全
 - 加好友 / 群邀请审核
 - 举报处理流程（申诉已在 0.12.0 实现）
