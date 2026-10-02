@@ -37,3 +37,11 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      # 管理前台是独立依赖（根 pnpm install 不装），CD 会把它一起发布 ——
+      # 所以前端坏了要在 CI 就拦下来，而不是等到发版时才炸。
+      - name: Install web dependencies
+        run: pnpm --dir web install --frozen-lockfile
+
+      - name: Typecheck & build web
+        run: pnpm web:build

@@ -68,6 +68,14 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # 管理前台（web/）是**独立的一套依赖**，根 pnpm install 不装它；
+      # 构建出来一起发上去，服务器上就不需要再手工 build / 拷贝 web/dist 了。
+      - name: Install web dependencies
+        run: pnpm --dir web install --frozen-lockfile
+
+      - name: Build web（类型检查 + vite build）
+        run: pnpm web:build
+
       - name: 记录部署来源（审计线索）
         run: |
           {
@@ -83,7 +91,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: dist
-          path: dist/
+          path: |
+            dist/
+            web/dist/
           retention-days: 7
 
   # 真正写服务器的任务：放在 Environment 里，可在仓库 Settings → Environments
@@ -104,18 +114,20 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: dist
-          path: dist
+          path: .
 
-      # 只发布**运行产物**：dist（`node dist/main.js` 自包含）+ scripts（class:index，纯 node 内置模块）
-      # + 依赖清单。不传 src / docs / tsconfig / Dockerfile / test —— 生产机器不需要它们。
+      # 只发布**运行产物**：dist（`node dist/main.js` 自包含）+ web/dist（管理前台静态资源，
+      # 交给服务器上的 nginx 托管）+ scripts（class:index，纯 node 内置模块）+ 依赖清单。
+      # 不传 src / docs / tsconfig / Dockerfile / test —— 生产机器不需要它们。
       - name: 准备部署目录（运行产物白名单）
         run: |
           set -eu
           rm -rf dist-deploy
           mkdir -p dist-deploy
-          for item in dist scripts package.json pnpm-lock.yaml .env.example; do
+          for item in dist web/dist scripts package.json pnpm-lock.yaml .env.example; do
             if [ -e "$item" ]; then
-              cp -R "$item" dist-deploy/
+              mkdir -p "dist-deploy/$(dirname "$item")"
+              cp -R "$item" "dist-deploy/$(dirname "$item")/"
             fi
           done
           # 不传源码时 sourcemap 没有可对照的源文件，删掉省一半体积
