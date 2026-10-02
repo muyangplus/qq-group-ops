@@ -7,6 +7,24 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **仓储漏接：`/data` 与管理 API 在真机进程里没装上**：`main.ts` 是按类型逐个列举仓储键
+  传给运行时的，漏了 `privacy` 与 `adminTokens`（`Persistence` 接口自己也漏声明白 `privacy`），
+  于是 `/data delete|anonymize|export` 报「功能未装配」、`ADMIN_API_ENABLED=true` 也起不来监听口。
+  现在装配只在 `createRepositories()` 一处发生，`main.ts` 与测试替身都整份透传，
+  并由 `toRuntimeRepositories()` 做编译期保证（新增仓储漏了会直接编译不过）。
+- **管理 API 监听口在「假模式」下会让进程变成僵尸**：没有 QQ 凭据时 `main.ts` 会 flush +
+  关数据库再退出，但监听口是在那之前起的 —— 进程不退出、库已关闭，表现为
+  `/healthz` 正常、任何要读库的接口都 500 `database is not open`。现在假模式分支
+  先关监听口再关库。
+- **`pnpm admin:api` / `pnpm admin:token` 不读 `.env`**：这两个独立入口从没调用过
+  `loadEnvFile()`，照文档在应用目录里跑会看不到任何配置（前者静默退出、后者报缺会话密钥）。
+  现在两者都先读 `.env`（系统环境变量优先级不变），只读巡检进程同时接上日志配置。
+- **管理 API 的 500 日志补调用栈**：原先只有一句 `message`，上面三条的排查都卡在这里。
+- 拿到令牌仓储失败时的告警按**实际原因**区分（内存模式 vs 装配 bug），不再一律说成
+  `DATABASE_URL=memory`。
+
 ### 变更
 
 - **`.env.example` 面向使用者重构**：改成以配置内容优先 —— 14 节、每节「说明 + 键」，
@@ -14,6 +32,8 @@
   用法、书写约定（`KEY=` 生效 / `# KEY=` 可选、不要写行尾注释）与「哪些能 `/config` 热改、
   哪些要重启」统一写进 [README.md](./README.md) 的「配置（`.env`）」一节；
   管理 API 一节按「怎么开」重写（生成会话密钥 → 填 `PUBLIC_BASE_URL` → 挂 TLS 后开 `COOKIE_SECURE`）。
+- **模板里的 `WEBHOOK_PORT` 示例值 `3000` → `8786`**（与 `.env` / `data/.env` 对齐；
+  代码默认值仍是 `3000`，这只影响照模板复制出来的新部署）。
 
 ## [0.23.0] - 2026-10-02
 
