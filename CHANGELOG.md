@@ -7,6 +7,15 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **管理前台产物随 CD 一起发布**：发版时门禁会先 `pnpm --dir web install` + `pnpm web:build`（含
+  `vue-tsc`），把 `web/dist` 跟后端产物一起上传到应用目录（`dist-deploy/web/dist`）——
+  服务器上不用装前端依赖、也不用手工构建 / 拷贝；nginx 只需一次性配好
+  静态资源 `root` 与 `/api`、`/auth`、`/healthz` 的反代。CI 同样会构建前端，
+  这样前端坏了在 push / PR 阶段就红，而不是等到发版。
+  另外把「CD 默认不发前端」这条旧口径从文档里撤掉（ADMIN-API / OPERATIONS / CD 已同步）。
+
 ## [0.23.1] - 2026-10-02
 
 ### 修复

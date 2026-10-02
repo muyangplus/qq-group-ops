@@ -198,13 +198,14 @@ location / {
 
 ## 管理前台（E2-e）
 
-管理后台是 `web/` 里的 Vue 工程（独立依赖）：**机器人不托管静态资源**，构建产物交给
-nginx（或任何静态服务器）。同源是关键 —— 会话 cookie 是 `SameSite=Strict` 的，
-跨源会把登录态吃掉。
+管理后台是 `web/` 里的 Vue 工程（独立依赖）。**CD 会把它一起发布**：发版时 CI 会
+`pnpm --dir web install` + `pnpm web:build`，并把 `web/dist` 跟后端产物一起上传到应用目录，
+所以服务器上**不需要**装前端依赖、也不需要手工 build / 拷贝。你只需要一次性配好 nginx：
 
-```bash
-pnpm web:install && pnpm web:build     # 产物在 web/dist（不进 dist/，CD 默认不发）
-```
+- 静态资源指向 `<应用目录>/web/dist`；
+- `/api`、`/auth`、`/healthz` 反代到管理 API 的回环监听口（`127.0.0.1:8787`）。
+
+同源是关键 —— 会话 cookie 是 `SameSite=Strict` 的，跨源会把登录态吃掉。
 
 ```nginx
 server {
@@ -230,9 +231,10 @@ server {
 
 - `.env` 里 `ADMIN_API_PUBLIC_BASE_URL=https://ops.example.com`（拼登录链接）、
   `ADMIN_API_COOKIE_SECURE=true`（挂了 TLS 才开）；
-- 前端开发时不需要 nginx：`pnpm web:dev` 会把上面前缀代理到 `ADMIN_API_PROXY`；
-- 只想在本机看一眼构建产物：`pnpm --dir web run preview`（默认 4173，注意它不会代理 API）；
-- **默认不发**：CD 只发后端产物，前端要单独构建 / 部署（改 CD 另议）。
+- **本地开发**不需要 nginx：`pnpm web:dev` 会把上面前缀代理到 `ADMIN_API_PROXY`；
+- **只想在本机看一眼构建产物**：`pnpm web:build && pnpm --dir web run preview`（默认 4173，不代理 API）；
+- **想手工补一次前端**（例如不想等下次发版）：在本地 `pnpm web:install && pnpm web:build`，
+  把 `web/dist` 传到应用目录的同名位置即可（CD 走的是同一套命令、同一份产物）。
 
 排障速查：
 

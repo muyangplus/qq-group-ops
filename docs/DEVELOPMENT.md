@@ -20,6 +20,8 @@
 > 前端是**独立的一套依赖**：根 `pnpm install` 不装 Vue / Vite，`pnpm web:*` 都走 `pnpm --dir web`。
 > `web/pnpm-workspace.yaml` 是 pnpm 12 的**构建脚本白名单**（只放行 `esbuild`）——
 > 删掉它 `pnpm web:install` 会以 `ERR_PNPM_IGNORED_BUILDS` 失败。
+> **CI 与 CD 都会构建前端**（`pnpm --dir web install` + `pnpm web:build`）：CI 用来尽早发现前端坏了，
+> CD 是把它跟后端产物一起发布（`dist-deploy/web/dist`）。
 
 > 在受限沙箱/CI 里 `pnpm` 可能因锁文件或 store 权限失败，此时直接用 node 二进制：
 > `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`、

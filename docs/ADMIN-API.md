@@ -240,11 +240,13 @@
     非平台超管不显示「状态」入口、待审批 / 活动 / 规则的写按钮按本群 130 禁用、
     审计默认收敛到自己够权限的群；**全部只是体验**：服务端逐路由门槛（E1-g）与写端点判定
     （本群 130 / 全局 240）才是硬约束 —— 直接调 API 一样会被 403 并留 `admin_api:denied` 审计。
-29. **E2-e 交付**（✅ 已完成）：选**独立 nginx 托管**（机器人不托管静态资源）——
-    `pnpm web:install && pnpm web:build` 得到 `web/dist`，nginx 同源托管它并把
-    `/api`、`/auth`、`/healthz` 反代到 `127.0.0.1:8787`（SPA 用 `try_files … /index.html`）；
-    完整片段与 `.env` 要点（`ADMIN_API_PUBLIC_BASE_URL` / `ADMIN_API_COOKIE_SECURE`）见
-    [OPERATIONS.md](./OPERATIONS.md)「管理前台」。**CD 保持默认不发前端**（要发另议）。
+29. **E2-e 交付**（✅ 已完成）：选**独立 nginx 托管静态资源**（机器人本身不托管）。
+    `web/dist` **由 CD 一起发布**：发版时门禁先 `pnpm --dir web install` + `pnpm web:build`（含 `vue-tsc`），
+    再把 `web/dist` 跟后端产物一起上传到应用目录 —— 服务器上不需要装前端依赖、也不需要手工构建；
+    nginx 只需**一次性**配置：静态资源 `root <应用目录>/web/dist` + `try_files … /index.html`，
+    并把 `/api`、`/auth`、`/healthz` 反代到 `127.0.0.1:8787`（片段与 `.env` 要点见
+    [OPERATIONS.md](./OPERATIONS.md)「管理前台」）。本地开发用 `pnpm web:dev`（自带代理），
+    想在本机看构建产物用 `pnpm --dir web run preview`。
 
 **E2 退出条件**：能在后台完成一次入群审批、改一个规则字段、并查到对应的审计记录；
 所有入口在权限不足时不可用（且直接调 API 也会被拒）。

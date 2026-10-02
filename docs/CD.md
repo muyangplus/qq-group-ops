@@ -53,6 +53,7 @@ Settings → **Environments** → 新建 `production-ftp` 后可以：
 
 ```
 dist/                 # 编译产物；`node dist/main.js` 自包含（不引 ../src）
+web/dist/             # 管理前台静态资源（Vite 产物，由服务器上的 nginx 托管；门禁里先 vue-tsc 再 vite build）
 scripts/              # build-class-index.mjs / classIndex.mjs（`pnpm class:index`，纯 node 内置模块）
 package.json          # 运行脚本入口（start / class:index）
 pnpm-lock.yaml        # 锁定依赖版本，服务器上 pnpm install --prod
