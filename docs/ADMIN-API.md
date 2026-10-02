@@ -245,8 +245,20 @@
     两种结果都会**私信申诉人**（`ModerationNotifier`，与指令层同一条通道）；
     已经处理过的申诉回 409（`conflict`），不存在回 404。
 
+44. `PUT /api/notify/levels { topic, level }`、`POST /api/notify/levels/reset`（平台超管 240）：
+    通知话题门槛，与指令层 `/notify level <话题> <数值>` **同一份存储**
+    （`NotificationService.setTopicLevel` / `resetTopicLevels`）。数值口径一致：
+    `-1` = 不限、`110`–`140` 群内轴、`210`–`240` 平台轴；非法话题 / 越界值回 400（中文原因来自领域服务）。
+    **门槛是全局一套**，改一次所有群生效 —— 这是它必须 240 的原因。响应回**全部话题的新状态**
+    （含当前门槛 / 默认门槛 / 订阅计数 / 说明文案），界面整体替换、不用再取一次；
+45. `POST /api/notify/test { group? }`（任何登录管理员）：给自己发一张测试卡，
+    与指令层 `/notify test` 同一条通道。**收件人取会话里的 userId，不接受请求体指定别人** ——
+    它既不打扰别人也不泄漏数据，所以不需要额外门槛；私信发不出去时回 `ok: false` 与人话原因。
+46. **订阅仍是个人偏好**：`GET /api/notify/topics` 只给「订了多少人」的计数，
+    后台**不提供替别人订阅 / 退订**（那是每个人自己的选择，在机器人里用 `/notify` 改）。
+
 **还没搬进后台的写操作**（[ADMIN-BACKEND.md](./ADMIN-BACKEND.md) §3 P2 余下部分，每条动手前先定口径）：
-活动创建 / 编辑 / 绑定群、规则关键词逐条增删与「恢复继承」、通知门槛调整与测试推送、别名表增删，
+活动创建 / 编辑 / 绑定群、规则关键词逐条增删与「恢复继承」、别名表增删，
 以及 P3 的权限授予 / 撤销。
 
 ### E1-g 只读端点的逐路由门槛（P1）
@@ -287,6 +299,8 @@
 | `GET /api/audit/export.csv` | 本群 130（脱敏）；`?full=1` 与不带 `group=` 的**全量**要平台 240 |
 | `POST /api/punishments/:code/release\|mute\|kick`、`POST /api/appeals/:code/accept\|reject` | 本群**审核员 120**（与指令层一致）|
 | `POST /api/punishments/:code/blacklist`、`POST /api/blacklist`、`DELETE /api/blacklist/:userId` | 本群 120；**`scope=global` 要平台 240**（会影响所有绑定群）|
+| `PUT /api/notify/levels`、`POST /api/notify/levels/reset` | 平台超管 240（门槛全局一套）|
+| `POST /api/notify/test` | 任何登录管理员（**只发给自己**，收件人取会话）|
 
 - **不报错、只裁剪**：列表类端点（待审批 / 活动）对够不着的群直接少返回，而不是整条 403 ——
   多群管理员看到的自然是自己那几行；
