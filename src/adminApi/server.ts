@@ -12,7 +12,14 @@ import { DEFAULT_GROUP_ID } from "../services/groupConfig.js";
 import { ACTIVITY_SETTING_FIELDS } from "../services/activitySettings.js";
 import { normalizeReportDays } from "./reports.js";
 import type { AdminApiReportsView } from "./reports.js";
-import { adminLoginUrl, machineTokenAllows, type AdminApiConfig, type AdminApiMachineToken } from "./config.js";
+import { requiredScopeFor } from "./scopes.js";
+import {
+  adminLoginUrl,
+  machineTokenAllows,
+  machineTokenUsable,
+  type AdminApiConfig,
+  type AdminApiMachineToken,
+} from "./config.js";
 import type { AdminApiEntityRef } from "./entityRef.js";
 import { AdminApiRequestError } from "./errors.js";
 import type {
@@ -940,7 +947,9 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
           errorBody("unauthorized", "请先登录：在机器人私信里发送 /admin login。"),
         );
       }
-      const requiredScope = isWriteMethod(request.method) ? "write" : "read";
+      // 按端点要求的 scope 判定（细粒度，见 scopes.ts）：每个端点声明自己的域，
+      // 没登记的端点回落到 read / write —— 细粒度 token 因此访问不了没登记的端点（fail-closed）。
+      const requiredScope = requiredScopeFor(request.method, route);
       if (!machineTokenAllows(machine, requiredScope, now())) {
         log.warn("admin api machine token scope denied", {
           scope: requiredScope,
@@ -2446,10 +2455,10 @@ export function findMachineToken(
 ): AdminApiMachineToken | undefined {
   let matched: AdminApiMachineToken | undefined;
   for (const token of tokens) {
-    if (machineTokenAllows(token, "read", now) || machineTokenAllows(token, "write", now)) {
-      if (tokensEqual(token.token, candidate)) {
-        matched = token;
-      }
+    // 只比令牌本身与有效期：scope 是**这个请求**能不能过的事，
+    // 细粒度 token 不满足粗粒度 read/write，不能因此被当成「令牌不存在」（会变成 401）。
+    if (machineTokenUsable(token, now) && tokensEqual(token.token, candidate)) {
+      matched = token;
     }
   }
   return matched;

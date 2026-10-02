@@ -1654,6 +1654,107 @@ describe("管理 API HTTP 层", () => {
     await app.close();
   });
 
+  it("机器令牌细粒度 scope：read:join 只能读待审批，write:activity 只能改活动", async () => {
+    const tokens = memoryTokens();
+    const config = loadAdminApiConfig({
+      ADMIN_API_ENABLED: "true",
+      ADMIN_API_SESSION_SECRET: "m".repeat(40),
+      ADMIN_API_TOKENS: [
+        "pending-only-token-12:read:join",
+        "activity-writer-token-12:write:activity",
+      ].join(","),
+    });
+    const calls: string[] = [];
+    const app = buildAdminApiServer({
+      config,
+      tokens,
+      version: "test",
+      readers: {
+        pending: async () => [],
+        rules: async (groupId: string) => ({ groupId, override: null, settings: [] }),
+        notifyTopics: async () => [],
+        activities: async () => [],
+      },
+      writers: {
+        exportAuditCsv: async () => ({
+          filename: "audit-all.csv",
+          csv: "record_id\n",
+          rows: 0,
+          full: false,
+        }),
+        createActivity: async (input) => {
+          calls.push(`create:${input.groupId}`);
+          return {
+            activity: {
+              activityId: "a1",
+              code: "ACT001",
+              title: input.title,
+              groupId: input.groupId,
+              status: "draft",
+              registered: 0,
+              createdAt: "2026-10-01T00:00:00.000Z",
+              group: groupRef(input.groupId),
+              boundGroups: [groupRef(input.groupId)],
+            },
+            boundGroups: [groupRef(input.groupId)],
+            message: "已新建活动草稿。",
+          };
+        },
+      },
+    }).app;
+
+    const pendingToken = { authorization: "Bearer pending-only-token-12" };
+    const activityToken = { authorization: "Bearer activity-writer-token-12" };
+
+    // read:join 能读待审批
+    const pending = await app.inject({
+      method: "GET",
+      url: "/api/pending",
+      headers: pendingToken,
+    });
+    expect(pending.statusCode).toBe(200);
+
+    // 同一把令牌读审计 → 403（错误里点名它缺 read:audit）
+    const auditDenied = await app.inject({
+      method: "GET",
+      url: "/api/audit",
+      headers: pendingToken,
+    });
+    expect(auditDenied.statusCode).toBe(403);
+    expect(auditDenied.json<{ message: string }>().message).toContain("read:audit");
+
+    // read:join 不能写（它没有 write:join）
+    const writeDenied = await app.inject({
+      method: "POST",
+      url: "/api/join/sync",
+      headers: pendingToken,
+      payload: { group: "g1" },
+    });
+    expect(writeDenied.statusCode).toBe(403);
+
+    // write:activity 能建活动（机器令牌不需要 CSRF 头）
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/activities",
+      headers: activityToken,
+      payload: { group: "g1", title: "春游" },
+    });
+    expect(created.statusCode).toBe(200);
+    expect(calls).toEqual(["create:g1"]);
+
+    // 但它改不了处罚（write:punish 没给）
+    const punishDenied = await app.inject({
+      method: "POST",
+      url: "/api/punishments/PUN001/release",
+      headers: activityToken,
+      payload: {},
+    });
+    expect(punishDenied.statusCode).toBe(403);
+    expect(punishDenied.json<{ message: string }>().message).toContain("write:punish");
+
+    await app.close();
+  });
+
   it("登录链接按 PUBLIC_BASE_URL 拼", async () => {
     const { app, loginUrl } = build();
     expect(loginUrl("tok")).toBe("https://ops.example.com/login?token=tok");

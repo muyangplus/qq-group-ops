@@ -11,6 +11,7 @@
  *
  * 因此这里**没有账号与口令**：身份天然是 openid，权限直接复用现有两轴模型（E1-b）。
  */
+import { describeKnownScopes, isKnownScope } from "./scopes.js";
 export interface AdminApiConfig {
   enabled: boolean;
   host: string;
@@ -47,7 +48,10 @@ export interface AdminApiConfig {
 
 export interface AdminApiMachineToken {
   token: string;
-  /** 允许的范围：`read` / `write` / `*`（`*` = 全部）。 */
+  /**
+   * 允许的范围（见 `scopes.ts`）：`*` / `read` / `write` 是通配，`read:<域>` / `write:<域>`
+   * 按域细分（例：`read:join`、`write:notify`）。
+   */
   scopes: readonly string[];
   /** 到期时间（可选；过期即视为不可用）。 */
   expiresAt?: Date | undefined;
@@ -107,10 +111,16 @@ export interface MachineTokensParseResult {
 }
 
 /**
- * 解析 `ADMIN_API_TOKENS`：`token:scope1|scope2[:到期ISO时间]`，多个令牌用 `,` 分隔。
+ * 解析 `ADMIN_API_TOKENS`：`token:scope1|scope2[@到期ISO时间]`，多个令牌用 `,` 分隔。
  *
- * 例：`ADMIN_API_TOKENS=abcdef0123456789:read,abcdef9876543210:read|write:2027-01-01T00:00:00Z`
- * 令牌长度下限 16（防止有人填个 `test` 就当凭据用）。
+ * 例：`ADMIN_API_TOKENS=abcdef0123456789:read,abcdef9876543210:read:audit|write:activity@2027-01-01T00:00:00Z`
+ *
+ * scope 三档：`*`（全部）/ `read` / `write`（该族全部，**老 token 不变**）/
+ * `read:<域>` / `write:<域>`（按域细分，域见 scopes.ts）。令牌长度下限 16（防止有人填
+ * `test` 就当凭据用）。
+ *
+ * 到期时间用 `@` 分隔（scope 自身含冒号，不能再拿第二个冒号切）；旧写法
+ * `token:read:2027-01-01T00:00:00Z` 仍然认 —— 仅当第二个冒号后面确实是个 ISO 时间时才当到期。
  */
 export function parseMachineTokens(
   value: string | undefined,
@@ -122,18 +132,11 @@ export function parseMachineTokens(
     if (entry.length === 0) {
       continue;
     }
-    // 只用前两个冒号切分：到期时间是 ISO 时间（自身含冒号），不能按 `:` 全切
     const firstSep = entry.indexOf(":");
-    const secondSep = firstSep < 0 ? -1 : entry.indexOf(":", firstSep + 1);
     const token = (firstSep < 0 ? entry : entry.slice(0, firstSep)).trim();
-    const scopeRaw =
-      firstSep < 0
-        ? ""
-        : secondSep < 0
-          ? entry.slice(firstSep + 1)
-          : entry.slice(firstSep + 1, secondSep);
-    const expiryRaw = secondSep < 0 ? "" : entry.slice(secondSep + 1).trim();
-    const scopes = scopeRaw
+    const rest = firstSep < 0 ? "" : entry.slice(firstSep + 1);
+    const split = splitScopesAndExpiry(rest);
+    const scopes = split.scopes
       .split("|")
       .map((scope) => scope.trim())
       .filter((scope) => scope.length > 0);
@@ -143,14 +146,23 @@ export function parseMachineTokens(
       continue;
     }
     if (scopes.length === 0) {
-      issues.push(`机器令牌缺少 scope（read / write / *）：${label}`);
+      issues.push(
+        `机器令牌缺少 scope（${describeKnownScopes()}）：${label}`,
+      );
+      continue;
+    }
+    const unknown = scopes.filter((scope) => !isKnownScope(scope));
+    if (unknown.length > 0) {
+      issues.push(
+        `机器令牌有未知 scope：${unknown.join(" / ")}（可用：${describeKnownScopes()}）`,
+      );
       continue;
     }
     let expiresAt: Date | undefined;
-    if (expiryRaw.length > 0) {
-      const parsed = new Date(expiryRaw);
+    if (split.expiry.length > 0) {
+      const parsed = new Date(split.expiry);
       if (Number.isNaN(parsed.getTime())) {
-        issues.push(`机器令牌的到期时间不是合法 ISO 时间：${expiryRaw}`);
+        issues.push(`机器令牌的到期时间不是合法 ISO 时间：${split.expiry}`);
         continue;
       }
       expiresAt = parsed;
@@ -164,16 +176,63 @@ export function parseMachineTokens(
   return { tokens, issues };
 }
 
-/** 机器令牌是否允许某个 scope（`*` 通配）；过期即不可用。 */
-export function machineTokenAllows(
+/**
+ * 把 `scope1|scope2[@ISO]` 拆成「scope 串 + 到期时间」。
+ *
+ * - 优先认 `@`（新写法，scope 里可以有冒号）；
+ * - 没有 `@` 时兼容旧写法 `read:2027-01-01T00:00:00Z`：只有第二个冒号后面真能解析成日期
+ *   才当到期时间，否则整串都是 scope（`read:audit` 这种不能被误切）。
+ */
+function splitScopesAndExpiry(rest: string): { scopes: string; expiry: string } {
+  const atIndex = rest.lastIndexOf("@");
+  if (atIndex >= 0) {
+    return {
+      scopes: rest.slice(0, atIndex),
+      expiry: rest.slice(atIndex + 1).trim(),
+    };
+  }
+  const secondSep = rest.indexOf(":");
+  if (secondSep >= 0) {
+    const tail = rest.slice(secondSep + 1).trim();
+    if (tail.length > 0 && !Number.isNaN(new Date(tail).getTime())) {
+      return { scopes: rest.slice(0, secondSep), expiry: tail };
+    }
+  }
+  return { scopes: rest, expiry: "" };
+}
+
+/**
+ * 令牌本身是否还在有效期（与 scope 无关）。
+ *
+ * 机器令牌的查找不能按 scope 过滤：细粒度 token（如 `read:join`）不满足粗粒度 `read`，
+ * 按 scope 找会导致它「看起来不存在」（401 而不是 403），排查时非常费解。
+ */
+export function machineTokenUsable(
   token: AdminApiMachineToken,
-  scope: "read" | "write",
   now: Date = new Date(),
 ): boolean {
-  if (token.expiresAt !== undefined && token.expiresAt.getTime() <= now.getTime()) {
+  return token.expiresAt === undefined || token.expiresAt.getTime() > now.getTime();
+}
+
+/**
+ * 机器令牌是否允许某个 scope。
+ *
+ * `*` 全放；`read` / `write` 放行该族的细粒度 scope（老 token 行为不变）；
+ * 其余做精确匹配 —— 细粒度 token **不会**因为「有个冒号前缀」就顺带拿到别的域。
+ */
+export function machineTokenAllows(
+  token: AdminApiMachineToken,
+  scope: string,
+  now: Date = new Date(),
+): boolean {
+  if (!machineTokenUsable(token, now)) {
     return false;
   }
-  return token.scopes.includes("*") || token.scopes.includes(scope);
+  if (token.scopes.includes("*") || token.scopes.includes(scope)) {
+    return true;
+  }
+  const family = scope.split(":")[0] ?? "";
+  return (family === "read" || family === "write") && token.scopes.includes(family);
 }
 
 /** 登录链接（`PUBLIC_BASE_URL` 没配时返回 undefined，调用方只给令牌）。 */export function adminLoginUrl(config: AdminApiConfig, token: string): string | undefined {
