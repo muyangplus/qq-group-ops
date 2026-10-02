@@ -7,6 +7,14 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **`.env.example` 面向使用者重构**：改成以配置内容优先 —— 14 节、每节「说明 + 键」，
+  去掉内部编号与维护流程（那些移到 [DEVELOPMENT.md](./docs/DEVELOPMENT.md)）；
+  用法、书写约定（`KEY=` 生效 / `# KEY=` 可选、不要写行尾注释）与「哪些能 `/config` 热改、
+  哪些要重启」统一写进 [README.md](./README.md) 的「配置（`.env`）」一节；
+  管理 API 一节按「怎么开」重写（生成会话密钥 → 填 `PUBLIC_BASE_URL` → 挂 TLS 后开 `COOKIE_SECURE`）。
+
 ## [0.23.0] - 2026-10-02
 
 ### 修复
