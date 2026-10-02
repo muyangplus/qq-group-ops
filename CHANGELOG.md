@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.23.2] - 2026-10-02
+
 ### 新增
 
 - **管理 API 直接托管管理前台**（`ADMIN_API_WEB_DIR`，默认 `web/dist`）：`/`、`/login`、`/pending`
