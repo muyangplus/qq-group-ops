@@ -62,6 +62,9 @@ const manageable = computed(() =>
         <RouterLink class="button" :to="{ name: 'pending' }">
           {{ manageable.length > 0 ? "去审批" : "查看待审批" }}
         </RouterLink>
+        <RouterLink class="button" :to="{ name: 'audit' }">审计查询</RouterLink>
+        <RouterLink class="button" :to="{ name: 'rules' }">规则编辑</RouterLink>
+        <RouterLink class="button" :to="{ name: 'activities' }">活动</RouterLink>
         <RouterLink
           v-if="session.isSuperAdmin"
           class="button"
@@ -72,11 +75,9 @@ const manageable = computed(() =>
       </div>
 
       <p class="hint">
-        计划里剩下的页面（E2-c）：审计查询（过滤 + 分页）、规则编辑（字段级、提交前给 diff）、
-        活动列表与开关。接口都已就绪：
-        <code>GET /api/audit</code>、<code>GET /api/rules?group=</code>、
-        <code>PUT /api/rules</code>、<code>GET /api/activities</code>、
-        <code>POST /api/activities/:code/open|close|cancel</code>。
+        「规则编辑」里提交前会给 diff 并写 <code>admin_api:rule_update</code> 审计；
+        活动的「名单 / 完整名单」直接下载 CSV（默认脱敏，完整版含学号 / 班级 / 学院），
+        两种都要求本群群管理员并写审计。
       </p>
     </template>
   </section>

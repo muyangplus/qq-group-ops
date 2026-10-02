@@ -141,8 +141,50 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
   it("路由表已挂上已落地的页面", () => {
     const source = read("router.ts");
 
-    for (const view of ["DashboardView", "PendingView", "StatusView", "LoginView"]) {
+    for (const view of [
+      "DashboardView",
+      "PendingView",
+      "AuditView",
+      "RulesView",
+      "ActivitiesView",
+      "StatusView",
+      "LoginView",
+    ]) {
       expect(source).toContain(view);
     }
+  });
+
+  it("审计页：非超管必须先选群（服务端不带 group 回 400）", () => {
+    const source = read("views/AuditView.vue");
+
+    expect(source).toContain("adminApi.audit");
+    expect(source).toContain("MODERATOR_LEVEL");
+    expect(source).toContain("needsGroup");
+  });
+
+  it("规则页：读用 120 / 写用 130，提交前给 diff", () => {
+    const source = read("views/RulesView.vue");
+
+    expect(source).toContain("adminApi.rules");
+    expect(source).toContain("adminApi.updateRule");
+    expect(source).toContain("GROUP_ADMIN_LEVEL");
+    // 全局规则要平台超管（服务端也是这个口径）
+    expect(source).toContain("__default__");
+    expect(source).toContain("diff");
+    expect(source).toContain("ModalDialog");
+  });
+
+  it("活动页：三个状态动作 + 名单 CSV 下载链接", () => {
+    const source = read("views/ActivitiesView.vue");
+
+    expect(source).toContain("adminApi.activities");
+    expect(source).toContain("adminApi.setActivityStatus");
+    for (const action of ["open", "close", "cancel"]) {
+      expect(source).toContain(`'${action}'`);
+    }
+    // 脱敏 / 完整两种导出，都是同源下载链接（靠 cookie 鉴权）
+    expect(source).toContain("export.csv");
+    expect(source).toContain("?full=1");
+    expect(source).toContain("GROUP_ADMIN_LEVEL");
   });
 });

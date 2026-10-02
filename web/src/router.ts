@@ -2,9 +2,12 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import { onUnauthorized } from "@/api/client";
 import { useSessionStore } from "@/stores/session";
+import ActivitiesView from "@/views/ActivitiesView.vue";
+import AuditView from "@/views/AuditView.vue";
 import DashboardView from "@/views/DashboardView.vue";
 import LoginView from "@/views/LoginView.vue";
 import PendingView from "@/views/PendingView.vue";
+import RulesView from "@/views/RulesView.vue";
 import StatusView from "@/views/StatusView.vue";
 
 /**
@@ -18,6 +21,9 @@ export const router = createRouter({
   routes: [
     { path: "/", name: "dashboard", component: DashboardView },
     { path: "/pending", name: "pending", component: PendingView },
+    { path: "/audit", name: "audit", component: AuditView },
+    { path: "/rules", name: "rules", component: RulesView },
+    { path: "/activities", name: "activities", component: ActivitiesView },
     { path: "/status", name: "status", component: StatusView },
     { path: "/login", name: "login", component: LoginView },
     { path: "/:pathMatch(.*)*", name: "not-found", redirect: "/" },

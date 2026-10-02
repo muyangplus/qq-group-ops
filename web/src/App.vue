@@ -40,6 +40,9 @@ async function signOut(): Promise<void> {
     <nav v-if="session.signedIn" class="tabs">
       <RouterLink :to="{ name: 'dashboard' }">概览</RouterLink>
       <RouterLink :to="{ name: 'pending' }">待审批</RouterLink>
+      <RouterLink :to="{ name: 'audit' }">审计</RouterLink>
+      <RouterLink :to="{ name: 'rules' }">规则</RouterLink>
+      <RouterLink :to="{ name: 'activities' }">活动</RouterLink>
       <!-- 状态看板是平台级信息：非平台超管看不到入口（服务端也会 403） -->
       <RouterLink v-if="session.isSuperAdmin" :to="{ name: 'status' }">
         状态
