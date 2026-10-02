@@ -484,6 +484,10 @@ export function createRuntime(
         configStore,
         activity,
         activityExport,
+        // P2 写：改活动字段复用指令层 `/activity set` 的解析与连带效果（满员广播 / 变更私信）。
+        // `adminCommands` 在本函数后面才创建，所以这里用惰性闭包（端点被调用时它早就绪）。
+        updateActivitySetting: (activityId, field, value) =>
+          adminCommands.updateActivitySetting(activityId, field, value),
         adminTokens: repositories.adminTokens,
         notificationSubscriptions: repositories.notificationSubscriptions,
         groupSettings: repositories.groupSettings,

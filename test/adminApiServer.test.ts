@@ -1278,6 +1278,142 @@ describe("管理 API HTTP 层", () => {
     await app.close();
   });
 
+  it("活动字段目录（登录即可）+ 改字段 PUT（要 CSRF、参数校验、只读巡检 503）", async () => {
+    const tokens = memoryTokens();
+    const calls: Array<{
+      code: string;
+      field: string;
+      value: string;
+      actorId: string;
+    }> = [];
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "test",
+      writers: {
+        updateActivity: async (input) => {
+          calls.push(input);
+          return {
+            activity: {
+              activityId: "a1",
+              code: input.code,
+              title: "春游",
+              groupId: "g1",
+              status: "open",
+              registered: 0,
+              createdAt: "2026-10-01T00:00:00.000Z",
+              group: groupRef("g1"),
+              boundGroups: [groupRef("g1")],
+            },
+            field: input.field,
+            fieldLabel: "名额",
+            before: "不限",
+            after: input.value,
+            message: "**结果**：已更新 capacity。",
+          };
+        },
+      },
+    }).app;
+
+    const unauth = await app.inject({
+      method: "GET",
+      url: "/api/activities/fields",
+    });
+    expect(unauth.statusCode).toBe(401);
+
+    const { token } = await tokens.issue({ userId: "admin", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const cookie = cookieOf(login);
+
+    // 字段目录来自指令层同一份 `ACTIVITY_SETTING_FIELDS`
+    const fields = await app.inject({
+      method: "GET",
+      url: "/api/activities/fields",
+      headers: { cookie },
+    });
+    expect(fields.statusCode).toBe(200);
+    const catalog = fields.json<{
+      fields: Array<{ field: string; label: string; kind: string }>;
+    }>().fields;
+    expect(catalog.map((field) => field.field)).toContain("capacity");
+    expect(catalog.find((field) => field.field === "capacity")?.label).toBe(
+      "名额",
+    );
+    expect(catalog.find((field) => field.field === "递补")).toBeUndefined();
+
+    // 写操作缺 CSRF 头 → 403
+    const noCsrf = await app.inject({
+      method: "PUT",
+      url: "/api/activities/ACT001",
+      headers: { cookie },
+      payload: { field: "capacity", value: "10" },
+    });
+    expect(noCsrf.statusCode).toBe(403);
+
+    const noField = await app.inject({
+      method: "PUT",
+      url: "/api/activities/ACT001",
+      headers: { cookie, "x-admin-request": "1" },
+      payload: { value: "10" },
+    });
+    expect(noField.statusCode).toBe(400);
+
+    const badValue = await app.inject({
+      method: "PUT",
+      url: "/api/activities/ACT001",
+      headers: { cookie, "x-admin-request": "1" },
+      payload: { field: "capacity", value: 10 },
+    });
+    expect(badValue.statusCode).toBe(400);
+
+    const ok = await app.inject({
+      method: "PUT",
+      url: "/api/activities/ACT001",
+      headers: { cookie, "x-admin-request": "1" },
+      payload: { field: "capacity", value: "10" },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({
+      ok: true,
+      field: "capacity",
+      fieldLabel: "名额",
+      before: "不限",
+      after: "10",
+    });
+    expect(calls).toEqual([
+      { code: "ACT001", field: "capacity", value: "10", actorId: "admin" },
+    ]);
+    await app.close();
+
+    // 只读巡检模式（不装配 writers）→ 503
+    const bareTokens = memoryTokens();
+    const bare = buildAdminApiServer({
+      config: CONFIG,
+      tokens: bareTokens,
+      version: "test",
+    }).app;
+    const bareToken = await bareTokens.issue({ userId: "admin", ttlMs: 60_000 });
+    const bareLogin = await bare.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: bareToken.token },
+    });
+    const bareResponse = await bare.inject({
+      method: "PUT",
+      url: "/api/activities/ACT001",
+      headers: { cookie: cookieOf(bareLogin), "x-admin-request": "1" },
+      payload: { field: "capacity", value: "10" },
+    });
+    expect(bareResponse.statusCode).toBe(503);
+    await bare.close();
+  });
+
   it("机器令牌：Bearer + scope（read 读 / write 写 / 缺 scope 403 / 假令牌 401）", async () => {
     const tokens = memoryTokens();
     const config = loadAdminApiConfig({

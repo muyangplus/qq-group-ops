@@ -5,6 +5,7 @@ import {
   adminApi,
   type AdminApiActivityAction,
   type AdminApiActivityItem,
+  type AdminApiActivitySettingField,
 } from "@/api/admin";
 import { ApiError } from "@/api/client";
 import EntityLabel from "@/components/EntityLabel.vue";
@@ -34,6 +35,10 @@ const newTitle = ref("");
 const creating = ref(false);
 /** 每行的「绑定到…」下拉当前选择；key 是活动短码。 */
 const bindTargets = ref<Record<string, string>>({});
+/** 改字段：字段目录（与 `/activity set` 同一份）+ 每行选中的字段 / 新值。 */
+const settingFields = ref<AdminApiActivitySettingField[]>([]);
+const editFields = ref<Record<string, string>>({});
+const editValues = ref<Record<string, string>>({});
 
 const groupOptions = computed(() =>
   (session.identity?.permissions?.groups ?? []).map((group) => group.groupId),
@@ -77,10 +82,56 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load);
+/** 字段目录只影响「改字段」那块：拿不到就整块不显示，不影响列表与开关。 */
+async function loadSettingFields(): Promise<void> {
+  try {
+    settingFields.value = await adminApi.activitySettingFields();
+  } catch {
+    settingFields.value = [];
+  }
+}
+
+onMounted(() => {
+  void load();
+  void loadSettingFields();
+});
 
 function canManage(groupId: string): boolean {
   return session.levelIn(groupId) >= GROUP_ADMIN_LEVEL;
+}
+
+/** 某一行当前选中的字段定义（用于提示文案）。 */
+function settingFieldOf(
+  item: AdminApiActivityItem,
+): AdminApiActivitySettingField | undefined {
+  const field = editFields.value[item.code] ?? "";
+  return settingFields.value.find((candidate) => candidate.field === field);
+}
+
+/** 改一个活动字段：与 `/activity set` 同一套写法（清空写 `clear`）。 */
+async function saveField(item: AdminApiActivityItem): Promise<void> {
+  const field = editFields.value[item.code] ?? "";
+  const value = (editValues.value[item.code] ?? "").trim();
+  if (field.length === 0) {
+    error.value = "先选要改的字段。";
+    return;
+  }
+  if (value.length === 0) {
+    error.value = "填上新值（清空写 clear）。";
+    return;
+  }
+  busyCode.value = item.code;
+  try {
+    const result = await adminApi.updateActivityField(item.code, field, value);
+    notice.value = `${item.title}：${result.fieldLabel} ${result.before} → ${result.after}`;
+    editValues.value = { ...editValues.value, [item.code]: "" };
+    error.value = "";
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : String(err);
+  } finally {
+    busyCode.value = "";
+  }
 }
 
 async function setStatus(
@@ -239,6 +290,12 @@ function formatTime(value: string): string {
       </span>
     </div>
 
+    <p class="hint">
+      每行的「改字段」与机器人里的 <code>/activity set &lt;短码&gt; &lt;字段&gt; &lt;值&gt;</code>
+      同一套写法（支持中文别名；清空写 <code>clear</code>）：改完会私信已报名 / 候补者，
+      名额调小到已满还会在发布群广播一次「活动已满」。
+    </p>
+
     <p v-if="!loading && items.length === 0" class="hint">没有活动。</p>
 
     <ul class="list">
@@ -255,6 +312,7 @@ function formatTime(value: string): string {
               群 <EntityLabel :entity="item.group" :fallback="item.groupId" /> · 报名
               {{ item.registered }}<span v-if="item.capacity"> / {{ item.capacity }}</span>
               · 创建于 {{ formatTime(item.createdAt) }}
+              <span v-if="item.closeAt"> · 截止 {{ formatTime(item.closeAt) }}</span>
             </div>
             <!-- 发布群：绑定集合为空时后端回落到归属群，至少一项 -->
             <div class="hint">发布群：</div>
@@ -297,6 +355,41 @@ function formatTime(value: string): string {
                 @click="bindGroup(item)"
               >
                 绑定
+              </button>
+            </template>
+            <!-- 改字段：字段表与写法完全复用指令层 `/activity set`（所以 `clear` 也能用） -->
+            <template v-if="canManage(item.groupId) && settingFields.length > 0">
+              <select
+                v-model="editFields[item.code]"
+                :disabled="busyCode === item.code"
+                title="选择要改的字段（与 /activity set 同一份字段表）"
+              >
+                <option value="">改字段…</option>
+                <option
+                  v-for="field in settingFields"
+                  :key="field.field"
+                  :value="field.field"
+                >
+                  {{ field.label }}
+                </option>
+              </select>
+              <input
+                v-model="editValues[item.code]"
+                :disabled="busyCode === item.code"
+                :placeholder="settingFieldOf(item)?.hint ?? '先选字段'"
+                title="新值；写法与 /activity set 一致（清空写 clear）"
+              />
+              <button
+                type="button"
+                :disabled="busyCode === item.code || !editFields[item.code]"
+                :title="
+                  settingFieldOf(item)?.notifiesParticipants
+                    ? '保存；改完会私信已报名 / 候补者'
+                    : '保存'
+                "
+                @click="saveField(item)"
+              >
+                保存
               </button>
             </template>
             <button

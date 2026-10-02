@@ -32,6 +32,7 @@ import { resolveTargetGroupId } from "./commands/targetResolvers.js";
 import { handleTest, handleTestAt, handleTestMenu, testCard } from "./commands/testCommands.js";
 import {
   activityCallbackCard,
+  applyActivitySetting,
   handleActivity,
 } from "./commands/activityCommands.js";
 import {
@@ -826,6 +827,25 @@ export class AdminCommandService {
   /** 回调：`cb:status:proc` —— 进程全套详情（仅全局超管）。 */
   public processCard(userId: string): CardResult {
     return processCard(this.context(), userId);
+  }
+
+  /**
+   * 管理后台改活动字段（P2）：与 `/activity set` **同一个 `applyActivitySetting`**，
+   * 所以字段校验、满员广播、变更私信（`notify = true`）完全一致。
+   *
+   * 权限不在这里判：调用方（管理 API）先用活动所属群判本群 130。
+   */
+  public async updateActivitySetting(
+    activityId: string,
+    field: string,
+    value: string,
+  ): Promise<{ ok: boolean; text: string }> {
+    const ctx = this.context();
+    const activity = ctx.activity?.getActivity(activityId);
+    if (!activity) {
+      return { ok: false, text: "活动不存在。" };
+    }
+    return applyActivitySetting(ctx, activity, field, value, true);
   }
 
   /** `/restart`：重启确认卡（仅全局超管；真正执行在 `cb:restart:go`）。 */

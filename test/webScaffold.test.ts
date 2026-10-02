@@ -192,6 +192,8 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     const router = read("router.ts");
 
     expect(view).toContain("adminApi.notifyTopics");
+    // 服务端回的是 `{ topics }`，客户端要拆包（以前当数组用，表格永远是空的）
+    expect(read("api/admin.ts")).toContain(".topics");
     expect(view).toContain("adminApi.setNotifyLevel");
     expect(view).toContain("adminApi.resetNotifyLevels");
     expect(view).toContain("adminApi.sendNotifyTest");
@@ -338,5 +340,9 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     expect(source).toContain("adminApi.unbindActivityGroup");
     expect(source).toContain("boundGroups");
     expect(source).toContain("草稿");
+    // P2 收尾：改字段与 `/activity set` 同一份字段表 / 同一套写法
+    expect(source).toContain("adminApi.activitySettingFields");
+    expect(source).toContain("adminApi.updateActivityField");
+    expect(source).toContain("clear");
   });
 });

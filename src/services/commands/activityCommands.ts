@@ -53,22 +53,13 @@ import {
   ACTIVITY_SET_USAGE,
   ACTIVITY_USAGE,
   cardFromText,
-  CLEAR_WORDS,
   formatError,
   formatGroupList,
   normalize,
-  parseCloseAt,
-  parseLink,
-  parseLinks,
-  parseList,
-  parsePositiveInt,
   parseSignupPage,
-  parseToggle,
-  parseYearList,
-  TOGGLE_OFF,
-  TOGGLE_ON,
   viewButton,
 } from "./support.js";
+import { applyActivitySettingValue } from "../activitySettings.js";
 
 /**
  * 活动回调与指令层：/activity 各子指令、cb:activity:* 回调分发、活动设置与规则点选。
@@ -974,148 +965,12 @@ export async function applyActivitySetting(
   notify: boolean,
 ): Promise<{ ok: boolean; text: string }> {
   const activities = ctx.activity!;
-  const cleared = CLEAR_WORDS.has(value.trim().toLowerCase());
-  try {
-    switch (field) {
-      case "title":
-      case "标题":
-        if (cleared) {
-          return { ok: false, text: "标题不能清空，请填写新的标题。" };
-        }
-        activities.updateActivity(activity.activityId, { title: value });
-        break;
-      case "desc":
-      case "description":
-      case "描述":
-        activities.updateActivity(activity.activityId, {
-          description: cleared ? "" : value,
-        });
-        break;
-      case "capacity":
-      case "名额":
-        activities.updateActivity(activity.activityId, {
-          capacity: cleared ? undefined : parsePositiveInt(field, value),
-        });
-        // 名额被调小到「已满」时也广播一次「活动已满」卡；
-        // announceActivityFull 自己会判断是否真的满员，且 `(活动, 群, full)` 去重表保证每个群只发一次。
-        await announceActivityFull(ctx, activity.activityId);
-        break;
-      case "group":
-      case "群号":
-        activities.updateActivity(activity.activityId, {
-          groupNumber: cleared ? "" : value,
-        });
-        break;
-      case "link":
-      case "链接":
-        activities.updateActivity(activity.activityId, {
-          links: cleared ? [] : [...activity.links, parseLink(value)],
-        });
-        break;
-      case "links":
-      case "链接列表":
-        activities.updateActivity(activity.activityId, {
-          links: cleared ? [] : parseLinks(value),
-        });
-        break;
-      case "closeat":
-      case "截止":
-        activities.updateActivity(activity.activityId, {
-          closeAt: cleared ? undefined : parseCloseAt(value),
-        });
-        break;
-      case "remindat":
-      case "提醒":
-      case "提醒时间":
-        activities.updateActivity(activity.activityId, {
-          remindAt: cleared ? undefined : parseCloseAt(value, "提醒时间"),
-        });
-        break;
-      case "waitlistpromotion":
-      case "递补":
-        return setWaitlistPromotion(ctx, activity, value, cleared);
-      case "mentionall":
-      case "提醒全体":
-        activities.updateActivity(activity.activityId, {
-          mentionAll: parseToggle(field, value),
-        });
-        break;
-      case "notifycreator":
-      case "通知发起人":
-        activities.updateActivity(activity.activityId, {
-          notifyCreator: parseToggle(field, value),
-        });
-        break;
-      case "allowcolleges":
-      case "允许学院":
-        activities.updateActivity(activity.activityId, {
-          allowColleges: cleared ? [] : parseList(value),
-        });
-        break;
-      case "denycolleges":
-      case "禁止学院":
-      case "不允许学院":
-        activities.updateActivity(activity.activityId, {
-          denyColleges: cleared ? [] : parseList(value),
-        });
-        break;
-      case "allowyears":
-      case "允许年级":
-        activities.updateActivity(activity.activityId, {
-          allowYears: cleared ? [] : parseYearList(value),
-        });
-        break;
-      case "denyyears":
-      case "禁止年级":
-      case "不允许年级":
-        activities.updateActivity(activity.activityId, {
-          denyYears: cleared ? [] : parseYearList(value),
-        });
-        break;
-      default:
-        return { ok: false, text: ACTIVITY_SET_USAGE };
-    }
-  } catch (error) {
-    return { ok: false, text: `设置失败：${formatError(error)}` };
-  }
-  const updated = activities.getActivity(activity.activityId);
-  if (notify) {
-    voidNotifyActivityChanged(ctx, updated, field);
-  }
-  return { ok: true, text: `**结果**：已更新 ${field}（${activityCode(updated)}）。` };
-}
-
-/** 递补方式：`auto`（自动递补）会先把已有冻结名额释放掉。 */
-
-export function setWaitlistPromotion(
-  ctx: AdminCommandContext,
-  activity: Activity,
-  value: string,
-  cleared: boolean,
-): { ok: boolean; text: string } {
-  const activities = ctx.activity!;
-  const normalized = normalize(value);
-  const mode: "auto" | "manual" = cleared
-    ? "manual"
-    : normalized === "auto" || normalized === "自动" || normalized === "自动递补"
-      ? "auto"
-      : normalized === "manual" || normalized === "手动" || normalized === "手动释放"
-        ? "manual"
-        : TOGGLE_ON.has(normalized)
-          ? "auto"
-          : TOGGLE_OFF.has(normalized)
-            ? "manual"
-            : (() => {
-                throw new Error("递补方式需要 auto（自动）或 manual（手动）");
-              })();
-  if (mode === "auto" && activity.heldSlots > 0) {
-    activities.releaseHeldSlot(activity.activityId);
-  }
-  activities.updateActivity(activity.activityId, { waitlistPromotion: mode });
-  return {
-    ok: true,
-    text: `**结果**：递补方式已改为「${mode === "auto" ? "自动递补" : "手动释放名额"}」。`,
-  };
+  return applyActivitySettingValue(activities, activity, field, value, {
+    notify,
+    announceFull: (activityId) => announceActivityFull(ctx, activityId),
+    notifyParticipants: (updated, changedField) =>
+      voidNotifyActivityChanged(ctx, updated, changedField),
+  });
 }
 
 /**

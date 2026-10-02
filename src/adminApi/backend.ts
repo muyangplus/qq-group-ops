@@ -25,11 +25,16 @@ import type { NotificationDelivery } from "../db/notificationRepository.js";
 import type { WriteQueue } from "../db/writeQueue.js";
 import type { ActivityService } from "../services/activity.js";
 import type { Activity } from "../services/activity.js";
+import {
+  activitySettingField,
+  describeActivitySetting,
+} from "../services/activitySettings.js";
 import type { ActivityExportService } from "../services/activityExport.js";
 import type { AppealService } from "../services/appeals.js";
 import type { AuditLogStore } from "../services/audit.js";
 import type { BlacklistService } from "../services/blacklist.js";
 import {
+  ACTIVITY_SET_USAGE,
   RULE_KEYWORD_MAX_LENGTH,
   parseRuleSetting,
 } from "../services/commands/support.js";
@@ -114,6 +119,18 @@ export interface AdminApiBackendDeps {
   configStore: GroupConfigStore;
   activity: ActivityService;
   activityExport: ActivityExportService;
+  /**
+   * 改活动字段：由机器人侧提供（`AdminCommandService.updateActivitySetting`），
+   * 内部就是 `/activity set` 用的那个 `applyActivitySetting` —— 字段校验、满员广播、
+   * 变更私信都与指令层一致，管理面不再写第二套。
+   */
+  updateActivitySetting?:
+    | ((
+        activityId: string,
+        field: string,
+        value: string,
+      ) => Promise<{ ok: boolean; text: string }>)
+    | undefined;
   /** 登录令牌仓储（`/api/status` 的 `activeTokens`）；内存模式为 undefined。 */
   adminTokens?: AdminTokenRepository | undefined;
   /** 话题订阅计数（只读原始行）；未接数据库时为 undefined。 */
@@ -1657,6 +1674,52 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
           .listBoundGroups(created.activityId)
           .map((groupId) => entities.group(groupId)),
         message: `已新建活动草稿 ${activityLabel(created)}「${created.title}」。默认只绑定创建群；需要发到别的群请再绑定，点「开放报名」才会广播。`,
+      };
+    },
+
+    updateActivity: async (input) => {
+      const activity = requireActivity(input.code);
+      requireGroupAdmin(input.actorId, activity.groupId, "修改活动信息");
+      const apply = deps.updateActivitySetting;
+      if (!apply) {
+        throw unavailable("改活动字段需要机器人进程内的管理监听口（只读巡检模式不提供）。");
+      }
+      const field = input.field.trim();
+      const info = activitySettingField(field);
+      if (!info) {
+        throw badRequest(ACTIVITY_SET_USAGE);
+      }
+      const before = describeActivitySetting(activity, info.field);
+      const result = await apply(activity.activityId, field, input.value);
+      if (!result.ok) {
+        // 与 `PUT /api/rules` 同口径：值不合法不落库、不写审计，中文原因原样给界面。
+        throw badRequest(result.text);
+      }
+      const title = describeActivitySetting(activity, "title");
+      const after = describeActivitySetting(
+        deps.activity.getActivity(activity.activityId),
+        info.field,
+      );
+      appendAudit({
+        groupId: activity.groupId,
+        actorId: input.actorId,
+        action: "admin_api:activity_update",
+        status: AuditStatus.Executed,
+        reason: `活动 ${activityLabel(activity)}「${title}」${info.label}：${before} → ${after}`,
+      });
+      log.info("admin api updated activity", {
+        activityId: activity.activityId,
+        groupId: activity.groupId,
+        field: info.field,
+        actorId: input.actorId,
+      });
+      return {
+        activity: activityItem(activity.activityId),
+        field,
+        fieldLabel: info.label,
+        before,
+        after,
+        message: result.text,
       };
     },
 

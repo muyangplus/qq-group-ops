@@ -345,13 +345,15 @@ export class ActivityService {
     if (patch.links !== undefined) {
       activity.links = [...patch.links];
     }
-    if (patch.capacity !== undefined) {
-      if (patch.capacity !== undefined && patch.capacity <= 0) {
-        throw new Error("activity capacity must be positive");
-      }
+    if ("capacity" in patch) {
       if (patch.capacity === undefined) {
+        // `clear` 名额 = 取消上限（以前这里漏了 `"capacity" in patch` 判断，
+        // `{ capacity: undefined }` 会静默变成「没改」，指令层却报「已更新」）。
         delete activity.capacity;
       } else {
+        if (patch.capacity <= 0) {
+          throw new Error("activity capacity must be positive");
+        }
         activity.capacity = patch.capacity;
       }
     }

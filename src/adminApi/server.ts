@@ -9,6 +9,7 @@ import { PermissionLevel, PlatformLevel } from "../core/enums.js";
 import { getLogger, type Logger } from "../core/logger.js";
 import type { AdminTokenRepository } from "../db/adminTokenRepository.js";
 import { DEFAULT_GROUP_ID } from "../services/groupConfig.js";
+import { ACTIVITY_SETTING_FIELDS } from "../services/activitySettings.js";
 import { adminLoginUrl, machineTokenAllows, type AdminApiConfig, type AdminApiMachineToken } from "./config.js";
 import type { AdminApiEntityRef } from "./entityRef.js";
 import { AdminApiRequestError } from "./errors.js";
@@ -641,15 +642,24 @@ export interface AdminApiWriters {
   }): Promise<AdminApiRuleResetResult>;
   /**
    * 新建活动（本群群管理员 130）：只建**草稿**，与 `/activity create <标题>` 一致 ——
-   * 绑定发布群之后再用 `open` 广播；其余字段（名额 / 截止 / 简介 / 限制…）仍在机器人里
-   * 用 `/activity set <短码> <字段> <值>` 配（字段解析与「改字段通知」都在那条路径上，
-   * 抽成共享模块后再搬，见 TODO §5）。
+   * 绑定发布群之后再用 `open` 广播。
    */
   createActivity(input: {
     groupId: string;
     title: string;
     actorId: string;
   }): Promise<AdminApiActivityBindResult>;
+  /**
+   * 改活动字段（本群 130）：`field` / `value` 的写法与 `/activity set <短码> <字段> <值>`
+   * **完全一致**（同一套解析），所以「名额调小到满员要广播」「改完私信已报名 / 候补者」
+   * 这些连带效果也一样。
+   */
+  updateActivity(input: {
+    code: string;
+    field: string;
+    value: string;
+    actorId: string;
+  }): Promise<AdminApiActivityUpdateResult>;
   /** 绑定 / 解绑发布群（与 `/activity bind|unbind` 同一服务方法）。 */
   bindActivityGroup(input: {
     code: string;
@@ -694,6 +704,20 @@ export interface AdminApiActivityBindResult {
   activity: AdminApiActivityItem;
   /** 变更之后仍然绑定的群（界面直接替换）。 */
   boundGroups: AdminApiEntityRef[];
+  message: string;
+}
+
+/** 活动字段修改的结果（P2 写）：带回「改哪个字段、旧值 → 新值」的人话摘要。 */
+export interface AdminApiActivityUpdateResult {
+  activity: AdminApiActivityItem;
+  /** 本次请求用的原始字段名（回执里显示的就是它）。 */
+  field: string;
+  /** 规范字段名 + 中文名（界面显示 / 审计用）。 */
+  fieldLabel: string;
+  /** 改动前的人话值。 */
+  before: string;
+  /** 改动后的人话值。 */
+  after: string;
   message: string;
 }
 
@@ -1787,6 +1811,16 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     };
   });
 
+  /**
+   * 活动字段目录（E1-k）：给「改活动字段」的表单渲染用（字段名 / 中文名 / 输入类型 / 提示）。
+   *
+   * 静态清单、不含任何数据，所以只要求**登录**；真正的改字段按活动所属群判本群 130。
+   * 与 `/activity set` 共用 `ACTIVITY_SETTING_FIELDS`，所以界面上的字段就是指令层支持的字段。
+   */
+  app.get("/api/activities/fields", async () => ({
+    fields: ACTIVITY_SETTING_FIELDS,
+  }));
+
   // ------------------------------------------------------------------ 写端点（E1-d）
   //
   // 统一形状：取路径 / 请求体参数 → 调 `writers` → 原样序列化领域层回执。
@@ -2020,6 +2054,46 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     const result = await writers.createActivity({
       groupId: group,
       title,
+      actorId: actorOf(request),
+    });
+    return { ok: true, ...result };
+  });
+
+  /**
+   * 改活动字段：`PUT /api/activities/:code { field, value }`（本群群管理员 130）。
+   *
+   * `field` / `value` 与 `/activity set` **同一套写法**（含中文别名、`clear` 清空），
+   * 走的也是同一个 `applyActivitySetting`，所以满员广播、变更私信等连带效果一致。
+   */
+  app.put("/api/activities/:code", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { code } = request.params as { code: string };
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const field = typeof body.field === "string" ? body.field.trim() : "";
+    if (field.length === 0) {
+      return reply
+        .code(400)
+        .send(
+          errorBody(
+            "bad_request",
+            "需要 field（活动字段名，写法同 /activity set，例如 capacity / 名额）。",
+          ),
+        );
+    }
+    if (typeof body.value !== "string") {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "value 必须是字符串（清空用 clear）。"));
+    }
+    const result = await writers.updateActivity({
+      code: code.trim(),
+      field,
+      value: body.value,
       actorId: actorOf(request),
     });
     return { ok: true, ...result };

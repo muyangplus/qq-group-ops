@@ -127,6 +127,40 @@ export interface AdminApiActivityWriteResult {
   message: string;
 }
 
+/** 活动字段目录（`GET /api/activities/fields`）：与指令层 `/activity set` 同一份字段表。 */
+export interface AdminApiActivitySettingField {
+  /** 规范字段名（提交给后端的就是它）。 */
+  field: string;
+  label: string;
+  kind:
+    | "text"
+    | "textarea"
+    | "number"
+    | "link"
+    | "datetime"
+    | "toggle"
+    | "list"
+    | "years"
+    | "mode";
+  /** 指令层也接受的别名（含中文）。 */
+  aliases: string[];
+  /** 能否用 `clear` 清空 / 复位。 */
+  clearable: boolean;
+  hint: string;
+  /** 改完是否会私信已报名 / 候补者。 */
+  notifiesParticipants: boolean;
+}
+
+/** 改活动字段的结果（`PUT /api/activities/:code`）。 */
+export interface AdminApiActivityUpdateResult {
+  activity: AdminApiActivityItem;
+  field: string;
+  fieldLabel: string;
+  before: string;
+  after: string;
+  message: string;
+}
+
 export type AdminApiActivityAction = "open" | "close" | "cancel";
 
 /** 处罚记录（`/api/punishments`，只读）。 */
@@ -481,8 +515,11 @@ export const adminApi = {
     api.get<AdminApiDeliveriesView>(`/api/notify/deliveries${query(params)}`),
 
   /** 通知话题（只读）：当前门槛 + 订阅计数 + 说明文案。 */
-  notifyTopics: (): Promise<AdminApiNotifyTopic[]> =>
-    api.get<AdminApiNotifyTopic[]>("/api/notify/topics"),
+  notifyTopics: async (): Promise<AdminApiNotifyTopic[]> =>
+    // 服务端回的是 `{ topics: [...] }`（与 `/api/aliases` 同一形状），这里拆包给页面用；
+    // 以前直接当数组用，页面表格永远是空的。
+    (await api.get<{ topics: AdminApiNotifyTopic[] }>("/api/notify/topics"))
+      .topics,
 
   /** 改某个话题的门槛（平台超管 240；与 `/notify level` 同一份存储）。 */
   setNotifyLevel: (
@@ -696,6 +733,28 @@ export const adminApi = {
   ): Promise<AdminApiActivityResult> =>
     api.post<AdminApiActivityResult>(
       `/api/activities/${encodeURIComponent(code)}/${action}`,
+    ),
+
+  /** 活动字段目录：与指令层 `/activity set` 同一份字段表（登录即可读）。 */
+  activitySettingFields: async (): Promise<AdminApiActivitySettingField[]> =>
+    (
+      await api.get<{ fields: AdminApiActivitySettingField[] }>(
+        "/api/activities/fields",
+      )
+    ).fields,
+
+  /**
+   * 改一个活动字段：`field` / `value` 的写法与 `/activity set` 完全一致
+   * （所以 `clear` 清空、中文别名、连带通知都照旧）。
+   */
+  updateActivityField: (
+    code: string,
+    field: string,
+    value: string,
+  ): Promise<AdminApiActivityUpdateResult> =>
+    api.put<AdminApiActivityUpdateResult>(
+      `/api/activities/${encodeURIComponent(code)}`,
+      { field, value },
     ),
 
   /** 新建活动：只建草稿（不广播），并自动绑定创建群。 */

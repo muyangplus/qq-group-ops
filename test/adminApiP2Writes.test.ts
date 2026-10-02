@@ -8,6 +8,7 @@ import { AdminApiRequestError } from "../src/adminApi/errors.js";
 import { loadSettings } from "../src/config.js";
 import { WriteQueue } from "../src/db/writeQueue.js";
 import { ActivityService } from "../src/services/activity.js";
+import { applyActivitySettingValue } from "../src/services/activitySettings.js";
 import { ActivityExportService } from "../src/services/activityExport.js";
 import { AppealService } from "../src/services/appeals.js";
 import { AuditLogStore } from "../src/services/audit.js";
@@ -41,11 +42,14 @@ interface Harness {
   configStore: GroupConfigStore;
   classAliases: ClassAliasService;
   activity: ActivityService;
+  /** 改活动字段时跑到的副作用（满员广播 / 变更私信），用来验证「与指令层同源」。 */
+  activityEffects: string[];
 }
 
 function harness(): Harness {
   const api = new FakeQQOfficialAPI();
   const writeQueue = new WriteQueue();
+  const activityEffects: string[] = [];
   const auditLog = new AuditLogStore();
   const joinAudit = new JoinAuditService(auditLog);
   const configStore = new GroupConfigStore({ groupId: DEFAULT_GROUP_ID });
@@ -91,6 +95,24 @@ function harness(): Harness {
     activityExport: new ActivityExportService({
       profiles: { get: () => undefined },
     }),
+    // 指令层的 `applyActivitySetting` 需要完整 `AdminCommandContext`（测试里没有），
+    // 用同一个「共享解析 + 执行」入口（`applyActivitySettingValue`）复刻，副作用只记录不真发。
+    updateActivitySetting: async (activityId, field, value) =>
+      applyActivitySettingValue(
+        activity,
+        activity.getActivity(activityId),
+        field,
+        value,
+        {
+          notify: true,
+          announceFull: async (id) => {
+            activityEffects.push(`announceFull:${id}`);
+          },
+          notifyParticipants: (_updated, changedField) => {
+            activityEffects.push(`notify:${changedField}`);
+          },
+        },
+      ),
     database: "sqlite",
     platform: new PlatformSettingsStore(loadSettings({ APPEAL_HOLD_MINUTES: "15" })),
     entities: createAdminApiEntities({
@@ -113,6 +135,7 @@ function harness(): Harness {
     configStore,
     classAliases,
     activity,
+    activityEffects,
   };
 }
 
@@ -698,6 +721,134 @@ describe("管理 API P2：活动创建与发布群绑定", () => {
       h.backend.bindActivityGroup({
         code: "NOPE1",
         groupId: "g1",
+        actorId: "admin",
+      }),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+  });
+});
+
+describe("管理 API P2：改活动字段", () => {
+  async function seedActivity(h: Harness): Promise<string> {
+    const created = await h.backend.createActivity({
+      groupId: "g1",
+      title: "周三晚自习",
+      actorId: "admin",
+    });
+    return created.activity.code;
+  }
+
+  it("改标题：落库 + 回执带「旧值 → 新值」+ 写审计 + 私信标记", async () => {
+    const h = harness();
+    const code = await seedActivity(h);
+
+    const result = await h.backend.updateActivity({
+      code,
+      field: "标题",
+      value: "周四晚自习",
+      actorId: "admin",
+    });
+
+    expect(result.activity.title).toBe("周四晚自习");
+    expect(result.fieldLabel).toBe("标题");
+    expect(result.before).toBe("周三晚自习");
+    expect(result.after).toBe("周四晚自习");
+    expect(result.message).toContain("已更新");
+    expect(h.activityEffects).toEqual(["notify:标题"]);
+    const audit = h.auditLog
+      .all()
+      .find((row) => row.action === "admin_api:activity_update");
+    expect(audit?.reason).toContain("周三晚自习 → 周四晚自习");
+    expect(audit?.groupId).toBe("g1");
+  });
+
+  it("名额调小：走同一个解析层，并触发「活动已满」广播", async () => {
+    const h = harness();
+    const code = await seedActivity(h);
+
+    const result = await h.backend.updateActivity({
+      code,
+      field: "capacity",
+      value: "10",
+      actorId: "admin",
+    });
+
+    expect(result.activity.capacity).toBe(10);
+    expect(result.before).toBe("不限");
+    expect(result.after).toBe("10");
+    expect(h.activityEffects).toEqual([
+      expect.stringContaining("announceFull:"),
+      "notify:capacity",
+    ]);
+  });
+
+  it("递补改自动：不私信当事人（与指令层一致的例外）", async () => {
+    const h = harness();
+    const code = await seedActivity(h);
+
+    const result = await h.backend.updateActivity({
+      code,
+      field: "递补",
+      value: "auto",
+      actorId: "admin",
+    });
+
+    expect(result.after).toBe("自动递补");
+    expect(h.activityEffects).toEqual([]);
+  });
+
+  it("值不合法 / 字段不认识：回 400 语义，不落库也不写审计", async () => {
+    const h = harness();
+    const code = await seedActivity(h);
+    const auditsBefore = h.auditLog.all().length;
+
+    await expect(
+      h.backend.updateActivity({
+        code,
+        field: "capacity",
+        value: "-3",
+        actorId: "admin",
+      }),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+    await expect(
+      h.backend.updateActivity({
+        code,
+        field: "nope",
+        value: "x",
+        actorId: "admin",
+      }),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+    await expect(
+      h.backend.updateActivity({
+        code,
+        field: "title",
+        value: "clear",
+        actorId: "admin",
+      }),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+
+    const activity = h.activity.listAllActivities()[0];
+    expect(activity?.title).toBe("周三晚自习");
+    expect(activity?.capacity).toBeUndefined();
+    expect(h.auditLog.all().length).toBe(auditsBefore);
+  });
+
+  it("门槛：本群 130（审核员不够）；活动不存在 → 404 语义", async () => {
+    const h = harness();
+    const code = await seedActivity(h);
+
+    await expect(
+      h.backend.updateActivity({
+        code,
+        field: "title",
+        value: "别人改的",
+        actorId: "mod",
+      }),
+    ).rejects.toBeInstanceOf(AdminApiRequestError);
+    await expect(
+      h.backend.updateActivity({
+        code: "NOPE1",
+        field: "title",
+        value: "x",
         actorId: "admin",
       }),
     ).rejects.toBeInstanceOf(AdminApiRequestError);
