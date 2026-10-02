@@ -18,7 +18,11 @@
     "class:index": "node scripts/build-class-index.mjs",
     "start": "node dist/main.js",
     "admin:api": "node dist/adminApi/main.js",
-    "admin:token": "node dist/adminApi/cliToken.js"
+    "admin:token": "node dist/adminApi/cliToken.js",
+    "web:install": "pnpm --dir web install",
+    "web:dev": "pnpm --dir web run dev",
+    "web:build": "pnpm --dir web run build",
+    "web:typecheck": "pnpm --dir web run typecheck"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

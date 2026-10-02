@@ -1,0 +1,159 @@
+/**
+ * 管理后台的样式（E2-a）：只有一个手写的极简深色主题，不引入 UI 框架。
+ *
+ * 理由：后台只给少数管理员用、页面数也少（E2-c 五个页面），
+ * 引一套组件库（Element Plus / Naive UI）会带来一整套依赖与升级面；
+ * 这里用原生元素 + 少量类名，够用且审查成本低。
+ */
+
+:root {
+  color-scheme: dark;
+  --bg: #14161a;
+  --panel: #1d2026;
+  --border: #2c313a;
+  --text: #e6e8ea;
+  --muted: #9aa3ad;
+  --accent: #4c8dff;
+  --danger: #ff6b6b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    14px/1.6 system-ui,
+    "Segoe UI",
+    "Microsoft YaHei",
+    sans-serif;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+code {
+  background: #00000040;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.brand {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.who em {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 20px 18px 48px;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 18px 20px;
+}
+
+.card.narrow {
+  max-width: 460px;
+  margin: 6vh auto 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0 8px;
+}
+
+input {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f1115;
+  color: var(--text);
+  font: inherit;
+}
+
+button {
+  padding: 9px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.link {
+  padding: 4px 8px;
+  border-color: var(--border);
+  background: transparent;
+  color: var(--muted);
+}
+
+.hint {
+  color: var(--muted);
+}
+
+.error {
+  color: var(--danger);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 12px 0;
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+}
+
+.groups {
+  margin: 0;
+  padding-left: 18px;
+}

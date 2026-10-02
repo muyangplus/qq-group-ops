@@ -1,0 +1,7 @@
+# pnpm 12 的安装设置写在这里（package.json 的 `pnpm` 字段已不再读取，只留 web/package.json
+# 里的依赖声明）。这份文件由 `pnpm install` 在遇到「未批准构建脚本」时生成，这里填好答案：
+#
+# esbuild 安装时要跑一次 postinstall 校验平台二进制；不批准安装会以
+# ERR_PNPM_IGNORED_BUILDS 结束。只批准 esbuild 这一个（其余依赖的构建脚本一律不放行）。
+allowBuilds:
+  esbuild: true
