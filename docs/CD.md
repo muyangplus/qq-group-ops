@@ -49,16 +49,30 @@ Settings → **Environments** → 新建 `production-ftp` 后可以：
 
 ## 3. 上传了什么 / 没上传什么
 
-部署的是**运行产物**，不是仓库快照。工作流在部署前显式白名单组包（`dist-deploy/`）：
+部署的是**运行产物**，不是仓库快照。工作流在部署前显式白名单组包，**分两段上传**：
+
+第一段（`dist-deploy/`，代码与清单）：
 
 ```
 dist/                 # 编译产物；`node dist/main.js` 自包含（不引 ../src）
 web/dist/             # 管理前台静态资源（Vite 产物，由服务器上的 nginx 托管；门禁里先 vue-tsc 再 vite build）
 scripts/              # build-class-index.mjs / classIndex.mjs（`pnpm class:index`，纯 node 内置模块）
-package.json          # 运行脚本入口（start / class:index）
 pnpm-lock.yaml        # 锁定依赖版本，服务器上 pnpm install --prod
 .env.example          # 配置对照模板（不含真实值）
 ```
+
+第二段（`dist-marker/`，**只有一个文件**）：
+
+```
+package.json          # 版本标记：最后落地（见下）
+```
+
+**为什么要把 `package.json` 单独放最后一段**：部署监测（新版本自动重启）认的就是它的版本号。
+原来一次上传里它是「其中一个文件」，顺序取决于 Action 的遍历 —— 上传还没完版本号就可能已经变了，
+那台机器会在**半个构建**上计时重启。拆成两段之后，「服务器上的版本号变了」严格等于
+「代码已经全部就位」，部署监测的宽限期只需要兜「重启时机」，不用再猜「传完没完」（ADR-0057）。
+代价是多一次 FTP 会话；若第二段失败，job 会变红，而服务器上是「新代码 + 旧版本号」——
+不会重启，旧进程继续服务，重跑一次发布即可。
 
 **不上服务器**：
 
