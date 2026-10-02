@@ -185,6 +185,8 @@ location / {
 | 登录 403 `csrf` | 页面之外的调用忘了带 `X-Admin-Request: 1` |
 | 写端点 503 `unavailable` | 连到了只读巡检模式（`pnpm admin:api`）的端口；改用机器人进程内的监听口 |
 | 写端点 403 `forbidden` | 该操作要的权限不够（审批 / 规则 / 活动要**本群群管理员 130**，全局规则要**平台超管 240**；`/api/audit` 里也有一条 `admin_api:denied`） |
+| 只读端点 403 `forbidden` | 只读也有门槛（平台级信息要 240，群级要本群 120）；`/api/pending`、`/api/activities` 对够不着的群是**少返回**而不是 403 |
+| 审计 400 `bad_request` | `GET /api/audit` 非平台超管必须带 `?group=<群 ID>` |
 | 写端点 409 `conflict` | 这条入群申请已经被别人处理过（群管理后台 / 另一位管理员） |
 | 429 `rate_limited` | 兑换端点每分钟 10 次、会话每分钟 `ADMIN_API_RATE_LIMIT_PER_MINUTE`（默认 60） |
 | 接口 503 | 连着内存模式（没有数据库），或该数据源未装配 |

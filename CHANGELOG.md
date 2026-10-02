@@ -20,6 +20,13 @@
 
 ### 新增
 
+- **管理 API 只读端点的逐路由权限门槛（E1-g）**：以前「登录了就能读全量」，现在按口径判定，
+  拒绝时写一条 `admin_api:denied` 审计：
+  - 平台级（要**平台超管 240**）：`GET /api/status`、`GET /api/notify/topics`、`GET /api/rules?group=__default__`；
+  - 群级（要**本群审核员 120**，与 `/audit`、`/rules` 查看一致）：`GET /api/audit?group=`、`GET /api/rules?group=`；
+  - 列表类（`GET /api/pending`、`GET /api/activities`）对够不着的群**直接裁剪**而不是整条报错；
+  - `GET /api/audit` 非平台超管必须带 `?group=`（缺参数 400），避免「没指定群」被当成全量；
+  - `ADMIN_API_TOKENS` 的机器令牌是运维显式配置的服务凭据，按平台级只读处理。
 - **管理 API 写端点（E1-d）**：管理面现在能完成「审批入群 / 改规则 / 开关活动 / 导出名单」四类操作，
   全部走与指令层**同一个领域服务入口**，因此不存在两份内存态互相覆盖的问题：
   - `POST /api/pending/:requestId/approve`、`POST /api/pending/:requestId/reject { reason }`

@@ -7,21 +7,20 @@
 > **所有需要真实 QQ 群环境的条目统一收在最后一节 §4**（不再散落在各优先级里）：等有环境时照
 > [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md) 一次跑完并回填。
 >
-> 当前状态（2026-10-02）：测试 **134 文件 / 1071 用例**全绿；**0.22.1 已发版**
+> 当前状态（2026-10-02）：测试 **135 文件 / 1077 用例**全绿；**0.22.1 已发版**
 > （其后 `[Unreleased]` 又攒了：`/migrate` 弹窗文案压到 21 字 + 卡片弹窗文案统一裁剪兜底、
 > `/migrate` 执行前自动备份数据库、入群申请拒绝理由改为自定义、删掉遗留的 `/activity subscribe`、
 > 依赖审计脚本与每周 CI、`/data` 个人数据匿名化与导出、管理 API 骨架与登录链路、
-> 管理 API 写端点与同进程回环监听口）。
-> 已完成：A1–A5、B1–B3、B6–B11、C1–C3、C5–C6、C9、D1、D3、D5、D6、D7、D10、E1-a/b/c/d/e/f、
+> 管理 API 写端点与同进程回环监听口、只读端点的逐路由门槛）。
+> 已完成：A1–A5、B1–B3、B6–B11、C1–C3、C5–C6、C9、D1、D3、D5、D6、D7、D10、**E1 全部（a–g）**、
 > F1–F2、H1–H8、D9（0.19.0 起）。
 
 ## 1. 排期（从上往下做）
 
 | 顺位 | 条目 | 为什么排在这里 |
 |---|---|---|
-| 1 | **E2 Vue 3 管理后台** | E1 已收口（写端点 + 同进程监听口）：E2-a 脚手架 → E2-b 登录 → E2-c 页面 → E2-d/e 权限与交付 |
+| 1 | **E2 Vue 3 管理后台** | E1 已全部收口（写端点 + 同进程监听口 + 逐路由门槛）：E2-a 脚手架 → E2-b 登录 → E2-c 页面 → E2-d/e 权限与交付 |
 | 2 | **E3 → E4 → E6**（AI 判断 / 辅助审核 / 策略闭环）、**E5** 统计报表 | 批次5 Phase 3；E6 依赖 E3 + E4 |
-| 3 | **E1-g 只读端点的逐路由门槛** | 现在「会话 = 已登录管理员」就能读全量 `/api/*`；E2 页面做出来后 UI 会按权限隐藏入口，但服务端门槛要先补上（口径见 ADMIN-API.md 的 E1-g） |
 | — | **B4 / B5 / A2** | ⚠️ 全部卡在官方能力取证：取证动作在 §4（真机清单 R3 / R18），拿到结论再排实现 |
 | 真机前 | **D8** 部署演练 + 备份恢复演练 | 要真实部署环境：跟 D2 一起放在 §4 之前 |
 | 真机前 | **D2** Docker Compose 启停补测 | 环境验证集中到最后（要 Docker 引擎） |
@@ -33,42 +32,14 @@
 
 ### P2
 
-- [ ] **E1 管理 API**（批次4 · Phase 2；**E1-a…f 已完成，只剩 E1-g**）：设计（方案对比 + 分阶段计划）见
-  [docs/ADMIN-API.md](./docs/ADMIN-API.md)。**认证选 B2**：机器人私信一次性令牌 + 会话 cookie
-  （令牌落库、只存 `sha256`、一次性 + TTL；机器人不可用时 `pnpm admin:token` 应急）。
-  **运行形态（2026-09-29 修订，2026-10-02 落地）**：机器人进程内的**第二个 Fastify 实例 + 独立回环监听口**
-  （默认 `127.0.0.1:8787`），一份内存态、一份 tick；`pnpm admin:api` 降为只读巡检模式。
-  - [x] **E1-a 骨架与安全底座**：`src/adminApi/{config,session,rateLimit,server,errors}.ts` + 令牌表/仓储 —— 核心安全项
-    只从 `.env` 读且缺密钥 fail-closed、HMAC 签名会话 cookie（滑动过期 + 上限淘汰）、滑窗限流、
-    `admin_api_tokens` 表与仓储（只存 sha256 / 一次性 / TTL / 顺手清过期）、
-    `/healthz` + `/auth/token|logout|me`、CSRF 头、请求日志、兑换 IP 限流。
-  - [x] **E1-b 身份与权限映射**：身份即 openid → 复用两轴权限；签发门槛 = 平台 240（可白名单收窄）；
-    机器人侧 `/admin login`（仅超管、只私信）与 `pnpm admin:token` 应急 CLI；
-    `/auth/me` 返回权限画像（平台档 + 能真正干事的群，审核员 120 起）。
-  - [x] **E1-c 只读端点**：`/api/status`、`/api/audit`（过滤 + 分页）、`/api/pending`、
-    `/api/rules?group=`、`/api/notify/topics`、`/api/activities`；未登录 401、缺参数 400、
-    数据源未装配 503。
-  - [x] **E1-d 写端点 + 进程模型**：`src/adminApi/backend.ts` 把管理 API 接到机器人**真实服务图**
-    （读走内存态：`auditLog.all()` / `joinAudit.listPending()` / `configStore` / `activity`；
-    写走领域服务：`JoinApprovalService` / `parseRuleSetting` + `setOverride` / `ActivityService`）；
-    `host.ts` 在机器人进程内起第二个回环监听口（`main.ts` 起停，端口被占不影响机器人，自检不占端口）；
-    `main.ts` 的只读巡检模式不装 writers（写端点回 503）。四个写端点：
-    `POST /api/pending/:requestId/approve|reject`、`PUT /api/rules`、
-    `POST /api/activities/:code/open|close|cancel`、
-    `GET /api/activities/:code/export.csv`（默认脱敏、`?full=1` 带隐私列、都写审计）。
-    权限判据与指令层同口径（本群 130 / 全局规则 240），越权与非法值都写拒绝审计。
-  - [x] **E1-e 机器 token**：`ADMIN_API_TOKENS`（`token:scope1|scope2[:到期]`）+ `Authorization: Bearer`、
-    常量时间比较、按方法校验 scope（缺 scope 403）、机器调用免 CSRF 头；写端点也可用，
-    审计 actor 记 `machine:<前 8 位>`（完整令牌不进日志 / 审计）。
-  - [x] **E1-f 可观测与运维**：`/api/status` 报版本 / 运行时长 / 数据库 / 迁移问题数 / 有效令牌数 /
-    会话数；结构化请求日志（不打凭据）；[OPERATIONS.md](./docs/OPERATIONS.md) 的「管理 API」一节
-    写同进程起停、只读巡检模式与排障速查（启用与地址在启动日志 / `/admin status`，不再往 `/status proc` 塞）。
-  - [ ] **E1-g 只读端点的逐路由门槛**（**下一步之一**）：现在「会话 = 已登录管理员」（签发端已收窄到
-    平台 240）就能读全量 `/api/*`。要按 E1-b 第 9 条补「每个路由声明门槛 + 统一前置钩子判定 + 失败写审计」：
-    `/api/audit` 要平台 240 或「按群过滤 + 本群 130」、`/api/pending` 只回自己够权限的群（240 全量）、
-    `/api/notify/topics` 要平台 240。**在此之前不要把登录资格发给不该看全量数据的人。**
-  - 退出条件：未登录 401 / 越权 403 且有审计 / 令牌只能用一次且过期即失效 / 写操作都能在 `/api/audit` 查到
-    （actor = openid）/ `ADMIN_API_ENABLED=false` 时完全不监听端口。
+- [x] **E1 管理 API**（批次4 · Phase 2，E1-a…g 全部完成；验收 / 口径 / 端点表见
+  [docs/ADMIN-API.md](./docs/ADMIN-API.md)，落地记录见 [CHANGELOG.md](./CHANGELOG.md)）：
+  **认证 = B2**（机器人私信一次性令牌 + 会话 cookie；令牌只存 `sha256`、一次性、默认 10 分钟 TTL；
+  机器人不可用时 `pnpm admin:token` 应急）；**运行形态 = 机器人进程内的第二个回环监听口**
+  （默认 `127.0.0.1:8787`，一份内存态、一份 tick，随机器人起停；`pnpm admin:api` 降为只读巡检）；
+  **端点 = `/healthz` + `/auth/*` + 6 个只读 + 4 个写**（审批 / 规则 / 活动状态 / 名单 CSV），
+  只读有逐路由门槛（240 / 本群 120 起，够不着的群直接裁剪），写操作全部写审计；
+  机器人侧入口是 `/admin login` 与 `/help admin`。
 - [ ] **E2 Vue 3 + TypeScript 管理后台**（批次4 · Phase 2）：计划见
   [docs/ADMIN-API.md](./docs/ADMIN-API.md) 的 E2-a…E2-e。
   - [ ] **E2-a 脚手架**：`web/`（Vite + Vue 3 + TS + vue-router + pinia），`pnpm web:dev` / `pnpm web:build`
