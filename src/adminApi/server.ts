@@ -814,7 +814,15 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
         .code(error.statusCode)
         .send(errorBody(error.errorCode, error.message));
     }
-    log.warn("admin api error", { error: String(error) });
+    // Fastify 自带的 4xx（body 解析失败 / 不支持的 Content-Type / 空 body 等）也是**调用方的问题**，
+    // 必须按原状态码回：以前一律吞成 500，客户端会以为服务挂了（真机 e2e 就踩到过）。
+    const status = (error as { statusCode?: unknown }).statusCode;
+    const message = error instanceof Error ? error.message : String(error);
+    if (typeof status === "number" && status >= 400 && status < 500) {
+      log.info("admin api bad request", { status, error: message });
+      return reply.code(status).send(errorBody("bad_request", message));
+    }
+    log.warn("admin api error", { error: message });
     return reply.code(500).send(errorBody("internal_error", "服务内部错误。"));
   });
 

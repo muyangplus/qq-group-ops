@@ -152,6 +152,13 @@ describe("管理 API 写端点（HTTP 层）", () => {
     });
     expect(rules.statusCode).toBe(503);
 
+    const activity = await app.inject({
+      method: "POST",
+      url: "/api/activities/A1/open",
+      headers: { cookie, "x-admin-request": "1" },
+    });
+    expect(activity.statusCode).toBe(503);
+
     const csv = await app.inject({
       method: "GET",
       url: "/api/activities/A1/export.csv",
@@ -349,6 +356,31 @@ describe("管理 API 写端点（HTTP 层）", () => {
       headers,
     });
     expect(activity.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it("不支持的 Content-Type / 坏 JSON 按 4xx 回，不吞成 500", async () => {
+    const writers = stubWriters();
+    const { app, cookie } = await loggedIn(writers);
+
+    const badType = await app.inject({
+      method: "PUT",
+      url: "/api/rules",
+      headers: { cookie, "x-admin-request": "1", "content-type": "application/xml" },
+      payload: "<rules/>",
+    });
+    expect(badType.statusCode).toBe(415);
+    expect(badType.json()).toMatchObject({ error: "bad_request" });
+
+    const badJson = await app.inject({
+      method: "PUT",
+      url: "/api/rules",
+      headers: { cookie, "x-admin-request": "1", "content-type": "application/json" },
+      payload: "{不是 JSON",
+    });
+    expect(badJson.statusCode).toBeGreaterThanOrEqual(400);
+    expect(badJson.statusCode).toBeLessThan(500);
+    expect(writers.calls).toHaveLength(0);
     await app.close();
   });
 
