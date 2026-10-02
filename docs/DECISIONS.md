@@ -1410,3 +1410,38 @@
   **能力边界**：不做发言量 / 消息量（需要新增写入路径）、不做订阅与定时推送、不做自定义维度
   （先把四块的固定口径做对）。
 
+## ADR-0060：权限授予 / 撤销只在超管面做，并且不许「自我降权」
+
+- 状态：已实现（未发版，见 CHANGELOG `[Unreleased]`；P3）
+- 背景：`/perm` 改的是**判定权限的那张表**（`permission_grants` + 内存里的三张集合）：误点一次
+  可能把自己或别人的「群管理员 / 审核员」拿走，最坏是**把最后一个超管撤掉** —— 从此谁都改不了
+  权限，只能上服务器改库。机器人里的 `/perm` 已有两条护栏：只有平台超管能执行；
+  `PermissionService.revokeSuperAdmin` 拒绝撤掉最后一个超管。
+- 决策：
+  1. **门槛只有一档**：平台超管 240 —— 管理面不另开「群超管能改本群审核员」这种口子，
+     免得「谁能在后台改权限」与「谁能在群里改权限」变成两套口径；
+  2. **与指令层同源**：直接调 `PermissionService` 的 grant / revoke（经 `permissionRoles.ts` 的
+     类型化入口），领域层护栏（最后一个超管不能撤）照旧生效；
+  3. **不许自我降权**：管理面拒绝「撤销自己的 `super`」—— 浏览器里点一下就把自己锁死，
+     页面上没有回滚入口；要让**别的超管**来撤。群内角色不额外禁止（本群超管撤掉自己的群管理员
+     仍可接受，且随时能被超管加回来）；
+  4. **改完必须看得见**：二次确认里写「谁 / 会获得或失去 / 哪个角色 / 在哪个范围」，回执给
+     `changed` 与改完后的成员名单；撤销一个本来就没有的授权**如实回 `changed: false`**
+     （不假装成功），审计记 `rejected`；
+  5. **每条都写审计**：`admin_api:perm_grant` / `admin_api:perm_revoke`，理由里带角色、范围
+     与目标，`targetUserId` 记当事人 —— 与群里 `/perm` 的入口能区分开；
+  6. **只做「一条一条改」**：不做批量导入 / 导出权限矩阵（那是另一套能力，风险与审计面都不同）。
+- 理由：「最小权限」的反面是**把自己锁在外面**。同源 + 最高门槛 + 二次确认 + diff +
+  禁止自我降权，这五条合起来才让「在后台点一下」不比「在群里发 `/perm`」更危险。
+- 影响：`src/services/permissionRoles.ts`（类型化角色入口，指令层与管理面共用）、
+  `src/services/permissions.ts`（新增只读的 `listGrantedGroups()`）、
+  `src/services/commands/permCommands.ts`（别名解析后落到共享入口）、
+  `src/adminApi/{server,backend}.ts`（`GET /api/permissions`、`POST /api/permissions`）；
+  前端 `web/src/views/PermissionsView.vue` + `api/admin.ts` + 导航「权限」。
+  测试：`test/adminApiP3Perms.test.ts`（10 条：总览形状 / 授予与撤销 / 重复操作 `changed: false`
+  与 rejected 审计 / 自我降权被拒 / 最后一个超管护栏 / 门槛 240 / QQ号与群号解析）、
+  `test/adminApiServer.test.ts`（HTTP：240 门槛、参数校验、只读巡检 503）、
+  `web/src/views/PermissionsView.spec.ts`（4 条组件测试：二次确认、`changed: false` 如实显示、
+  非超管不发请求、没有群时群角色被拦）。
+  **能力边界**：不做批量 / 权限矩阵导入导出；不做「权限变更通知」。
+
