@@ -150,9 +150,11 @@
 ### 4.3 重启与状态
 
 - [ ] **管理后台走一遍真实链路**（E2 退出条件；要有真实群 + 一条真申请）
-  - 步骤：`pnpm web:build` → nginx 托管 `web/dist` 并把 `/api`、`/auth`、`/healthz` 反代到
-    `127.0.0.1:8787`（片段见 [OPERATIONS.md](./docs/OPERATIONS.md)「管理前台」一节）→
-    私信 `/admin login` 拿链接 → 浏览器里完成：**看状态 → 通过一条入群申请 → 改一个规则字段（看 diff）
+  - 已完成（2026-10-02，0.23.2 线上）：域名根路径返回前端 HTML（不再是 401 JSON）、
+    `/login` `/pending` 及任意无扩展名深链接都回 `index.html`、`/assets/*` 长缓存且内容正确、
+    `/auth/me` 与 `/api/status` 仍按接口回 401、`/healthz` 报 `0.23.2`。
+    （这一步顺带验证了 0.23.2 的交付形态：反向代理**整个域名 → 8787** 即可，nginx 不用配 `root` / `try_files`。）
+  - 待做：私信 `/admin login` 拿链接 → 浏览器里完成：**看状态 → 通过一条入群申请 → 改一个规则字段（看 diff）
     → 在「审计」里查到对应的 `admin_api:*` 记录**；再用一个非超管账号确认入口隐藏、直接调 API 被 403。
   - 顺带确认：`ADMIN_API_COOKIE_SECURE=true` 下 cookie 正常、会话过期会跳登录页并显示「已过期」。
 - [ ] **`/restart` 在真实部署里确实能拉起新进程**
