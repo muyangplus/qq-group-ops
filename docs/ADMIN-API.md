@@ -257,9 +257,23 @@
 46. **订阅仍是个人偏好**：`GET /api/notify/topics` 只给「订了多少人」的计数，
     后台**不提供替别人订阅 / 退订**（那是每个人自己的选择，在机器人里用 `/notify` 改）。
 
-**还没搬进后台的写操作**（[ADMIN-BACKEND.md](./ADMIN-BACKEND.md) §3 P2 余下部分，每条动手前先定口径）：
-活动创建 / 编辑 / 绑定群、规则关键词逐条增删与「恢复继承」、别名表增删，
-以及 P3 的权限授予 / 撤销。
+47. `POST /api/rules/keywords { group, action, words }`（本群 130 / 全局 240）：规则关键词**逐条**增删。
+    走 `GroupConfigStore.setOverride`（与 `/rules add|del keyword` 同一份存储），逐词按指令层同一套规则校验
+    （trim / 空 / 单条 ≤ `RULE_KEYWORD_MAX_LENGTH` 50 字 / 重复）；
+    **单个词失败不整批失败** —— 已存在 / 不存在的词进 `skipped`（带原因）并如实回给界面，
+    响应另给 `added` / `removed` / 改完后的**完整**关键词表；
+48. `POST /api/rules/reset-fields { group, fields }`、`POST /api/rules/reset { group }`（门槛同 47）：
+    **恢复继承** —— 前者只清指定字段的覆盖（`clearFields`，回落到全局默认），后者整群重置
+    （`removeOverride`，连带清空该群关键词行）。两者都**不可逆**（覆盖行被删掉），界面必须二次确认；
+    响应给 `overriddenFields`（清完之后仍在覆盖的字段），界面据此刷新「覆盖中」标记；
+49. `GET /api/aliases`、`PUT /api/aliases { alias, target }`、`DELETE /api/aliases/:alias`
+    （**平台超管 240**）：班级 / 学院 / 专业别名表，与指令层 `/alias set|del` 同一份存储。
+    类型（`class` / `college` / `major`）由服务按班级库**自动判定**，不需要调用方指定；
+    班级库未加载时按服务原话回 400（「先在服务器执行 `pnpm class:index`」）；
+    删不存在的别名回 `ok: false` 与说明，不静默成功。
+
+**还没搬进后台的写操作**（[ADMIN-BACKEND.md](./ADMIN-BACKEND.md) §3 P2 余下的部分、以及 P3）：
+活动创建 / 编辑 / 绑定群 / 解绑，以及 P3 的权限授予 / 撤销。
 
 ### E1-g 只读端点的逐路由门槛（P1）
 
@@ -301,6 +315,8 @@
 | `POST /api/punishments/:code/blacklist`、`POST /api/blacklist`、`DELETE /api/blacklist/:userId` | 本群 120；**`scope=global` 要平台 240**（会影响所有绑定群）|
 | `PUT /api/notify/levels`、`POST /api/notify/levels/reset` | 平台超管 240（门槛全局一套）|
 | `POST /api/notify/test` | 任何登录管理员（**只发给自己**，收件人取会话）|
+| `POST /api/rules/keywords`、`POST /api/rules/reset-fields`、`POST /api/rules/reset` | 本群群管理员 130；`group=__default__` 要平台 240（与 `PUT /api/rules` 一致）|
+| `GET /api/aliases`、`PUT /api/aliases`、`DELETE /api/aliases/:alias` | 平台超管 240（别名表是全局配置）|
 
 - **不报错、只裁剪**：列表类端点（待审批 / 活动）对够不着的群直接少返回，而不是整条 403 ——
   多群管理员看到的自然是自己那几行；
