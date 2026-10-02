@@ -176,6 +176,44 @@ location / {
 }
 ```
 
+## 管理前台（E2-e）
+
+管理后台是 `web/` 里的 Vue 工程（独立依赖）：**机器人不托管静态资源**，构建产物交给
+nginx（或任何静态服务器）。同源是关键 —— 会话 cookie 是 `SameSite=Strict` 的，
+跨源会把登录态吃掉。
+
+```bash
+pnpm web:install && pnpm web:build     # 产物在 web/dist（不进 dist/，CD 默认不发）
+```
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name ops.example.com;
+  # ssl_certificate / ssl_certificate_key ...
+
+  # SPA：找不到的路径一律回 index.html（前端路由自己处理）
+  root /opt/qq-group-ops/web/dist;
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+
+  # 管理 API（机器人进程内的回环监听口）：同源反代，绕开 CORS 与 SameSite 限制
+  location ~ ^/(api|auth|healthz) {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+```
+
+- `.env` 里 `ADMIN_API_PUBLIC_BASE_URL=https://ops.example.com`（拼登录链接）、
+  `ADMIN_API_COOKIE_SECURE=true`（挂了 TLS 才开）；
+- 前端开发时不需要 nginx：`pnpm web:dev` 会把上面前缀代理到 `ADMIN_API_PROXY`；
+- 只想在本机看一眼构建产物：`pnpm --dir web run preview`（默认 4173，注意它不会代理 API）；
+- **默认不发**：CD 只发后端产物，前端要单独构建 / 部署（改 CD 另议）。
+
 排障速查：
 
 | 现象 | 原因 / 处理 |
