@@ -240,13 +240,16 @@
     非平台超管不显示「状态」入口、待审批 / 活动 / 规则的写按钮按本群 130 禁用、
     审计默认收敛到自己够权限的群；**全部只是体验**：服务端逐路由门槛（E1-g）与写端点判定
     （本群 130 / 全局 240）才是硬约束 —— 直接调 API 一样会被 403 并留 `admin_api:denied` 审计。
-29. **E2-e 交付**（✅ 已完成）：选**独立 nginx 托管静态资源**（机器人本身不托管）。
-    `web/dist` **由 CD 一起发布**：发版时门禁先 `pnpm --dir web install` + `pnpm web:build`（含 `vue-tsc`），
-    再把 `web/dist` 跟后端产物一起上传到应用目录 —— 服务器上不需要装前端依赖、也不需要手工构建；
-    nginx 只需**一次性**配置：静态资源 `root <应用目录>/web/dist` + `try_files … /index.html`，
-    并把 `/api`、`/auth`、`/healthz` 反代到 `127.0.0.1:8787`（片段与 `.env` 要点见
-    [OPERATIONS.md](./OPERATIONS.md)「管理前台」）。本地开发用 `pnpm web:dev`（自带代理），
-    想在本机看构建产物用 `pnpm --dir web run preview`。
+29. **E2-e 交付**（✅ 已完成）：`web/dist` **由 CD 一起发布**（门禁先 `pnpm --dir web install` +
+    `pnpm web:build`，再跟后端产物一起上传到应用目录）—— 服务器上不用装前端依赖、不用手工构建。交付有两条路：
+    - **默认（推荐）：管理 API 自己托管** `ADMIN_API_WEB_DIR`（默认 `web/dist`）—— `/`、`/login`、
+      `/pending` 由它提供，导航请求回退 `index.html`；于是反代「整个域名 → 8787」就够了，
+      nginx 里不用写 `root` / `try_files`（把 `ADMIN_API_WEB_DIR` 留空即可关掉，改回 nginx 托管）；
+    - **nginx 托管**：`root <应用目录>/web/dist` + `try_files … /index.html`，并只反代
+      `/api`、`/auth`、`/healthz` 到 `127.0.0.1:8787`。片段见 [OPERATIONS.md](./OPERATIONS.md)「管理前台」。
+
+    两种方式都同源（会话 cookie 是 `SameSite=Strict`，跨源会把登录态吃掉）。
+    本地开发用 `pnpm web:dev`（自带代理），想在本机看构建产物用 `pnpm --dir web run preview`。
 
 **E2 退出条件**：能在后台完成一次入群审批、改一个规则字段、并查到对应的审计记录；
 所有入口在权限不足时不可用（且直接调 API 也会被拒）。

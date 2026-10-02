@@ -7,13 +7,27 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **管理 API 直接托管管理前台**（`ADMIN_API_WEB_DIR`，默认 `web/dist`）：`/`、`/login`、`/pending`
+  等页面由管理监听口提供，带哈希的 `assets/*` 长缓存、导航请求回退 `index.html`（SPA），
+  路径穿越被挡住；目录不存在时自动跳过（接口不受影响），留空则完全关闭、改回 nginx 托管。
+  于是**「整个域名反代到 8787」这种最省事的做法直接可用**，nginx 里不用再配 `root` / `try_files`。
+
+### 修复
+
+- **非接口路径不再回 401**：管理 API 的鉴权钩子以前只放过 `/healthz` 与 `/auth/token`，
+  其它路径一律「请先登录」—— 把页面路径（`/`、`/login`）反代过来时，浏览器看到的是
+  「登录页要求先登录」，极难排查。现在只守 `/api/*`、`/auth/me`、`/auth/logout`，
+  其它路径走 404，且 404 文案直接说清页面该由谁提供。
+
 ### 变更
 
 - **管理前台产物随 CD 一起发布**：发版时门禁会先 `pnpm --dir web install` + `pnpm web:build`（含
   `vue-tsc`），把 `web/dist` 跟后端产物一起上传到应用目录（`dist-deploy/web/dist`）——
-  服务器上不用装前端依赖、也不用手工构建 / 拷贝；nginx 只需一次性配好
-  静态资源 `root` 与 `/api`、`/auth`、`/healthz` 的反代。CI 同样会构建前端，
-  这样前端坏了在 push / PR 阶段就红，而不是等到发版。
+  服务器上不用装前端依赖、也不用手工构建 / 拷贝（默认由管理 API 自己托管；
+  想改回 nginx 托管就把 `ADMIN_API_WEB_DIR` 设成空值，那时才需要在 nginx 里配 `root` + `try_files`）。
+  CI 同样会构建前端，这样前端坏了在 push / PR 阶段就红，而不是等到发版。
   另外把「CD 默认不发前端」这条旧口径从文档里撤掉（ADMIN-API / OPERATIONS / CD 已同步）。
 
 ## [0.23.1] - 2026-10-02

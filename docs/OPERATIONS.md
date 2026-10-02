@@ -185,10 +185,29 @@ curl -s http://127.0.0.1:8787/healthz   # 健康检查：{"ok":true,"version":�
 - 自检（`node dist/main.js --check`，`/restart` 前后各跑一次）**不占管理端口**：
   自检在起监听口之前就返回了，所以不会和旧 / 新进程抢 8787。
 
-反向代理只需要转发一个前缀（同源部署时管理后台的静态资源也走这里）：
+反向代理**最省心的做法就是把整个域名转给 8787**：管理 API 自己会托管管理前台
+（`web/dist`，见下一节），所以不需要在 nginx 里写 `root` / `try_files`：
 
 ```nginx
-location / {
+server {
+  listen 443 ssl;
+  server_name ops.example.com;
+  # ssl_certificate / ssl_certificate_key ...
+
+  location / {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+```
+
+只想把 **API 反代出去**（页面交给别的静态托管 / 只想跑 `pnpm admin:api` 巡检）时，
+收敛到三个前缀即可：
+
+```nginx
+location ~ ^/(api|auth|healthz) {
   proxy_pass http://127.0.0.1:8787;
   proxy_set_header Host $host;
   proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -196,16 +215,28 @@ location / {
 }
 ```
 
+> ⚠️ 不要把**只有三个前缀**的那个片段和「页面也交给 nginx」混着用而不配 `root`：
+> 那样 `/login` 会落到默认站点（或 404），页面打不开。两种配法二选一，见下一节。
+
 ## 管理前台（E2-e）
 
-管理后台是 `web/` 里的 Vue 工程（独立依赖）。**CD 会把它一起发布**：发版时 CI 会
+管理后台是 `web/` 里的 Vue 工程（独立依赖）。**CD 会把它一起发布**：发版时门禁会
 `pnpm --dir web install` + `pnpm web:build`，并把 `web/dist` 跟后端产物一起上传到应用目录，
-所以服务器上**不需要**装前端依赖、也不需要手工 build / 拷贝。你只需要一次性配好 nginx：
+所以服务器上**不需要**装前端依赖、也不需要手工 build / 拷贝。
 
-- 静态资源指向 `<应用目录>/web/dist`；
-- `/api`、`/auth`、`/healthz` 反代到管理 API 的回环监听口（`127.0.0.1:8787`）。
+### 交付方式 A（默认，推荐）：机器人自己托管
 
-同源是关键 —— 会话 cookie 是 `SameSite=Strict` 的，跨源会把登录态吃掉。
+管理 API 默认就会托管 `web/dist`（`ADMIN_API_WEB_DIR`，默认值就是它）：`/`、`/login`、
+`/pending` 等页面由它提供，带扩展名的请求按文件给、导航请求回退 `index.html`（SPA）。
+
+- 反向代理只需要 `location / { proxy_pass http://127.0.0.1:8787; }`（上面第一段）；
+- 「整个域名反代到 8787」于是完全够用，**不用**在 nginx 里配 `root`；
+- 目录不存在（没构建 / 没部署前端）时自动跳过：接口照常，页面回 404 并提示；
+- 想关掉（改回 nginx 托管）就设 `ADMIN_API_WEB_DIR=`（空值）。
+
+### 交付方式 B：nginx 托管静态资源
+
+不想让机器人发静态文件时，把 `ADMIN_API_WEB_DIR` 设成空值，改由 nginx 托管：
 
 ```nginx
 server {
@@ -228,6 +259,8 @@ server {
   }
 }
 ```
+
+同源是关键 —— 会话 cookie 是 `SameSite=Strict` 的，跨源会把登录态吃掉（两种方式都同源）。
 
 - `.env` 里 `ADMIN_API_PUBLIC_BASE_URL=https://ops.example.com`（拼登录链接）、
   `ADMIN_API_COOKIE_SECURE=true`（挂了 TLS 才开）；

@@ -878,6 +878,7 @@ pnpm db:up     # docker compose --profile postgres up -d db
 | `ADMIN_API_ALLOWED_OPENIDS` | 否 | 额外白名单（逗号分隔）；留空 = 所有平台超管（240）都能签发令牌 |
 | `ADMIN_API_RATE_LIMIT_PER_MINUTE` | 否 | 每个会话每分钟请求上限，默认 `60`；`0` = 不限 |
 | `ADMIN_API_TOKENS` | 否 | **机器调用令牌**（与一次性登录令牌分开）：`token:scope1\|scope2[:到期ISO时间]`，多个用逗号分隔，`scope` = `read` / `write` / `*`；请求带 `Authorization: Bearer <token>`，按方法校验 scope，**不需要 CSRF 头**（不涉及 cookie） |
+| `ADMIN_API_WEB_DIR` | 否 | 管理前台静态资源目录，默认 `web/dist`：**由管理 API 自己托管**（`/`、`/login` 等页面 + SPA 回退），于是「整个域名反代到 8787」就够了；目录不存在时自动跳过（接口不受影响）。想改由 nginx 托管就设成空值 |
 
 生成会话密钥：
 
