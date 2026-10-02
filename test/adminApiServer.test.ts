@@ -1758,6 +1758,90 @@ describe("管理 API HTTP 层", () => {
     await bare.close();
   });
 
+  it("身份映射只读：平台超管 240 才看得到；只读巡检 503", async () => {
+    const tokens = memoryTokens();
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "test",
+      readAccessOf: async (userId: string) =>
+        userId === "boss"
+          ? { platformLevel: 240, groups: [] }
+          : { platformLevel: 0, groups: [{ groupId: "g1", level: 140 }] },
+      readers: {
+        pending: async () => [],
+        rules: async (groupId: string) => ({ groupId, override: null, settings: [] }),
+        notifyTopics: async () => [],
+        activities: async () => [],
+        identities: async () => ({
+          users: [
+            {
+              officialId: "u1",
+              entity: userRef("u1"),
+              externalId: "10001",
+              createdAt: "2026-09-01T00:00:00.000Z",
+            },
+          ],
+          groups: [{ officialId: "g1", entity: groupRef("g1"), externalId: "50001" }],
+        }),
+      },
+    }).app;
+
+    const login = async (userId: string): Promise<string> => {
+      const { token } = await tokens.issue({ userId, ttlMs: 60_000 });
+      const response = await app.inject({
+        method: "POST",
+        url: "/auth/token",
+        headers: { "x-admin-request": "1" },
+        payload: { token },
+      });
+      return cookieOf(response);
+    };
+
+    const boss = await login("boss");
+    const ok = await app.inject({
+      method: "GET",
+      url: "/api/identities",
+      headers: { cookie: boss },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({
+      users: [{ officialId: "u1", externalId: "10001" }],
+      groups: [{ officialId: "g1", externalId: "50001" }],
+    });
+
+    // 本群超管（140）不是平台超管 → 看不了身份映射
+    const groupSuper = await login("gsuper");
+    const denied = await app.inject({
+      method: "GET",
+      url: "/api/identities",
+      headers: { cookie: groupSuper },
+    });
+    expect(denied.statusCode).toBe(403);
+    await app.close();
+
+    const bareTokens = memoryTokens();
+    const bare = buildAdminApiServer({
+      config: CONFIG,
+      tokens: bareTokens,
+      version: "test",
+    }).app;
+    const bareToken = await bareTokens.issue({ userId: "boss", ttlMs: 60_000 });
+    const bareLogin = await bare.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: bareToken.token },
+    });
+    const bareResponse = await bare.inject({
+      method: "GET",
+      url: "/api/identities",
+      headers: { cookie: cookieOf(bareLogin) },
+    });
+    expect(bareResponse.statusCode).toBe(503);
+    await bare.close();
+  });
+
   it("机器令牌：Bearer + scope（read 读 / write 写 / 缺 scope 403 / 假令牌 401）", async () => {
     const tokens = memoryTokens();
     const config = loadAdminApiConfig({

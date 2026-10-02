@@ -480,6 +480,8 @@ export interface AdminApiReaders {
         group?: string | undefined;
       }) => Promise<AdminApiPermissionGrantsView>)
     | undefined;
+  /** 身份映射只读（`GET /api/identities`，平台超管 240）。 */
+  identities?: (() => Promise<AdminApiIdentitiesView>) | undefined;
 }
 
 /** 通过 / 拒绝入群申请后的回执。 */
@@ -798,8 +800,25 @@ export interface AdminApiPermissionGroupSummary {
   group: AdminApiEntityRef;
 }
 
-/** 权限总览（`GET /api/permissions`，平台超管 240）。 */
-export interface AdminApiPermissionGrantsView {
+/** 一条身份映射（`GET /api/identities`，平台超管 240）。 */
+export interface AdminApiIdentityItem {
+  /** 内部 ID（openid / group_openid）。 */
+  officialId: string;
+  /** 展示信息：QQ号 / 群号（`externalId` 与它同源，另给一份方便脚本直接读）。 */
+  entity: AdminApiEntityRef;
+  externalId: string;
+  /** 首次绑定 / 最近改绑；老库或纯内存实现没有这两列时缺省。 */
+  createdAt?: string | undefined;
+  updatedAt?: string | undefined;
+}
+
+/** 身份映射总览（只读；`/bind user|groupid` 的**写**不搬）。 */
+export interface AdminApiIdentitiesView {
+  users: AdminApiIdentityItem[];
+  groups: AdminApiIdentityItem[];
+}
+
+/** 权限总览（`GET /api/permissions`，平台超管 240）。 */export interface AdminApiPermissionGrantsView {
   /** 有任何群内授权的群；选了群时至少包含该群。 */
   groups: AdminApiPermissionGroupSummary[];
   /** 全局角色（当前只有 `super`）。 */
@@ -2071,6 +2090,25 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
       actorId: actorOf(request),
     });
     return { ok: true, ...result };
+  });
+
+  /**
+   * 身份映射只读（`GET /api/identities`，**平台超管 240**）：群号 ↔ 群 ID、QQ号 ↔ openid。
+   *
+   * 这是 `/bind user` / `/bind groupid`（代绑任意主体）的**只读**面：写仍然只在机器人里做，
+   * 后台只回答「这个群号对应哪个群 ID / 这个人是什么时候绑的」——排查展示层问题时最常用。
+   */
+  app.get("/api/identities", async (request, reply) => {
+    const reader = options.readers?.identities;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "身份映射数据源未装配。"));
+    }
+    if (!(await allowPlatformRead(request, reply, "GET /api/identities"))) {
+      return reply;
+    }
+    return reader();
   });
 
   // ------------------------------------------------------------------ 写端点（E1-d）

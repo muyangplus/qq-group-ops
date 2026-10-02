@@ -120,6 +120,8 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
       "/api/reports",
       // P3 权限授予 / 撤销
       "/api/permissions",
+      // P3 身份映射只读
+      "/api/identities",
     ]) {
       expect(source, `缺少端点 ${endpoint}`).toContain(endpoint);
     }
@@ -300,6 +302,7 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
       "ActivitiesView",
       "ReportsView",
       "PermissionsView",
+      "IdentitiesView",
       "StatusView",
       "SettingsView",
       "LoginView",
@@ -396,5 +399,22 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     }
     expect(api).toContain("/api/permissions");
     expect(app).toContain("permissions");
+  });
+
+  it("身份页（P3）：只读展示映射，写（代绑）不搬", () => {
+    const source = read("views/IdentitiesView.vue");
+    const api = read("api/admin.ts");
+    const app = read("App.vue");
+
+    expect(source).toContain("adminApi.identities");
+    // 平台级只读：非超管不发请求
+    expect(source).toContain("session.isSuperAdmin");
+    expect(source).toContain("需要平台超管（240）");
+    // 两张表 + 写操作不搬的说明
+    expect(source).toContain("QQ号 ↔ openid");
+    expect(source).toContain("群号 ↔ 群 ID");
+    expect(source).toContain("代绑");
+    expect(api).toContain("/api/identities");
+    expect(app).toContain("identities");
   });
 });

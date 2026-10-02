@@ -526,6 +526,8 @@ export function createRuntime(
         classAliases,
         // P3 写：权限授予 / 撤销与 `/perm` 同一份数据（QQ号 / #短码 → openid 也要解析）
         identityMap,
+        // P3 读：身份映射只读展示直接从绑定表读（内存映射没有时间戳）
+        identityBindings: repositories.identityBindings,
         database: dependencies.databaseDriver,
         migrationIssues: dependencies.migration?.issues.length,
       })

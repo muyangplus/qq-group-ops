@@ -153,6 +153,34 @@ async function main(): Promise<void> {
         buildNotifyTopicViews(
           await persistence.notificationSubscriptions.findAll(),
         ),
+      // 身份映射只读：直接读绑定表（巡检进程也看得到「什么时候绑的」）
+      identities: async () => {
+        const rows = await persistence.identityBindings.findAll();
+        const item = (row: {
+          kind: "user" | "group";
+          officialId: string;
+          externalId: string;
+          createdAt?: Date | undefined;
+          updatedAt?: Date | undefined;
+        }) => ({
+          officialId: row.officialId,
+          entity:
+            row.kind === "user"
+              ? entities.user(row.officialId)
+              : entities.group(row.officialId),
+          externalId: row.externalId,
+          ...(row.createdAt !== undefined
+            ? { createdAt: row.createdAt.toISOString() }
+            : {}),
+          ...(row.updatedAt !== undefined
+            ? { updatedAt: row.updatedAt.toISOString() }
+            : {}),
+        });
+        return {
+          users: rows.filter((row) => row.kind === "user").map(item),
+          groups: rows.filter((row) => row.kind === "group").map(item),
+        };
+      },
       activities: async () => {
         const [activities, details, registrations, groupRows] = await Promise.all([
           persistence.activities.findActivities(),

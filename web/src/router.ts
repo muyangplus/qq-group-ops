@@ -16,6 +16,7 @@ import PunishmentsView from "@/views/PunishmentsView.vue";
 import RulesView from "@/views/RulesView.vue";
 import ReportsView from "@/views/ReportsView.vue";
 import PermissionsView from "@/views/PermissionsView.vue";
+import IdentitiesView from "@/views/IdentitiesView.vue";
 import SettingsView from "@/views/SettingsView.vue";
 import StatusView from "@/views/StatusView.vue";
 
@@ -44,6 +45,8 @@ export const router = createRouter({
     { path: "/reports", name: "reports", component: ReportsView },
     // 权限（P3）：改的是判定权限的表，只有平台超管（240）能用
     { path: "/permissions", name: "permissions", component: PermissionsView },
+    // 身份映射（P3）：只读展示，写（/bind user|groupid）刻意不搬
+    { path: "/identities", name: "identities", component: IdentitiesView },
     { path: "/status", name: "status", component: StatusView },
     { path: "/settings", name: "settings", component: SettingsView },
     { path: "/login", name: "login", component: LoginView },

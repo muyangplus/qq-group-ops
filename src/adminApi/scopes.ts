@@ -25,7 +25,8 @@ export type AdminApiScopeDomain =
   | "settings"
   | "reports"
   | "status"
-  | "perm";
+  | "perm"
+  | "identity";
 
 export interface AdminApiScopeDomainMeta {
   domain: AdminApiScopeDomain;
@@ -51,6 +52,7 @@ export const ADMIN_API_SCOPE_DOMAINS: readonly AdminApiScopeDomainMeta[] = [
   { domain: "reports", label: "统计报表", writable: false, platformOnly: false },
   { domain: "status", label: "状态 / 周期任务 / 运维健康", writable: false, platformOnly: true },
   { domain: "perm", label: "权限授予 / 撤销", writable: true, platformOnly: true },
+  { domain: "identity", label: "身份映射（只读）", writable: false, platformOnly: true },
 ];
 
 /** 全部合法 scope（配置校验用）。 */
@@ -109,6 +111,7 @@ export const ADMIN_API_ROUTE_SCOPES: readonly AdminApiRouteScope[] = [
   { method: "GET", url: "/api/reports", scope: "read:reports" },
   { method: "GET", url: "/api/reports/export.csv", scope: "read:reports" },
   { method: "GET", url: "/api/permissions", scope: "read:perm" },
+  { method: "GET", url: "/api/identities", scope: "read:identity" },
   { method: "GET", url: "/api/activities", scope: "read:activity" },
   { method: "GET", url: "/api/activities/fields", scope: "read:activity" },
   { method: "GET", url: "/api/activities/:code/export.csv", scope: "read:activity" },

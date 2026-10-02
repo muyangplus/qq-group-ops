@@ -38,7 +38,7 @@ for (const driver of TEST_DATABASES) {
         await map.bindUser("openid-user", "123456");
         await map.bindUser("openid-user", "999999");
 
-        await expect(repository.findAll()).resolves.toEqual([
+        await expect(repository.findAll()).resolves.toMatchObject([
           { kind: "user", officialId: "openid-user", externalId: "999999" },
         ]);
       } finally {
@@ -55,7 +55,7 @@ for (const driver of TEST_DATABASES) {
         await map.bindUser("first-user", "123456");
         await map.bindUser("second-user", "123456");
 
-        await expect(repository.findAll()).resolves.toEqual([
+        await expect(repository.findAll()).resolves.toMatchObject([
           { kind: "user", officialId: "second-user", externalId: "123456" },
         ]);
       } finally {
@@ -73,7 +73,7 @@ for (const driver of TEST_DATABASES) {
         await map.bindUser("second-user", "222222");
         await map.bindUser("first-user", "222222");
 
-        await expect(repository.findAll()).resolves.toEqual([
+        await expect(repository.findAll()).resolves.toMatchObject([
           { kind: "user", officialId: "first-user", externalId: "222222" },
         ]);
         expect(map.getQq("second-user")).toBeUndefined();

@@ -52,6 +52,8 @@ import type { JoinRequestSyncService } from "../services/joinAuditSync.js";
 import type { MigrationResult } from "../db/migrate.js";
 import type { ModerationNotifier } from "../services/moderationNotifier.js";
 import type { IdentityMapService } from "../services/identityMap.js";
+import type { IdentityBindingRepository } from "../db/identityBindingRepository.js";
+import type { IdentityBinding } from "../db/identityBindingRepository.js";
 import {
   PERMISSION_ROLE_LABELS,
   PERMISSION_ROLES,
@@ -101,6 +103,8 @@ import type {
   AdminApiDeliveryItem,
   AdminApiDeniedInput,
   AdminApiHealthView,
+  AdminApiIdentitiesView,
+  AdminApiIdentityItem,
   AdminApiAliasItem,
   AdminApiAliasResult,
   AdminApiNotifyTopic,
@@ -221,6 +225,8 @@ export interface AdminApiBackendDeps {
   classAliases?: ClassAliasService | undefined;
   /** 身份映射（`/api/permissions` 把 QQ号 / #短码 解析成 openid）。 */
   identityMap?: IdentityMapService | undefined;
+  /** 身份绑定表（`GET /api/identities` 的只读来源；不装配时退回内存映射）。 */
+  identityBindings?: IdentityBindingRepository | undefined;
   /** 审计导出（`/api/audit/export.csv`，与指令层 `/export audit` 同一实现）。 */
   exportService?: ExportService | undefined;
 }
@@ -626,6 +632,22 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     user: entities.user(userId),
   });
 
+  /** 一条身份映射：内部 ID + 展示信息 +（有的话）绑定 / 改绑时间。 */
+  const identityItem = (row: IdentityBinding): AdminApiIdentityItem => ({
+    officialId: row.officialId,
+    entity:
+      row.kind === "user"
+        ? entities.user(row.officialId)
+        : entities.group(row.officialId),
+    externalId: row.externalId,
+    ...(row.createdAt !== undefined
+      ? { createdAt: row.createdAt.toISOString() }
+      : {}),
+    ...(row.updatedAt !== undefined
+      ? { updatedAt: row.updatedAt.toISOString() }
+      : {}),
+  });
+
   /** 权限目标（人）：openid / 已绑定的 QQ号 / #短码；认不出来就原样当 openid。 */
   const resolvePermissionUser = (raw: string | undefined): string => {
     const value = (raw ?? "").trim();
@@ -793,6 +815,35 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     },
 
     reports: async (options) => collectReports(options),
+
+    identities: async () => {
+      const repository = deps.identityBindings;
+      if (repository) {
+        const rows = await repository.findAll();
+        return {
+          users: rows.filter((row) => row.kind === "user").map(identityItem),
+          groups: rows.filter((row) => row.kind === "group").map(identityItem),
+        };
+      }
+      // 没接库（纯内存单测 / 假模式）：退回内存映射的列表，仍然只有读
+      const map = deps.identityMap;
+      return {
+        users: (map?.listUsers() ?? []).map((row) =>
+          identityItem({
+            kind: "user",
+            officialId: row.officialId,
+            externalId: row.qq,
+          }),
+        ),
+        groups: (map?.listGroups() ?? []).map((row) =>
+          identityItem({
+            kind: "group",
+            officialId: row.officialId,
+            externalId: row.groupNumber,
+          }),
+        ),
+      };
+    },
 
     permissions: async (options) => {
       const service = deps.permissions;

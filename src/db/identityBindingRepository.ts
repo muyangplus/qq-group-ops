@@ -6,6 +6,10 @@ export interface IdentityBinding {
   kind: IdentityBindingKind;
   officialId: string;
   externalId: string;
+  /** 首次绑定时间（老库 / 内存实现可能没有）。 */
+  createdAt?: Date | undefined;
+  /** 最近一次改绑时间（同上）。 */
+  updatedAt?: Date | undefined;
 }
 
 export interface IdentityBindingRepository {
@@ -21,6 +25,8 @@ export interface IdentityBindingRow {
   kind: string;
   official_id: string;
   external_id: string;
+  created_at?: string | Date | null;
+  updated_at?: string | Date | null;
 }
 
 const DELETE_SQL = `
@@ -37,7 +43,7 @@ SET external_id = EXCLUDED.external_id,
 `.trim();
 
 const SELECT_ALL_SQL = `
-SELECT kind, official_id, external_id
+SELECT kind, official_id, external_id, created_at, updated_at
 FROM identity_bindings
 ORDER BY kind ASC, official_id ASC
 `.trim();
@@ -69,11 +75,24 @@ export class SqlIdentityBindingRepository
 }
 
 function rowToIdentityBinding(row: IdentityBindingRow): IdentityBinding {
+  const createdAt = toDate(row.created_at);
+  const updatedAt = toDate(row.updated_at);
   return {
     kind: parseKind(row.kind),
     officialId: row.official_id,
     externalId: row.external_id,
+    ...(createdAt !== undefined ? { createdAt } : {}),
+    ...(updatedAt !== undefined ? { updatedAt } : {}),
   };
+}
+
+/** 老库 / 假库里可能没有这两列；解析不出来就不带这个字段，而不是编一个时间。 */
+function toDate(value: string | Date | null | undefined): Date | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
 function parseKind(value: string): IdentityBindingKind {

@@ -224,6 +224,23 @@ export interface AdminApiReportsView {
   activities: AdminApiReportActivityRow[];
 }
 
+/** 一条身份映射（`GET /api/identities`，只读）。 */
+export interface AdminApiIdentityItem {
+  /** 内部 ID（openid / group_openid）。 */
+  officialId: string;
+  /** 展示信息：QQ号 / 群号。 */
+  entity: AdminApiEntityRef;
+  externalId: string;
+  /** 首次绑定 / 最近改绑；老库或纯内存实现没有时缺省。 */
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AdminApiIdentitiesView {
+  users: AdminApiIdentityItem[];
+  groups: AdminApiIdentityItem[];
+}
+
 /** 权限成员（一条授权指向的人）。 */
 export interface AdminApiPermissionMember {
   userId: string;
@@ -906,6 +923,10 @@ export const adminApi = {
   /** 权限总览（平台超管 240）：全局超管 + 选定群的三个群内角色。 */
   permissions: (params: { group?: string | undefined } = {}): Promise<AdminApiPermissionGrantsView> =>
     api.get<AdminApiPermissionGrantsView>(`/api/permissions${query(params)}`),
+
+  /** 身份映射只读（平台超管 240）：群号 ↔ 群 ID、QQ号 ↔ openid。 */
+  identities: (): Promise<AdminApiIdentitiesView> =>
+    api.get<AdminApiIdentitiesView>("/api/identities"),
 
   /** 授予 / 撤销角色（平台超管 240）：与指令层 `/perm` 同一个服务。 */
   setPermission: (input: {

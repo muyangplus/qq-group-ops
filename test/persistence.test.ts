@@ -72,7 +72,7 @@ describe("connectPersistence", () => {
       await first?.close();
 
       const second = await connectPersistence(loadSettings({ SQLITE_PATH: path }));
-      await expect(second?.identityBindings.findAll()).resolves.toEqual([
+      await expect(second?.identityBindings.findAll()).resolves.toMatchObject([
         { kind: "user", officialId: "u1", externalId: "10001" },
       ]);
       await second?.close();
