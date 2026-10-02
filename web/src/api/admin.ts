@@ -262,6 +262,40 @@ export interface AdminApiHealthView {
   };
 }
 
+/** 处罚动作的结果（与指令层 `/punish …` 同一服务）。 */
+export interface AdminApiPunishmentActionResult {
+  ok: boolean;
+  /** 领域服务给的人话结果（成功摘要或失败原因）。 */
+  message: string;
+  punishment: AdminApiPunishmentItem;
+  /** 拉黑动作：被一并移出的群数（全局拉黑会影响所有绑定群）。 */
+  kickedGroups?: number;
+  /** 处置即回应申诉：本次连带判定为「已通过」的申诉条数。 */
+  acceptedAppeals: number;
+}
+
+/** 黑名单增删的结果。 */
+export interface AdminApiBlacklistResult {
+  action: "add" | "remove";
+  ok: boolean;
+  message: string;
+  scope: "group" | "global";
+  groupId: string;
+  userId: string;
+  /** 被移出的群数（本群 0/1，全局可能多个）。 */
+  kickedGroups: number;
+}
+
+/** 申诉复核的结果。 */
+export interface AdminApiAppealDecisionResult {
+  appeal: AdminApiAppealItem;
+  decision: "accepted" | "rejected";
+  /** 人话摘要：通过时说明对处罚做了什么。 */
+  message: string;
+}
+
+export type AdminApiPunishmentAction = "release" | "mute" | "kick" | "blacklist";
+
 /** 周期任务监测里的一个任务（`/api/tasks`）。 */
 export interface AdminApiTaskItem {
   name: string;
@@ -378,6 +412,60 @@ export const adminApi = {
   /** 同步官方入群申请队列（写但幂等；本群 120）。 */
   syncJoinRequests: (group: string): Promise<AdminApiJoinSyncResult> =>
     api.post<AdminApiJoinSyncResult>("/api/join/sync", { group }),
+
+  /**
+   * 处罚动作（本群 120；`blacklist` 的 `scope=global` 要平台超管）。
+   *
+   * 与机器人里的 `/punish …` 完全同源：成功后会**连带把该处罚下待处理的申诉标为已通过**，
+   * 并按指令层同一条通道发通知。
+   */
+  punish: (
+    code: string,
+    action: AdminApiPunishmentAction,
+    body: {
+      note?: string | undefined;
+      seconds?: number | undefined;
+      scope?: "group" | "global" | undefined;
+      reason?: string | undefined;
+    } = {},
+  ): Promise<{ ok: boolean; result: AdminApiPunishmentActionResult }> =>
+    api.post(
+      `/api/punishments/${encodeURIComponent(code)}/${action}`,
+      body,
+    ),
+
+  /** 加入黑名单（本群 120 / 全局 240；默认同时把人移出群）。 */
+  addBlacklist: (body: {
+    scope: "group" | "global";
+    group?: string | undefined;
+    userId: string;
+    reason?: string | undefined;
+  }): Promise<{ ok: boolean; result: AdminApiBlacklistResult }> =>
+    api.post("/api/blacklist", body),
+
+  /** 解除黑名单（本群 120 / 全局 240）。 */
+  removeBlacklist: (params: {
+    scope: "group" | "global";
+    group?: string | undefined;
+    userId: string;
+  }): Promise<{ ok: boolean; result: AdminApiBlacklistResult }> =>
+    api.del(
+      `/api/blacklist/${encodeURIComponent(params.userId)}${query({
+        scope: params.scope,
+        group: params.group,
+      })}`,
+    ),
+
+  /** 申诉复核（本群 120）：通过 = 撤销该处罚；两种结果都会私信申诉人。 */
+  decideAppeal: (
+    code: string,
+    decision: "accept" | "reject",
+    body: { note?: string | undefined } = {},
+  ): Promise<{ ok: boolean; result: AdminApiAppealDecisionResult }> =>
+    api.post(
+      `/api/appeals/${encodeURIComponent(code)}/${decision}`,
+      body,
+    ),
 
   /**
    * 审计导出 CSV 的**同源下载地址**（靠 cookie 鉴权，所以直接用 `<a href>`）。

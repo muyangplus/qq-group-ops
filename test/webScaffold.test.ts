@@ -156,6 +156,33 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     expect(app).toContain("blacklist");
   });
 
+  it("P2 写操作：被处罚 / 被拉黑人 / 申诉人只有二次确认后才动手", () => {
+    const punishments = read("views/PunishmentsView.vue");
+    const blacklist = read("views/BlacklistView.vue");
+    const appeals = read("views/AppealsView.vue");
+
+    // 处罚动作：与指令层同一服务；不可逆动作要写明后果
+    expect(punishments).toContain("adminApi.punish");
+    expect(punishments).toContain("ModalDialog");
+    expect(punishments).toContain("不可逆");
+    // 「处置即回应申诉」的连带结果要说给操作者
+    expect(punishments).toContain("acceptedAppeals");
+    // 全局拉黑只有平台超管能点
+    expect(punishments).toContain("isSuperAdmin");
+
+    // 黑名单增删：加入要二次确认、全局项只给超管
+    expect(blacklist).toContain("adminApi.addBlacklist");
+    expect(blacklist).toContain("adminApi.removeBlacklist");
+    expect(blacklist).toContain("ModalDialog");
+    expect(blacklist).toContain("所有已绑定群");
+
+    // 申诉复核：通过 = 撤销处罚；理由会私信申诉人
+    expect(appeals).toContain("adminApi.decideAppeal");
+    expect(appeals).toContain("ModalDialog");
+    expect(appeals).toContain("撤销该处罚");
+    expect(appeals).toContain("私信");
+  });
+
   it("待审批页：申请人资料摘要 + 同步官方队列（120 起）", () => {
     const source = read("views/PendingView.vue");
 

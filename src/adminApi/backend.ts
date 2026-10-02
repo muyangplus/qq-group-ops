@@ -40,6 +40,7 @@ import type { JoinApprovalService } from "../services/joinApproval.js";
 import type { JoinAuditService, JoinRequest } from "../services/joinAudit.js";
 import type { JoinRequestSyncService } from "../services/joinAuditSync.js";
 import type { MigrationResult } from "../db/migrate.js";
+import type { ModerationNotifier } from "../services/moderationNotifier.js";
 import type { NotificationService } from "../services/notifications.js";
 import { NOTIFY_TOPIC_META } from "../services/notifyTopics.js";
 import type { PermissionService } from "../services/permissions.js";
@@ -156,6 +157,8 @@ export interface AdminApiBackendDeps {
   mode?: string | undefined;
   /** 申请队列同步（`POST /api/join/sync`，与指令层 `/sync` 同一服务）。 */
   joinSync?: JoinRequestSyncService | undefined;
+  /** 申诉结论的私信通道（与指令层同一套 `ModerationNotifier`）。 */
+  moderationNotifier?: ModerationNotifier | undefined;
   /** 审计导出（`/api/audit/export.csv`，与指令层 `/export audit` 同一实现）。 */
   exportService?: ExportService | undefined;
 }
@@ -1061,8 +1064,261 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         full: options.full,
       };
     },
+
+    // ------------------------------------------------------------ P2 写操作
+
+    punish: async (input) => {
+      const service = requirePunishments();
+      const record = service.get(input.code);
+      if (!record) {
+        throw notFound(`未找到处罚记录：${input.code}`);
+      }
+      requireGroupModerator(input.actorId, record.groupId, "处罚管理");
+      if (input.action === "blacklist" && (input.scope ?? "group") === "global") {
+        requireGlobalSuperAdmin(input.actorId, "全局拉黑");
+      }
+
+      const code = record.recordId;
+      const actorId = input.actorId;
+      let result: { ok: boolean; text: string; record: PunishmentRecord } | undefined;
+      if (input.action === "release") {
+        result = await service.release({
+          code,
+          actorId,
+          ...(input.note !== undefined && input.note.length > 0
+            ? { note: input.note }
+            : {}),
+        });
+      } else if (input.action === "mute") {
+        result = await service.setMute({
+          code,
+          actorId,
+          seconds: input.seconds ?? 0,
+        });
+      } else if (input.action === "kick") {
+        result = await service.kick({ code, actorId });
+      } else {
+        result = await service.blacklistUser({
+          code,
+          actorId,
+          scope: input.scope ?? "group",
+          ...(input.reason !== undefined && input.reason.length > 0
+            ? { reason: input.reason }
+            : {}),
+        });
+      }
+      if (!result) {
+        throw notFound(`未找到处罚记录：${input.code}`);
+      }
+
+      // 处置即回应申诉：与指令层 `/punish …` 一致，成功后顺手把该处罚下待处理的申诉判定为已通过
+      let acceptedAppeals = 0;
+      if (result.ok) {
+        const decided = await deps.appeals?.acceptByPunishment({
+          punishmentId: code,
+          reviewerId: actorId,
+          note: PUNISH_ACTION_NOTES[input.action],
+        });
+        acceptedAppeals = decided?.length ?? 0;
+      }
+      const detail =
+        input.action === "mute"
+          ? `禁言=${input.seconds ?? 0} 秒`
+          : input.action === "blacklist"
+            ? `范围=${input.scope ?? "group"}`
+            : "";
+      appendAudit({
+        groupId: record.groupId,
+        actorId,
+        action: `admin_api:punish_${input.action}`,
+        status: result.ok ? AuditStatus.Executed : AuditStatus.Rejected,
+        reason: `处罚 ${codeLabel(code)}${detail.length > 0 ? ` ${detail}` : ""}：${truncate(result.text, 120)}`,
+        targetUserId: record.userId,
+      });
+      log.info("admin api punished record", {
+        recordId: code,
+        action: input.action,
+        actorId,
+        ok: result.ok,
+        acceptedAppeals,
+      });
+      return {
+        ok: result.ok,
+        message: result.text,
+        punishment: punishmentItem(result.record),
+        acceptedAppeals,
+      };
+    },
+
+    addBlacklist: async (input) => {
+      const service = requireBlacklist();
+      const scope = input.scope;
+      const groupId = scope === "global" ? "" : (input.groupId ?? "");
+      if (scope === "global") {
+        requireGlobalSuperAdmin(input.actorId, "加入全局黑名单");
+      } else {
+        requireGroupModerator(input.actorId, groupId, "加入本群黑名单");
+      }
+      const result = await service.add({
+        scope,
+        groupId,
+        userId: input.userId,
+        actorId: input.actorId,
+        ...(input.reason !== undefined && input.reason.length > 0
+          ? { reason: input.reason }
+          : {}),
+        source: "manual",
+      });
+      appendAudit({
+        groupId,
+        actorId: input.actorId,
+        action: "admin_api:blacklist_add",
+        status: AuditStatus.Executed,
+        reason: `黑名单(${scope}) 加入 ${input.userId}：${truncate(result.detail, 120)}`,
+        targetUserId: input.userId,
+      });
+      log.info("admin api added blacklist entry", {
+        scope,
+        groupId,
+        actorId: input.actorId,
+        kicked: result.kicked.length,
+      });
+      return {
+        action: "add",
+        ok: result.ok,
+        message: `已加入${scope === "global" ? "全局" : "本群"}黑名单。${result.detail}`,
+        scope,
+        groupId,
+        userId: input.userId,
+        kickedGroups: result.kicked.length,
+      };
+    },
+
+    removeBlacklist: async (input) => {
+      const service = requireBlacklist();
+      const scope = input.scope;
+      const groupId = scope === "global" ? "" : (input.groupId ?? "");
+      if (scope === "global") {
+        requireGlobalSuperAdmin(input.actorId, "解除全局黑名单");
+      } else {
+        requireGroupModerator(input.actorId, groupId, "解除本群黑名单");
+      }
+      const removed = await service.remove(scope, groupId, input.userId);
+      appendAudit({
+        groupId,
+        actorId: input.actorId,
+        action: "admin_api:blacklist_remove",
+        status: removed ? AuditStatus.Executed : AuditStatus.Rejected,
+        reason: removed
+          ? `黑名单(${scope}) 解除 ${input.userId}`
+          : `黑名单(${scope}) 里没有 ${input.userId}`,
+        targetUserId: input.userId,
+      });
+      return {
+        action: "remove",
+        ok: removed,
+        message: removed ? "已解除黑名单。" : "这个人不在该黑名单里。",
+        scope,
+        groupId,
+        userId: input.userId,
+        kickedGroups: 0,
+      };
+    },
+
+    decideAppeal: async (input) => {
+      const service = requireAppeals();
+      const appeal = service.get(input.code);
+      if (!appeal) {
+        throw notFound(`未找到申诉记录：${input.code}`);
+      }
+      requireGroupModerator(input.actorId, appeal.groupId, "处理申诉");
+      if (appeal.status !== "pending") {
+        throw conflict(
+          `该申诉已经处理过了（${appeal.status === "accepted" ? "已通过" : "已驳回"}）。`,
+        );
+      }
+      const punishment = deps.punishments?.get(appeal.punishmentId);
+      const actorId = input.actorId;
+      let message: string;
+      if (input.decision === "accepted") {
+        // 通过 = 撤销处罚（与指令层一致：逐项撤销，撤回与踢出不可逆）
+        const released = deps.punishments?.get(appeal.punishmentId)
+          ? await deps.punishments.release({
+              code: appeal.punishmentId,
+              actorId,
+              note: "通过申诉",
+            })
+          : undefined;
+        message = released?.text ?? "已通过申诉（处罚记录已不存在，只更新申诉状态）";
+      } else {
+        message = input.note?.trim() ?? "";
+        if (message.length === 0) {
+          message = "已驳回";
+        }
+      }
+      const updated = await service.decide({
+        code: appeal.appealId,
+        reviewerId: actorId,
+        status: input.decision,
+        note: message,
+      });
+      if (!updated) {
+        throw notFound(`未找到申诉记录：${input.code}`);
+      }
+      // 私信申诉人（与指令层同一条通道；失败只记日志，不影响结论）
+      if (deps.moderationNotifier && punishment) {
+        const sent = await deps.moderationNotifier.notifyAppealDecision(
+          updated,
+          punishment,
+          input.decision === "accepted",
+          actorId,
+          message,
+        );
+        if (!sent.ok) {
+          log.warn("appeal decision notify failed", {
+            appealId: appeal.appealId,
+            detail: sent.detail,
+          });
+        }
+        await deps.moderationNotifier.notifyAppealHandled(
+          updated,
+          punishment,
+          input.decision === "accepted",
+          actorId,
+        );
+      }
+      appendAudit({
+        groupId: appeal.groupId,
+        actorId,
+        action: `admin_api:appeal_${input.decision === "accepted" ? "accept" : "reject"}`,
+        status: AuditStatus.Executed,
+        reason: `申诉 #${appeal.appealId}：${truncate(message, 120)}`,
+        targetUserId: appeal.userId,
+      });
+      log.info("admin api decided appeal", {
+        appealId: appeal.appealId,
+        decision: input.decision,
+        actorId,
+      });
+      return {
+        appeal: appealItem(updated, deps.platform?.get("appealHoldMinutes") ?? 0),
+        decision: input.decision,
+        message,
+      };
+    },
   };
 }
+
+/** 处罚动作成功后写进申诉备注的话术（与指令层逐条一致）。 */
+const PUNISH_ACTION_NOTES: Record<
+  "release" | "mute" | "kick" | "blacklist",
+  string
+> = {
+  release: "已解除处罚",
+  mute: "已调整禁言时长",
+  kick: "已移出群",
+  blacklist: "已拉黑",
+};
 
 /**
  * 话题订阅计数（`/api/notify/topics`）。

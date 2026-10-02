@@ -273,8 +273,7 @@ export interface AdminApiDeliveriesView {
   counts: Array<{ status: string; count: number }>;
 }
 
-/** 运维只读（`/api/health`，P1）：把 `/status proc` 的内容接进后台。 */
-export interface AdminApiHealthView {
+/** 运维只读（`/api/health`，P1）：把 `/status proc` 的内容接进后台。 */export interface AdminApiHealthView {
   process: {
     /** 本进程运行的版本（`runningVersionOf()`）。 */
     runningVersion: string;
@@ -320,6 +319,44 @@ export interface AdminApiHealthView {
     /** `data/dist-broken/` 是否存在（说明历史上换过一次坏构建）。 */
     brokenBuild: boolean;
   };
+}
+
+/**
+ * 处罚动作的结果（P2 写）。
+ *
+ * 动作本身与指令层 `/punish release|mute|kick|blacklist` 完全同源（同一个领域服务），
+ * 因此**通知话术、官方调用、审计口径都一致**；这里只把结果整理成结构化响应。
+ */
+export interface AdminApiPunishmentActionResult {
+  ok: boolean;
+  /** 领域服务给的人话结果（成功摘要或失败原因）。 */
+  message: string;
+  punishment: AdminApiPunishmentItem;
+  /** 拉黑动作：被一并移出的群数（全局拉黑会影响所有绑定群）。 */
+  kickedGroups?: number | undefined;
+  /** 处置即回应申诉：本次连带判定为「已通过」的申诉条数。 */
+  acceptedAppeals: number;
+}
+
+/** 黑名单增删的结果（P2 写）。 */
+export interface AdminApiBlacklistResult {
+  action: "add" | "remove";
+  ok: boolean;
+  message: string;
+  scope: "group" | "global";
+  /** 落库的群 id；全局为 `""`。 */
+  groupId: string;
+  userId: string;
+  /** 被移出的群数（本群 0/1，全局可能多个）。 */
+  kickedGroups: number;
+}
+
+/** 申诉复核的结果（P2 写）。 */
+export interface AdminApiAppealDecisionResult {
+  appeal: AdminApiAppealItem;
+  decision: "accepted" | "rejected";
+  /** 人话摘要：通过时说明对处罚做了什么（撤销了哪几项）。 */
+  message: string;
 }
 
 export interface AdminApiAuditRecord {
@@ -508,6 +545,50 @@ export interface AdminApiWriters {
     actorId: string,
     options: { group?: string | undefined; full: boolean },
   ): Promise<AdminApiCsvExport>;
+
+  // ---------------------------------------------------------------- P2 写操作
+  /**
+   * 处罚动作（与指令层 `/punish release|mute|kick|blacklist` 同一服务、同一门槛 120）。
+   *
+   * 成功后**连带把该处罚下待处理的申诉标为已通过**（与指令层一致：处置即回应申诉）；
+   * `scope=global` 的拉黑要平台超管 240。
+   */
+  punish(input: {
+    code: string;
+    action: "release" | "mute" | "kick" | "blacklist";
+    actorId: string;
+    note?: string | undefined;
+    seconds?: number | undefined;
+    scope?: "group" | "global" | undefined;
+    reason?: string | undefined;
+  }): Promise<AdminApiPunishmentActionResult>;
+  /** 加入黑名单（本群 120 / 全局 240）；默认同时把人移出群（与 `/blacklist add` 一致）。 */
+  addBlacklist(input: {
+    scope: "group" | "global";
+    groupId?: string | undefined;
+    userId: string;
+    actorId: string;
+    reason?: string | undefined;
+  }): Promise<AdminApiBlacklistResult>;
+  /** 解除黑名单（本群 120 / 全局 240）。 */
+  removeBlacklist(input: {
+    scope: "group" | "global";
+    groupId?: string | undefined;
+    userId: string;
+    actorId: string;
+  }): Promise<AdminApiBlacklistResult>;
+  /**
+   * 申诉复核（本群 120）。
+   *
+   * **通过 = 撤销该处罚**（`PunishmentService.release`，逐项撤销：禁言解除 / 拉黑解除等，
+   * 撤回与踢出不可逆）；通过或驳回都会私信申诉人（`ModerationNotifier`，与指令层同一条通道）。
+   */
+  decideAppeal(input: {
+    code: string;
+    decision: "accepted" | "rejected";
+    actorId: string;
+    note?: string | undefined;
+  }): Promise<AdminApiAppealDecisionResult>;
 }
 
 export interface AdminApiActivityItem {
@@ -1416,8 +1497,147 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     return { ok: true, ...result };
   });
 
-  const ACTIVITY_ACTIONS = new Set(["open", "close", "cancel"]);
+  /** 处罚动作：`POST /api/punishments/:code/release|mute|kick|blacklist`。 */
+  const PUNISH_ACTIONS = new Set(["release", "mute", "kick", "blacklist"]);
+  app.post("/api/punishments/:code/:action", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { code, action } = request.params as { code: string; action: string };
+    if (!PUNISH_ACTIONS.has(action)) {
+      return reply
+        .code(400)
+        .send(
+          errorBody(
+            "bad_request",
+            "action 只能是 release | mute | kick | blacklist。",
+          ),
+        );
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const note = typeof body.note === "string" ? body.note : undefined;
+    const seconds =
+      typeof body.seconds === "number"
+        ? body.seconds
+        : typeof body.seconds === "string" && /^\d+$/u.test(body.seconds)
+          ? Number.parseInt(body.seconds, 10)
+          : undefined;
+    if (action === "mute" && seconds === undefined) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "改禁言时长需要 seconds（整数秒；0 = 解除禁言）。"));
+    }
+    const scope =
+      body.scope === "global"
+        ? "global"
+        : body.scope === "group"
+          ? "group"
+          : undefined;
+    const reason = typeof body.reason === "string" ? body.reason : undefined;
+    const result = await writers.punish({
+      code: code.trim(),
+      action: action as "release" | "mute" | "kick" | "blacklist",
+      actorId: actorOf(request),
+      ...(note !== undefined ? { note } : {}),
+      ...(seconds !== undefined ? { seconds } : {}),
+      ...(scope !== undefined ? { scope } : {}),
+      ...(reason !== undefined ? { reason } : {}),
+    });
+    return { ok: result.ok, result };
+  });
 
+  /** 加入黑名单：`POST /api/blacklist { scope, group, userId, reason }`。 */
+  app.post("/api/blacklist", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const userId = typeof body.userId === "string" ? body.userId.trim() : "";
+    if (userId.length === 0) {
+      return reply.code(400).send(errorBody("bad_request", "需要 userId（QQ号 / #短码 / openid）。"));
+    }
+    const scope = body.scope === "global" ? "global" : "group";
+    const group = typeof body.group === "string" ? body.group.trim() : "";
+    if (scope === "group" && group.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "本群黑名单需要 group（群 ID）。"));
+    }
+    const result = await writers.addBlacklist({
+      scope,
+      ...(scope === "group" ? { groupId: group } : {}),
+      userId,
+      actorId: actorOf(request),
+      ...(typeof body.reason === "string" ? { reason: body.reason } : {}),
+    });
+    return { ok: result.ok, result };
+  });
+
+  /** 解除黑名单：`DELETE /api/blacklist/:userId?scope=&group=`。 */
+  app.delete("/api/blacklist/:userId", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { userId } = request.params as { userId: string };
+    const query = request.query as Record<string, unknown>;
+    const scope = queryString(query.scope) === "global" ? "global" : "group";
+    const group = queryString(query.group);
+    if (scope === "group" && group === undefined) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "本群黑名单需要 ?group=<群 ID>。"));
+    }
+    const result = await writers.removeBlacklist({
+      scope,
+      ...(group !== undefined ? { groupId: group } : {}),
+      userId: userId.trim(),
+      actorId: actorOf(request),
+    });
+    return { ok: result.ok, result };
+  });
+
+  /**
+   * 申诉复核：`POST /api/appeals/:code/accept|reject`（本群 120）。
+   *
+   * 通过 = 撤销该处罚（与指令层一致）；驳回可带 `note`（默认「已驳回」）。
+   * 两种结果都会私信申诉人。
+   */
+  app.post("/api/appeals/:code/:decision", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { code, decision } = request.params as {
+      code: string;
+      decision: string;
+    };
+    if (decision !== "accept" && decision !== "reject") {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "decision 只能是 accept | reject。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const result = await writers.decideAppeal({
+      code: code.trim(),
+      decision: decision === "accept" ? "accepted" : "rejected",
+      actorId: actorOf(request),
+      ...(typeof body.note === "string" ? { note: body.note } : {}),
+    });
+    return { ok: true, result };
+  });
+
+  const ACTIVITY_ACTIONS = new Set(["open", "close", "cancel"]);
   /** 活动状态：`POST /api/activities/:code/open|close|cancel`。 */
   app.post("/api/activities/:code/:action", async (request, reply) => {
     const writers = options.writers;

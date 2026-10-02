@@ -4,15 +4,18 @@ import { computed, onMounted, ref } from "vue";
 import { adminApi, type AdminApiAppealItem } from "@/api/admin";
 import { ApiError } from "@/api/client";
 import EntityLabel from "@/components/EntityLabel.vue";
+import ModalDialog from "@/components/ModalDialog.vue";
 import { MODERATOR_LEVEL, useSessionStore } from "@/stores/session";
 
 /**
- * 申诉队列（只读）。
+ * 申诉队列（列表 + 复核）。
  *
  * 口径与 `/appeal list` 一致：平台超管 240 可以不选群看全量，
  * 其余人必须带本群审核员（120）的群；所以默认选中第一个够 120 的群。
  *
- * 「复核（通过 / 驳回）」写操作目前仍只在机器人指令里做，这台后台只看不写。
+ * 复核（通过 / 驳回）与机器人里的 `/appeal` **同源**（同一个领域服务）：
+ * 通过 = 撤销该处罚（逐项：解除禁言 / 解除拉黑等；撤回与移出群不可逆），
+ * 两种结果都会私信申诉人。界面只按本群 120 禁用按钮，服务端仍会再判一次。
  */
 const session = useSessionStore();
 
@@ -23,6 +26,14 @@ const groupFilter = ref("");
 const statusFilter = ref("");
 const loading = ref(false);
 const error = ref("");
+/** 复核成功回执（通过 / 驳回都走这里）。 */
+const notice = ref("");
+
+/** 通过 / 驳回各一个确认弹窗：驳回要填理由、通过不用，所以不共用状态。 */
+const approveTarget = ref<AdminApiAppealItem | null>(null);
+const rejectTarget = ref<AdminApiAppealItem | null>(null);
+const rejectNote = ref("");
+const busy = ref(false);
 
 const groupOptions = computed(() =>
   (session.identity?.permissions?.groups ?? []).map((group) => group.groupId),
@@ -44,6 +55,14 @@ function groupLabel(groupId: string): string {
 function orDash(value: string): string {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : "—";
+}
+
+/**
+ * 复核按钮的启用口径：本群审核员 120（平台超管的平台档会折算进 `levelIn`）。
+ * 真正能不能干由服务端判（不满足 403），这里只避免点出一个注定失败的请求。
+ */
+function canReview(item: AdminApiAppealItem): boolean {
+  return session.levelIn(item.groupId) >= MODERATOR_LEVEL;
 }
 
 async function load(): Promise<void> {
@@ -81,6 +100,63 @@ onMounted(load);
 
 async function reload(): Promise<void> {
   await load();
+}
+
+function openApprove(item: AdminApiAppealItem): void {
+  notice.value = "";
+  approveTarget.value = item;
+}
+
+function openReject(item: AdminApiAppealItem): void {
+  notice.value = "";
+  rejectNote.value = "";
+  rejectTarget.value = item;
+}
+
+/** 通过 = 撤销该处罚；`load()` 用的还是当前 `status`，所以「只看待处理」的过滤会保持。 */
+async function confirmApprove(): Promise<void> {
+  const item = approveTarget.value;
+  if (item === null) {
+    return;
+  }
+  busy.value = true;
+  try {
+    const response = await adminApi.decideAppeal(item.code, "accept");
+    notice.value = response.result.message;
+    error.value = "";
+    approveTarget.value = null;
+    await load();
+  } catch (err) {
+    // 失败不关弹窗：错误留在页面上，用户可以直接重试或取消
+    error.value = err instanceof ApiError ? err.message : String(err);
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** 驳回理由可空：留空时由后端用「已驳回」，所以这里不拼默认文案。 */
+async function confirmReject(): Promise<void> {
+  const item = rejectTarget.value;
+  if (item === null) {
+    return;
+  }
+  const note = rejectNote.value.trim();
+  busy.value = true;
+  try {
+    const response = await adminApi.decideAppeal(
+      item.code,
+      "reject",
+      note === "" ? {} : { note },
+    );
+    notice.value = response.result.message;
+    error.value = "";
+    rejectTarget.value = null;
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : String(err);
+  } finally {
+    busy.value = false;
+  }
 }
 
 /**
@@ -129,7 +205,8 @@ function holdText(item: AdminApiAppealItem): string {
     <h1>申诉</h1>
 
     <p class="hint">
-      复核（通过 / 驳回）目前仍在机器人里做（`/appeal`）：这里只读，
+      复核（通过 / 驳回）与机器人里的 <code>/appeal</code> 同源：通过 = <b>撤销该处罚</b>
+      （逐项：解除禁言 / 解除拉黑等），两种结果都会私信申诉人；
       超时未处理的会按 <b>{{ holdMinutes }}</b> 分钟的时限转派给其他审核员。
     </p>
 
@@ -157,7 +234,9 @@ function holdText(item: AdminApiAppealItem): string {
       待处理 <b>{{ pendingCount }}</b> 条 · 超时转派时限 <b>{{ holdMinutes }}</b> 分钟
     </p>
 
+    <p v-if="loading" class="hint">加载中…</p>
     <p v-if="error" class="error">{{ error }}</p>
+    <p v-if="notice" class="ok">{{ notice }}</p>
     <p v-if="!loading && items.length === 0 && !error" class="hint">
       没有符合条件的申诉。
     </p>
@@ -174,6 +253,7 @@ function holdText(item: AdminApiAppealItem): string {
           <th>处理人</th>
           <th>时限</th>
           <th>详情</th>
+          <th>操作</th>
         </tr>
       </thead>
       <tbody>
@@ -236,9 +316,90 @@ function holdText(item: AdminApiAppealItem): string {
               </dl>
             </details>
           </td>
+          <!-- 只有待处理的才有复核按钮：已处理的行不给（后端也会回「已经处理过了」） -->
+          <td>
+            <div v-if="item.status === 'pending'" class="row-actions">
+              <button
+                type="button"
+                :disabled="!canReview(item)"
+                :title="canReview(item) ? '通过 = 撤销该处罚' : '需要本群审核员（120）'"
+                @click="openApprove(item)"
+              >
+                通过（撤销处罚）
+              </button>
+              <button
+                type="button"
+                class="danger"
+                :disabled="!canReview(item)"
+                :title="canReview(item) ? '驳回申诉（理由会私信申诉人）' : '需要本群审核员（120）'"
+                @click="openReject(item)"
+              >
+                驳回
+              </button>
+            </div>
+            <span v-else>—</span>
+          </td>
         </tr>
       </tbody>
     </table>
+
+    <!-- 通过 = 撤销处罚：撤回与移出群不可逆，必须写进确认弹窗 -->
+    <ModalDialog
+      :open="approveTarget !== null"
+      title="通过申诉（撤销处罚）？"
+      :busy="busy"
+      confirm-text="确认通过"
+      @close="approveTarget = null"
+      @confirm="confirmApprove"
+    >
+      <template v-if="approveTarget">
+        <p class="hint">
+          申诉人
+          <EntityLabel
+            :entity="approveTarget.appellant"
+            :fallback="approveTarget.userId"
+            :details="false"
+          />
+          · 关联处罚 <code>{{ approveTarget.punishmentCode }}</code>
+        </p>
+        <p class="hint">
+          通过 = <b>撤销该处罚</b>（逐项：解除禁言 / 解除拉黑等；
+          <b>撤回消息与移出群不可逆</b>），并会<b>私信申诉人</b>结果。
+        </p>
+      </template>
+    </ModalDialog>
+
+    <!-- 驳回：理由可空（留空后端用「已驳回」），但一定会私信申诉人 -->
+    <ModalDialog
+      :open="rejectTarget !== null"
+      title="驳回申诉？"
+      :busy="busy"
+      confirm-text="确认驳回"
+      danger
+      @close="rejectTarget = null"
+      @confirm="confirmReject"
+    >
+      <template v-if="rejectTarget">
+        <p class="hint">
+          申诉人
+          <EntityLabel
+            :entity="rejectTarget.appellant"
+            :fallback="rejectTarget.userId"
+            :details="false"
+          />
+          · 关联处罚 <code>{{ rejectTarget.punishmentCode }}</code>
+        </p>
+        <label for="appeal-reject-note">驳回理由（留空 = 后端用「已驳回」）</label>
+        <input
+          id="appeal-reject-note"
+          v-model="rejectNote"
+          type="text"
+          maxlength="200"
+          placeholder="例如：材料不完整，请补充后重新申诉"
+        />
+        <p class="hint">会<b>私信申诉人</b>这条理由。</p>
+      </template>
+    </ModalDialog>
   </section>
 </template>
 

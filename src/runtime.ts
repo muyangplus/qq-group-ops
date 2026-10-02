@@ -514,6 +514,8 @@ export function createRuntime(
         mode,
         joinSync,
         exportService,
+        // P2 写：申诉结论要私信申诉人（与指令层同一个 ModerationNotifier）
+        moderationNotifier,
         database: dependencies.databaseDriver,
         migrationIssues: dependencies.migration?.issues.length,
       })

@@ -509,6 +509,201 @@ describe("管理 API HTTP 层", () => {
     await bare.close();
   });
 
+  it("P2 写端点：CSRF / 参数校验 / 未装配 503 都按口径", async () => {
+    const tokens = memoryTokens();
+    const calls: Array<Record<string, unknown>> = [];
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      writers: {
+        punish: async (input) => {
+          calls.push({ kind: "punish", ...input });
+          return {
+            ok: true,
+            message: "已解除处罚",
+            punishment: {
+              recordId: input.code,
+              code: `#${input.code}`,
+              groupId: "g1",
+              group: groupRef("g1"),
+              userId: "u1",
+              target: userRef("u1"),
+              actorId: input.actorId,
+              actor: userRef(input.actorId),
+              source: "manual",
+              ruleReason: "",
+              messageExcerpt: "",
+              actions: "警告",
+              detail: "",
+              status: "released",
+              createdAt: "2026-10-02T00:00:00.000Z",
+              updatedAt: "2026-10-02T00:00:00.000Z",
+            },
+            acceptedAppeals: 0,
+          };
+        },
+        addBlacklist: async (input) => ({
+          action: "add",
+          ok: true,
+          message: "已加入本群黑名单。",
+          scope: input.scope,
+          groupId: input.groupId ?? "",
+          userId: input.userId,
+          kickedGroups: 1,
+        }),
+        removeBlacklist: async (input) => ({
+          action: "remove",
+          ok: true,
+          message: "已解除黑名单。",
+          scope: input.scope,
+          groupId: input.groupId ?? "",
+          userId: input.userId,
+          kickedGroups: 0,
+        }),
+        decideAppeal: async (input) => ({
+          appeal: {
+            appealId: input.code,
+            code: `#${input.code}`,
+            punishmentId: "ABC123",
+            punishmentCode: "#ABC123",
+            groupId: "g1",
+            group: groupRef("g1"),
+            userId: "u1",
+            appellant: userRef("u1"),
+            reason: "",
+            status: input.decision,
+            reviewerId: input.actorId,
+            note: input.note ?? "",
+            createdAt: "2026-10-02T00:00:00.000Z",
+            overdue: false,
+          },
+          decision: input.decision,
+          message: "已通过申诉",
+        }),
+      },
+    }).app;
+    const { token } = await tokens.issue({ userId: "mod", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const cookie = cookieOf(login);
+
+    // 缺 CSRF：写方法一律 403（全局钩子）
+    const noCsrf = await app.inject({
+      method: "POST",
+      url: "/api/punishments/ABC123/release",
+      headers: { cookie },
+      payload: {},
+    });
+    expect(noCsrf.statusCode).toBe(403);
+
+    // 非法 action → 400
+    const badAction = await app.inject({
+      method: "POST",
+      url: "/api/punishments/ABC123/explode",
+      headers: { cookie, "x-admin-request": "1" },
+      payload: {},
+    });
+    expect(badAction.statusCode).toBe(400);
+
+    // 改禁言时长缺 seconds → 400
+    const noSeconds = await app.inject({
+      method: "POST",
+      url: "/api/punishments/ABC123/mute",
+      headers: { cookie, "x-admin-request": "1" },
+      payload: {},
+    });
+    expect(noSeconds.statusCode).toBe(400);
+
+    // 正常解除
+    const released = await app.inject({
+      method: "POST",
+      url: "/api/punishments/ABC123/release",
+      headers: { cookie, "x-admin-request": "1" },
+      payload: { note: "申诉通过" },
+    });
+    expect(released.statusCode).toBe(200);
+    expect(released.json()).toMatchObject({ ok: true });
+
+    // 黑名单：本群缺 group → 400；全局不需要 group
+    const badBlacklist = await app.inject({
+      method: "POST",
+      url: "/api/blacklist",
+      headers: { cookie, "x-admin-request": "1" },
+      payload: { scope: "group", userId: "u1" },
+    });
+    expect(badBlacklist.statusCode).toBe(400);
+    const globalBlacklist = await app.inject({
+      method: "POST",
+      url: "/api/blacklist",
+      headers: { cookie, "x-admin-request": "1" },
+      payload: { scope: "global", userId: "u1", reason: "屡犯" },
+    });
+    expect(globalBlacklist.statusCode).toBe(200);
+    expect(globalBlacklist.json()).toMatchObject({
+      result: { action: "add", kickedGroups: 1 },
+    });
+
+    // 解除：本群缺 ?group= → 400
+    const badRemove = await app.inject({
+      method: "DELETE",
+      url: "/api/blacklist/u1?scope=group",
+      headers: { cookie, "x-admin-request": "1" },
+    });
+    expect(badRemove.statusCode).toBe(400);
+
+    // 申诉复核：decision 只能是 accept / reject
+    const badDecision = await app.inject({
+      method: "POST",
+      url: "/api/appeals/ABCDEF/maybe",
+      headers: { cookie, "x-admin-request": "1" },
+      payload: {},
+    });
+    expect(badDecision.statusCode).toBe(400);
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/api/appeals/ABCDEF/accept",
+      headers: { cookie, "x-admin-request": "1" },
+      payload: {},
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.json()).toMatchObject({
+      result: { decision: "accepted" },
+    });
+
+    // 装配点收到的参数（actor 来自会话，不是请求体）
+    expect(calls).toContainEqual({
+      kind: "punish",
+      code: "ABC123",
+      action: "release",
+      actorId: "mod",
+      note: "申诉通过",
+    });
+    await app.close();
+
+    // 只读巡检模式：写端点 503
+    const bareTokens = memoryTokens();
+    const bare = buildAdminApiServer({ config: CONFIG, tokens: bareTokens }).app;
+    const bareToken = await bareTokens.issue({ userId: "mod", ttlMs: 60_000 });
+    const bareLogin = await bare.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: bareToken.token },
+    });
+    const bareResponse = await bare.inject({
+      method: "POST",
+      url: "/api/punishments/ABC123/release",
+      headers: { cookie: cookieOf(bareLogin), "x-admin-request": "1" },
+      payload: {},
+    });
+    expect(bareResponse.statusCode).toBe(503);
+    await bare.close();
+  });
+
   it("/api/status 需要登录，返回只读状态", async () => {
     const { app, tokens } = build();
     const unauth = await app.inject({ method: "GET", url: "/api/status" });
