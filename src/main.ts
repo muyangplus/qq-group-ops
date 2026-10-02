@@ -27,7 +27,7 @@ import { loadEnvFile } from "./env.js";
 import { attachGateway } from "./gatewayRunner.js";
 import { startAdminApiHost, type AdminApiHost } from "./adminApi/host.js";
 import { connectPersistence, type Persistence } from "./persistence.js";
-import { createRuntime, type Runtime } from "./runtime.js";
+import { createRuntime, toRuntimeRepositories, type Runtime } from "./runtime.js";
 import { escapeCardText, renderCard } from "./services/cardTemplate.js";
 import { startupReportText } from "./services/commands/healthCommands.js";
 import type { MigrationResult } from "./db/migrate.js";
@@ -155,35 +155,11 @@ async function main(): Promise<void> {
     {
       onRestartRequested: (info) => restartHandler?.(info),
       deploy: deployWatcher,
+      // 整份持久化对象直接透传：RuntimeRepositories 是它的结构化子集。
+      // 逐个列举键会漏 —— 0.23.0 就这么漏过 privacy 与 adminTokens（`/data` 与 `/admin login`
+      // 在真机上直接报「未装配」）；现在装配只发生在 createRepositories() 一处。
       ...(persistence
-        ? {
-            repositories: {
-            audit: persistence.audit,
-            joinRequests: persistence.joinRequests,
-            groupConfigs: persistence.groupConfigs,
-            groupSettings: persistence.groupSettings,
-            identityBindings: persistence.identityBindings,
-            groupMessageModes: persistence.groupMessageModes,
-            permissions: persistence.permissions,
-            activities: persistence.activities,
-            activityDetails: persistence.activityDetails,
-            activityWaitlist: persistence.activityWaitlist,
-            activitySettings: persistence.activitySettings,
-            activitySubscriptions: persistence.activitySubscriptions,
-            activityNotifications: persistence.activityNotifications,
-            activityGroups: persistence.activityGroups,
-            notificationSubscriptions: persistence.notificationSubscriptions,
-            notificationDeliveries: persistence.notificationDeliveries,
-            blacklist: persistence.blacklist,
-            punishments: persistence.punishments,
-            appeals: persistence.appeals,
-            shortCodes: persistence.shortCodes,
-            userProfiles: persistence.userProfiles,
-            classAliases: persistence.classAliases,
-            menuDeliveries: persistence.menuDeliveries,
-            platformSettings: persistence.platformSettings,
-           },
-          }
+        ? { repositories: toRuntimeRepositories(persistence) }
         : {}),
       migration: persistence?.migration,
       // 管理 API 的 `/api/status` 要展示数据库类型（内存模式为 undefined）
@@ -266,6 +242,10 @@ async function main(): Promise<void> {
   if (runtime.mode === "fake") {
     log.warn("fake mode: official WebSocket gateway not started");
     await runtime.flush();
+    // 管理 API 的监听口是在上面起的（假模式也允许，方便本地排查）：这里必须先把它关掉。
+    // 否则监听口会把事件循环留住、进程不退出，而接下来 `persistence.close()` 已经把库关了 ——
+    // 症状就是「/healthz 正常，任何要读库的接口都 500 `database is not open`」。
+    await adminApiHost?.close();
     await persistence?.close();
     await closeLogging();
     return;
@@ -951,8 +931,14 @@ async function startAdminApiIfEnabled(
   }
   const log = getLogger("main");
   if (!source.tokens) {
-    log.warn("管理 API 已开启但没有数据库，跳过监听口", {
-      hint: "DATABASE_URL=memory 时没有令牌表，无法签发/兑换登录令牌。",
+    // 真机上这条曾经误导过一次：明明配了 SQLITE_PATH，却报「没有数据库」——
+    // 真实原因是生产装配漏传了 adminTokens 仓储。所以这里必须把**实际原因**写清楚。
+    log.warn("管理 API 已开启但拿不到令牌仓储，跳过监听口", {
+      databaseDriver: source.databaseDriver,
+      hint:
+        source.databaseDriver === "memory"
+          ? "当前是内存模式（DATABASE_URL=memory / SQLITE_PATH=:memory:）：没有令牌表，签发与兑换都无处落库；改回 SQLite 文件或 PostgreSQL 后重启。"
+          : "数据库是持久化的，却拿到 undefined 的令牌仓储 —— 这是装配 bug（process 内没接上 adminTokens），请带着这行日志提 issue。",
     });
     return undefined;
   }

@@ -115,41 +115,18 @@ export interface PersistencePool extends PgPoolLike {
   on?(event: "error", listener: (error: Error) => void): unknown;
 }
 
-export interface Persistence {
+/**
+ * 连上数据库后的完整产物：**全套仓储** + 驱动信息 + 启动期迁移结果 + 关闭句柄。
+ *
+ * 仓储部分直接继承 `RepositorySet`（装配的唯一出处）：以前这里把 26 个仓储又抄了一遍，
+ * 抄漏了 `privacy` —— 于是 `main.ts` 按类型逐个列举时也就理直气壮地漏了它，
+ * 真机上 `/data` 报「未装配」。**别再抄第二遍**。
+ */
+export interface Persistence extends RepositorySet {
   driver: "sqlite" | "postgres";
   /** 启动期迁移里的非致命问题（补列 / 数据归一化失败）：由运行时展示给超管。 */
   migration: MigrationResult;
-  audit: AuditRepository;
-  joinRequests: JoinRequestRepository;
-  groupConfigs: GroupConfigRepository;
-  groupSettings: GroupSettingsRepository;
-  platformSettings: PlatformSettingsRepository;
-  identityBindings: IdentityBindingRepository;
-  groupMessageModes: GroupMessageModeRepository;
-  permissions: PermissionRepository;
-  activities: ActivityRepository;
-  activityWaitlist: ActivityWaitlistRepository;
-  activitySettings: ActivitySettingsRepository;
-  activitySubscriptions: ActivitySubscriptionRepository;
-  activityNotifications: ActivityNotificationRepository;
-  /** 活动绑定群（§B4）：发布与满员广播的目标群集合。 */
-  activityGroups: ActivityGroupRepository;
-  notificationSubscriptions: NotificationSubscriptionRepository;
-  notificationDeliveries: NotificationDeliveryRepository;
-  /** §A5 黑名单（本群 / 全局）。 */
-  blacklist: BlacklistRepository;
-  /** §B7 处罚记录。 */
-  punishments: PunishmentRepository;
-  /** §B8 申诉记录。 */
-  appeals: AppealRepository;
-  shortCodes: ShortCodeRepository;
-  userProfiles: UserProfileRepository;
-  classAliases: ClassAliasRepository;
-  activityDetails: ActivityDetailsRepository;
-  menuDeliveries: MenuDeliveryRepository;
   close(): Promise<void>;
-  /** 管理 API 的一次性登录令牌（E1）。 */
-  adminTokens: AdminTokenRepository;
 }
 
 export interface PersistenceOptions {
@@ -237,7 +214,15 @@ export async function connectPersistence(
   };
 }
 
-interface RepositorySet {
+/**
+ * 仓储集合（**装配的唯一出处**）。
+ *
+ * 别在别处逐个 `new SqlXxxRepository(...)`：主进程与测试历史上都这么干过，结果各漏了几个
+ * （`privacy` / `adminTokens` 漏在 `main.ts`，测试替身还漏了 `platformSettings` /
+ * `blacklist` / `punishments` / `appeals` / `menuDeliveries`），现象是「指令明明实现了却报未装配」。
+ * 新增仓储时只改这里，然后 `pnpm typecheck` 会把所有该跟着改的地方指出来。
+ */
+export interface RepositorySet {
   audit: AuditRepository;
   joinRequests: JoinRequestRepository;
   groupConfigs: GroupConfigRepository;
@@ -272,7 +257,8 @@ interface RepositorySet {
   adminTokens: AdminTokenRepository;
 }
 
-function createRepositories(db: Queryable): RepositorySet {
+/** 用同一个 `Queryable` 装出全套仓储（主进程与测试共用这一处）。 */
+export function createRepositories(db: Queryable): RepositorySet {
   return {
     audit: new SqlAuditRepository(db),
     joinRequests: new SqlJoinRequestRepository(db),

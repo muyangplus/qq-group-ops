@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import { getLogger } from "../core/logger.js";
+import { closeLogging, configureLogging, getLogger } from "../core/logger.js";
 import { AuditStatus } from "../core/enums.js";
 import { loadSettings } from "../config.js";
+import { loadEnvFile } from "../env.js";
 import { connectPersistence } from "../persistence.js";
 import { buildNotifyTopicViews } from "./backend.js";
 import { adminLoginUrl, loadAdminApiConfig } from "./config.js";
@@ -24,14 +25,24 @@ import { buildAdminApiServer, type AdminApiReadAccess } from "./server.js";
  * 未开启（`ADMIN_API_ENABLED` 非 true）时**什么都不做**，不监听端口。
  */
 async function main(): Promise<void> {
+  // 和 `src/main.ts` 一样先读 `.env`：否则「在应用目录里跑 pnpm admin:api」会看不到
+  // 任何配置（进程环境变量本来就有优先级，真实存在的变量不会被覆盖）。
+  loadEnvFile();
+  const settings = loadSettings();
+  configureLogging({
+    level: settings.logLevel,
+    file: settings.logFile,
+    console: settings.logConsole,
+    color: settings.logColor,
+  });
   const log = getLogger("admin-api");
   const config = loadAdminApiConfig();
   if (!config.enabled) {
     log.info("admin api disabled", { hint: "ADMIN_API_ENABLED 未开启，未监听任何端口。" });
+    await closeLogging();
     return;
   }
 
-  const settings = loadSettings();
   const persistence = await connectPersistence(settings);
   if (!persistence) {
     throw new Error(
@@ -196,9 +207,10 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
+main().catch(async (error: unknown) => {
   getLogger("admin-api").error("admin api failed to start", {
     error: error instanceof Error ? error.message : String(error),
   });
+  await closeLogging().catch(() => undefined);
   process.exitCode = 1;
 });

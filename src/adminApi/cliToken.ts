@@ -1,4 +1,5 @@
 import { loadSettings } from "../config.js";
+import { loadEnvFile } from "../env.js";
 import { connectPersistence } from "../persistence.js";
 import { loadAdminApiConfig } from "./config.js";
 import { AdminApiLinkService } from "./loginLink.js";
@@ -23,6 +24,8 @@ function argValue(name: string): string | undefined {
 }
 
 async function main(): Promise<void> {
+  // 应急命令通常在服务器应用目录里直接跑，必须自己读 `.env`（环境变量已有的值优先）
+  loadEnvFile();
   const config = loadAdminApiConfig();
   if (!config.enabled) {
     throw new Error(

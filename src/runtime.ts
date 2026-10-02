@@ -71,6 +71,7 @@ import {
 import { PlatformSettingsStore } from "./services/platformSettings.js";
 import type { HotSettingKey } from "./services/platformSettings.js";
 import type { PlatformSettingsRepository } from "./db/platformSettingsRepository.js";
+import type { RepositorySet } from "./persistence.js";
 import { GroupConfigStore, DEFAULT_GROUP_ID } from "./services/groupConfig.js";
 import { GroupMessageModeRegistry } from "./services/groupMessageMode.js";
 import { IdentityMapService } from "./services/identityMap.js";
@@ -148,6 +149,8 @@ export interface Runtime {
   adminCommands: AdminCommandService;
   /** 富消息发送器（Markdown + 按钮，含被动回复与三级降级）。 */
   richMessages: RichMessageSender;
+  /** 个人数据匿名化 / 导出（`/data`，D7）：暴露出来便于诊断「是否装了仓储」（`configured`）。 */
+  privacy: PrivacyService;
   /** 私信首次交互主菜单的去重状态（dev 内存 / 正式入库）。 */
   menuState: FirstMenuPushState;
   /** 回调按钮翻页试验（`/testmenu`）。 */
@@ -170,6 +173,8 @@ export interface AdminApiHostSource {
   config: AdminApiConfig;
   /** 一次性登录令牌仓储；纯内存模式（无数据库）时为 `undefined`，没有它无法兑换令牌。 */
   tokens: AdminTokenRepository | undefined;
+  /** 数据库类型（诊断用）：`memory` 时「没有令牌表」就出在这里。 */
+  databaseDriver: string;
   /** 读 + 写后端：直接调本进程的领域服务，写端点自带权限校验与审计。 */
   backend: ReturnType<typeof createAdminApiBackend>;
 }
@@ -224,6 +229,21 @@ export interface RuntimeDependencies {
   migration?: MigrationResult | undefined;
   /** 数据库类型（`sqlite` / `postgres` / `memory`）：管理 API 的 `/api/status` 展示用。 */
   databaseDriver?: string | undefined;
+}
+
+/**
+ * 把整份 `Persistence`（或 `createRepositories()` 的产物）当仓储集合传给 `createRuntime`。
+ *
+ * 为什么要这个适配器：以前 `main.ts` 与测试替身是**逐个列举**仓储键的，结果各漏了几个
+ * （生产路径漏 `privacy` 与 `adminTokens` → `/data` 与 `/admin login` 在真机上直接报「未装配」；
+ * 测试替身还漏了 `platformSettings` / `blacklist` / `punishments` / `appeals` / `menuDeliveries`）。
+ * 现在只在 `src/persistence.ts` 的 `createRepositories()` 里装配一次，这里做一次**编译期**转换：
+ * `RepositorySet` 必须覆盖 `RuntimeRepositories` 要求的每一个键，否则 `pnpm typecheck` 直接报错。
+ */
+export function toRuntimeRepositories(
+  repositories: RepositorySet,
+): RuntimeRepositories {
+  return repositories;
 }
 
 const log = getLogger("runtime");
@@ -1170,6 +1190,7 @@ export function createRuntime(
     writeQueue,
     adminCommands,
     richMessages,
+    privacy,
     menuState,
     testMenu,
     adminApiHost:
@@ -1177,6 +1198,7 @@ export function createRuntime(
         ? {
             config: adminApiConfig,
             tokens: repositories.adminTokens,
+            databaseDriver: dependencies.databaseDriver ?? "memory",
             backend: adminApiBackend,
           }
         : undefined,

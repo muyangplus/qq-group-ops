@@ -822,7 +822,11 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
       log.info("admin api bad request", { status, error: message });
       return reply.code(status).send(errorBody("bad_request", message));
     }
-    log.warn("admin api error", { error: message });
+    log.warn("admin api error", {
+      error: message,
+      // 500 一律带调用栈：这条日志就是排查入口（曾经只有一句 message，定位花了不少时间）
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return reply.code(500).send(errorBody("internal_error", "服务内部错误。"));
   });
 
