@@ -417,4 +417,68 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     expect(api).toContain("/api/identities");
     expect(app).toContain("identities");
   });
+
+  it("外壳与概览不直接渲染登录账号的 openid（正文出 QQ号 / 短码）", () => {
+    const app = read("App.vue");
+    const dashboard = read("views/DashboardView.vue");
+
+    // 顶栏 / 概览的登录账号都要走 EntityLabel（QQ号 → 短码 → 长 id 收进「详情」）
+    expect(app).toContain("EntityLabel");
+    expect(dashboard).toContain("EntityLabel");
+    // 不允许再把 `identity.userId` 直接插值出来
+    for (const [file, source] of [
+      ["App.vue", app],
+      ["views/DashboardView.vue", dashboard],
+    ] as const) {
+      expect(
+        /\{\{[^}]*identity\?\.userId[^}]*\}\}/u.test(source),
+        `${file} 直接渲染了登录账号的 userId`,
+      ).toBe(false);
+    }
+    // `/auth/me` 要带展示信息（`user`），否则前端只能退回长 id
+    expect(read("stores/session.ts")).toContain("user?: AdminApiEntityRef");
+  });
+
+  it("列表里的原始 ID 只出现在「详情」的 <dd> 里（「身份」页是映射本身，例外）", () => {
+    // 「身份」页的正文就是映射表（群号 ↔ 群 ID），长 id 是内容而不是泄漏
+    const allowRawCells = new Set(["views/IdentitiesView.vue"]);
+    const idField =
+      "(userId|groupId|actorId|targetUserId|requestId|officialId|externalId)";
+    // 只匹配「直接插值字段」：插值体里不能有 `(`，否则 `groupLabel(item.groupId)` 这类
+    // 走的是展示函数的调用（返回的是展示名，不是原始 id）
+    const interpolation = new RegExp(`\\{\\{[^}()]*\\.${idField}\\b[^}()]*\\}\\}`, "u");
+
+    for (const file of [
+      "App.vue",
+      "views/ActivitiesView.vue",
+      "views/AliasesView.vue",
+      "views/AppealsView.vue",
+      "views/AuditView.vue",
+      "views/BlacklistView.vue",
+      "views/DashboardView.vue",
+      "views/DeliveriesView.vue",
+      "views/IdentitiesView.vue",
+      "views/NotifyView.vue",
+      "views/PendingView.vue",
+      "views/PermissionsView.vue",
+      "views/PunishmentsView.vue",
+      "views/ReportsView.vue",
+      "views/RulesView.vue",
+      "views/SettingsView.vue",
+      "views/StatusView.vue",
+    ]) {
+      const source = read(file);
+      source.split("\n").forEach((line, index) => {
+        if (!interpolation.test(line)) {
+          return;
+        }
+        const trimmed = line.trim();
+        const ok = allowRawCells.has(file) || trimmed.startsWith("<dd");
+        expect(
+          ok,
+          `${file}:${index + 1} 直接渲染了原始 ID（应放进「详情」的 <dd>）：${trimmed}`,
+        ).toBe(true);
+      });
+    }
+  });
 });

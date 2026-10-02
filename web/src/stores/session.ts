@@ -26,6 +26,8 @@ export interface AdminIdentity {
   userId: string | null;
   expiresAt: string;
   permissions?: AdminPermissions;
+  /** 登录账号的展示信息（QQ号 → 短码 → 截断 id）；老响应没有时退回 `userId`。 */
+  user?: AdminApiEntityRef;
 }
 
 /** 与后端 `PLATFORM_OFFSET` / `PLATFORM_LEVEL_MIN` 同一套折算（docs/ADMIN-API.md §1）。 */

@@ -202,7 +202,7 @@ async function confirm(): Promise<void> {
         <div class="section-title">全局超级管理员</div>
         <ul class="chips">
           <li v-for="member in roleListOf('super')?.members ?? []" :key="member.userId">
-            <EntityLabel :entity="member.user" :fallback="member.userId" :details="false" />
+            <EntityLabel :entity="member.user" :fallback="member.userId" />
           </li>
         </ul>
 
@@ -224,11 +224,7 @@ async function confirm(): Promise<void> {
                 <td>
                   <span v-if="list.members.length === 0" class="hint">（没有人）</span>
                   <template v-for="member in list.members" :key="member.userId">
-                    <EntityLabel
-                      :entity="member.user"
-                      :fallback="member.userId"
-                      :details="false"
-                    />
+                    <EntityLabel :entity="member.user" :fallback="member.userId" />
                     <span class="hint"> </span>
                   </template>
                 </td>

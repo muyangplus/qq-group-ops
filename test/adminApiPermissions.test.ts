@@ -127,4 +127,48 @@ describe("/auth/me 附带权限画像", () => {
 
     await app.close();
   });
+
+  it("装配 userRefOf 时带上登录账号的展示信息（顶栏不再露 openid）", async () => {
+    const tokens = memoryTokens();
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "test",
+      userRefOf: (userId: string) => ({
+        kind: "user",
+        officialId: userId,
+        label: "10001",
+        externalId: "10001",
+        shortCode: "#U12345",
+      }),
+    }).app;
+
+    const { token } = await tokens.issue({ userId: "u-openid", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    // 这个假令牌库固定把 tok-1 映射成 op1（见上面的 memoryTokens）
+    const cookie = String(login.headers["set-cookie"]);
+    const me = await app.inject({
+      method: "GET",
+      url: "/auth/me",
+      headers: { cookie: cookie.split(";")[0] ?? "" },
+    });
+
+    expect(me.statusCode).toBe(200);
+    expect(me.json()).toMatchObject({
+      userId: "op1",
+      user: {
+        kind: "user",
+        officialId: "op1",
+        label: "10001",
+        externalId: "10001",
+        shortCode: "#U12345",
+      },
+    });
+    await app.close();
+  });
 });

@@ -89,6 +89,7 @@ import { badRequest, conflict, forbidden, notFound, unavailable } from "./errors
 import {
   createAdminApiEntities,
   type AdminApiEntities,
+  type AdminApiEntityRef,
 } from "./entityRef.js";
 import { buildSettingsView, toSettingItem } from "./settings.js";
 import {
@@ -236,6 +237,8 @@ export interface AdminApiBackend extends AdminApiReaders, AdminApiWriters {
   status(): Promise<AdminApiStatusExtra>;
   audit(): Promise<AdminApiAuditRecord[]>;
   permissionsOf(userId: string): Promise<AdminApiPermissionsView>;
+  /** 登录账号的展示信息（顶栏用）：QQ号 → 短码 → 完整 openid。 */
+  userRefOf(userId: string): AdminApiEntityRef;
   /** 周期任务监测（`/api/tasks`）；没有调度器时返回 `undefined` → 端点回 503。 */
   tasks(): AdminApiTasksView | undefined;
   /** 配置视图（`/api/settings`）；没有内存态配置存储时返回 `undefined` → 端点回 503。 */
@@ -964,6 +967,8 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
       ]);
       return describePermissions(deps.permissions, userId, [...groupIds], entities);
     },
+
+    userRefOf: (userId: string): AdminApiEntityRef => entities.user(userId),
 
     tasks: (): AdminApiTasksView | undefined => {
       const state = deps.tickTasks?.();

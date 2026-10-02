@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { RouterLink, RouterView, useRouter } from "vue-router";
 
+import EntityLabel from "@/components/EntityLabel.vue";
 import { useSessionStore } from "@/stores/session";
 
 /**
@@ -75,8 +76,12 @@ async function signOut(): Promise<void> {
       </RouterLink>
     </nav>
     <nav class="topbar-right">
+      <!-- 登录账号也不露原始 openid：正文出 QQ号 / 短码，完整 id 收进「详情」 -->
       <span v-if="session.signedIn" class="who">
-        {{ session.identity?.userId }}
+        <EntityLabel
+          :entity="session.identity?.user"
+          :fallback="session.identity?.userId ?? '（未登录）'"
+        />
         <em v-if="session.isSuperAdmin">平台超管</em>
       </span>
       <span v-if="expiresIn" class="muted-text">{{ expiresIn }}</span>

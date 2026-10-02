@@ -100,6 +100,15 @@ export interface AdminApiServerOptions {
   /** 权限画像（E2-d）：给 `/auth/me` 附带，前端据此隐藏入口（服务端仍强校验）。 */
   permissionsOf?: ((userId: string) => Promise<AdminApiPermissionsView>) | undefined;
   /**
+   * 登录账号的**展示信息**（E2-f）：给 `/auth/me` 附带 `user`（`AdminApiEntityRef`），
+   * 顶栏因此能显示「QQ号 → 短码 → 完整 openid」而不是把 32 位 openid 摊在页头。
+   *
+   * 未装配时前端退回 `userId` 原文（与其它展示点的兜底一致）。
+   */
+  userRefOf?:
+    | ((userId: string) => Promise<AdminApiEntityRef | undefined> | AdminApiEntityRef | undefined)
+    | undefined;
+  /**
    * 只读端点的门槛（E1-g）：取该账号的只读范围。未装配时按「已登录管理员」全量放行
    * （只读巡检模式与单元测试走这条路），装配后每个只读端点都按下面的口径裁剪或 403。
    */
@@ -1072,12 +1081,18 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
       userId !== null && options.permissionsOf
         ? await options.permissionsOf(userId)
         : undefined;
+    // 顶栏的展示名：优先 QQ号 → 短码，完整 openid 收进「详情」（E2-f 的统一口径）
+    const user =
+      userId !== null && options.userRefOf
+        ? await options.userRefOf(userId)
+        : undefined;
     return {
       userId,
       expiresAt: new Date(
         (request.adminSession?.lastSeenAt ?? now().getTime()) + config.sessionTtlMs,
       ).toISOString(),
       ...(permissions !== undefined ? { permissions } : {}),
+      ...(user !== undefined ? { user } : {}),
     };
   });
 

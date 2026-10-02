@@ -233,6 +233,8 @@ async function main(): Promise<void> {
     },
     // 权限画像（E2-d）与只读门槛（E1-g）共用同一份视图
     permissionsOf: (userId: string) => viewFor(userId),
+    // 顶栏展示名：只读巡检进程也把 QQ号 / 短码解出来（同一批表）
+    userRefOf: (userId: string) => entities.user(userId),
     // 只读巡检模式也按同一套门槛：能登进来不等于能看全量数据
     readAccessOf: (userId: string) => viewFor(userId),
     // 只读巡检进程没有内存态审计存储，直接写审计表
