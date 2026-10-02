@@ -78,6 +78,16 @@
   **手动重试不限次数**：卡上的重试与重发 `/restart` 想试几次都可以；「同一版本只自动重试一次」
   这条限制只作用于部署监测的自动重试（版本一变即重新给机会）。
 
+### 变更
+
+- **前端有了组件测试底座**（`pnpm web:test`）：`web/` 自己的 vitest（jsdom + `@vue/test-utils`，
+  跑 `web/src/**/*.spec.ts`），网络边界只在 `fetch` 一层造假 —— 真实走
+  `api/client.ts` → `adminApi.*` → 组件的整条链路，所以「服务端形状变了、前端没跟着拆包」
+  这类 bug 能被测出来（上线前的 `notifyTopics` 就是这么漏的）。CI 与 CD 的门禁都跑它；
+  根 `pnpm test` 里那批扫源码的契约守卫保留（防整块页面被误删），两层互不替代。
+  首批 14 条：展示口径（`EntityLabel`）、API 响应形状 / CSRF / `ApiError`（`api/admin.spec.ts`）、
+  通知页话题表与非超管只读、活动页的字段目录 / 改字段 / 新建草稿 / 门槛 120 只读。
+
 ### 修复
 
 - **「通知」页的话题表不再永远是空的**：`GET /api/notify/topics` 回的是 `{ topics: [...] }`，

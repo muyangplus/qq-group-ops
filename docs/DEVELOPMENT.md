@@ -16,12 +16,20 @@
 | 管理前台（首次） | `pnpm web:install`（只装 `web/` 自己那套依赖，根 `pnpm install` 不受影响） |
 | 管理前台开发 | `pnpm web:dev`（默认 http://127.0.0.1:5173，`/api`、`/auth`、`/healthz` 代理到 `ADMIN_API_PROXY`，默认 127.0.0.1:8787） |
 | 管理前台检查 / 构建 | `pnpm web:typecheck`（`vue-tsc`）、`pnpm web:build`（类型检查 + `vite build`，产物 `web/dist`，**不进 `dist/`**） |
+| 管理前台组件测试 | `pnpm web:test`（`web/` 自己的 vitest：jsdom + `@vue/test-utils`，跑 `web/src/**/*.spec.ts`） |
 
 > 前端是**独立的一套依赖**：根 `pnpm install` 不装 Vue / Vite，`pnpm web:*` 都走 `pnpm --dir web`。
 > `web/pnpm-workspace.yaml` 是 pnpm 12 的**构建脚本白名单**（只放行 `esbuild`）——
 > 删掉它 `pnpm web:install` 会以 `ERR_PNPM_IGNORED_BUILDS` 失败。
-> **CI 与 CD 都会构建前端**（`pnpm --dir web install` + `pnpm web:build`）：CI 用来尽早发现前端坏了，
-> CD 是把它跟后端产物一起发布（`dist-deploy/web/dist`）。
+> **CI 与 CD 都会构建前端**（`pnpm --dir web install` + `pnpm web:test` + `pnpm web:build`）：
+> CI 用来尽早发现前端坏了，CD 是把它跟后端产物一起发布（`dist-deploy/web/dist`）。
+>
+> 前端的测试分两层（两条命令各跑一边，互不干扰）：
+> - **组件测试**（`pnpm web:test`，在 `web/src/**/*.spec.ts`）：真的把页面挂起来渲染，
+>   网络边界只在 `fetch` 造假（`web/src/test/fetch.ts`），所以「服务端形状变了、前端没拆包」
+>   这类 bug 能被测出来（`notifyTopics` 就是这么漏的）；
+> - **契约守卫**（根 `pnpm test` 里的 `test/webScaffold.test.ts`）：扫源码字符串，钉住
+>   「每个页面都调了该调的端点 / 保留了该保留的文案」，防的是整块页面被误删。
 
 > 在受限沙箱/CI 里 `pnpm` 可能因锁文件或 store 权限失败，此时直接用 node 二进制：
 > `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`、

@@ -357,10 +357,12 @@
 ### E2-a…E2-e 管理后台（P3）
 
 25. **E2-a 脚手架**（✅ 已完成）：`web/`（Vite 7 + Vue 3 + TypeScript + vue-router + pinia），
-    根 `pnpm web:install` / `web:dev` / `web:typecheck` / `web:build`；开发期 vite proxy 把
+    根 `pnpm web:install` / `web:dev` / `web:typecheck` / `web:build` / `web:test`；开发期 vite proxy 把
     `/api`、`/auth`、`/healthz` 转发到 `ADMIN_API_PROXY`（默认 `http://127.0.0.1:8787`），
     浏览器看到同源地址，因此不涉及 CORS、`SameSite=Strict` 的 cookie 也能直接带上；
     产物 `web/dist` 不进 `dist/`（CD 默认不发，`.gitignore` 覆盖）。
+    组件测试（P2 收尾那批）用 `web/vitest.config.ts`：jsdom + `@vue/test-utils`，
+    只在 `fetch` 一层造假，CI 与 CD 都跑 `pnpm web:test`（见 [DEVELOPMENT.md](./DEVELOPMENT.md) §1）。
     脚手架里已经带了**最小可用的登录链路**：`src/api/client.ts`（同源 + 写操作自动带
     `X-Admin-Request: 1` + 统一 `ApiError`）、`src/stores/session.ts`（`/auth/me` / `/auth/token` /
     `/auth/logout`，并用与后端同一套两轴折算提供 `isSuperAdmin` / `levelIn(group)`）、
