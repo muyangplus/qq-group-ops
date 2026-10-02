@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { computed } from "vue";
 import { RouterLink, RouterView, useRouter } from "vue-router";
 
 import { useSessionStore } from "@/stores/session";
@@ -7,18 +7,23 @@ import { useSessionStore } from "@/stores/session";
 /**
  * 应用外壳（E2-a）：顶部显示登录态与登出入口，正文交给路由。
  *
- * 进站先问一次 `/auth/me`：没有会话就跳登录页（E2-b 会把这段换成带深链回跳的路由守卫）。
+ * 「没登录就跳登录页」在路由守卫里做（`router.ts`），这里只管渲染与登出。
  */
 const session = useSessionStore();
 const router = useRouter();
 
-onMounted(async () => {
-  if (!session.loaded) {
-    await session.load();
+/** 会话剩余时间：E2-b 的「过期提示」，让人知道什么时候会掉线。 */
+const expiresIn = computed((): string => {
+  const at = session.identity?.expiresAt;
+  if (!at) {
+    return "";
   }
-  if (!session.signedIn && router.currentRoute.value.name !== "login") {
-    await router.replace({ name: "login" });
+  const ms = new Date(at).getTime() - Date.now();
+  if (ms <= 0) {
+    return "会话已过期";
   }
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  return minutes >= 60 ? `${Math.round(minutes / 60)} 小时后过期` : `${minutes} 分钟后过期`;
 });
 
 async function signOut(): Promise<void> {
@@ -37,6 +42,7 @@ async function signOut(): Promise<void> {
         {{ session.identity?.userId }}
         <em v-if="session.isSuperAdmin">平台超管</em>
       </span>
+      <span v-if="expiresIn" class="muted-text">{{ expiresIn }}</span>
       <button
         v-if="session.signedIn"
         type="button"

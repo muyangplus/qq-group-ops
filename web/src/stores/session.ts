@@ -71,7 +71,10 @@ export const useSessionStore = defineStore("session", {
     async load(): Promise<void> {
       this.pending = true;
       try {
-        this.identity = await api.get<AdminIdentity>("/auth/me");
+        // `silent401`：「我还没登录」是正常分支，不触发全局跳登录（路由守卫自己会跳）
+        this.identity = await api.get<AdminIdentity>("/auth/me", {
+          silent401: true,
+        });
         this.error = "";
       } catch (error) {
         this.identity = null;

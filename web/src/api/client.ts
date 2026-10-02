@@ -26,6 +26,26 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * 会话失效（401）时的全局回调（E2-b）：路由层注册一次，把用户送回登录页。
+ *
+ * 为什么放在客户端模块里：401 可能来自任何一个 API 调用（cookie 过期、换过
+ * `ADMIN_API_SESSION_SECRET`、机器人重启），散在每个页面里处理一定会漏。
+ */
+let unauthorizedHandler: (() => void) | undefined;
+
+export function onUnauthorized(handler: () => void): void {
+  unauthorizedHandler = handler;
+}
+
+export interface RequestOptions {
+  /**
+   * 401 不当成「会话刚失效」（`/auth/me` 用它）：
+   * 「我还没登录」是正常分支，不该触发全局跳登录，否则会和路由守卫互相打断。
+   */
+  silent401?: boolean | undefined;
+}
+
 function parseBody(text: string): unknown {
   if (text.length === 0) {
     return {};
@@ -42,6 +62,7 @@ async function request<T>(
   method: "GET" | "POST" | "PUT",
   path: string,
   body?: unknown,
+  options: RequestOptions = {},
 ): Promise<T> {
   const headers: Record<string, string> = {};
   if (method !== "GET") {
@@ -62,6 +83,9 @@ async function request<T>(
 
   const data = parseBody(await response.text());
   if (!response.ok) {
+    if (response.status === 401 && options.silent401 !== true) {
+      unauthorizedHandler?.();
+    }
     const errorBody = data as Partial<ApiErrorBody>;
     throw new ApiError(
       response.status,
@@ -75,7 +99,8 @@ async function request<T>(
 }
 
 export const api = {
-  get: <T>(path: string): Promise<T> => request<T>("GET", path),
+  get: <T>(path: string, options?: RequestOptions): Promise<T> =>
+    request<T>("GET", path, undefined, options ?? {}),
   post: <T>(path: string, body?: unknown): Promise<T> =>
     request<T>("POST", path, body),
   put: <T>(path: string, body?: unknown): Promise<T> =>
