@@ -25,6 +25,27 @@
 > `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`、
 > `node node_modules/vitest/vitest.mjs run --configLoader runner`（`--configLoader runner` 用来避开 `spawn EPERM`）。
 
+### 配置改动：三份 `.env` 要一起改（维护者约定）
+
+| 文件 | 角色 | 进 Git？ | 随 CD 上传？ |
+|---|---|---|---|
+| `.env.example` | 模板与文档（全部键 + 默认值 + 说明） | ✅ | ✅（部署白名单里有它）→ **只放占位符** |
+| `.env` | 本地调试实际生效的那份 | ❌ | ❌ |
+| `data/.env` | 线上配置的母本（部署时覆盖服务器上的 `.env`） | ❌（`data/` 整体忽略） | ❌ |
+
+代码里新增 / 改名一个键时，**三份一起改**：只改模板会让本地与线上「查无此项」→
+进程悄悄用代码默认值，现象是「配置改了却没生效」。改完自检（只看键名、不打印值）：
+
+```bash
+grep -ohE '^[A-Za-z_][A-Za-z0-9_]*=' .env.example | tr -d '=' | sort -u > /tmp/ex.txt
+grep -ohE '^[A-Za-z_][A-Za-z0-9_]*=' .env data/.env | tr -d '=' | sort -u > /tmp/real.txt
+comm -23 /tmp/ex.txt /tmp/real.txt   # 模板有、真实配置没有 → 漏改，补上
+comm -13 /tmp/ex.txt /tmp/real.txt   # 真实配置有、模板没有 → 模板缺说明，补注释
+```
+
+> 外部贡献者只需要自己的 `.env`：`data/.env` 是**本项目维护者**的线上配置副本，
+> 别人 clone 下来不会有这个文件，忽略即可。
+
 ## 2. 目录结构
 
 ```

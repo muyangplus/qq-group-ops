@@ -132,6 +132,33 @@
 - **关键词豁免**：**审核员及以上**（moderator / 群管理员 / 本群超管 / 全局超管）的消息不做关键词判断——不警告、不撤回、不处罚，也不写审计，只记 debug 日志；普通成员照常处理。
 - **全局超管的私信体验**：私信里查看群指令帮助（`/help rules`、`/help approve`、`/help notify` 等）不受群上下文限制；私信直接发 `/rules` 等价于 `/rules all`（查看全局默认规则）。
 
+## 配置（`.env`）
+
+```bash
+cp .env.example .env      # 复制模板
+# 只改「必填」那几项：QQ_BOT_APP_ID / QQ_BOT_CLIENT_SECRET / ADMIN_USER_IDS
+pnpm install && pnpm start
+```
+
+其余项留空或默认即可跑起来（默认 SQLite，零配置；`pnpm dev` 本地开发、`pnpm start` 跑构建产物）。
+
+怎么读 `.env.example`：
+
+- `KEY=值` **未注释** = 生效项（值留空表示「必填」或「用默认值」，见该行上方注释）；
+- `# KEY=值` **注释掉** = 可选项，需要时去掉行首的 `#` 再填（例如管理 API、部署监测）；
+- **不要写行尾注释**：`KEY=value  # 说明` 会把 `# 说明` 一起当成值。
+
+改完什么时候生效：
+
+- 标了「可 `/config` 热改」的项（时区、保留期、活动通知上限、扫描周期、部署监测…）只是**默认值**，
+  全局超管可以在私信用 `/config` 覆盖，改完立即生效、不用重启；
+- 其余（凭据 / 事件通道 / 时区 / 数据库 / 日志 / 班级库 / 超管种子 / 管理 API）是**启动项**，改完要重启进程。
+
+**真实值只写在 `.env` 里**：`.env.example` 是模板，会提交进仓库、也会随 CD 部署一起上传，所以它只放占位符与默认值。
+
+逐项说明（取值 / 默认值 / 热改范围）见 [docs/CONFIGURATION.md](docs/CONFIGURATION.md)；
+部署、反向代理、systemd / Docker Compose 与排障见 [docs/OPERATIONS.md](docs/OPERATIONS.md)。
+
 ## 文档
 
 - [**快速开始 / 部署 / 排障**（含迎新晚会完整示例）](docs/OPERATIONS.md)
