@@ -7,6 +7,20 @@
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-10-02
+
+### 修复
+
+- **CD 两段上传不再互相删对方的文件**：0.24.0 上线时两段共用了默认的
+  `.ftp-deploy-sync-state.json`（存在服务器 `server-dir` 里），而 FTP Action 的删除动作正是由这份
+  「上次传过什么」的状态驱动的 —— 于是第一段删了 `package.json`、第二段（本地只有 `package.json`）
+  删了 `dist/`、`scripts/`、`web/`、`pnpm-lock.yaml`：机器人靠内存继续跑 0.23.2，但管理前台 404、
+  且任何自我重启都会失败。现在两段各用自己的 `state-name`
+  （`ftp-sync-state-code.json` / `ftp-sync-state-marker.json`），并显式写
+  `dangerous-clean-slate: false`；`test/workflows.test.ts` 把「所有 FTP 步骤必须显式声明
+  `state-name` 且互不相同」钉成断言。服务器上的文件用单段上传时代的 `v0.23.2` 工作流补齐，
+  期间机器人一次都没重启（细节见 docs/DECISIONS.md 的 ADR-0057「事故与修正」）。
+
 ## [0.24.0] - 2026-10-02
 
 ### 新增
