@@ -169,9 +169,37 @@
 ### E1-e 机器调用的 token（P2）
 
 20. **机器调用 token**（与一次性登录令牌分开，长时有效、按 scope 限定）：`ADMIN_API_TOKENS`
-    （`token:scope`，如 `read` / `read:pending`，可配过期），`Authorization: Bearer`，
+    （`token:scope1|scope2[@到期ISO时间]`，多个令牌用 `,` 分隔），`Authorization: Bearer`，
     用 `crypto.timingSafeEqual` 比较，日志里只打 token 前缀。
-    机器令牌可以走写端点（要 `write` scope），审计 actor 记 `machine:<前 8 位>`，**完整令牌不进日志 / 审计**。
+    机器令牌可以走写端点，审计 actor 记 `machine:<前 8 位>`，**完整令牌不进日志 / 审计**；
+    机器令牌不涉及 cookie，因此**不需要 `X-Admin-Request` 头**；它也**不受逐路由门槛限制**
+    （运维自己配的服务凭据，按显式 scope 走），但**越权仍会被 scope 挡在 403**。
+    - **三档通配**（老 token 行为不变）：`*` = 全部；`read` / `write` = 该族的全部端点；
+    - **按域细分**：`read:<域>` / `write:<域>`，域清单与每个端点的映射见
+      `src/adminApi/scopes.ts`（下表是同一份口径的文档版）；
+    - **fail-closed 回落**：没登记进映射表的端点要求粗粒度 `read` / `write` ——
+      于是「新加端点忘了登记」表现为「细粒度 token 被拒」，而不是意外放行；
+    - 未知 scope / 令牌太短 / 缺 scope 都会让配置**启动失败**（`loadAdminApiConfig` 抛错），
+      不会带着半套凭据跑；
+    - 细粒度 token 访问不匹配的端点回 403，错误消息里点名它缺哪个 scope
+      （例：`这个机器令牌没有 \`read:audit\` 权限（当前：read:join）`）。
+
+| 域 | 读 scope | 写 scope | 说明 |
+|---|---|---|---|
+| `join` | `read:join` | `write:join` | 待审批列表 / 审批 / 同步官方队列 |
+| `audit` | `read:audit` | —— | 审计列表与 CSV 导出 |
+| `punish` | `read:punish` | `write:punish` | 处罚记录与处罚动作 |
+| `blacklist` | `read:blacklist` | `write:blacklist` | 本群 / 全局黑名单 |
+| `appeal` | `read:appeal` | `write:appeal` | 申诉队列与复核 |
+| `rule` | `read:rule` | `write:rule` | 群规则（含关键词 / 恢复继承） |
+| `notify` | `read:notify` | `write:notify` | 话题门槛 / 测试推送 / 投递记录 |
+| `activity` | `read:activity` | `write:activity` | 活动列表 / 状态 / 创建 / 改字段 / 发布群 |
+| `alias` | `read:alias` | `write:alias` | 别名表（平台 240） |
+| `settings` | `read:settings` | `write:settings` | 热改配置（平台 240） |
+| `reports` | `read:reports` | —— | 统计报表（页面与 CSV） |
+| `status` | `read:status` | —— | 状态 / 周期任务 / 运维健康（平台 240） |
+| `perm` | `read:perm` | `write:perm` | 权限授予 / 撤销（P3） |
+
 
 ### E1-f 可观测性与运维（P1）
 
@@ -370,8 +398,10 @@
 
 - **不报错、只裁剪**：列表类端点（待审批 / 活动）对够不着的群直接少返回，而不是整条 403 ——
   多群管理员看到的自然是自己那几行；
-- **机器令牌不受逐路由门槛限制**：`ADMIN_API_TOKENS` 是运维自己配的服务凭据（`read` / `write`
-  scope 显式给），按平台级只读处理；
+- **机器令牌不受逐路由门槛限制**：`ADMIN_API_TOKENS` 是运维自己配的服务凭据（scope 显式给：
+  `*` / `read` / `write` 或按域 `read:<域>` / `write:<域>`，见 E1-e），按平台级只读处理 ——
+  它能看见什么、能改什么完全由配置决定，所以**配细粒度 token 时别再指望权限表兜底**；
+  未登记的端点要求粗粒度 `read` / `write`，细粒度 token 会被拒（fail-closed）；
 - **未装配 `readAccessOf` 时全量放行**：这是单元测试用的路径，也是「只读巡检模式」在
   没有权限表（纯内存库）时的兜底 —— 真实部署两条入口都会装配它；
 - `?group=` 统一是**内部群 ID**（`/auth/me` 返回的 `groups[].groupId`），不接受 `#群短码`：

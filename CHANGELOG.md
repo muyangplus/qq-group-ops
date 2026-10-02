@@ -89,6 +89,16 @@
     `full=1`（含内部群 ID）与全量导出要 240，两种都写 `admin_api:report_export` 审计；
   - 只读巡检模式没有这四块的数据源（审计 / 处罚 / 活动都在机器人进程内存里）→ 明确 503。
 
+- **管理 API 的机器令牌支持细粒度 scope**：`ADMIN_API_TOKENS` 除了 `*` / `read` / `write`
+  三档通配（老 token 行为不变），还能按域收窄 —— `read:join`、`read:audit`、`write:activity`、
+  `write:notify` … 给 CI / 脚本最小权限（域与端点映射集中在 `src/adminApi/scopes.ts`）。
+  - **fail-closed 回落**：没登记进映射表的端点要求粗粒度 `read` / `write`，细粒度 token 会被拒
+    （403 里点名缺哪个 scope），新端点要么登记、要么给粗粒度 scope，不会意外放行；
+  - 到期时间改用 `@`（scope 本身含冒号），旧写法 `token:read:2027-…` 仍然兼容；
+    未知 scope / 令牌太短 / 缺 scope 会让配置**启动失败**，不会带半套凭据跑；
+  - 顺带修一个坑：令牌查找以前按 `read` / `write` 过滤，细粒度 token 会「看起来不存在」回 401 ——
+    现在只比令牌与有效期，权限不足如实回 403。
+
 ### 变更
 
 - **前端有了组件测试底座**（`pnpm web:test`）：`web/` 自己的 vitest（jsdom + `@vue/test-utils`，
