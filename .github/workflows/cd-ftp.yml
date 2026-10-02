@@ -176,12 +176,19 @@ jobs:
           port: ${{ vars.FTP_PORT || 21 }}
           local-dir: ./dist-deploy/
           server-dir: ${{ vars.FTP_SERVER_DIR }}
+          # ⚠️ 必须与第二段用**不同的** state-name：这个 Action 的删除动作来自它「上次传过什么」
+          # 的同步状态（默认 `.ftp-deploy-sync-state.json`，存在 server-dir 里）。两段共用一个
+          # 状态文件时会互相把对方的文件判成「本地没有 → 从服务器删掉」—— 2026-10-02 的 v0.24.0
+          # 发布就这么把服务器上的 dist/ scripts/ web/ 删了（ADR-0057 的「事故与修正」）。
+          state-name: ftp-sync-state-code.json
           # 只试连：dry-run 会走完 PASV 数据连接与差异比对，但不写服务器文件
           dry-run: ${{ inputs.dry_run }}
           # 被动模式数据连接建立慢时多等一会儿（默认 30s 偏紧）
           timeout: 120000
           # 首次联调用 verbose 看清 PASV/EPSV 交互；稳定后可改回 standard
           log-level: verbose
+          # 显式写死：绝不删除状态文件之外的东西（默认即 false）
+          dangerous-clean-slate: false
           # 第二层保险：即使组包时漏了，也不上传这些（含 sourcemap）
           exclude: |
             **/.git*
@@ -199,6 +206,8 @@ jobs:
       # 第二段：**版本标记最后落地**（ADR-0057）。
       # 在它落地之前，服务器上的 package.json 还是旧版本号 → 部署监测不会在「传了一半」时触发；
       # 它一落地，代码已经全在服务器上了，宽限期到点重启加载的就是完整构建。
+      # 这一段**必须用自己的 state-name**（见上一段的说明），否则它的同步状态里只有
+      # package.json，会把代码目录全判成「该删」。
       # 这一步失败会让 job 变红：代码是新的但版本号还是旧的 → 不重启（旧进程继续服务），
       # 重新跑一次发布即可（或下次版本更新时一并落地）。
       - name: 上传版本标记 package.json（最后落地）
@@ -211,9 +220,11 @@ jobs:
           port: ${{ vars.FTP_PORT || 21 }}
           local-dir: ./dist-marker/
           server-dir: ${{ vars.FTP_SERVER_DIR }}
+          state-name: ftp-sync-state-marker.json
           dry-run: ${{ inputs.dry_run }}
           timeout: 120000
           log-level: verbose
+          dangerous-clean-slate: false
           exclude: |
             **/.git*
             **/node_modules/**

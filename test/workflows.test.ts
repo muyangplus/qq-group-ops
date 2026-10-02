@@ -200,6 +200,22 @@ describe("CI/CD 工作流审计", () => {
       text.indexOf("local-dir: ./dist-marker/"),
     );
     expect(text).toContain("ADR-0057");
+
+    // **两段必须用各自的 state-name**：共用一个同步状态文件时，这一段会把另一段传过的文件
+    // 判成「本地没有 → 从服务器删掉」—— v0.24.0 发布就这么删掉过服务器的 dist/ scripts/ web/
+    // （见 ADR-0057 的「事故与修正」）。所有 FTP 步骤都必须显式写 state-name 且互不相同。
+    const stateNames = ftpSteps.map(
+      (step) => (step.with as Record<string, string>)["state-name"],
+    );
+    expect(stateNames.every((name) => typeof name === "string" && name.length > 0)).toBe(
+      true,
+    );
+    expect(new Set(stateNames).size).toBe(stateNames.length);
+    // 同时显式关闭 dangerous-clean-slate（默认即 false，写出来是不让人顺手改成 true）
+    const cleanSlate = ftpSteps.map(
+      (step) => (step.with as Record<string, unknown>)["dangerous-clean-slate"],
+    );
+    expect(cleanSlate).toEqual([false, false]);
   });
 
   it("管理前台随 CD 一起发布：门禁先构建前端，产物路径覆盖 web/dist", () => {
