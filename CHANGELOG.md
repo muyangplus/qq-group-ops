@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-02
+
 ### 新增
 
 - **管理后台能直接办「审核动作」了**（P2 第一批，见 [docs/ADMIN-API.md](docs/ADMIN-API.md) 的 E1-j）：
@@ -1245,7 +1247,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.2...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.24.1...v0.25.0
 [0.18.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.17.4...v0.18.0
