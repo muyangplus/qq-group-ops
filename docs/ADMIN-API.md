@@ -120,7 +120,9 @@
    `issue(userId, ttl)` 只把明文令牌返给调用方、库里只存 `sha256`；`redeem(token)` 一次性
    （校验未用过 + 未过期 → 立刻写 `used_at`）；顺手清过期行；
 4. 兑换与登出：`POST /auth/token { token }`（校验 + 种会话 cookie）、`POST /auth/logout`、
-   `GET /auth/me`（返回 userId 与到期时间）；会话默认 12 小时滑动过期；
+   `GET /auth/me`（返回 `userId`、到期时间、权限画像 `permissions`，以及**登录账号的展示信息
+   `user`**：`AdminApiEntityRef`，顶栏据此显示 QQ号 / 短码而不是把 32 位 openid 摊在页头）；
+   会话默认 12 小时滑动过期；
 5. 限流：兑换端点按 IP 滑窗（默认 10 次/分钟），会话级全站限流默认 60 req/min；
 6. CSRF：写操作必须带 `X-Admin-Request: 1`；CORS 默认关闭；
 7. 审计：令牌签发 / 兑换（成功与失败）、权限拒绝、每个写操作都写 `audit_log`
@@ -499,10 +501,14 @@
     两种方式都同源（会话 cookie 是 `SameSite=Strict`，跨源会把登录态吃掉）。
     本地开发用 `pnpm web:dev`（自带代理），想在本机看构建产物用 `pnpm --dir web run preview`。
 33. **E2-f 展示层与配置页**（✅ 已完成）：
-    - **展示口径**：列表与选择器**优先出绑定号（QQ号 / 群号），其次短码，完整官方长码只出现在「详情」里**。
+    - **展示口径（全站，含登录账号）**：列表、选择器与**顶栏 / 概览页的登录账号**一律
+      **优先出绑定号（QQ号 / 群号），其次短码，完整官方长码只出现在「详情」里**。
       服务端把这份信息算成 `AdminApiEntityRef`（`kind` / `officialId` / `label` / `externalId` /
-      `shortCode`），挂在 `/api/audit`、`/api/pending`、`/api/rules`、`/api/activities` 的每一项上，
-      以及 `/auth/me` 的 `groups[]` 上；前端只读 `label`，长码收进折叠区（`components/EntityLabel.vue`）。
+      `shortCode`），挂在 `/api/audit`、`/api/pending`、`/api/rules`、`/api/activities` 的每一项上、
+      `/auth/me` 的 `groups[]` 上，以及 `/auth/me` 的 `user`（登录账号自己）上；
+      前端只读 `label`，长码收进折叠区（`components/EntityLabel.vue`）。
+      例外只有「身份」页：那一页的正文就是映射表（群号 ↔ 群 ID），长 id 是内容而不是泄漏。
+      `test/webScaffold.test.ts` 里有一条扫描守卫：**页面模板里原始 id 只允许出现在「详情」的 `<dd>`**；
       **短码只查不造**（`ShortCodeService.existingCode`）：读端点不给历史 actor 现造短码；
       审计记录补上 `targetUserId`（「操作对象」列）；审计页的时间统一成本地 `YYYY-MM-DD HH:MM:SS`；
     - **配置页** `/settings`（平台超管）：可改项就地编辑（布尔用下拉）+「恢复默认」，
