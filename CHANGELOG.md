@@ -9,6 +9,10 @@
 
 ### 修复
 
+- **管理 API 不再把客户端 4xx 吞成 500**：`setErrorHandler` 以前只认自己抛的
+  `AdminApiRequestError`，Fastify 自带的 4xx（Content-Type 不支持 → 415、body 解析失败 → 400、
+  空 body 等）全落到最后那个 500 分支，客户端会以为服务挂了。现在按原状态码回
+  `{ error: "bad_request", message: <原文> }`，只有真正的 5xx 才留 `internal_error`。
 - **`/migrate` 的确认弹窗压回 40 字以内**：真机上出现过「预览卡一个按钮都没有、其它卡正常」。
   根因是那次弹窗文案 **49 字**，超过官方 `action.modal.content` 的 **40 字上限**：超限的 `modal`
   会让官方判整条 payload 非法，于是**整块键盘**（连「指令帮助」）一起消失；其它弹窗文案都在
@@ -20,6 +24,10 @@
 
 ### 新增
 
+- **管理前台登录与会话保持（E2-b）**：没会话时进站自动跳登录页并记下原地址
+  （登录成功后回跳，私信链接里的 `?token=` 也一起带过）；页面停留期间会话失效
+  （cookie 过期 / 机器人重启 / 换过 `ADMIN_API_SESSION_SECRET`）时，任何一个 API 调用的 401
+  都会把用户送回登录页并说明「是过期，不是令牌错」；顶栏显示会话剩余时间。
 - **管理前台脚手架（E2-a）**：`web/` 是一套**独立依赖**的 Vite 7 + Vue 3 + TypeScript +
   vue-router + pinia 工程（`pnpm web:install` 只装它自己，根 `pnpm install` 不受影响），
   根命令加 `web:install` / `web:dev` / `web:typecheck` / `web:build`，产物 `web/dist` 不进 `dist/`。
