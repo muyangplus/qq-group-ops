@@ -92,7 +92,8 @@ import { RichMessageSender } from "./services/richMessages.js";
 import { DataMigrationService } from "./services/dataMigration.js";
 import { PrivacyService } from "./services/privacy.js";
 import { AdminApiLinkService } from "./adminApi/loginLink.js";
-import { loadAdminApiConfig } from "./adminApi/config.js";
+import { loadAdminApiConfig, type AdminApiConfig } from "./adminApi/config.js";
+import { createAdminApiBackend } from "./adminApi/backend.js";
 import { backupDatabase } from "./services/dbBackup.js";
 import { HealthRegistry } from "./services/health.js";
 import {
@@ -151,10 +152,26 @@ export interface Runtime {
   menuState: FirstMenuPushState;
   /** 回调按钮翻页试验（`/testmenu`）。 */
   testMenu: TestMenuService;
+  /**
+   * 管理 API 的**同进程回环监听口**数据源（E1-d）。
+   *
+   * `ADMIN_API_ENABLED` 未开启时为 `undefined`；有值时由 `main.ts` 起第二个
+   * Fastify 监听口，读写都落在本进程这同一份服务图上（见 docs/ADMIN-API.md §2）。
+   */
+  adminApiHost: AdminApiHostSource | undefined;
   /** 从数据库载入全部持久化状态；未配置数据库时为空操作。 */
   load(): Promise<void>;
   /** 等待所有排队写入落库。 */
   flush(): Promise<void>;
+}
+
+/** 起同进程管理 API 监听口所需的全部依赖。 */
+export interface AdminApiHostSource {
+  config: AdminApiConfig;
+  /** 一次性登录令牌仓储；纯内存模式（无数据库）时为 `undefined`，没有它无法兑换令牌。 */
+  tokens: AdminTokenRepository | undefined;
+  /** 读 + 写后端：直接调本进程的领域服务，写端点自带权限校验与审计。 */
+  backend: ReturnType<typeof createAdminApiBackend>;
 }
 
 export interface RuntimeRepositories {
@@ -205,6 +222,8 @@ export interface RuntimeDependencies {
   deploy?: DeployControl | undefined;
   /** 启动期迁移的非致命问题（`main.ts` 从 persistence 透传，供 `/status proc` 展示）。 */
   migration?: MigrationResult | undefined;
+  /** 数据库类型（`sqlite` / `postgres` / `memory`）：管理 API 的 `/api/status` 展示用。 */
+  databaseDriver?: string | undefined;
 }
 
 const log = getLogger("runtime");
@@ -412,11 +431,35 @@ export function createRuntime(
     sender: richMessages,
   });
   // 管理后台登录令牌（E1-b）：配置没开或没有令牌仓储时 `enabled` 为 false，指令会明确说明
+  const adminApiConfig = loadAdminApiConfig();
   const adminApiLink = new AdminApiLinkService({
     tokens: repositories.adminTokens,
-    config: loadAdminApiConfig(),
+    config: adminApiConfig,
     permissions,
   });
+  /**
+   * 管理 API 的读 + 写后端（E1-d）：接的是**本进程**的服务图，不是另一套仓储连接。
+   * 写端点因此与指令层走同一入口（审批走 `JoinApprovalService`、规则走
+   * `GroupConfigStore.setOverride`、活动状态走 `ActivityService`），不存在两份内存态。
+   * 配置没开时不构造（纯单测 / 未启用时零开销）。
+   */
+  const adminApiBackend = adminApiConfig.enabled
+    ? createAdminApiBackend({
+        permissions,
+        auditLog,
+        joinAudit,
+        joinApproval,
+        configStore,
+        activity,
+        activityExport,
+        adminTokens: repositories.adminTokens,
+        notificationSubscriptions: repositories.notificationSubscriptions,
+        groupSettings: repositories.groupSettings,
+        shortCodes,
+        database: dependencies.databaseDriver,
+        migrationIssues: dependencies.migration?.issues.length,
+      })
+    : undefined;
   // 模块健康：单个模块加载失败只降级它自己（层 1），它的功能域由闸门拦住（层 2）
   const menuState = createFirstMenuPushState(
     () => platform.get("menuFirstPush"),
@@ -1129,6 +1172,14 @@ export function createRuntime(
     richMessages,
     menuState,
     testMenu,
+    adminApiHost:
+      adminApiConfig.enabled && adminApiBackend
+        ? {
+            config: adminApiConfig,
+            tokens: repositories.adminTokens,
+            backend: adminApiBackend,
+          }
+        : undefined,
     router: new EventRouter(
       messageGuard,
       joinAudit,

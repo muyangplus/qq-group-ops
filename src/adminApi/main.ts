@@ -1,8 +1,8 @@
 import { getLogger } from "../core/logger.js";
 import { loadSettings } from "../config.js";
 import { connectPersistence } from "../persistence.js";
+import { buildNotifyTopicViews } from "./backend.js";
 import { adminLoginUrl, loadAdminApiConfig } from "./config.js";
-import { NOTIFY_TOPIC_META } from "../services/notifyTopics.js";
 import {
   describePermissions,
   loadAdminApiPermissions,
@@ -10,10 +10,12 @@ import {
 import { buildAdminApiServer } from "./server.js";
 
 /**
- * 管理 API 进程入口（E1，认证方案 B2）。
+ * 管理 API 的**只读巡检入口**（E1，认证方案 B2；E1-d 起降级为只读）。
  *
- * 独立进程、默认只监听 `127.0.0.1`（见 docs/ADMIN-API.md §2）：与机器人进程隔离，
- * 管理面崩了不影响收消息，webhook 端口也不用跟着暴露。
+ * 写操作（审批 / 改规则 / 活动状态 / 名单导出）只在**机器人进程内**的那个回环监听口上
+ * （`src/adminApi/host.ts`，见 docs/ADMIN-API.md §2）：那里才有机器人的内存态服务图。
+ * 这个独立进程只读仓储，用于「不想重启机器人、只想看状态 / 审计」的场景——
+ * 它注册的写端点一律回 503。
  *
  * 启动：`pnpm admin:api`（需要先 `pnpm build`，或开发时用 `tsx src/adminApi/main.ts`）。
  * 未开启（`ADMIN_API_ENABLED` 非 true）时**什么都不做**，不监听端口。
@@ -84,31 +86,10 @@ async function main(): Promise<void> {
             .map((row) => ({ key: row.key, value: row.value })),
         };
       },
-      notifyTopics: async () => {
-        const rows = await persistence.notificationSubscriptions.findAll();
-        return Object.entries(NOTIFY_TOPIC_META).map(([topic, meta]) => {
-          const prefix = `${topic}:`;
-          let allScope = 0;
-          let groupScopes = 0;
-          for (const row of rows) {
-            if (!row.scope.startsWith(prefix)) {
-              continue;
-            }
-            if (row.scope === `${prefix}__all__`) {
-              allScope += 1;
-            } else {
-              groupScopes += 1;
-            }
-          }
-          return {
-            topic,
-            label: meta.label,
-            defaultLevel: meta.defaultLevel,
-            allScope,
-            groupScopes,
-          };
-        });
-      },
+      notifyTopics: async () =>
+        buildNotifyTopicViews(
+          await persistence.notificationSubscriptions.findAll(),
+        ),
       activities: async () => {
         const [activities, details, registrations] = await Promise.all([
           persistence.activities.findActivities(),
@@ -178,7 +159,12 @@ async function main(): Promise<void> {
     port: config.port,
     secureCookie: config.cookieSecure,
     loginUrl: config.publicBaseUrl.length > 0,
+    mode: "readonly",
   });
+  log.warn(
+    "只读巡检模式：写端点（审批 / 规则 / 活动 / 导出）未装配，调用会回 503；" +
+      "写操作请用机器人进程内的那个监听口。",
+  );
   if (config.publicBaseUrl.length === 0) {
     log.warn(
       "ADMIN_API_PUBLIC_BASE_URL 未配置：/admin login 只会给出令牌，登录页需要手工粘贴。",

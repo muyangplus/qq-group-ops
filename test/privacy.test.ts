@@ -32,9 +32,10 @@ const EMPTY: PrivacyCounts = {
   activitySubscriptions: 0,
   activityNotifications: 0,
   menuDeliveries: 0,
+  adminTokens: 0,
 };
 
-/** 13 张目标表各回一行统计（顺序与仓储里的 STEPS 一致）。 */
+/** 14 张目标表各回一行统计（顺序与仓储里的 STEPS 一致）。 */
 function countResponses(values: readonly number[]): unknown[][] {
   return values.map((n) => [{ n }]);
 }
@@ -77,7 +78,7 @@ function spySender(): {
 
 describe("SqlPrivacyRepository", () => {
   it("按表统计待匿名化条数", async () => {
-    const db = new FakeQueryable(countResponses([...Array(13).keys()]));
+    const db = new FakeQueryable(countResponses([...Array(14).keys()]));
     const repository = new SqlPrivacyRepository(db);
 
     const counts = await repository.scan("u1");
@@ -85,8 +86,9 @@ describe("SqlPrivacyRepository", () => {
     expect(counts.bindings).toBe(0);
     expect(counts.profiles).toBe(1);
     expect(counts.menuDeliveries).toBe(12);
-    expect(totalPrivacyCounts(counts)).toBe(78);
-    expect(db.calls).toHaveLength(13);
+    expect(counts.adminTokens).toBe(13);
+    expect(totalPrivacyCounts(counts)).toBe(91);
+    expect(db.calls).toHaveLength(14);
     expect(db.calls[0]?.text).toContain("FROM identity_bindings");
     expect(db.calls[0]?.values).toEqual(["u1"]);
     // 短码只统计 user 类，不牵连群 / 申请短码
@@ -100,7 +102,7 @@ describe("SqlPrivacyRepository", () => {
 
     await repository.anonymize("u1", "anon:x");
 
-    expect(db.calls).toHaveLength(13);
+    expect(db.calls).toHaveLength(14);
     for (const call of db.calls) {
       expect(call.values).toEqual(["anon:x", "u1"]);
     }

@@ -4,6 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import { getLogger, type Logger } from "../core/logger.js";
 import type { AdminTokenRepository } from "../db/adminTokenRepository.js";
 import { adminLoginUrl, machineTokenAllows, type AdminApiConfig, type AdminApiMachineToken } from "./config.js";
+import { AdminApiRequestError } from "./errors.js";
 import { WindowRateLimiter } from "./rateLimit.js";
 import type { AdminApiPermissionsView } from "./permissions.js";
 import { SessionStore, type AdminSession } from "./session.js";
@@ -14,6 +15,8 @@ declare module "fastify" {
     adminSession?: AdminSession | undefined;
     /** 通过机器令牌鉴权时挂上的 scope（E1-e）。 */
     adminMachineScopes?: readonly string[] | undefined;
+    /** 通过机器令牌鉴权时的审计 actor（`machine:<前缀>`，不暴露完整令牌）。 */
+    adminMachineActor?: string | undefined;
   }
 }
 
@@ -40,6 +43,12 @@ export interface AdminApiServerOptions {
   auditReader?: AdminApiAuditReader | undefined;
   /** 只读数据源（E1-c）：待审批与规则覆盖。未装配时对应端点回 503。 */
   readers?: AdminApiReaders | undefined;
+  /**
+   * 写端点（E1-d）：审批 / 规则 / 活动状态 / 名单导出。未装配时对应端点回 503。
+   *
+   * 只有机器人进程内的回环监听口会装配它；`pnpm admin:api` 只读巡检模式不装配。
+   */
+  writers?: AdminApiWriters | undefined;
   /** 权限画像（E2-d）：给 `/auth/me` 附带，前端据此隐藏入口（服务端仍强校验）。 */
   permissionsOf?: ((userId: string) => Promise<AdminApiPermissionsView>) | undefined;
 }
@@ -71,10 +80,16 @@ export interface AdminApiPendingItem {
 /** 某个群的规则覆盖（`/api/rules`）：原始覆盖行，合并生效值的逻辑在机器人侧。 */
 export interface AdminApiRulesView {
   groupId: string;
-  /** `group_configs` 的覆盖行（没有覆盖时为 null）。 */
+  /** `group_configs` + `group_settings` 合并出的**覆盖字段**（没有覆盖时为 null）。 */
   override: Record<string, unknown> | null;
   /** `group_settings` 的键值覆盖（关键词等扩展字段）。 */
   settings: Array<{ key: string; value: string }>;
+  /**
+   * 合并全局默认后的**生效配置**（只读巡检模式不提供：它没有内存态服务）。
+   *
+   * 写端点校验「我改的到底生效成什么」要靠它；缺省时前端只展示覆盖字段。
+   */
+  effective?: Record<string, unknown> | undefined;
 }
 
 export interface AdminApiReaders {
@@ -84,6 +99,76 @@ export interface AdminApiReaders {
   notifyTopics(): Promise<AdminApiNotifyTopic[]>;
   /** 活动列表（含报名人数；群卡片广播目标在机器人侧管理）。 */
   activities(): Promise<AdminApiActivityItem[]>;
+}
+
+/** 通过 / 拒绝入群申请后的回执。 */
+export interface AdminApiJoinDecision {
+  requestId: string;
+  groupId: string;
+  status: string;
+  message: string;
+}
+
+/** 规则写回执。 */
+export interface AdminApiRuleUpdateResult {
+  groupId: string;
+  /** `global` = 写的是全局默认规则（`__default__`）。 */
+  locale: "global" | "group";
+  fields: string[];
+  message: string;
+}
+
+/** 活动状态变更回执。 */
+export interface AdminApiActivityResult {
+  activityId: string;
+  code: string;
+  groupId: string;
+  status: string;
+  message: string;
+}
+
+/** 活动名单 CSV。 */
+export interface AdminApiCsvExport {
+  filename: string;
+  csv: string;
+  rows: number;
+  /** 是否含学号 / 班级 / 学院等隐私列。 */
+  full: boolean;
+}
+
+/** 活动状态写动作。 */
+export type AdminApiActivityAction = "open" | "close" | "cancel";
+
+/**
+ * 写端点（E1-d）。
+ *
+ * HTTP 层只做「取参数 → 调 writer → 序列化」，权限判据、领域服务调用与审计都在
+ * writer 里（见 `backend.ts`）：这条边界让 HTTP 层不必重复实现业务规则，
+ * 也让「只读巡检模式」（不装 writers）天然写不了任何东西。
+ */
+export interface AdminApiWriters {
+  approveJoin(requestId: string, actorId: string): Promise<AdminApiJoinDecision>;
+  rejectJoin(
+    requestId: string,
+    actorId: string,
+    reason: string,
+  ): Promise<AdminApiJoinDecision>;
+  updateRule(
+    groupId: string,
+    field: string,
+    value: string,
+    actorId: string,
+  ): Promise<AdminApiRuleUpdateResult>;
+  setActivityStatus(
+    code: string,
+    action: AdminApiActivityAction,
+    actorId: string,
+  ): Promise<AdminApiActivityResult>;
+  exportActivityCsv(
+    code: string,
+    actorId: string,
+    options: { full: boolean },
+  ): Promise<AdminApiCsvExport>;
 }
 
 export interface AdminApiActivityItem {
@@ -242,6 +327,8 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
           .send(errorBody("rate_limited", "请求过于频繁，请稍后再试。"));
       }
       request.adminMachineScopes = machine.scopes;
+      // 审计 actor：机器令牌用前缀（完整令牌绝不进审计 / 日志 / 数据库）
+      request.adminMachineActor = `machine:${machine.token.slice(0, 8)}`;
       // 机器令牌不涉及 cookie，因此不需要 CSRF 头
       return;
     }
@@ -399,6 +486,135 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     };
   });
 
+  // ------------------------------------------------------------------ 写端点（E1-d）
+  //
+  // 统一形状：取路径 / 请求体参数 → 调 `writers` → 原样序列化领域层回执。
+  // 权限判据（本群群管理员 130 / 平台超管 240）、领域服务调用与审计都在 writer 里；
+  // writer 抛 `AdminApiRequestError` 时由下面的 errorHandler 映射成 400/403/404/409。
+
+  /** 审计 actor：会话用户；机器令牌用 `machine:<前缀>`（完整令牌不进日志 / 数据库）。 */
+  const actorOf = (request: FastifyRequest): string =>
+    request.adminSession?.userId ?? request.adminMachineActor ?? "unknown";
+
+  /** 通过入群申请（复用 `JoinApprovalService`，官方接口成功后才落地本地状态）。 */
+  app.post("/api/pending/:requestId/approve", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { requestId } = request.params as { requestId: string };
+    const result = await writers.approveJoin(requestId, actorOf(request));
+    return { ok: true, ...result };
+  });
+
+  /** 拒绝入群申请：请求体 `{ reason }`（可空，空 = 官方默认文案）。 */
+  app.post("/api/pending/:requestId/reject", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { requestId } = request.params as { requestId: string };
+    const body = (request.body ?? {}) as { reason?: unknown };
+    const reason = typeof body.reason === "string" ? body.reason : "";
+    const result = await writers.rejectJoin(requestId, actorOf(request), reason);
+    return { ok: true, ...result };
+  });
+
+  /** 写规则：`{ group, field, value }`；非法值整体拒绝（不会写半套）。 */
+  app.put("/api/rules", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const group = typeof body.group === "string" ? body.group.trim() : "";
+    if (group.length === 0) {
+      return reply
+        .code(400)
+        .send(
+          errorBody(
+            "bad_request",
+            "需要 group（群 ID / #群短码 / 全局用 __default__）。",
+          ),
+        );
+    }
+    const field = typeof body.field === "string" ? body.field.trim() : "";
+    if (field.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 field（规则字段名）。"));
+    }
+    if (typeof body.value !== "string") {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "value 必须是字符串（清空用空串）。"));
+    }
+    const result = await writers.updateRule(
+      group,
+      field,
+      body.value,
+      actorOf(request),
+    );
+    return { ok: true, ...result };
+  });
+
+  const ACTIVITY_ACTIONS = new Set(["open", "close", "cancel"]);
+
+  /** 活动状态：`POST /api/activities/:code/open|close|cancel`。 */
+  app.post("/api/activities/:code/:action", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { code, action } = request.params as { code: string; action: string };
+    if (!ACTIVITY_ACTIONS.has(action)) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "动作只能是 open / close / cancel。"));
+    }
+    const result = await writers.setActivityStatus(
+      code,
+      action as "open" | "close" | "cancel",
+      actorOf(request),
+    );
+    return { ok: true, ...result };
+  });
+
+  /**
+   * 活动名单 CSV：默认**脱敏**（清空学号 / 班级 / 学院），`?full=1` 才带隐私列。
+   *
+   * 两种都要求本群群管理员并写审计；响应带 UTF-8 BOM，Excel 直接打开不乱码。
+   */
+  app.get("/api/activities/:code/export.csv", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { code } = request.params as { code: string };
+    const query = request.query as Record<string, unknown>;
+    const full = queryString(query.full) === "1";
+    const result = await writers.exportActivityCsv(code, actorOf(request), {
+      full,
+    });
+    reply.header("content-type", "text/csv; charset=utf-8");
+    reply.header(
+      "content-disposition",
+      `attachment; filename="${result.filename}"`,
+    );
+    // BOM：没有它 Excel 会按本地编码猜，中文列名直接乱码
+    return reply.send(`\uFEFF${result.csv}`);
+  });
+
   app.post("/auth/logout", async (request, reply) => {
     sessions.destroy(readCookie(request.headers.cookie, ADMIN_SESSION_COOKIE));
     reply.header("set-cookie", sessionCookie("", config, 0));
@@ -410,6 +626,16 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     reply.code(404).send(errorBody("not_found", "没有这个接口。")),
   );
   app.setErrorHandler(async (error, _request, reply) => {
+    // 领域层给的判定（权限不足 / 参数非法 / 不存在 / 已被处理）：按原状态码回，不打日志噪声
+    if (error instanceof AdminApiRequestError) {
+      log.info("admin api request rejected", {
+        status: error.statusCode,
+        error: error.errorCode,
+      });
+      return reply
+        .code(error.statusCode)
+        .send(errorBody(error.errorCode, error.message));
+    }
     log.warn("admin api error", { error: String(error) });
     return reply.code(500).send(errorBody("internal_error", "服务内部错误。"));
   });

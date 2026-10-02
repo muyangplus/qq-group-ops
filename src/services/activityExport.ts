@@ -31,6 +31,13 @@ export interface ActivityExportInput {
   /** 候补名单（CSV 里带「候补」标记，排在正式报名之后）。 */
   waitlist?: readonly ActivityWaitlistEntry[] | undefined;
   operatorId: string;
+  /**
+   * 脱敏导出：清空学号 / 班级 / 学院三列（姓名与备注保留）。
+   *
+   * 管理 API 的 `export.csv` 默认脱敏，`?full=1` 才带隐私列（两种都写审计）；
+   * 指令层 `/export` 不传，保持导出完整名单的既有行为。
+   */
+  maskPii?: boolean | undefined;
 }
 
 export interface ActivityExportServiceOptions {
@@ -129,14 +136,15 @@ export class ActivityExportService {
   /** 导出模型：正式报名在前，候补在后，序号连续。 */
   public buildRows(input: ActivityExportInput): ActivityExportRow[] {
     const rows: ActivityExportRow[] = [];
+    const maskPii = input.maskPii ?? false;
     let serial = 0;
     for (const registration of input.registrations) {
       serial += 1;
-      rows.push(this.toRow(serial, registration.userId, registration.displayName, registration.note, false));
+      rows.push(this.toRow(serial, registration.userId, registration.displayName, registration.note, false, maskPii));
     }
     for (const entry of input.waitlist ?? []) {
       serial += 1;
-      rows.push(this.toRow(serial, entry.userId, entry.displayName, entry.note, true));
+      rows.push(this.toRow(serial, entry.userId, entry.displayName, entry.note, true, maskPii));
     }
     return rows;
   }
@@ -147,8 +155,9 @@ export class ActivityExportService {
     displayName: string,
     note: string,
     waitlisted: boolean,
+    maskPii: boolean,
   ): ActivityExportRow {
-    const profile = this.profiles?.get(userId);
+    const profile = maskPii ? undefined : this.profiles?.get(userId);
     return {
       serial,
       name: displayName.trim(),

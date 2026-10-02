@@ -232,6 +232,13 @@ export class ActivityService {
       .map(cloneActivity);
   }
 
+  /** 全部活动（不分群，管理 API 的列表端点用）；按创建时间升序，与 `listActivities` 一致。 */
+  public listAllActivities(): Activity[] {
+    return [...this.activities.values()]
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .map(cloneActivity);
+  }
+
   /** 设了定时提醒（`remindAt`）的活动；供 `ActivityReminderService` 轮询（C3）。 */
   public listActivitiesWithReminder(): Activity[] {
     return [...this.activities.values()]

@@ -26,6 +26,7 @@ export interface PrivacyCounts {
   activitySubscriptions: number;
   activityNotifications: number;
   menuDeliveries: number;
+  adminTokens: number;
 }
 
 export type PrivacyTargetKey = keyof PrivacyCounts;
@@ -121,6 +122,13 @@ const STEPS: readonly PrivacyStep[] = [
     where: "user_id = {{user}}",
     assignments: "user_id = $1",
   },
+  {
+    key: "adminTokens",
+    label: "管理 API 登录令牌",
+    where: "user_id = {{user}}",
+    // 顺手标记为已用：占位 id 兑出来的会话本来就没有任何角色，但不该留一张还能兑的令牌
+    assignments: "user_id = $1, used_at = NOW()",
+  },
 ];
 
 /** 表名只在这里出现一次，避免每张表写两遍 SQL。 */
@@ -182,6 +190,11 @@ const TABLES: Record<PrivacyTargetKey, { table: string; select: string }> = {
   menuDeliveries: {
     table: "menu_deliveries",
     select: "SELECT user_id, pushed_at FROM menu_deliveries",
+  },
+  adminTokens: {
+    table: "admin_api_tokens",
+    // 令牌哈希不进导出（对当事人毫无意义，且没必要多带一份凭据材料）
+    select: "SELECT user_id, created_at, expires_at, used_at FROM admin_api_tokens",
   },
 };
 
@@ -319,6 +332,7 @@ export function emptyCounts(): PrivacyCounts {
     activitySubscriptions: 0,
     activityNotifications: 0,
     menuDeliveries: 0,
+    adminTokens: 0,
   };
 }
 

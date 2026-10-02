@@ -25,6 +25,7 @@ import { formatDisplayTime } from "./core/timeFormat.js";
 import { retryWithBackoff } from "./core/retry.js";
 import { loadEnvFile } from "./env.js";
 import { attachGateway } from "./gatewayRunner.js";
+import { startAdminApiHost, type AdminApiHost } from "./adminApi/host.js";
 import { connectPersistence, type Persistence } from "./persistence.js";
 import { createRuntime, type Runtime } from "./runtime.js";
 import { escapeCardText, renderCard } from "./services/cardTemplate.js";
@@ -185,6 +186,8 @@ async function main(): Promise<void> {
           }
         : {}),
       migration: persistence?.migration,
+      // 管理 API 的 `/api/status` 要展示数据库类型（内存模式为 undefined）
+      databaseDriver: persistence?.driver,
     },
   );
   if (persistence) {
@@ -204,6 +207,15 @@ async function main(): Promise<void> {
   await announceRollbackIfAny(runtime);
   // 上次 `/restart` 留下的回执：给发起人私信一条「已重启」（说明进程管理器真的拉回来了）
   await announceRestartIfAny(runtime);
+
+  /**
+   * 管理 API（E1-d）：在机器人进程内起**第二个回环监听口**（默认 `127.0.0.1:8787`），
+   * 与 webhook 端口互不相干；读写都走上面这一份服务图（同一份内存态、同一个 tick）。
+   *
+   * 端口被占 / 监听失败只记错误，**不让机器人起不来**（管理面是旁路能力）；
+   * 自检模式在上面已经 return，不会占端口。
+   */
+  const adminApiHost = await startAdminApiIfEnabled(runtime);
 
   const retention = new RetentionService(
     runtime.auditLog,
@@ -390,6 +402,7 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     scheduler.stop();
     deployWatcher.stop();
+    await adminApiHost?.close();
     await gateway.stop();
     await runtime.flush();
     await persistence?.close();
@@ -919,4 +932,44 @@ async function alertUnknownEvent(
     topic,
     recipients: recipients.length,
   });
+}
+
+/**
+ * 起管理 API 的同进程回环监听口（E1-d）。
+ *
+ * 三种「不起」都走同一条路：**不阻塞机器人启动**，只把原因写进日志：
+ * - `ADMIN_API_ENABLED` 没开（`runtime.adminApiHost` 为 undefined）→ 静默返回；
+ * - 纯内存模式没有令牌仓储 → 无法兑换登录令牌，起了也没人进得来；
+ * - 端口被占 / 监听失败 → 管理面是旁路能力，不该拖垮收消息。
+ */
+async function startAdminApiIfEnabled(
+  runtime: Runtime,
+): Promise<AdminApiHost | undefined> {
+  const source = runtime.adminApiHost;
+  if (!source) {
+    return undefined;
+  }
+  const log = getLogger("main");
+  if (!source.tokens) {
+    log.warn("管理 API 已开启但没有数据库，跳过监听口", {
+      hint: "DATABASE_URL=memory 时没有令牌表，无法签发/兑换登录令牌。",
+    });
+    return undefined;
+  }
+  try {
+    return await startAdminApiHost({
+      config: source.config,
+      tokens: source.tokens,
+      backend: source.backend,
+      version: appVersion(),
+      uptimeMs: () => Math.round(process.uptime() * 1000),
+      logger: getLogger("admin-api"),
+    });
+  } catch (error) {
+    log.error("管理 API 监听失败（机器人继续运行）", {
+      error: error instanceof Error ? error.message : String(error),
+      hint: "端口可能被占用；改 ADMIN_API_PORT 或先停掉旧进程。",
+    });
+    return undefined;
+  }
 }

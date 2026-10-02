@@ -143,6 +143,18 @@ export class JoinAuditService {
   }
 
   /**
+   * 全局待审批列表（管理 API 的只读 / 审批端点用）。
+   *
+   * 与 `pending(groupId)` 同一口径：查询即懒清理过期申请；调用方自己排序与分页。
+   */
+  public listPending(): JoinRequest[] {
+    this.expireStalePending();
+    return [...this.requests.values()]
+      .filter((request) => request.status === JoinRequestStatus.Pending)
+      .map((request) => ({ ...request }));
+  }
+
+  /**
    * 把超过 TTL 的待审批申请标记为过期（`expired`），返回条数。
    *
    * 只改状态、不删数据：`/audit` 与 `/whois` 仍能查到；`/pending`、推送与统计自动不再包含它。
