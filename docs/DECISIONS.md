@@ -1314,8 +1314,8 @@
 ## ADR-0058：管理后台写操作与指令层**同源**，风险动作先"看得清"再做
 
 - 状态：已实现（未发版，见 CHANGELOG `[Unreleased]`；处罚 / 黑名单 / 申诉先落地，
-  随后规则关键词与恢复继承、通知门槛与测试推送、别名表、**活动创建与发布群绑定**也落地，
-  P2 只剩活动字段编辑）
+  随后规则关键词与恢复继承、通知门槛与测试推送、别名表、活动创建与发布群绑定、
+  **活动字段编辑**也落地 —— §3 的 P2 写操作全部搬完，只剩 P3 的权限授予 / 撤销）
 - 背景：管理后台的只读面（ADR-0056 / ADMIN-BACKEND §3 P1）做完后，下一步是把写操作搬上来。
   写操作的风险与只读完全不是一个量级：误点一次可能把人踢出版、全局拉黑、或撤销一条处罚。
   而机器人里这套动作已经有成熟语义（谁能做、做了什么通知、连带什么后果），
@@ -1326,7 +1326,9 @@
      `PunishmentService.release`（通过 = 撤销处罚）+ `ModerationNotifier`（私信申诉人）；
      规则关键词与恢复继承 → `GroupConfigStore.setOverride` / `clearFields` / `removeOverride`；
      通知门槛 → `NotificationService.setTopicLevel` / `resetTopicLevels`；别名表 → `ClassAliasService`；
-     活动 → `ActivityService.createActivity` / `bindGroup` / `unbindGroup`（创建即草稿并自动绑定创建群）。
+     活动 → `ActivityService.createActivity` / `bindGroup` / `unbindGroup`（创建即草稿并自动绑定创建群）、
+     改字段 → `activitySettings.ts` 的 `resolveActivitySetting` + `applyActivitySettingValue`
+     （与 `/activity set` 同一份字段表、同一套解析，连带「满员广播 / 变更私信」）。
      因此**通知话术、官方接口调用、连带效果天然一致**，管理面只多一层「入口是浏览器」；
   2. **门槛逐条与指令层对齐**：处罚动作 / 申诉复核 / 本群黑名单 = 本群审核员 120；
      `scope=global` 的黑名单 = 平台超管 240。管理 API **不**擅自抬高或降低；
@@ -1349,16 +1351,22 @@
 - 影响：`src/adminApi/{server,backend}.ts`（E1-j / E1-k 的写端点 + `punish` / `addBlacklist` /
   `removeBlacklist` / `decideAppeal` / `setNotifyLevel` / `resetNotifyLevels` / `sendNotifyTest` /
   `addRuleKeywords` / `removeRuleKeywords` / `resetRuleFields` / `resetRuleGroup` / `setAlias` /
-  `removeAlias` / `createActivity` / `bindActivityGroup` / `unbindActivityGroup`）、
-  `src/adminApi/errors.ts`（复用 `conflict`）、`src/runtime.ts`（把 `moderationNotifier` 等
-  领域服务注入管理后端，让通知结论走同一条私信通道）；
+  `removeAlias` / `createActivity` / `bindActivityGroup` / `unbindActivityGroup` / `updateActivity`
+  + `GET /api/activities/fields`）、`src/adminApi/errors.ts`（复用 `conflict`）、
+  `src/services/activitySettings.ts`（字段表 / 解析 / 执行，指令层与管理后台共用）、
+  `src/services/commands/activityCommands.ts`（`applyActivitySetting` 变成薄封装）、
+  `src/runtime.ts`（把 `moderationNotifier` 等领域服务与 `AdminCommandService.updateActivitySetting`
+  注入管理后端，让通知结论走同一条私信通道）；
   前端 `PunishmentsView` / `BlacklistView` / `AppealsView` / `NotifyView` / `RulesView` /
   `AliasesView` / `ActivitiesView` 加操作列与二次确认弹窗。
-  测试：`test/adminApiP2Writes.test.ts`（24 条：解除连带通过申诉 / 改时长 / 移出群 / 拉黑的本群与全局
+  测试：`test/adminApiP2Writes.test.ts`（29 条：解除连带通过申诉 / 改时长 / 移出群 / 拉黑的本群与全局
   权限 / 权限不足写拒绝审计 / 黑名单增删与「不在名单里」的语义 / 申诉通过与驳回 / 重复处理 409 /
-  不存在 404 / 关键词逐条增删 / 恢复继承 / 别名 / 通知门槛与测试推送 / 活动创建与发布群绑定）、
+  不存在 404 / 关键词逐条增删 / 恢复继承 / 别名 / 通知门槛与测试推送 / 活动创建与发布群绑定 /
+  改活动字段的旧值 → 新值 / 满员广播标记 / 递补不私信 / 非法值不落库）、
+  `test/activitySettings.test.ts`（14 条：字段表与别名唯一性 / 各字段补丁与 clear / 连带副作用
+  顺序 / capacity clear 生效 / 递补释放冻结名额）、
   `test/adminApiServer.test.ts`（HTTP 层：缺 CSRF 403、非法 action 400、缺 `seconds` 400、
-  本群黑名单缺 `group` 400、只读巡检 503）。
-  **能力边界**：活动**字段编辑**（先抽共享的字段解析与连带通知再搬）、权限授予 / 撤销（P3）
-  尚未搬上来（仍在机器人里做）；后台的批量操作一律不支持。
+  本群黑名单缺 `group` 400、活动字段目录与 PUT 的参数校验、只读巡检 503）。
+  **能力边界**：只剩 P3 的权限授予 / 撤销（`/perm`）尚未搬上来（仍在机器人里做）；
+  后台的批量操作一律不支持。
 

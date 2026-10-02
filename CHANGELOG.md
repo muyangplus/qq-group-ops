@@ -38,9 +38,17 @@
     所以界面只在绑定数 > 1 时给「解绑」按钮；
   - 列表每条现在显示**当前发布群**与截止时间（`boundGroups` / `closeAt`），
     三条写操作都写 `admin_api:activity_create` / `_bind` / `_unbind` 审计；
-  - **字段编辑（标题 / 名额 / 截止 / 简介 / 链接 / 报名限制 / 递补 / 提醒）没搬**：那套字段解析
-    与「满员 / 改动」通知目前只存在于 `activityCommands`，先抽成共享模块再搬，
-    否则后台改字段会漏广播、漏通知（见 [TODO.md](TODO.md) §5 P2）。
+- **管理后台的「活动」页能改字段了**（P2 第五批，收尾）：
+  - **与 `/activity set <短码> <字段> <值>` 同一套写法**（含中文别名、`clear` 清空）：两边现在
+    共用 `src/services/activitySettings.ts` 的字段表与解析层，所以「名额调小到满员要广播
+    『活动已满』」「改完私信已报名 / 候补者」这些连带效果逐字一致（递补方式与指令层一样不私信）；
+  - 表单字段由服务端 `GET /api/activities/fields` 下发（与解析层同一份表：中文名 / 输入类型 /
+    提示 / 能否 clear），页面按它渲染，不再各写一套字段清单；`PUT /api/activities/:code`
+    写审计（`admin_api:activity_update`，理由里带「旧值 → 新值」）；
+  - **字段解析抽成共享模块**（`activitySettings.ts`：字段表 + `resolveActivitySetting` 解析 +
+    `applyActivitySettingValue` 执行）：指令层、配置卡回调与管理后台共用同一份；
+  - 至此 [docs/ADMIN-BACKEND.md](docs/ADMIN-BACKEND.md) §3 的 P2 写操作**全部落地**，
+    后台只剩 P3 的权限授予 / 撤销（`/perm`）。
 
 - **管理后台补齐「看得清」的只读面**（[docs/ADMIN-BACKEND.md](docs/ADMIN-BACKEND.md) §3 P1）：新增
   **处罚 / 黑名单 / 申诉 / 投递** 四个页面与对应端点（`/api/punishments`、`/api/blacklist`、
@@ -72,6 +80,11 @@
 
 ### 修复
 
+- **「通知」页的话题表不再永远是空的**：`GET /api/notify/topics` 回的是 `{ topics: [...] }`，
+  前端却当数组直接塞进列表（页面只剩「没有话题」）。现在按服务端形状拆包。
+- **`/activity set <短码> capacity clear` 真的能取消名额上限了**：`{ capacity: undefined }`
+  以前被 `updateActivity` 的「非 undefined 才处理」判断静默忽略 —— 指令回「已更新 名额」，
+  可上限还在。现在按 `"capacity" in patch` 判断，与 `closeAt` / `remindAt` 的 clear 语义一致。
 - **重启确认卡与重启回执显示的是「运行版本」而不是磁盘版本**：部署窗口里磁盘已经是新版本，
   以前确认卡会把新版本显示成「当前版本」，回执还会写成「vX → vX」（看不出到底换了什么）。
 

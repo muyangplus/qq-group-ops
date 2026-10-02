@@ -272,12 +272,12 @@
     班级库未加载时按服务原话回 400（「先在服务器执行 `pnpm class:index`」）；
     删不存在的别名回 `ok: false` 与说明，不静默成功。
 
-### E1-k 写操作：活动创建 / 绑定群 / 解绑（P2，0.24.2 起）
+### E1-k 写操作：活动创建 / 绑定群 / 改字段（P2，0.24.2 起）
 
-> 与 **E1-j** 同一套三条口径（同源 / 不可逆要确认 / 每条写审计）。活动**字段编辑**
-> （标题 / 名额 / 截止 / 简介 / 链接 / 报名限制 / 递补 / 提醒）**暂不搬**：那套字段解析与
-> 「满员 / 改动」通知目前只存在于 `activityCommands` 的 `applyActivitySetting` 里，
-> 先抽成共享模块再搬，否则后台改字段会漏广播、漏通知（理由见 [TODO.md](../TODO.md) §5 P2）。
+> 与 **E1-j** 同一套三条口径（同源 / 不可逆要确认 / 每条写审计）。字段解析与两个连带副作用
+> （名额调小到满员要广播「活动已满」、改完私信已报名 / 候补者）现在住在共享模块
+> `src/services/activitySettings.ts`，指令层 `/activity set` 与管理后台**调同一份**
+> （`resolveActivitySetting` + `applyActivitySettingValue`），所以两边不可能再漂移。
 
 50. `POST /api/activities { group, title }`（本群群管理员 130）：新建活动，与 `/activity create`
     同一个 `ActivityService.createActivity`。**建出来是草稿、不广播**，并**自动绑定创建群**
@@ -288,10 +288,17 @@
     **重复绑定是幂等空操作**（消息说明「已经绑定过」，不报错）；**解绑最后一行绑定会回落到归属群**
     （`listBoundGroups` 既有语义），所以界面只在绑定数 > 1 时给「解绑」按钮。
     三条写各写 `admin_api:activity_create` / `admin_api:activity_bind` / `admin_api:activity_unbind` 审计；
-    `GET /api/activities` 列表也补了 `boundGroups` / `closeAt` 字段（页面显示发布群与截止时间）。
+    `GET /api/activities` 列表也补了 `boundGroups` / `closeAt` 字段（页面显示发布群与截止时间）；
+52. `GET /api/activities/fields`：**活动字段目录**（字段名 / 中文名 / 输入类型 / 提示 / 能否 `clear` /
+    改完是否私信），就是共享模块里的 `ACTIVITY_SETTING_FIELDS`。静态清单、不含数据，所以只要求
+    **登录**；页面按它渲染「改字段」表单，不再各写一套字段清单；
+53. `PUT /api/activities/:code { field, value }`（本群 130）：改一个活动字段，`field` / `value` 的
+    写法与 `/activity set <短码> <字段> <值>` **完全一致**（含中文别名、`clear` 清空）。
+    值不合法 / 字段不认识回 400（中文原因原样给界面，**不落库、不写审计**，与 `PUT /api/rules` 同口径）；
+    成功写 `admin_api:activity_update` 审计，理由里带「旧值 → 新值」（`describeActivitySetting` 生成）。
 
-**还没搬进后台的写操作**（[ADMIN-BACKEND.md](./ADMIN-BACKEND.md) §3 P2 余下的部分、以及 P3）：
-活动**字段编辑**（先抽共享的字段解析与连带通知，见上），以及 P3 的权限授予 / 撤销。
+**还没搬进后台的写操作**：[ADMIN-BACKEND.md](./ADMIN-BACKEND.md) §3 的 P2 **已全部落地**，
+只剩 P3 的权限授予 / 撤销（`/perm`，见该文档 §3 P3）。
 
 ### E1-g 只读端点的逐路由门槛（P1）
 
@@ -335,7 +342,8 @@
 | `POST /api/notify/test` | 任何登录管理员（**只发给自己**，收件人取会话）|
 | `POST /api/rules/keywords`、`POST /api/rules/reset-fields`、`POST /api/rules/reset` | 本群群管理员 130；`group=__default__` 要平台 240（与 `PUT /api/rules` 一致）|
 | `GET /api/aliases`、`PUT /api/aliases`、`DELETE /api/aliases/:alias` | 平台超管 240（别名表是全局配置）|
-| `POST /api/activities`、`POST /api/activities/:code/groups`、`DELETE /api/activities/:code/groups/:group` | 本群**群管理员 130**（与指令层 `create` / `bind` / `unbind` 一致；`code` 所属群决定判定对象）|
+| `POST /api/activities`、`POST /api/activities/:code/groups`、`DELETE /api/activities/:code/groups/:group`、`PUT /api/activities/:code` | 本群**群管理员 130**（与指令层 `create` / `bind` / `unbind` / `set` 一致；`code` 所属群决定判定对象）|
+| `GET /api/activities/fields` | **任意登录会话**（静态字段目录，不含任何数据）|
 
 - **不报错、只裁剪**：列表类端点（待审批 / 活动）对够不着的群直接少返回，而不是整条 403 ——
   多群管理员看到的自然是自己那几行；
@@ -375,8 +383,9 @@
       非法值由机器人侧解析器整体拒绝并原样显示；
     - **活动** `/activities`：按群 / 状态过滤 + 分页，开放 / 结束 / 取消（本群 130 起，
       已是目标状态的按钮禁用），「名单 / 完整名单」两个下载链接（`export.csv` 与 `?full=1`）；
-      另加「新建活动（草稿）」表单与每行的发布群绑定 / 解绑（本群 130，见 E1-k）；
-      每行列出当前发布群，绑定数 > 1 时才给「解绑」（最后一行会回落到归属群）。
+      另加「新建活动（草稿）」表单、每行的发布群绑定 / 解绑与**改字段**（本群 130，见 E1-k）；
+      每行列出当前发布群与截止时间，绑定数 > 1 时才给「解绑」（最后一行会回落到归属群）；
+      改字段的字段清单来自 `GET /api/activities/fields`，写法与 `/activity set` 一致（含 `clear`）。
 28. **E2-d 权限呈现**（✅ 已完成）：按 `/auth/me` 的两轴画像决定入口与可用性 ——
     非平台超管不显示「状态」入口、待审批 / 活动 / 规则的写按钮按本群 130 禁用、
     审计默认收敛到自己够权限的群；**全部只是体验**：服务端逐路由门槛（E1-g）与写端点判定
