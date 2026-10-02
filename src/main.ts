@@ -40,6 +40,7 @@ import { TickScheduler } from "./services/tickScheduler.js";
 import { DeployWatcher } from "./services/deployWatcher.js";
 import { NOTIFY_SCOPE_ALL, topicOfOfficialEvent } from "./services/notifyTopics.js";
 import {
+  preflightFailedCard,
   restartDoneCard,
   takeRestartNotice,
   writeRestartNotice,
@@ -442,9 +443,19 @@ async function main(): Promise<void> {
           requestedBy: info.requestedBy,
         });
         const restore = restoreDistFromBackup();
+        // 这两份「别重试同一个坏版本」的记忆**只作用于自动重试**：
+        // `failedVersions` 供卡片/诊断显示，`deployWatcher.blockVersion` 让部署监测不再反复试。
+        // **手动重试（含失败卡上的「重新检查并重启」）不查它们** —— 人在看着结果点，
+        // 想试几次试几次（用户明确要求；`restartCard` 的文案也这么写）。
         failedVersions.markFailed(targetVersion, reason, info.reason ?? "manual");
         deployWatcher.blockVersion(targetVersion, reason);
-        await notifyPreflightFailed(runtime, info, reason, restore);
+        await notifyPreflightFailed(
+          runtime,
+          info,
+          reason,
+          restore,
+          preflight.summary,
+        );
         return;
       }
       // 自检通过：这个构建没问题，清掉旧的失败记录
@@ -464,7 +475,9 @@ async function main(): Promise<void> {
     writeRestartNotice({
       userId: info.requestedBy,
       requestedAt: new Date().toISOString(),
-      version: appVersion(),
+      // **重启前的运行版本**（不是磁盘版本）：部署重启时磁盘已经是新版本了，
+      // 用 `appVersion()` 会让回执写成「vX → vX」，看不出到底换了什么。
+      version: runningVersionOf(),
       mode: "respawn",
       reason: info.reason ?? "manual",
       ...(info.targetVersion !== undefined
@@ -496,47 +509,23 @@ async function main(): Promise<void> {
 
 /**
  * 自检不过时的「重启已取消」卡：机器人**没有退出**，坏构建已换回上一版，
- * 卡上给「强制重启」和「再次检查」两个出口。
+ * 卡上给四个出口 + `data/startup-check.json` 的原文（内联一段，「自检结果」按钮给全文）。
+ *
+ * 卡片本身在 `restartNotice.ts`（纯函数，可单测）；这里只负责发给谁、投递失败只记日志。
  */
 async function notifyPreflightFailed(
   runtime: Runtime,
   info: RestartRequestInfo,
   reason: string,
   restore: { ok: boolean; detail: string },
+  summary?: Record<string, unknown>,
 ): Promise<void> {
-  const lines = [
-    "**机器人仍在运行上一版**（这次没有重启）。",
-    `**新版本**：v${info.targetVersion ?? onDiskVersion()}`,
-    `**原因**：${reason}`,
-    restore.ok
-      ? `已把坏构建换回上一版：${restore.detail}`
-      : `换回上一版没成功：${restore.detail}`,
-    "",
-    "修好新版本后重新部署（版本一变就会重新检查）；也可以点下面两个按钮：",
-    "「再次检查」只跑自检、不重启；「强制重启」跳过自检直接换版本（确认要看新版本行为时用）。",
-  ];
-  const rows = [
-    [
-      {
-        id: "force",
-        label: "强制重启",
-        callbackData: encodeCallback("restart", "force"),
-      },
-      {
-        id: "again",
-        label: "再次检查",
-        callbackData: encodeCallback("restart", "again"),
-      },
-    ],
-    [
-      {
-        id: "proc",
-        label: "看看进程状态",
-        callbackData: encodeCallback("status", "proc"),
-      },
-    ],
-  ];
-  const card = renderCard({ title: "重启已取消", lines, rows });
+  const card = preflightFailedCard({
+    targetVersion: info.targetVersion ?? onDiskVersion(),
+    reason,
+    restore,
+    ...(summary !== undefined ? { summary } : {}),
+  });
   // 自动重启（部署监测）发给全部全局超管；手动重启发给发起人
   const recipients =
     info.reason === "deploy"

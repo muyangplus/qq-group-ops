@@ -640,6 +640,10 @@ export function createRuntime(
         if (parsed.action === "again") {
           return adminCommands.restartCheckCard(userId).rich;
         }
+        // 失败卡上的「自检结果」：把 data/startup-check.json 原文发过来
+        if (parsed.action === "detail") {
+          return adminCommands.startupCheckCard(userId).rich;
+        }
         return undefined;
       },
     ],

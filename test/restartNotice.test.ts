@@ -6,6 +6,9 @@ import { describe, expect, it } from "vitest";
 
 import { appVersion } from "../src/core/buildInfo.js";
 import {
+  PREFLIGHT_SUMMARY_INLINE_MAX,
+  inlineSummary,
+  preflightFailedCard,
   restartDoneCard,
   takeRestartNotice,
   writeRestartNotice,
@@ -101,5 +104,78 @@ describe("restartNotice", () => {
     );
     expect(card.markdown).toContain("机器人已重启");
     expect(card.markdown).not.toContain("请求到启动");
+  });
+});
+
+/**
+ * 「重启已取消」卡（自检没过时）。
+ *
+ * 用户口径：**这时候要把 `data/startup-check.json` 发过来**（内联一段 + 一个「自检结果」按钮给全文），
+ * 并且说清「手动重试不限次数」——那条「同一版本只试一次」的限制只作用于部署监测的自动重试。
+ */
+describe("preflightFailedCard", () => {
+  const base = {
+    targetVersion: "0.24.0",
+    reason: "自检退出码 1（详见 data/startup-check.json）",
+    restore: { ok: true, detail: "坏构建已挪到 data/dist-broken，并从快照还原 dist" },
+  };
+
+  it("说清三件事：还在跑上一版 / 为什么没过 / 手动重试不限次数", () => {
+    const card = preflightFailedCard({
+      ...base,
+      summary: { ok: false, error: "database is not open" },
+    });
+
+    expect(card.markdown).toContain("重启已取消");
+    expect(card.markdown).toContain("机器人仍在运行上一版");
+    expect(card.markdown).toContain("**新版本**：v0.24.0");
+    expect(card.markdown).toContain("database is not open");
+    expect(card.markdown).toContain("手动重试不限次数");
+    expect(card.markdown).toContain("**自动重试**对同一版本只试一次");
+  });
+
+  it("内联自检原文，并把完整内容的入口做成按钮", () => {
+    const card = preflightFailedCard({
+      ...base,
+      summary: { ok: false, error: "boom", at: "2026-10-02T07:20:00.000Z" },
+    });
+    const keyboard = JSON.stringify(card.keyboard);
+
+    expect(card.markdown).toContain("data/startup-check.json");
+    expect(card.markdown).toContain('"error":"boom"');
+    // 四个出口 + 进程状态：重新检查并重启 / 自检结果 / 强制重启 / 再次检查 / 看看进程状态
+    expect(keyboard).toContain("cb:restart:go");
+    expect(keyboard).toContain("cb:restart:detail");
+    expect(keyboard).toContain("cb:restart:force");
+    expect(keyboard).toContain("cb:restart:again");
+    expect(keyboard).toContain("cb:status:proc");
+    expect(card.markdown).toContain("重新检查并重启");
+    expect(card.markdown).toContain("自检结果");
+  });
+
+  it("读不到自检文件时明确说明，而不是留一行空白", () => {
+    const card = preflightFailedCard(base);
+
+    expect(card.markdown).toContain("读不到 data/startup-check.json");
+  });
+
+  it("回滚失败也如实说（不让人以为已经换回上一版）", () => {
+    const card = preflightFailedCard({
+      ...base,
+      restore: { ok: false, detail: "没有可回滚的构建快照" },
+    });
+
+    expect(card.markdown).toContain("换回上一版没成功");
+    expect(card.markdown).toContain("没有可回滚的构建快照");
+  });
+
+  it("inlineSummary：超长截断并提示点按钮看全文", () => {
+    const long = { ok: false, error: "x".repeat(PREFLIGHT_SUMMARY_INLINE_MAX + 50) };
+
+    const text = inlineSummary(long);
+
+    expect(text.length).toBeLessThan(PREFLIGHT_SUMMARY_INLINE_MAX + 40);
+    expect(text.endsWith("（完整内容点「自检结果」）")).toBe(true);
+    expect(inlineSummary({ ok: true })).toBe('{"ok":true}');
   });
 });

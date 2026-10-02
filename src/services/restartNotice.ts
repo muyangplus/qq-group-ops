@@ -3,13 +3,17 @@ import { dirname } from "node:path";
 
 import { getLogger } from "../core/logger.js";
 import { formatDisplayTime } from "../core/timeFormat.js";
-import { renderCard } from "./cardTemplate.js";
+import { encodeCallback } from "./callbackData.js";
+import { renderCard, type CardButton } from "./cardTemplate.js";
 import type { RichMessage } from "./richMessages.js";
 
 const log = getLogger("restart-notice");
 
 /** 重启回执文件（相对启动目录，和 `data/` 下的库文件同居；gitignored）。 */
 export const RESTART_NOTICE_FILE = "data/restart-notice.json";
+
+/** 失败卡正文里内联的自检原文上限（完整内容走「自检结果」按钮）。 */
+export const PREFLIGHT_SUMMARY_INLINE_MAX = 300;
 
 export interface RestartNotice {
   /** 发起重启的人；部署自动重启时是占位符 `deploy-watcher`（不是真实用户）。 */
@@ -85,6 +89,83 @@ export function takeRestartNotice(
     log.warn("restart notice is not valid json", { file, error: String(error) });
   }
   return undefined;
+}
+
+/**
+ * 「重启已取消」卡（自检没过时发给超管 / 发起人）。
+ *
+ * 三件事必须说清：
+ * 1. **机器人还在跑上一版**（没有重启）—— 这是最容易被误解的一句；
+ * 2. **为什么没过**：退出码 + 原因，并把 `data/startup-check.json` 的原文**内联**一段
+ *    （完整内容点「自检结果」按钮发过来，见 `startupCheckCard`）；
+ * 3. **还能怎么办**：手动重试**不限次数**（「重新检查并重启」），自动重试才受
+ *    「同一版本只试一次」的限制；「强制重启」跳过自检、换完就看新版本行为。
+ */
+export function preflightFailedCard(input: {
+  /** 本次要换上去的版本（`info.targetVersion ?? 磁盘版本`）。 */
+  targetVersion: string;
+  /** 自检失败原因（`PreflightResult.reason`）。 */
+  reason: string;
+  /** 回滚结果（坏构建是否换回上一版）。 */
+  restore: { ok: boolean; detail: string };
+  /** `data/startup-check.json` 的内容（可能读不到）。 */
+  summary?: Record<string, unknown> | undefined;
+}): RichMessage {
+  const lines = [
+    "**机器人仍在运行上一版**（这次没有重启）。",
+    `**新版本**：v${input.targetVersion}`,
+    `**原因**：${input.reason}`,
+    ...(input.summary
+      ? [`**自检结果**（data/startup-check.json）：`, "```json", inlineSummary(input.summary), "```"]
+      : ["**自检结果**：读不到 data/startup-check.json（自检进程可能没跑到写文件那一步）。"]),
+    input.restore.ok
+      ? `已把坏构建换回上一版：${input.restore.detail}`
+      : `换回上一版没成功：${input.restore.detail}`,
+    "",
+    "「重新检查并重启」= 再跑一次自检，过了就换版本（没过会再来一张这张卡）。",
+    "**手动重试不限次数**；只有部署监测的**自动重试**对同一版本只试一次（它已经被拦掉了）。",
+    "也可以在修好新版本后重新部署 —— 版本一变就会自动重新检查。",
+  ];
+  return renderCard({
+    title: "重启已取消",
+    lines,
+    rows: [
+      [
+        callbackButton("retry", "重新检查并重启", encodeCallback("restart", "go")),
+        callbackButton("report", "自检结果", encodeCallback("restart", "detail")),
+      ],
+      [
+        callbackButton("force", "强制重启", encodeCallback("restart", "force")),
+        callbackButton("again", "再次检查", encodeCallback("restart", "again")),
+      ],
+      [callbackButton("proc", "看看进程状态", encodeCallback("status", "proc"))],
+    ],
+  });
+}
+
+/** 内联展示的紧凑 JSON：太长就截断（完整内容走「自检结果」按钮）。 */
+export function inlineSummary(
+  summary: Record<string, unknown>,
+  max: number = PREFLIGHT_SUMMARY_INLINE_MAX,
+): string {
+  let text: string;
+  try {
+    text = JSON.stringify(summary);
+  } catch {
+    text = String(summary);
+  }
+  return text.length > max
+    ? `${text.slice(0, max)}…（完整内容点「自检结果」）`
+    : text;
+}
+
+/** 本地小工具：避免服务层依赖命令层（与 `deployWatcher.ts` 同样的做法）。 */
+function callbackButton(
+  id: string,
+  label: string,
+  callbackData: string,
+): CardButton {
+  return { id, label, callbackData };
 }
 
 /**

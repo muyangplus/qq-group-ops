@@ -58,6 +58,7 @@ import {
   restartCard,
   restartCheckCard,
   restartNowCard,
+  startupCheckCard,
 } from "./commands/restartCommands.js";
 import {
   deployCancelCard,
@@ -844,6 +845,15 @@ export class AdminCommandService {
   /** 回调：`cb:restart:again` —— 只跑一次退出前自检，不重启。 */
   public restartCheckCard(userId: string): CardResult {
     return restartCheckCard(this.context(), userId);
+  }
+
+  /** 回调：`cb:restart:detail` —— 把 `data/startup-check.json` 原文发过来。 */
+  public startupCheckCard(userId: string, file?: string): CardResult {
+    return startupCheckCard(
+      this.context(),
+      userId,
+      file === undefined ? {} : { file },
+    );
   }
 
   /** 回调：`cb:deploy:cancel` —— 取消因新版本的自动重启。 */
