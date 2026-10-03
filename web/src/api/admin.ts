@@ -485,6 +485,32 @@ export interface AdminApiHealthView {
   };
 }
 
+/** 订阅关系只读的一行（`GET /api/notify/subscriptions`，平台超管 240）。 */
+export interface AdminApiNotifySubscriptionItem {
+  userId: string;
+  /** 展示口径：QQ号 → 短码 → 截断后的 openid（完整 id 在「详情」）。 */
+  user: AdminApiEntityRef;
+  topic: string;
+  topicLabel: string;
+  /** `all` = 「我担任审核员的所有群」；`group` = 某个具体群。 */
+  scope: "all" | "group";
+  groupId?: string;
+  group?: AdminApiEntityRef;
+  /** 现在的角色还够不够这个门槛：**订阅了也可能收不到**。 */
+  eligible: boolean;
+  /** 不够门槛时的人话原因（够的话空串）。 */
+  reason: string;
+}
+
+export interface AdminApiNotifySubscriptionsView {
+  /** 每个话题的订阅计数（与话题表那一列同一口径）。 */
+  counts: AdminApiNotifyTopic[];
+  total: number;
+  page: number;
+  pageSize: number;
+  items: AdminApiNotifySubscriptionItem[];
+}
+
 /** 降级模块「重试加载」的结果（运维写，平台超管 240）。 */
 export interface AdminApiModuleRetryResult {
   module: { key: string; label: string; state: string; error?: string };
@@ -657,6 +683,33 @@ export const adminApi = {
     // 以前直接当数组用，页面表格永远是空的。
     (await api.get<{ topics: AdminApiNotifyTopic[] }>("/api/notify/topics"))
       .topics,
+
+  /**
+   * 订阅关系只读（平台超管 240）：谁订了哪些话题、订的哪个范围、**现在够不够门槛**。
+   *
+   * `ineligible` = 只看「订了但当前收不到」的行（订阅后角色掉了 / 活动通知没绑 QQ 号）——
+   * 这是「我说了怎么没通知」最直接的答案。
+   */
+  notifySubscriptions: (
+    params: {
+      topic?: string | undefined;
+      group?: string | undefined;
+      user?: string | undefined;
+      ineligible?: boolean | undefined;
+      page?: number | undefined;
+      pageSize?: number | undefined;
+    } = {},
+  ): Promise<AdminApiNotifySubscriptionsView> =>
+    api.get<AdminApiNotifySubscriptionsView>(
+      `/api/notify/subscriptions${query({
+        topic: params.topic,
+        group: params.group,
+        user: params.user,
+        ineligible: params.ineligible === true ? 1 : undefined,
+        page: params.page,
+        pageSize: params.pageSize,
+      })}`,
+    ),
 
   /** 改某个话题的门槛（平台超管 240；与 `/notify level` 同一份存储）。 */
   setNotifyLevel: (

@@ -115,6 +115,9 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
       "/api/blacklist",
       "/api/appeals",
       "/api/notify/deliveries",
+      "/api/notify/subscriptions",
+      // 运维写：降级模块重试加载（与 /status proc 同一入口）
+      "/api/health/modules/",
       "/api/join/sync",
       // E5 统计报表
       "/api/reports",
@@ -203,6 +206,10 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
     expect(view).toContain("adminApi.setNotifyLevel");
     expect(view).toContain("adminApi.resetNotifyLevels");
     expect(view).toContain("adminApi.sendNotifyTest");
+    // 订阅关系只读（谁订了什么 / 现在还够不够门槛）：展示走 EntityLabel（不摊长 id）
+    expect(view).toContain("adminApi.notifySubscriptions");
+    expect(view).toContain("EntityLabel");
+    expect(view).toContain("eligible");
     expect(view).toContain("ModalDialog");
     // 门槛是全局的、只有平台超管能改；订阅是个人偏好，仍在机器人里改
     expect(view).toContain("session.isSuperAdmin");

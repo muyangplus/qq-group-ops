@@ -1217,6 +1217,132 @@ describe("管理 API HTTP 层", () => {
     await bareApp.close();
   });
 
+  it("/api/notify/subscriptions：平台超管 240 才看得到；筛选进 reader、分页在 HTTP 层", async () => {
+    const tokens = memoryTokens();
+    const calls: Array<Record<string, unknown>> = [];
+    const rows = [
+      {
+        userId: "u1",
+        user: userRef("u1"),
+        topic: "join",
+        topicLabel: "入群申请",
+        scope: "group" as const,
+        groupId: "g1",
+        group: groupRef("g1"),
+        eligible: false,
+        reason: "权限不足：入群申请推送只发给群管理员及以上。",
+      },
+      {
+        userId: "u2",
+        user: userRef("u2"),
+        topic: "bot_join",
+        topicLabel: "机器人入群",
+        scope: "all" as const,
+        eligible: true,
+        reason: "",
+      },
+    ];
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "test",
+      readAccessOf: async (userId) => ({
+        platformLevel: userId === "boss" ? 240 : 0,
+        groups: [{ groupId: "g1", level: 120 }],
+      }),
+      readers: {
+        pending: async () => [],
+        rules: async (groupId: string) => ({ groupId, override: null, settings: [] }),
+        notifyTopics: async () => [],
+        notifySubscriptions: async (options) => {
+          calls.push(options as Record<string, unknown>);
+          return {
+            items: rows,
+            total: rows.length,
+            counts: [
+              {
+                topic: "join",
+                label: "入群申请",
+                hint: "",
+                defaultLevel: 130,
+                level: 130,
+                allScope: 0,
+                groupScopes: 1,
+              },
+            ],
+          };
+        },
+      },
+    }).app;
+    const modToken = await tokens.issue({ userId: "mod", ttlMs: 60_000 });
+    const modLogin = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: modToken.token },
+    });
+    // 订阅是别人的个人偏好：非平台超管 403（连裁剪都不给）
+    const denied = await app.inject({
+      method: "GET",
+      url: "/api/notify/subscriptions",
+      headers: { cookie: cookieOf(modLogin) },
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const bossToken = await tokens.issue({ userId: "boss", ttlMs: 60_000 });
+    const bossLogin = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: bossToken.token },
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/notify/subscriptions?topic=join&ineligible=1&page=2&pageSize=1",
+      headers: { cookie: cookieOf(bossLogin) },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      total: 2,
+      page: 2,
+      pageSize: 1,
+      items: [{ userId: "u2" }],
+      counts: [{ topic: "join", groupScopes: 1 }],
+    });
+    // `ineligible` 这类查询参数由 HTTP 层翻译成 reader 选项，分页参数不往下传
+    expect(calls).toEqual([{ topic: "join", ineligibleOnly: true }]);
+    await app.close();
+
+    // 只读巡检模式：没有推送服务内存态 → 503
+    const bareTokens = memoryTokens();
+    const bareApp = buildAdminApiServer({
+      config: CONFIG,
+      tokens: bareTokens,
+      version: "test",
+      readAccessOf: async () => ({ platformLevel: 240, groups: [] }),
+      readers: {
+        pending: async () => [],
+        rules: async (groupId: string) => ({ groupId, override: null, settings: [] }),
+        notifyTopics: async () => [],
+      },
+    }).app;
+    const issued = await bareTokens.issue({ userId: "boss", ttlMs: 60_000 });
+    const bareLogin = await bareApp.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: issued.token },
+    });
+    const unavailable = await bareApp.inject({
+      method: "GET",
+      url: "/api/notify/subscriptions",
+      headers: { cookie: cookieOf(bareLogin) },
+    });
+    expect(unavailable.statusCode).toBe(503);
+    expect(unavailable.json()).toMatchObject({ error: "unavailable" });
+    await bareApp.close();
+  });
+
   it("/api/activities 需要登录，可按群/状态过滤 + 分页", async () => {
     const tokens = memoryTokens();
     const readers = {

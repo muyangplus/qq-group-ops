@@ -75,6 +75,7 @@ import type { NotifyChannel } from "../services/notifyTopics.js";
 import type { NotificationService } from "../services/notifications.js";
 import {
   NOTIFY_CHANNELS,
+  NOTIFY_SCOPE_ALL,
   NOTIFY_TOPIC_META,
 } from "../services/notifyTopics.js";
 import type { PermissionService } from "../services/permissions.js";
@@ -108,6 +109,8 @@ import type {
   AdminApiIdentityItem,
   AdminApiAliasItem,
   AdminApiAliasResult,
+  AdminApiNotifySubscriptionItem,
+  AdminApiNotifySubscriptionsView,
   AdminApiNotifyTopic,
   AdminApiRuleKeywordsResult,
   AdminApiRuleResetResult,
@@ -742,6 +745,75 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     },
 
     notifyTopics: notifyTopicViews,
+
+    /**
+     * 订阅关系只读（平台超管 240）：谁订了哪些话题、订的哪个范围、现在够不够门槛。
+     *
+     * 数据源是**推送服务的内存订阅表**（权威），不是 `notification_subscriptions` 原始行 ——
+     * 只有服务里才有「现在的角色还够不够」这份判据（`checkTopicReach`，与推送同一份）。
+     * 因此只读巡检模式（没有推送服务）回 503。
+     */
+    notifySubscriptions: async (options): Promise<AdminApiNotifySubscriptionsView> => {
+      const notifications = requireNotifications();
+      if (
+        options.topic !== undefined &&
+        !(NOTIFY_CHANNELS as readonly string[]).includes(options.topic)
+      ) {
+        throw badRequest(
+          `未知话题：${options.topic}。可用：${NOTIFY_CHANNELS.join(" / ")}`,
+        );
+      }
+      const wantedUser =
+        options.userId === undefined
+          ? undefined
+          : (deps.identityMap?.resolveUserId(options.userId) ?? options.userId);
+      const rows = notifications.listSubscriptions();
+      const items: AdminApiNotifySubscriptionItem[] = [];
+      for (const row of rows) {
+        if (options.topic !== undefined && row.topic !== options.topic) {
+          continue;
+        }
+        if (options.group !== undefined && row.scope !== options.group) {
+          continue;
+        }
+        if (wantedUser !== undefined && row.userId !== wantedUser) {
+          continue;
+        }
+        const reach = notifications.checkTopicReach(
+          row.userId,
+          row.topic,
+          row.scope,
+        );
+        if (options.ineligibleOnly === true && reach.ok) {
+          continue;
+        }
+        const all = row.scope === NOTIFY_SCOPE_ALL;
+        items.push({
+          userId: row.userId,
+          user: entities.user(row.userId),
+          topic: row.topic,
+          topicLabel: NOTIFY_TOPIC_META[row.topic].label,
+          scope: all ? "all" : "group",
+          ...(all
+            ? {}
+            : { groupId: row.scope, group: entities.group(row.scope) }),
+          eligible: reach.ok,
+          reason: reach.reason,
+        });
+      }
+      return {
+        items,
+        total: items.length,
+        // 计数始终按**全部**订阅行算（不受筛选影响）：它对应话题表那一列
+        counts: buildNotifyTopicViews(
+          rows.map((row) => ({
+            userId: row.userId,
+            scope: `${row.topic}:${row.scope}`,
+          })),
+          (topic) => notifications.topicLevel(topic),
+        ),
+      };
+    },
 
     aliases: async () => aliasItems(),
 

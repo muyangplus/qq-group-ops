@@ -248,6 +248,45 @@ export class NotificationService {
     return result.sort();
   }
 
+  /**
+   * 全部订阅行（管理面只读视图用）：`{ userId, topic, scope }`，`scope` 是**业务范围**
+   * （`__all__` 或某个群）。排序按 话题 → 用户 → 范围，输出稳定（列表分页不会跳）。
+   *
+   * 只做枚举：订阅是个人偏好，管理面**只看不改**（改仍在机器人里用 `/notify`）。
+   * 存储键是 `话题:范围`；前缀不是已知话题的坏行直接跳过（宁可少显示，也不瞎猜话题）。
+   */
+  public listSubscriptions(): Array<{
+    userId: string;
+    topic: NotifyChannel;
+    scope: string;
+  }> {
+    const rows: Array<{ userId: string; topic: NotifyChannel; scope: string }> =
+      [];
+    for (const [userId, stored] of this.subscriptions) {
+      for (const raw of stored) {
+        const separator = raw.indexOf(":");
+        if (separator <= 0) {
+          continue;
+        }
+        const topic = raw.slice(0, separator);
+        if (!(NOTIFY_CHANNELS as readonly string[]).includes(topic)) {
+          continue;
+        }
+        rows.push({
+          userId,
+          topic: topic as NotifyChannel,
+          scope: raw.slice(separator + 1),
+        });
+      }
+    }
+    return rows.sort(
+      (left, right) =>
+        left.topic.localeCompare(right.topic) ||
+        left.userId.localeCompare(right.userId) ||
+        left.scope.localeCompare(right.scope),
+    );
+  }
+
   public subscribe(
     userId: string,
     scope: string,

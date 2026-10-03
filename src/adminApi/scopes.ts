@@ -103,6 +103,7 @@ export const ADMIN_API_ROUTE_SCOPES: readonly AdminApiRouteScope[] = [
   { method: "GET", url: "/api/audit/export.csv", scope: "read:audit" },
   { method: "GET", url: "/api/rules", scope: "read:rule" },
   { method: "GET", url: "/api/notify/topics", scope: "read:notify" },
+  { method: "GET", url: "/api/notify/subscriptions", scope: "read:notify" },
   { method: "GET", url: "/api/notify/deliveries", scope: "read:notify" },
   { method: "GET", url: "/api/punishments", scope: "read:punish" },
   { method: "GET", url: "/api/blacklist", scope: "read:blacklist" },

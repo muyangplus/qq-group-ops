@@ -347,6 +347,32 @@ export interface AdminApiDeliveriesView {
   };
 }
 
+/** 「订阅关系」只读视图里的一行（`GET /api/notify/subscriptions`，平台超管 240）。 */
+export interface AdminApiNotifySubscriptionItem {
+  userId: string;
+  user: AdminApiEntityRef;
+  topic: string;
+  topicLabel: string;
+  /** `all` = 「我担任审核员的所有群」（`__all__`）；`group` = 某个具体群。 */
+  scope: "all" | "group";
+  groupId?: string | undefined;
+  group?: AdminApiEntityRef | undefined;
+  /**
+   * 现在的角色还够不够这个门槛：**订阅了也可能收不到**
+   * （判据与推送同一份：`NotificationService.checkTopicReach`）。
+   */
+  eligible: boolean;
+  /** 不够门槛时的人话原因（例如「订阅『全部群』的活动通知需要先绑定 QQ 号」）；够的话是空串。 */
+  reason: string;
+}
+
+export interface AdminApiNotifySubscriptionsView {
+  items: AdminApiNotifySubscriptionItem[];
+  total: number;
+  /** 每个话题的订阅计数（订「全部群」的人数 / 按群的条数），与 `/api/notify/topics` 同一口径。 */
+  counts: AdminApiNotifyTopic[];
+}
+
 /**
  * 降级模块「重试加载」的结果（运维写，平台超管 240）。
  *
@@ -489,6 +515,20 @@ export interface AdminApiReaders {
         group?: string | undefined;
         status?: string | undefined;
       }) => Promise<AdminApiDeliveryItem[]>)
+    | undefined;
+  /**
+   * 订阅关系只读（`GET /api/notify/subscriptions`，平台超管 240）：
+   * 谁订了哪些话题、订的是哪个范围、**现在的角色还够不够门槛**。
+   *
+   * 订阅是个人偏好，这里只读；服务端回全量再由 HTTP 层分页。
+   */
+  notifySubscriptions?:
+    | ((options: {
+        topic?: string | undefined;
+        group?: string | undefined;
+        userId?: string | undefined;
+        ineligibleOnly?: boolean | undefined;
+      }) => Promise<AdminApiNotifySubscriptionsView>)
     | undefined;
   /** 运维只读（`/api/health`）：只读巡检模式没有进程内状态，不装配。 */
   health?: (() => Promise<AdminApiHealthView>) | undefined;
@@ -1483,6 +1523,52 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
       counts: [...counts.entries()]
         .map(([status, count]) => ({ status, count }))
         .sort((left, right) => right.count - left.count),
+    };
+  });
+
+  /**
+   * 订阅关系只读（`GET /api/notify/subscriptions`，平台超管 240）。
+   *
+   * 回答「我说了怎么没通知」的另一半：**他到底订没订、订的哪个范围、现在够不够门槛**
+   * （订阅了但角色掉下来也会被推送跳过 —— 判据与推送同一份 `checkTopicReach`）。
+   * 订阅是个人偏好：这里**只读**，改仍在机器人里用 `/notify`。
+   */
+  app.get("/api/notify/subscriptions", async (request, reply) => {
+    if (
+      !(await allowPlatformRead(request, reply, "GET /api/notify/subscriptions"))
+    ) {
+      return reply;
+    }
+    const reader = options.readers?.notifySubscriptions;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(
+          errorBody(
+            "unavailable",
+            "订阅关系数据源未装配（只读巡检模式 / 推送服务未启用）。",
+          ),
+        );
+    }
+    const query = request.query as Record<string, unknown>;
+    const topic = queryString(query.topic);
+    const group = queryString(query.group);
+    const user = queryString(query.user);
+    const view = await reader({
+      ...(topic !== undefined ? { topic } : {}),
+      ...(group !== undefined ? { group } : {}),
+      ...(user !== undefined ? { userId: user } : {}),
+      ...(queryString(query.ineligible) === "1" ? { ineligibleOnly: true } : {}),
+    });
+    const page = positiveQueryInt(query.page, 1);
+    const pageSize = Math.min(positiveQueryInt(query.pageSize, 50), 200);
+    const start = (page - 1) * pageSize;
+    return {
+      counts: view.counts,
+      total: view.total,
+      page,
+      pageSize,
+      items: view.items.slice(start, start + pageSize),
     };
   });
 

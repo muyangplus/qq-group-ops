@@ -1,21 +1,28 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
-import { adminApi, type AdminApiNotifyTopic } from "@/api/admin";
+import {
+  adminApi,
+  type AdminApiNotifySubscriptionItem,
+  type AdminApiNotifyTopic,
+} from "@/api/admin";
 import { ApiError } from "@/api/client";
+import EntityLabel from "@/components/EntityLabel.vue";
 import ModalDialog from "@/components/ModalDialog.vue";
 import { useSessionStore } from "@/stores/session";
 
 /**
- * 通知（P2）：话题门槛 + 测试推送。
+ * 通知（P2 + 收尾批次）：话题门槛 + 测试推送 + **订阅关系只读**。
  *
- * 三条口径（与指令层 `/notify` 一致）：
+ * 四条口径（与指令层 `/notify` 一致）：
  * - **门槛是全局一套**（`__default__.notifyTopicLevels`），改一次所有群生效，所以只有平台超管
  *   （240）能改 —— 服务端也会再判一次；
  * - 数值：`-1` = 不限 · `110` 群成员 / `120` 审核员 / `130` 群管理员 / `140` 本群超管 ·
  *   `210`–`240` 平台档（机器人卡片里的说明与这里同一份口径）；合法性由服务端判（同一套错误文案）；
  * - **订阅是个人偏好**（每人订哪些话题、按群还是全部群），仍在机器人里用 `/notify` 改；
- *   后台只给「订了多少人」的计数，不提供替别人订 / 退订 —— 那是别人的选择。
+ *   后台给「订了多少人」的计数，外加一张**只读**的订阅关系表（谁订了什么、现在够不够门槛）；
+ * - 「订阅了却收不到」= 角色掉到门槛以下（活动通知的「全部群」还要求先绑 QQ 号）——
+ *   判据与推送**同一份**（`checkTopicReach`），所以这一页能直接回答「我说了怎么没通知」。
  */
 const session = useSessionStore();
 
@@ -31,6 +38,16 @@ const editing = ref<{ topic: string; level: string } | null>(null);
 const pendingChange = ref<{ topic: string; level: string } | null>(null);
 /** 「恢复默认门槛」的确认弹窗。 */
 const confirmingReset = ref(false);
+
+// —— 订阅关系（只读，平台超管 240）：回答「我说了怎么没通知」的另一半
+const subscriptions = ref<AdminApiNotifySubscriptionItem[]>([]);
+const subsTotal = ref(0);
+const subsPage = ref(1);
+const subsPageSize = 20;
+/** 筛选：话题（空 = 全部）+ 「只看收不到的」。 */
+const subsTopic = ref("");
+const subsIneligibleOnly = ref(false);
+const subsError = ref("");
 
 const allowed = computed(() => session.isSuperAdmin);
 
@@ -67,7 +84,40 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load);
+/**
+ * 订阅关系（只读，平台超管 240）：服务端回全量、这里分页。
+ *
+ * 非超管**连请求都不发**（服务端也会 403）：订阅是别人的个人偏好。
+ */
+async function loadSubscriptions(page: number): Promise<void> {
+  if (!allowed.value) {
+    return;
+  }
+  try {
+    const view = await adminApi.notifySubscriptions({
+      ...(subsTopic.value.length > 0 ? { topic: subsTopic.value } : {}),
+      ...(subsIneligibleOnly.value ? { ineligible: true } : {}),
+      page,
+      pageSize: subsPageSize,
+    });
+    subscriptions.value = view.items;
+    subsTotal.value = view.total;
+    subsPage.value = view.page;
+    subsError.value = "";
+  } catch (err) {
+    subsError.value = err instanceof ApiError ? err.message : String(err);
+  }
+}
+
+/** 改筛选条件：回第 1 页重查（否则页码可能越界）。 */
+async function applySubsFilter(): Promise<void> {
+  await loadSubscriptions(1);
+}
+
+onMounted(async () => {
+  await load();
+  await loadSubscriptions(1);
+});
 
 function startEdit(topic: AdminApiNotifyTopic): void {
   editing.value = { topic: topic.topic, level: String(topic.level) };
@@ -156,8 +206,8 @@ async function sendTest(): Promise<void> {
     <p class="hint">
       话题门槛是<b>全局一套</b>（改一次所有群生效），只有平台超管能改；
       <b>订阅</b>是每个人自己的偏好，请在机器人里用 <code>/notify</code> 改 ——
-      后台只统计「订了多少人」，不替别人改。
-      推送为什么没到？看「投递」页的失败原因。
+      后台只<b>看</b>订阅关系（下面那张只读表）与「订了多少人」的计数，不替别人改。
+      推送为什么没到？先看下面「已订阅但收不到」的人，再看「投递」页的失败原因。
     </p>
 
     <p v-if="loading" class="hint">加载中…</p>
@@ -246,6 +296,94 @@ async function sendTest(): Promise<void> {
         刷新
       </button>
     </div>
+
+    <!-- 订阅关系（只读）：回答「我说了怎么没通知」的另一半 -->
+    <template v-if="allowed">
+      <h2 class="section-title">订阅关系（只读）</h2>
+      <p class="hint">
+        订阅是每个人的偏好，后台<b>只看不改</b>（改仍在机器人里用 <code>/notify</code>）。
+        状态「收不到」= 订阅还在，但按<b>现在的门槛</b>他不够格（角色掉了，或活动通知订「全部群」
+        却没绑 QQ 号）—— 推送会跳过这些人，这正是「说好要通知我怎么没收到」最常见的原因。
+      </p>
+
+      <div class="toolbar">
+        <label>
+          话题
+          <select id="subs-topic" v-model="subsTopic" @change="applySubsFilter">
+            <option value="">全部</option>
+            <option v-for="topic in topics" :key="topic.topic" :value="topic.topic">
+              {{ topic.label }}
+            </option>
+          </select>
+        </label>
+        <label>
+          <input
+            id="subs-ineligible"
+            v-model="subsIneligibleOnly"
+            type="checkbox"
+            @change="applySubsFilter"
+          />
+          只看收不到的
+        </label>
+        <span v-if="subsTotal > 0" class="hint">共 {{ subsTotal }} 行</span>
+      </div>
+
+      <p v-if="subsError" class="error">{{ subsError }}</p>
+      <p v-else-if="subscriptions.length === 0" class="hint">没有符合条件的订阅行。</p>
+      <table v-else id="notify-subscriptions" class="table">
+        <thead>
+          <tr>
+            <th>成员</th>
+            <th>话题</th>
+            <th>订阅范围</th>
+            <th>当前状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="row in subscriptions"
+            :key="`${row.topic}|${row.userId}|${row.scope}`"
+          >
+            <td><EntityLabel :entity="row.user" :fallback="row.userId" /></td>
+            <td>{{ row.topicLabel }}</td>
+            <td>
+              <template v-if="row.scope === 'all'">
+                全部群（他担任审核员的群）
+              </template>
+              <EntityLabel
+                v-else-if="row.group"
+                :entity="row.group"
+                :fallback="row.groupId ?? ''"
+              />
+              <span v-else class="hint">—</span>
+            </td>
+            <td>
+              <span v-if="row.eligible">可收到</span>
+              <span v-else class="error">收不到：{{ row.reason }}</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-if="subsTotal > subsPageSize" class="toolbar">
+        <button
+          type="button"
+          class="link"
+          :disabled="subsPage <= 1"
+          @click="loadSubscriptions(subsPage - 1)"
+        >
+          上一页
+        </button>
+        <span class="hint">第 {{ subsPage }} 页</span>
+        <button
+          type="button"
+          class="link"
+          :disabled="subsPage * subsPageSize >= subsTotal"
+          @click="loadSubscriptions(subsPage + 1)"
+        >
+          下一页
+        </button>
+      </div>
+    </template>
 
     <!-- 改门槛的二次确认：改完全群立即生效，值得停一下 -->
     <ModalDialog
