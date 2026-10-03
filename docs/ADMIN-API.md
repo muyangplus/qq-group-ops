@@ -232,7 +232,8 @@
     视图另外给 `holdMinutes` 与 `pendingCount`。门槛与处罚相同（全量要 240，否则本群 ≥120）；
 36. `GET /api/notify/deliveries?group=&status=&page=&pageSize=`：通知投递记录（谁收到了 / 失败原因 /
     降级说明），响应额外给**按状态汇总** `counts`（一眼看「失败多少」）。
-    门槛与处罚相同 —— 排查「我说了怎么没通知」是审核员级别的只读需求；
+    门槛与处罚相同 —— 排查「我说了怎么没通知」是审核员级别的只读需求
+    （「他到底订没订」看 **E1-p**）；
 37. `GET /api/health`（平台超管 240）：把 `/status proc` 的内容接进后台 ——
     **进程**（运行版本 vs 磁盘版本、启动时间、Node / pid / 内存、运行模式）、
     **写队列**（待写 / 失败 / 最近错误）、**数据库**（driver + 迁移问题明细）、
@@ -399,6 +400,26 @@
     仍失败 `rejected`，理由形如 `模块=config(群规则) degraded(bad row) → ready`；
     只读巡检模式没有健康注册表 → 503（与其它内存态端点一致）。
 
+### E1-p 订阅关系只读：谁订了什么、现在还够不够门槛（收尾批次）
+
+> 背景：投递记录（E1-i 第 36 条）能回答「这条通知投给谁了、为什么失败」，
+> 但回答不了另一半 ——「**他到底订没订**」。功能全表 row 22 的缺口（每个人订什么后台看不到）
+> 由这条只读视图补上；订阅的**改**仍然只在机器人里（`/notify`）。
+
+64. `GET /api/notify/subscriptions?topic=&group=&user=&ineligible=1&page=&pageSize=`（**平台超管 240**）：
+    `{ items, total, page, pageSize, counts }`，每行给**展示信息**（`user`，QQ号 → 短码 → 截断 id）、
+    话题（`topic` / `topicLabel`）、范围（`scope: all|group`，`group` 时带 `groupId` 与展示信息 `group`）、
+    以及**当前资格** `eligible` + 人话原因 `reason`；
+    - 判据与推送**同一份**（`NotificationService.checkTopicReach`）：订阅了但角色掉到门槛以下
+      （活动通知订「全部群」还要先绑 QQ 号）→ `eligible: false` + 原因原话，
+      这正是「说好要通知我怎么没收到」最常见的原因；
+    - 数据源是推送服务的**内存订阅表**（只有它带资格判据），因此只读巡检模式 → 503；
+    - 筛选：`topic`（未知话题 400 并列出可用值）、`group`（内部群 ID，或 `__all__` 看「全部群」订阅）、
+      `user`（openid / QQ号 / #短码，走身份映射解析）、`ineligible=1`（只看「订了但收不到」）；
+    - `counts` 与 `/api/notify/topics` 那一列**同一口径**，且始终按全部订阅行算（不受筛选影响）；
+65. **只读**：这条视图不改任何人的订阅 —— 订阅是个人偏好，改仍在机器人里用 `/notify`
+    （后台连「替他退订」的按钮都没有，这是有意为之）。
+
 ### E1-g 只读端点的逐路由门槛（P1）
 
 30. `GET /api/tasks`（平台超管 240）：**周期任务监测列表** —— 统一扫描周期 + 每个任务的
@@ -424,7 +445,7 @@
 
 | 端点 | 门槛 |
 |---|---|
-| `GET /api/status`、`GET /api/notify/topics`、`GET /api/tasks`、`GET /api/settings` | 平台超管 240（平台级信息 / 全局话题门槛 / 运维面板）|
+| `GET /api/notify/topics`、`GET /api/status`、`GET /api/tasks`、`GET /api/settings` | 平台超管 240（平台级信息 / 全局话题门槛 / 运维面板）|
 | `GET /api/rules?group=__default__` | 平台超管 240（全局规则）|
 | `GET /api/rules?group=<群>` | 本群审核员 120（与 `/rules` 查看口径一致）|
 | `GET /api/audit` | 平台超管 240 拿全量；其余必须带 `?group=<群>`（缺参数 400）且本群 ≥120 |
@@ -448,6 +469,7 @@
 | `GET /api/permissions`、`POST /api/permissions` | 平台超管 240（改的是判定权限的表，只有这一档）|
 | `GET /api/identities` | 平台超管 240（身份映射是平台级数据；只读，没有任何写端点）|
 | `POST /api/health/modules/:key/retry` | 平台超管 240（运维动作：重试加载降级模块，幂等、不重启进程）|
+| `GET /api/notify/subscriptions` | 平台超管 240（订阅是个人偏好：不裁剪、非超管直接 403；只读，没有任何写端点）|
 
 - **不报错、只裁剪**：列表类端点（待审批 / 活动）对够不着的群直接少返回，而不是整条 403 ——
   多群管理员看到的自然是自己那几行；
