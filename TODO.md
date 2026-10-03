@@ -340,8 +340,12 @@
     `status`（「只看被拒」），操作人与操作对象改按「QQ号 / #短码 / openid / 展示名」多形态匹配；
     响应带筛选后 `total`；审计页加筛选条（E1-q）。
   - 边界：CSV 导出仍按「群 / 全量」（`group` / `full`），**不跟随列表筛选**，链接文案已写明。
-- [ ] **D. 登录令牌列表 + 立即吊销**（240）：发错登录链接不用等 TTL（要先扩令牌仓储
-  `listActive` / `revoke`；会话是签名 cookie，不在本项范围）。
+- [x] **D. 登录令牌列表 + 立即吊销**（240）：发错登录链接不用等 TTL。
+  - 落点：`GET /api/tokens`（按成员聚合的张数 + 最早签发 / 最晚到期，**不回传哈希**）+
+    `POST /api/tokens/revoke { user }`（openid / QQ号 / #短码）+ 状态页「登录令牌」区块
+    （二次确认吊销）；仓储扩 `listActive` / `revokeActiveForUser`（E1-r）。
+  - 边界：只管**未兑换**的登录令牌；已建立的会话是签名 cookie，不受影响；
+    `.env` 机器令牌只报 scope（要吊销得改 `.env`）。
 - [ ] **E. 规则覆盖率总览 + 一次改多项带 diff**：`/rules overrides`（只读 240）搬进规则页顶部；
   `PUT /api/rules` 支持多字段一次改，并给旧值 → 新值 diff 后再确认。
 - [ ] **收尾：`docs/ADMIN-BACKEND.md` 覆盖表按代码校正** —— 表里停在 0.24.2 的 ❌ 大多已在
