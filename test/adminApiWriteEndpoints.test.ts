@@ -88,6 +88,21 @@ function stubWriters(
         groupId: "g1",
         locale: "group" as const,
         fields: ["warningMessage"],
+        changes: [
+          { field: "warningMessage", label: "警告语", before: "（未设置）", after: "改后的文案" },
+        ],
+        message: "已更新群规则。",
+      }),
+    updateRules:
+      overrides.updateRules ??
+      record("updateRules", {
+        groupId: "g1",
+        locale: "group" as const,
+        fields: ["warningMessage", "keywords"],
+        changes: [
+          { field: "warningMessage", label: "警告语", before: "旧", after: "新" },
+          { field: "keywords", label: "关键词", before: "（未设置）", after: "刷屏" },
+        ],
         message: "已更新群规则。",
       }),
     setActivityStatus:
@@ -324,6 +339,66 @@ describe("管理 API 写端点（HTTP 层）", () => {
     expect(writers.calls[0]).toEqual({
       method: "updateRule",
       args: ["g1", "warning", "本群新文案", "op1"],
+    });
+    await app.close();
+  });
+
+  it("一次改多项：updates 形状校验 + 整批进 writer（回执带 diff）", async () => {
+    const writers = stubWriters();
+    const { app, cookie } = await loggedIn(writers);
+    const headers = { cookie, "x-admin-request": "1" };
+
+    // 形状不对：updates 不是数组 / 缺 field / value 不是字符串 / 空数组 → 都 400 且不调 writer
+    for (const updates of [
+      "not-an-array",
+      [{}],
+      [{ field: "warning", value: 3 }],
+      [],
+    ]) {
+      const bad = await app.inject({
+        method: "PUT",
+        url: "/api/rules",
+        headers,
+        payload: { group: "g1", updates },
+      });
+      expect(bad.statusCode, JSON.stringify(updates)).toBe(400);
+      expect(bad.json()).toMatchObject({ error: "bad_request" });
+    }
+    expect(writers.calls).toHaveLength(0);
+
+    const ok = await app.inject({
+      method: "PUT",
+      url: "/api/rules",
+      headers,
+      payload: {
+        group: "g1",
+        updates: [
+          { field: "warning", value: "新文案" },
+          { field: "keywords", value: "刷屏,广告" },
+        ],
+      },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({
+      ok: true,
+      fields: ["warningMessage", "keywords"],
+    });
+    const changes = ok.json<{ changes: Array<{ field: string; before: string; after: string }> }>()
+      .changes;
+    expect(changes).toHaveLength(2);
+    expect(changes[0]).toMatchObject({ field: "warningMessage", before: "旧", after: "新" });
+    expect(writers.calls[0]).toEqual({
+      method: "updateRules",
+      args: [
+        {
+          group: "g1",
+          updates: [
+            { field: "warning", value: "新文案" },
+            { field: "keywords", value: "刷屏,广告" },
+          ],
+          actorId: "op1",
+        },
+      ],
     });
     await app.close();
   });

@@ -70,7 +70,7 @@ import {
   type ClassAliasKind,
 } from "../services/classAliases.js";
 import type { GroupConfigOverride } from "../services/groupConfigCore.js";
-import { RULE_FIELD_LABELS } from "../services/commands/support.js";
+import { ruleFieldLabel, RULE_FIELD_LABELS } from "../services/commands/support.js";
 import type { NotifyChannel } from "../services/notifyTopics.js";
 import type { NotificationService } from "../services/notifications.js";
 import {
@@ -113,7 +113,9 @@ import type {
   AdminApiNotifySubscriptionsView,
   AdminApiNotifyTopic,
   AdminApiRuleKeywordsResult,
+  AdminApiRuleOverridesView,
   AdminApiRuleResetResult,
+  AdminApiRuleUpdateResult,
   AdminApiNotifyLevelResult,
   AdminApiNotifyTestResult,
   AdminApiPendingItem,
@@ -673,6 +675,140 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     return deps.identityMap?.resolveGroupId(value) ?? value;
   };
 
+  /** 规则视图（覆盖行 + 生效值）：`/api/rules` 与规则写端点的 diff 共用同一份口径。 */
+  const rulesViewOf = async (groupId: string): Promise<AdminApiRulesView> => {
+    const override = deps.configStore
+      .listOverrides()
+      .find((row) => row.groupId === groupId);
+    const settings = deps.groupSettings
+      ? (await deps.groupSettings.findAll())
+          .filter((row) => row.groupId === groupId)
+          .map((row) => ({ key: row.key, value: row.value }))
+      : [];
+    return {
+      groupId,
+      group: entities.group(groupId),
+      override:
+        (override as unknown as Record<string, unknown> | undefined) ?? null,
+      settings,
+      effective: deps.configStore.get(groupId) as unknown as Record<
+        string,
+        unknown
+      >,
+    };
+  };
+
+  /**
+   * 一次改多项的实现（`updateRule` 是「只有一项」的特例，走同一条路）。
+   *
+   * 三条口径：
+   * - **先全部解析、再落库**：任何一项不合法 → 整体 400 + 审计 `rejected`，**不写半套**；
+   * - 回执带**逐字段 diff**（生效值的 旧值 → 新值，与界面同一套展示口径），
+   *   所以「一次改了几项、各自从什么变成了什么」有出处（审计里也带）；
+   * - 项数上限 20（一次点几十个字段已经是误操作，别让一次请求改出半张表）。
+   */
+  const applyRuleUpdates = async (input: {
+    group: string;
+    updates: Array<{ field: string; value: string }>;
+    actorId: string;
+  }): Promise<AdminApiRuleUpdateResult> => {
+    const groupId = input.group.trim();
+    if (groupId.length === 0) {
+      throw badRequest("缺少 group（群 ID / #群短码 / 全局用 __default__）。");
+    }
+    if (input.updates.length === 0) {
+      throw badRequest("至少给一项要改的字段。");
+    }
+    if (input.updates.length > 20) {
+      throw badRequest("一次最多改 20 项（多了请分两次，避免误操作）。");
+    }
+    // 与指令层 `canManageRules` 同口径：全局规则只有平台超管能改
+    if (groupId === DEFAULT_GROUP_ID) {
+      requireGlobalSuperAdmin(input.actorId, "修改全局规则");
+    } else {
+      requireGroupAdmin(input.actorId, groupId, "修改群规则");
+    }
+    const before = await rulesViewOf(groupId);
+    // 1) 先全部解析（dry-run）：这里不落库
+    const parsed: Array<{
+      field: string;
+      value: string;
+      override: Record<string, unknown> & { groupId: string };
+    }> = [];
+    for (const update of input.updates) {
+      const trimmedField = update.field.trim();
+      if (trimmedField.length === 0) {
+        throw badRequest("缺少 field（规则字段名）。");
+      }
+      try {
+        parsed.push({
+          field: trimmedField,
+          value: update.value,
+          override: parseRuleSetting(
+            groupId,
+            trimmedField,
+            update.value,
+            deps.configStore,
+          ) as unknown as Record<string, unknown> & { groupId: string },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        appendAudit({
+          groupId,
+          actorId: input.actorId,
+          action: "admin_api:rule_update",
+          status: AuditStatus.Rejected,
+          reason: `字段=${trimmedField} 解析失败：${message}`,
+        });
+        throw badRequest(`规则值不合法：${message}`);
+      }
+    }
+    // 2) 落库：一次性把解析好的覆盖写进去（同一个 setOverride 入口）
+    for (const item of parsed) {
+      deps.configStore.setOverride(item.override);
+    }
+    const after = await rulesViewOf(groupId);
+    const fields: string[] = [];
+    for (const item of parsed) {
+      for (const key of Object.keys(item.override)) {
+        if (key !== "groupId" && !fields.includes(key)) {
+          fields.push(key);
+        }
+      }
+    }
+    const changes = fields.map((key) => ({
+      field: key,
+      label: ruleFieldLabel(key),
+      before: describeRuleValue(ruleValueOf(before, key)),
+      after: describeRuleValue(ruleValueOf(after, key)),
+    }));
+    appendAudit({
+      groupId,
+      actorId: input.actorId,
+      action: "admin_api:rule_update",
+      status: AuditStatus.Executed,
+      reason: `字段=${fields.join(",")} ${changes
+        .map((change) => `${change.field}: ${change.before} → ${change.after}`)
+        .join("；")}`,
+    });
+    log.info("admin api rules updated", {
+      groupId,
+      actorId: input.actorId,
+      fields: fields.join(","),
+      entries: parsed.length,
+    });
+    return {
+      groupId,
+      locale: groupId === DEFAULT_GROUP_ID ? "global" : "group",
+      fields,
+      changes,
+      message:
+        groupId === DEFAULT_GROUP_ID
+          ? "已更新全局规则（影响所有未单独覆盖的群）。"
+          : "已更新群规则。",
+    };
+  };
+
   return {
     // ---------------------------------------------------------------- 只读
 
@@ -723,25 +859,30 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
           };
         }),
 
-    rules: async (groupId: string): Promise<AdminApiRulesView> => {
-      const override = deps.configStore
-        .listOverrides()
-        .find((row) => row.groupId === groupId);
-      const settings = deps.groupSettings
-        ? (await deps.groupSettings.findAll())
-            .filter((row) => row.groupId === groupId)
-            .map((row) => ({ key: row.key, value: row.value }))
-        : [];
+    rules: (groupId: string): Promise<AdminApiRulesView> => rulesViewOf(groupId),
+
+    /**
+     * 规则覆盖率总览（平台超管 240）：哪些群覆盖了哪些字段。
+     *
+     * 与机器人 `/rules overrides`（`ruleOverridesCard`）**同一个数据源**
+     * （`GroupConfigStore.listOverrideSummaries()`），只是这里一次全给、不翻页。
+     * 只读巡检模式没有这个内存态服务 → 503。
+     */
+    ruleOverrides: async (): Promise<AdminApiRuleOverridesView> => {
+      const summaries = deps.configStore.listOverrideSummaries();
+      const items = summaries.map((summary) => ({
+        groupId: summary.groupId,
+        group: entities.group(summary.groupId),
+        fields: summary.fields as unknown as string[],
+        labels: summary.fields.map((field) =>
+          ruleFieldLabel(field as string),
+        ),
+        fieldCount: summary.fields.length,
+      }));
       return {
-        groupId,
-        group: entities.group(groupId),
-        override:
-          (override as unknown as Record<string, unknown> | undefined) ?? null,
-        settings,
-        effective: deps.configStore.get(groupId) as unknown as Record<
-          string,
-          unknown
-        >,
+        items,
+        totalGroups: items.length,
+        totalFields: items.reduce((sum, item) => sum + item.fieldCount, 0),
       };
     },
 
@@ -1161,62 +1302,21 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
       };
     },
 
-    updateRule: async (rawGroupId, field, value, actorId) => {
-      const groupId = rawGroupId.trim();
-      if (groupId.length === 0) {
-        throw badRequest("缺少 group（群 ID / #群短码 / 全局用 __default__）。");
-      }
-      const trimmedField = field.trim();
-      if (trimmedField.length === 0) {
-        throw badRequest("缺少 field（规则字段名）。");
-      }
-      // 与指令层 `canManageRules` 同口径：全局规则只有平台超管能改
-      if (groupId === DEFAULT_GROUP_ID) {
-        requireGlobalSuperAdmin(actorId, "修改全局规则");
-      } else {
-        requireGroupAdmin(actorId, groupId, "修改群规则");
-      }
-      let override;
-      try {
-        override = parseRuleSetting(groupId, trimmedField, value, deps.configStore);
-      } catch (error) {
-        appendAudit({
-          groupId,
-          actorId,
-          action: "admin_api:rule_update",
-          status: AuditStatus.Rejected,
-          reason: `字段=${trimmedField} 解析失败：${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        });
-        throw badRequest(
-          `规则值不合法：${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-      deps.configStore.setOverride(override);
-      const fields = Object.keys(override).filter((key) => key !== "groupId");
-      appendAudit({
-        groupId,
+    /**
+     * 改规则：**单字段是批量的特例**（`applyRuleUpdates` 传一项）。
+     *
+     * 口径（与指令层同源）：门槛 `canManageRules`（本群 130 / 全局 240）、值的解析走
+     * `parseRuleSetting`、落库走 `configStore.setOverride` —— 与机器人 `/rules set` 同一入口。
+     */
+    updateRule: (rawGroupId, field, value, actorId) =>
+      applyRuleUpdates({
+        group: rawGroupId,
+        updates: [{ field, value }],
         actorId,
-        action: "admin_api:rule_update",
-        status: AuditStatus.Executed,
-        reason: `字段=${fields.join(",")} 值=${truncate(value, 120)}`,
-      });
-      log.info("admin api rule updated", {
-        groupId,
-        actorId,
-        fields: fields.join(","),
-      });
-      return {
-        groupId,
-        locale: groupId === DEFAULT_GROUP_ID ? "global" : "group",
-        fields,
-        message:
-          groupId === DEFAULT_GROUP_ID
-            ? "已更新全局规则（影响所有未单独覆盖的群）。"
-            : "已更新群规则。",
-      };
-    },
+      }),
+
+    /** 一次改多项（收尾批次 E）：实现见 `applyRuleUpdates`（先全解析、再落库，回执带 diff）。 */
+    updateRules: applyRuleUpdates,
 
     setActivityStatus: async (rawCode, action, actorId) => {
       const activity = requireActivity(rawCode);
@@ -2404,6 +2504,23 @@ export function aggregateActiveAdminTokens(
   }));
   items.sort((left, right) => left.expiresAt.localeCompare(right.expiresAt));
   return { total: rows.length, items };
+}
+
+/** 规则值在界面上的「当前值」口径（与 `RulesView.currentValue` 一致：覆盖优先，其次生效值）。 */
+function ruleValueOf(view: AdminApiRulesView, field: string): unknown {
+  const own = view.override?.[field];
+  return own !== undefined ? own : view.effective?.[field];
+}
+
+/** 规则值的人话（数组按「、」连接；缺省「（未设置）」）。 */
+function describeRuleValue(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "（未设置）";
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).join("、");
+  }
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 
 /** 活动在审计与回执里的标签（`#活动短码`）。 */

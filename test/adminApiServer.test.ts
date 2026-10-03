@@ -1271,6 +1271,99 @@ describe("管理 API HTTP 层", () => {
     await bareApp.close();
   });
 
+  it("/api/rules/overrides：平台超管 240 才看得到；只读巡检 503", async () => {
+    const tokens = memoryTokens();
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "test",
+      readAccessOf: async (userId) => ({
+        platformLevel: userId === "boss" ? 240 : 130,
+        groups: [{ groupId: "g1", level: 130 }],
+      }),
+      readers: {
+        pending: async () => [],
+        rules: async (groupId: string) => ({ groupId, override: null, settings: [] }),
+        notifyTopics: async () => [],
+        ruleOverrides: async () => ({
+          items: [
+            {
+              groupId: "g1",
+              group: groupRef("g1"),
+              fields: ["keywords"],
+              labels: ["关键词"],
+              fieldCount: 1,
+            },
+          ],
+          totalGroups: 1,
+          totalFields: 1,
+        }),
+      },
+    }).app;
+    const modToken = await tokens.issue({ userId: "admin", ttlMs: 60_000 });
+    const modLogin = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: modToken.token },
+    });
+    // 群管理员 130 也不行：覆盖率总览是全局视角（与机器人 `/rules overrides` 一样只要 240）
+    const denied = await app.inject({
+      method: "GET",
+      url: "/api/rules/overrides",
+      headers: { cookie: cookieOf(modLogin) },
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const bossToken = await tokens.issue({ userId: "boss", ttlMs: 60_000 });
+    const bossLogin = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: bossToken.token },
+    });
+    const ok = await app.inject({
+      method: "GET",
+      url: "/api/rules/overrides",
+      headers: { cookie: cookieOf(bossLogin) },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({
+      totalGroups: 1,
+      totalFields: 1,
+      items: [{ groupId: "g1", labels: ["关键词"] }],
+    });
+    await app.close();
+
+    // 只读巡检模式：没有规则存储 → 503
+    const bareTokens = memoryTokens();
+    const bareApp = buildAdminApiServer({
+      config: CONFIG,
+      tokens: bareTokens,
+      version: "test",
+      readAccessOf: async () => ({ platformLevel: 240, groups: [] }),
+      readers: {
+        pending: async () => [],
+        rules: async (groupId: string) => ({ groupId, override: null, settings: [] }),
+        notifyTopics: async () => [],
+      },
+    }).app;
+    const issued = await bareTokens.issue({ userId: "boss", ttlMs: 60_000 });
+    const bareLogin = await bareApp.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: issued.token },
+    });
+    const unavailable = await bareApp.inject({
+      method: "GET",
+      url: "/api/rules/overrides",
+      headers: { cookie: cookieOf(bareLogin) },
+    });
+    expect(unavailable.statusCode).toBe(503);
+    await bareApp.close();
+  });
+
   it("/api/notify/topics 返回默认门槛与订阅人数（无数据源 503）", async () => {
     const tokens = memoryTokens();
     const readers = {

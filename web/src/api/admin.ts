@@ -81,11 +81,38 @@ export interface AdminApiRulesView {
   effective?: Record<string, unknown>;
 }
 
+/** 一次改多项里单条字段的 diff（生效值的 旧值 → 新值）。 */
+export interface AdminApiRuleChange {
+  field: string;
+  label: string;
+  before: string;
+  after: string;
+}
+
 export interface AdminApiRuleUpdateResult {
   groupId: string;
   locale: "global" | "group";
   fields: string[];
+  /** 逐字段 diff（单字段也是长度 1）：界面用它做「改了什么」的回执。 */
+  changes: AdminApiRuleChange[];
   message: string;
+}
+
+/** 覆盖率总览的一行（`GET /api/rules/overrides`，平台超管 240）。 */
+export interface AdminApiRuleOverrideItem {
+  groupId: string;
+  group: AdminApiEntityRef;
+  /** 该群显式覆盖的字段（按持久化顺序）。 */
+  fields: string[];
+  /** 字段展示名（与 `fields` 一一对应）。 */
+  labels: string[];
+  fieldCount: number;
+}
+
+export interface AdminApiRuleOverridesView {
+  items: AdminApiRuleOverrideItem[];
+  totalGroups: number;
+  totalFields: number;
 }
 
 export interface AdminApiJoinDecision {
@@ -969,6 +996,22 @@ export const adminApi = {
     value: string,
   ): Promise<AdminApiRuleUpdateResult> =>
     api.put<AdminApiRuleUpdateResult>("/api/rules", { group, field, value }),
+
+  /**
+   * 一次改多项（平台超管 / 本群群管理员 130）。
+   *
+   * 服务端**先全部解析、再落库**：任一项不合法整体 400（不写半套）；
+   * 回执带逐字段 diff（旧值 → 新值），界面拿它做回执。
+   */
+  updateRules: (
+    group: string,
+    updates: Array<{ field: string; value: string }>,
+  ): Promise<AdminApiRuleUpdateResult> =>
+    api.put<AdminApiRuleUpdateResult>("/api/rules", { group, updates }),
+
+  /** 规则覆盖率总览（平台超管 240）：哪些群覆盖了哪些字段。 */
+  ruleOverrides: (): Promise<AdminApiRuleOverridesView> =>
+    api.get<AdminApiRuleOverridesView>("/api/rules/overrides"),
 
   activities: (params: {
     page?: number | undefined;

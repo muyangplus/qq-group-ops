@@ -1,20 +1,28 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 
-import { adminApi, type AdminApiRulesView } from "@/api/admin";
+import {
+  adminApi,
+  type AdminApiRuleChange,
+  type AdminApiRuleOverridesView,
+  type AdminApiRulesView,
+} from "@/api/admin";
 import { ApiError } from "@/api/client";
 import EntityLabel from "@/components/EntityLabel.vue";
 import ModalDialog from "@/components/ModalDialog.vue";
 import { GROUP_ADMIN_LEVEL, useSessionStore } from "@/stores/session";
 
 /**
- * 规则编辑（E2-c）。
+ * 规则编辑（E2-c + 收尾批次 E）。
  *
- * 口径（docs/ADMIN-API.md 的 E1-g / E1-d）：
+ * 口径（docs/ADMIN-API.md 的 E1-g / E1-d / E1-s）：
  * - **读**：本群审核员 120 起（全局规则要平台超管）；
- * - **写**：本群群管理员 130 起（全局规则要平台超管），`PUT /api/rules { group, field, value }`；
- * - 值由机器人侧的 `parseRuleSetting` 解析：非法值整体拒绝、不留半套，
- *   所以提交前先给 **diff**（字段 / 旧值 → 新值）再确认。
+ * - **写**：本群群管理员 130 起（全局规则要平台超管），`PUT /api/rules { group, field, value }`
+ *   或**一次改多项** `{ group, updates: [{ field, value }] }`；
+ * - 值由机器人侧的 `parseRuleSetting` 解析：非法值整体拒绝、不留半套（批量会**先全部校验再落库**），
+ *   所以提交前先给 **diff**（字段 / 旧值 → 新值）再确认；
+ * - **覆盖率总览**（平台超管 240，只读）：哪些群覆盖了哪些字段 —— 与机器人
+ *   `/rules overrides` 同一数据源。
  *
  * 页面里另外两块写操作：
  * - **关键词逐条增删**（`POST /api/rules/keywords`）：单条失败只进 `skipped`、不整批失败，
@@ -163,14 +171,17 @@ onMounted(async () => {
   );
   groupId.value = editable ?? groups.value[0] ?? (session.isSuperAdmin ? "__default__" : "");
   await load();
+  await loadOverrides();
 });
 
 watch(groupId, () => {
   notice.value = "";
-  // 换群：关键词输入与上一次的回执都不该跟着搬过去
+  // 换群：关键词输入、待改清单与上一次的回执都不该跟着搬过去
   keywordInput.value = "";
   keywordResult.value = null;
   overriddenNames.value = null;
+  pendingChanges.value = [];
+  lastChanges.value = null;
   void load();
 });
 
@@ -213,6 +224,7 @@ async function confirmUpdate(): Promise<void> {
     field.value = "";
     value.value = "";
     await load();
+    await loadOverrides();
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : String(err);
   } finally {
@@ -314,6 +326,83 @@ async function confirmResetAll(): Promise<void> {
     resetAllBusy.value = false;
   }
 }
+
+// —— 覆盖率总览（只读，平台超管 240）：哪些群覆盖了哪些字段
+const overrides = ref<AdminApiRuleOverridesView | null>(null);
+const overridesError = ref("");
+
+async function loadOverrides(): Promise<void> {
+  if (!session.isSuperAdmin) {
+    return;
+  }
+  try {
+    overrides.value = await adminApi.ruleOverrides();
+    overridesError.value = "";
+  } catch (err) {
+    overrides.value = null;
+    overridesError.value = err instanceof ApiError ? err.message : String(err);
+  }
+}
+
+// —— 一次改多项：先把改动攒进清单，再一次性提交（服务端先全校验、再落库）
+const pendingChanges = ref<Array<{ field: string; value: string }>>([]);
+const batchConfirming = ref(false);
+const batchBusy = ref(false);
+/** 上一次批量提交的 diff 回执（服务端算的，与审计同一份）。 */
+const lastChanges = ref<AdminApiRuleChange[] | null>(null);
+
+/** 清单里一项的「旧值 → 新值」：旧值取当前生效值，与单字段确认同一口径。 */
+function pendingDiff(item: { field: string; value: string }): {
+  before: string;
+  after: string;
+} {
+  return {
+    before: currentValue(item.field),
+    after: item.value === "" ? "（清空 / 恢复默认）" : item.value,
+  };
+}
+
+/** 加入清单：同名字段只留最后一次（清单是「待改」而不是历史）。 */
+function addPendingChange(): void {
+  const name = field.value.trim();
+  if (name === "" || !canEdit.value) {
+    return;
+  }
+  pendingChanges.value = [
+    ...pendingChanges.value.filter((item) => item.field !== name),
+    { field: name, value: value.value },
+  ];
+  field.value = "";
+  value.value = "";
+  notice.value = "";
+}
+
+function removePendingChange(name: string): void {
+  pendingChanges.value = pendingChanges.value.filter(
+    (item) => item.field !== name,
+  );
+}
+
+async function confirmBatch(): Promise<void> {
+  if (pendingChanges.value.length === 0) {
+    return;
+  }
+  batchBusy.value = true;
+  try {
+    const result = await adminApi.updateRules(groupId.value, pendingChanges.value);
+    notice.value = `${result.message}（改了 ${result.changes.length} 个字段）`;
+    lastChanges.value = result.changes;
+    pendingChanges.value = [];
+    batchConfirming.value = false;
+    error.value = "";
+    await load();
+    await loadOverrides();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : String(err);
+  } finally {
+    batchBusy.value = false;
+  }
+}
 </script>
 
 <template>
@@ -342,6 +431,51 @@ async function confirmResetAll(): Promise<void> {
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="notice" class="ok">{{ notice }}</p>
 
+    <!-- 覆盖率总览（只读，平台超管 240）：与机器人 `/rules overrides` 同一数据源 -->
+    <template v-if="session.isSuperAdmin">
+      <h2 class="section-title">覆盖率总览</h2>
+      <p class="hint">
+        全局默认只影响<b>未覆盖</b>的群；下面是各群显式覆盖的字段（与机器人
+        <code>/rules overrides</code> 同一数据源）。
+        <span v-if="overrides">
+          共 {{ overrides.totalGroups }} 个群 · {{ overrides.totalFields }} 个字段。
+        </span>
+      </p>
+      <p v-if="overridesError" class="error">{{ overridesError }}</p>
+      <p
+        v-else-if="overrides && overrides.items.length === 0"
+        class="hint"
+      >
+        没有任何群覆盖全局规则（全部继承全局）。
+      </p>
+      <table v-else-if="overrides" id="rule-overrides" class="table">
+        <thead>
+          <tr>
+            <th>群</th>
+            <th>覆盖字段数</th>
+            <th>覆盖了哪些字段</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in overrides.items" :key="item.groupId">
+            <td>
+              <EntityLabel :entity="item.group" :fallback="item.groupId" />
+            </td>
+            <td>{{ item.fieldCount }}</td>
+            <td class="reason">
+              <code
+                v-for="(label, index) in item.labels"
+                :key="item.fields[index] ?? index"
+                class="chip"
+              >
+                {{ label }}
+              </code>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </template>
+
     <template v-if="view">
       <h2 class="section-title">
         覆盖字段（覆盖中 {{ currentOverridden.length }}）
@@ -360,6 +494,7 @@ async function confirmResetAll(): Promise<void> {
       <h2 class="section-title">修改一个字段</h2>
       <div class="toolbar">
         <input
+          id="rule-field"
           v-model="field"
           type="text"
           list="rule-fields"
@@ -370,6 +505,7 @@ async function confirmResetAll(): Promise<void> {
           <option v-for="name in FIELD_HINTS" :key="name" :value="name" />
         </datalist>
         <input
+          id="rule-value"
           v-model="value"
           type="text"
           placeholder="新值（清空 = 恢复默认）"
@@ -384,10 +520,85 @@ async function confirmResetAll(): Promise<void> {
         <code>on/off</code>，关键词用逗号 / 顿号分隔，禁言时长填秒数。
       </p>
 
+      <h2 class="section-title">一次改多项</h2>
+      <p class="hint">
+        把几个字段的改动攒进清单、一次提交（服务端<b>先全部校验、再落库</b>：有一项不合法就整体拒绝，
+        不会改一半）；确认框里会列出每个字段的<b>旧值 → 新值</b>。
+      </p>
+      <div class="toolbar">
+        <button
+          type="button"
+          class="link"
+          :disabled="!canEdit || field.trim() === ''"
+          :title="canEdit ? '把上面填的字段 / 值加进待改清单' : '改规则需要本群群管理员 130'"
+          @click="addPendingChange"
+        >
+          加入清单
+        </button>
+        <span v-if="pendingChanges.length > 0" class="hint">
+          清单 {{ pendingChanges.length }} 项
+        </span>
+      </div>
+      <table v-if="pendingChanges.length > 0" id="rule-batch" class="table">
+        <thead>
+          <tr>
+            <th>字段</th>
+            <th>旧值</th>
+            <th>新值</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in pendingChanges" :key="item.field">
+            <td><code>{{ item.field }}</code></td>
+            <td class="reason">{{ pendingDiff(item).before }}</td>
+            <td class="reason">{{ pendingDiff(item).after }}</td>
+            <td>
+              <button
+                type="button"
+                class="link"
+                @click="removePendingChange(item.field)"
+              >
+                移出
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-if="pendingChanges.length > 0" class="toolbar">
+        <button
+          type="button"
+          :disabled="batchBusy || !canEdit"
+          @click="batchConfirming = true"
+        >
+          提交 {{ pendingChanges.length }} 项
+        </button>
+        <button
+          type="button"
+          class="link"
+          :disabled="batchBusy"
+          @click="pendingChanges = []"
+        >
+          清空清单
+        </button>
+      </div>
+      <p v-if="pendingChanges.length > 0" class="hint">
+        清单里的「旧值」是按你填的字段名在当前配置里查的；填的是<b>别名</b>时
+        （例如 <code>warning</code> → <code>warningMessage</code>），以提交后回执里的 diff 为准。
+      </p>
+      <p v-if="lastChanges" class="ok">
+        上次提交：
+        {{
+          lastChanges
+            .map((change) => `${change.label} ${change.before} → ${change.after}`)
+            .join("；")
+        }}
+      </p>
+
       <h2 class="section-title">关键词管理</h2>
       <p class="hint">
         关键词命中后按 <code>warning</code> / <code>mute</code> / <code>wordFilter</code> 等字段的动作处理。
-        增删是**逐条**的：保存时自动 <code>trim</code>、去重、按字典序排列，单条最长 50 字；
+        增删是<b>逐条</b>的：保存时自动 <code>trim</code>、去重、按字典序排列，单条最长 50 字；
         <b>已存在 / 不存在的词不会被静默忽略</b>，会作为「跳过」连原因一起列出来。
         门槛与改规则一致（本群群管理员 130；全局要平台超管 240）。
       </p>
@@ -440,8 +651,8 @@ async function confirmResetAll(): Promise<void> {
 
       <h2 class="section-title">恢复继承</h2>
       <p class="hint">
-        「恢复继承」= 删掉本{{ isGlobal ? "全局" : "群" }}的覆盖，让字段回落到**全局默认**。
-        字段级只清下面列出的字段；整群那条会清空**全部**覆盖，<b>不可逆</b>。
+        「恢复继承」= 删掉本{{ isGlobal ? "全局" : "群" }}的覆盖，让字段回落到<b>全局默认</b>。
+        字段级只清下面列出的字段；整群那条会清空<b>全部</b>覆盖，<b>不可逆</b>。
       </p>
       <div class="toolbar">
         <button
@@ -510,6 +721,41 @@ async function confirmResetAll(): Promise<void> {
       </p>
     </ModalDialog>
 
+    <!-- 一次改多项：确认框里逐项列 diff（与审计同一份口径） -->
+    <ModalDialog
+      :open="batchConfirming"
+      title="确认一次改多项？"
+      :busy="batchBusy"
+      confirm-text="确认提交多项"
+      @close="batchConfirming = false"
+      @confirm="confirmBatch"
+    >
+      <p class="hint">
+        共 {{ pendingChanges.length }} 项：服务端会<b>先全部校验、再落库</b>，
+        有一项不合法就整体拒绝（不会改一半）。
+      </p>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>字段</th>
+            <th>旧值</th>
+            <th>新值</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in pendingChanges" :key="item.field">
+            <td><code>{{ item.field }}</code></td>
+            <td class="reason">{{ pendingDiff(item).before }}</td>
+            <td class="reason">{{ pendingDiff(item).after }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="hint">
+        {{ currentGroupName }} · 提交后写一条 <code>admin_api:rule_update</code> 审计
+        （理由里带每个字段的旧值 → 新值）。
+      </p>
+    </ModalDialog>
+
     <!-- 恢复字段继承：把要清的字段名单列出来，避免误点 -->
     <ModalDialog
       :open="resetFieldConfirming"
@@ -524,7 +770,7 @@ async function confirmResetAll(): Promise<void> {
         <code>{{ currentOverridden.join("、") || "—" }}</code>
       </p>
       <p class="hint">
-        清掉后它们回落到**全局默认**；这是**不可逆**的（要改回来自定义值只能再写一次）。
+        清掉后它们回落到<b>全局默认</b>；这是<b>不可逆</b>的（要改回来自定义值只能再写一次）。
         机器人侧的指令层同样有字段级恢复。
       </p>
     </ModalDialog>

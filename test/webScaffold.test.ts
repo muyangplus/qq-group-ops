@@ -109,6 +109,8 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
       "/api/pending",
       "/api/audit",
       "/api/rules",
+      // 规则覆盖率总览（只读 240）+ 一次改多项
+      "/api/rules/overrides",
       "/api/activities",
       // P1 只读补齐
       "/api/punishments",

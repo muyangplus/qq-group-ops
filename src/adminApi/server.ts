@@ -584,6 +584,11 @@ export interface AdminApiReaders {
   /** 身份映射只读（`GET /api/identities`，平台超管 240）。 */
   identities?: (() => Promise<AdminApiIdentitiesView>) | undefined;
   /**
+   * 规则覆盖率总览（`GET /api/rules/overrides`，平台超管 240）：
+   * 哪些群覆盖了哪些字段 —— 与机器人 `/rules overrides` 同一数据源，一次全给、不翻页。
+   */
+  ruleOverrides?: (() => Promise<AdminApiRuleOverridesView>) | undefined;
+  /**
    * 登录令牌只读（`GET /api/tokens`，平台超管 240）：**谁手上还有未用的登录链接**。
    *
    * 只按成员聚合（张数 + 最早签发 / 最晚到期），**不回传任何哈希或明文**；
@@ -600,12 +605,42 @@ export interface AdminApiJoinDecision {
   message: string;
 }
 
+/** 覆盖率总览里的一行（`GET /api/rules/overrides`，平台超管 240）。 */
+export interface AdminApiRuleOverrideItem {
+  groupId: string;
+  /** 群展示信息（群号 → 短码 → 截断 id）。 */
+  group: AdminApiEntityRef;
+  /** 该群显式覆盖的字段（按持久化顺序）。 */
+  fields: string[];
+  /** 字段的展示名（与 `fields` 一一对应）。 */
+  labels: string[];
+  /** 覆盖字段数（= `fields.length`，界面直接显示）。 */
+  fieldCount: number;
+}
+
+export interface AdminApiRuleOverridesView {
+  items: AdminApiRuleOverrideItem[];
+  /** 有覆盖的群数 / 覆盖字段总条数（界面的「共 N 个群 · M 个字段」）。 */
+  totalGroups: number;
+  totalFields: number;
+}
+
+/** 一次改多项里单条字段的 diff（生效值的 旧值 → 新值）。 */
+export interface AdminApiRuleChange {
+  field: string;
+  label: string;
+  before: string;
+  after: string;
+}
+
 /** 规则写回执。 */
 export interface AdminApiRuleUpdateResult {
   groupId: string;
   /** `global` = 写的是全局默认规则（`__default__`）。 */
   locale: "global" | "group";
   fields: string[];
+  /** 逐字段 diff（单字段也是长度 1），界面用它做「改了什么」的回执与审计同源。 */
+  changes: AdminApiRuleChange[];
   message: string;
 }
 
@@ -650,6 +685,17 @@ export interface AdminApiWriters {
     value: string,
     actorId: string,
   ): Promise<AdminApiRuleUpdateResult>;
+  /**
+   * 一次改多项（收尾批次 E）：`{ group, updates: [{ field, value }] }`。
+   *
+   * **先全部解析、再落库**：任一项不合法 → 整体 400（不写半套）；回执带逐字段 diff。
+   * 单字段写是它的特例（`updateRule`）。
+   */
+  updateRules(input: {
+    group: string;
+    updates: Array<{ field: string; value: string }>;
+    actorId: string;
+  }): Promise<AdminApiRuleUpdateResult>;
   setActivityStatus(
     code: string,
     action: AdminApiActivityAction,
@@ -1998,6 +2044,31 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     return { ...result, ok: result.ok };
   });
 
+  /**
+   * 规则覆盖率总览（`GET /api/rules/overrides`，平台超管 240）。
+   *
+   * 与机器人 `/rules overrides`（`cb:rules:overrides`）同一数据源、同一口径：
+   * 「哪些群显式覆盖了哪些字段」——全局默认只影响**未覆盖**的群，这一页就是那张地图。
+   * 只读巡检模式没有内存态 config store → 503。
+   */
+  app.get("/api/rules/overrides", async (request, reply) => {
+    if (!(await allowPlatformRead(request, reply, "GET /api/rules/overrides"))) {
+      return reply;
+    }
+    const reader = options.readers?.ruleOverrides;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(
+          errorBody(
+            "unavailable",
+            "规则覆盖率数据源未装配（只读巡检模式 / 未装配规则存储）。",
+          ),
+        );
+    }
+    return reader();
+  });
+
   /** 只读状态（E1-c）：入口给数据库与迁移信息，server 补版本 / 运行时长 / 会话数。 */
   app.get("/api/status", async (request, reply) => {
     if (!(await allowPlatformRead(request, reply, "GET /api/status"))) {
@@ -2445,7 +2516,12 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     return { ok: true, ...result };
   });
 
-  /** 写规则：`{ group, field, value }`；非法值整体拒绝（不会写半套）。 */
+  /**
+   * 写规则：`{ group, field, value }` 或**一次改多项** `{ group, updates: [{ field, value }] }`。
+   *
+   * 非法值整体拒绝（不会写半套）；批量回执带逐字段 diff（旧值 → 新值），
+   * 界面据此显示「改了什么」，审计里也是同一份。
+   */
   app.put("/api/rules", async (request, reply) => {
     const writers = options.writers;
     if (!writers) {
@@ -2464,6 +2540,50 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
             "需要 group（群 ID / #群短码 / 全局用 __default__）。",
           ),
         );
+    }
+    // 一次改多项（收尾批次 E）：先做形状校验，业务校验在 writer 里（先解析后落库）
+    if (body.updates !== undefined) {
+      if (!Array.isArray(body.updates)) {
+        return reply
+          .code(400)
+          .send(errorBody("bad_request", "updates 必须是数组（[{ field, value }]）。"));
+      }
+      const updates: Array<{ field: string; value: string }> = [];
+      for (const [index, entry] of body.updates.entries()) {
+        const row = (
+          typeof entry === "object" && entry !== null ? entry : {}
+        ) as Record<string, unknown>;
+        const field = typeof row.field === "string" ? row.field.trim() : "";
+        if (field.length === 0) {
+          return reply
+            .code(400)
+            .send(
+              errorBody("bad_request", `updates[${index}] 缺少 field（规则字段名）。`),
+            );
+        }
+        if (typeof row.value !== "string") {
+          return reply
+            .code(400)
+            .send(
+              errorBody(
+                "bad_request",
+                `updates[${index}].value 必须是字符串（清空用空串）。`,
+              ),
+            );
+        }
+        updates.push({ field, value: row.value });
+      }
+      if (updates.length === 0) {
+        return reply
+          .code(400)
+          .send(errorBody("bad_request", "updates 不能为空（至少一项）。"));
+      }
+      const result = await writers.updateRules({
+        group,
+        updates,
+        actorId: actorOf(request),
+      });
+      return { ok: true, ...result };
     }
     const field = typeof body.field === "string" ? body.field.trim() : "";
     if (field.length === 0) {
