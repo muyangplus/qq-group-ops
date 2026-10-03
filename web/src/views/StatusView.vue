@@ -6,12 +6,16 @@ import {
   type AdminApiHealthView,
   type AdminApiStatus,
   type AdminApiTasksView,
+  type AdminApiTokensView,
 } from "@/api/admin";
 import { ApiError } from "@/api/client";
+import EntityLabel from "@/components/EntityLabel.vue";
+import ModalDialog from "@/components/ModalDialog.vue";
 import { useSessionStore } from "@/stores/session";
 
 /**
- * 状态看板（E2-c）：`GET /api/status` + 周期任务监测 `GET /api/tasks` + 运维只读 `GET /api/health`。
+ * 状态看板（E2-c / 运维面）：`GET /api/status` + 周期任务监测 `GET /api/tasks` +
+ * 运维只读 `GET /api/health` + 登录令牌 `GET /api/tokens`。
  *
  * 平台级信息，服务端要**平台超管 240**（见 docs/ADMIN-API.md 的 E1-g），
  * 所以非超管这里只显示一句说明、连请求都不发。
@@ -26,6 +30,13 @@ const error = ref("");
 const retrying = ref("");
 /** 上一次「重试加载」的结果（成功 / 仍失败都显示服务端给的原话）。 */
 const retryNotice = ref<{ ok: boolean; text: string } | null>(null);
+
+// —— 登录令牌（只读 + 吊销，平台超管 240）
+const tokens = ref<AdminApiTokensView | null>(null);
+/** 待确认吊销的那一行（弹窗期间保持）。 */
+const pendingRevoke = ref<AdminApiTokensView["items"][number] | null>(null);
+const revoking = ref(false);
+const tokenNotice = ref<{ ok: boolean; text: string } | null>(null);
 
 const allowed = computed(() => session.isSuperAdmin);
 
@@ -43,19 +54,62 @@ async function load(): Promise<void> {
   }
   loading.value = true;
   try {
-    const [next, nextTasks, nextHealth] = await Promise.all([
+    const [next, nextTasks, nextHealth, nextTokens] = await Promise.all([
       adminApi.status(),
       adminApi.tasks().catch(nullOnUnavailable),
       adminApi.health().catch(nullOnUnavailable),
+      adminApi.tokens().catch(nullOnUnavailable),
     ]);
     status.value = next;
     tasks.value = nextTasks;
     health.value = nextHealth;
+    tokens.value = nextTokens;
     error.value = "";
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : String(err);
   } finally {
     loading.value = false;
+  }
+}
+
+/** 只刷令牌表（吊销后调一次；不复用 `load()`，免得把整页打成 loading）。 */
+async function reloadTokens(): Promise<void> {
+  try {
+    tokens.value = await adminApi.tokens().catch(nullOnUnavailable);
+  } catch (err) {
+    tokenNotice.value = {
+      ok: false,
+      text: err instanceof ApiError ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * 确认吊销某成员手上全部**未用**的登录令牌（平台超管 240）。
+ *
+ * 只作用于还没兑换的登录链接：已经建立的会话是签名 cookie，不受影响（弹窗与回执都写明）。
+ */
+async function confirmRevoke(): Promise<void> {
+  const target = pendingRevoke.value;
+  if (!target) {
+    return;
+  }
+  revoking.value = true;
+  try {
+    const response = await adminApi.revokeTokens(target.userId);
+    tokenNotice.value = {
+      ok: response.result.revoked > 0,
+      text: response.result.message,
+    };
+    await reloadTokens();
+  } catch (err) {
+    tokenNotice.value = {
+      ok: false,
+      text: err instanceof ApiError ? err.message : String(err),
+    };
+  } finally {
+    revoking.value = false;
+    pendingRevoke.value = null;
   }
 }
 
@@ -352,9 +406,103 @@ function formatBytes(bytes: number): string {
         本进程没有运行时状态（只读巡检模式）：运维区块只在机器人进程内那口有。
       </p>
 
+      <!-- 登录令牌（只读 + 吊销，平台超管 240）：回答「我发的登录链接还能不能被用掉」 -->
+      <template v-if="tokens">
+        <h2 class="section-title">登录令牌</h2>
+        <p class="hint">
+          <code>/admin login</code> 发出去的链接是<b>一次性</b>的（默认 10 分钟过期）。
+          这里能看到<b>谁手上还有没用的链接</b>（按成员聚合，不显示任何哈希），发错人时立刻吊销 ——
+          <b>已经登录的会话是签名 cookie，不受影响</b>。`.env` 里的机器令牌只报把数与 scope，
+          要吊销得登服务器改 <code>ADMIN_API_TOKENS</code>。
+        </p>
+        <p v-if="tokenNotice" :class="tokenNotice.ok ? 'hint' : 'error'">
+          {{ tokenNotice.text }}
+        </p>
+        <p v-if="tokens.items.length === 0" class="hint">
+          现在没有人手上留着未用的登录链接（共 {{ tokens.total }} 张）。
+        </p>
+        <table v-else id="admin-tokens" class="table">
+          <thead>
+            <tr>
+              <th>成员</th>
+              <th>未用令牌</th>
+              <th>最早签发</th>
+              <th>最晚到期</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in tokens.items" :key="item.userId">
+              <td><EntityLabel :entity="item.user" :fallback="item.userId" /></td>
+              <td>{{ item.count }} 张</td>
+              <td class="nowrap">{{ formatTime(item.createdAt) }}</td>
+              <td class="nowrap">{{ formatTime(item.expiresAt) }}</td>
+              <td>
+                <button
+                  type="button"
+                  class="link"
+                  :disabled="revoking"
+                  @click="pendingRevoke = item"
+                >
+                  吊销
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3 class="row-title">配置里的机器令牌（`ADMIN_API_TOKENS`）</h3>
+        <p v-if="tokens.machine.length === 0" class="hint">
+          没有配置机器令牌（`ADMIN_API_TOKENS` 未设置）。
+        </p>
+        <table v-else id="admin-machine-tokens" class="table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>scope</th>
+              <th>到期</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(machine, index) in tokens.machine" :key="index">
+              <td>{{ index + 1 }}</td>
+              <td><code>{{ machine.scopes.join(" ") }}</code></td>
+              <td class="nowrap">
+                {{ machine.expiresAt ? formatTime(machine.expiresAt) : "不过期" }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </template>
+      <p v-else-if="status && !loading" class="hint">
+        本进程没有登录令牌仓储（内存模式）：令牌列表只在接了数据库时可用。
+      </p>
+
       <button type="button" class="link" :disabled="loading" @click="load">
         刷新
       </button>
     </template>
+
+    <!-- 吊销登录令牌：只作用在未兑换的链接上，改完不能撤销，所以先确认 -->
+    <ModalDialog
+      :open="pendingRevoke !== null"
+      title="确认吊销登录令牌？"
+      confirm-text="确认吊销"
+      :busy="revoking"
+      @confirm="confirmRevoke"
+      @close="pendingRevoke = null"
+    >
+      <p>
+        会让该成员手上<b>所有还没用过的登录链接立刻失效</b>（发错人的补救，不用等 10 分钟 TTL）；
+        <b>已经登录的会话不受影响</b>。
+      </p>
+      <p v-if="pendingRevoke" class="hint">
+        <EntityLabel
+          :entity="pendingRevoke.user"
+          :fallback="pendingRevoke.userId"
+        />
+        · {{ pendingRevoke.count }} 张
+      </p>
+    </ModalDialog>
   </section>
 </template>

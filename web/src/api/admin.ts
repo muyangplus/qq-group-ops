@@ -511,6 +511,36 @@ export interface AdminApiNotifySubscriptionsView {
   items: AdminApiNotifySubscriptionItem[];
 }
 
+/** 一枚「未用登录令牌」按成员聚合后的一行（`GET /api/tokens`，平台超管 240）。 */
+export interface AdminApiTokenItem {
+  userId: string;
+  /** 展示口径：QQ号 → 短码 → 截断后的 openid（完整 openid 走「详情」）。 */
+  user: AdminApiEntityRef;
+  /** 该成员手上还有几张**未用且未过期**的登录令牌。 */
+  count: number;
+  /** 最早一张的签发时间（ISO）。 */
+  createdAt: string;
+  /** 最晚一张的到期时间（ISO）。 */
+  expiresAt: string;
+}
+
+export interface AdminApiTokensView {
+  /** 未用且未过期的登录令牌总数（与 `/api/status` 的 `activeTokens` 同口径）。 */
+  total: number;
+  items: AdminApiTokenItem[];
+  /** `.env`（`ADMIN_API_TOKENS`）里的机器令牌：只报 scope 与到期，**不回传密钥**。 */
+  machine: Array<{ scopes: string[]; expiresAt?: string }>;
+}
+
+/** 吊销未用登录令牌的结果。 */
+export interface AdminApiTokenRevokeResult {
+  userId: string;
+  user: AdminApiEntityRef;
+  /** 作废了几张（0 = 本来就没有未用的登录令牌）。 */
+  revoked: number;
+  message: string;
+}
+
 /** 降级模块「重试加载」的结果（运维写，平台超管 240）。 */
 export interface AdminApiModuleRetryResult {
   module: { key: string; label: string; state: string; error?: string };
@@ -636,6 +666,27 @@ export const adminApi = {
   /** 运维只读（平台超管 240）：进程细节 / 模块健康 / 写队列 / 恢复现场。 */
   health: (): Promise<AdminApiHealthView> =>
     api.get<AdminApiHealthView>("/api/health"),
+
+  /**
+   * 登录令牌只读（平台超管 240）：谁手上还有**未用**的登录链接（按成员聚合，不含任何哈希）。
+   *
+   * 机器令牌（`.env`）也在同一份响应里，但只报把数与 scope、不回传密钥。
+   */
+  tokens: (): Promise<AdminApiTokensView> =>
+    api.get<AdminApiTokensView>("/api/tokens"),
+
+  /**
+   * 立刻作废某成员手上**全部未用**的登录令牌（平台超管 240）。
+   *
+   * 用途：`/admin login` 的链接发错了人，不必等 TTL；**已建立的会话不受影响**。
+   */
+  revokeTokens: (
+    user: string,
+  ): Promise<{ ok: boolean; result: AdminApiTokenRevokeResult }> =>
+    api.post<{ ok: boolean; result: AdminApiTokenRevokeResult }>(
+      "/api/tokens/revoke",
+      { user },
+    ),
 
   /**
    * 重试加载一个降级模块（平台超管 240；幂等）：与机器人 `/status proc` 的「重试加载」

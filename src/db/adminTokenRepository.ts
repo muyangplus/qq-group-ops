@@ -13,6 +13,15 @@ import type { Queryable } from "./queryable.js";
  * - 令牌是 32 字节随机串（base64url），一次性（兑换成功立刻写 `used_at`）、有 TTL；
  * - 过期行由 `issue` / `redeem` 顺手清理，不额外起定时任务。
  */
+/** 一条**未用且未过期**的登录令牌（管理后台只读列表用；**不含哈希**）。 */
+export interface ActiveAdminToken {
+  userId: string;
+  /** 签发时间（列表显示「什么时候发的链接」）。 */
+  createdAt: Date;
+  /** 到期时间（到点自然失效，不必人工吊销）。 */
+  expiresAt: Date;
+}
+
 export interface AdminTokenRepository {
   /** 签发：返回明文令牌与到期时间（明文不落库）。 */
   issue(input: {
@@ -26,11 +35,31 @@ export interface AdminTokenRepository {
   pruneExpired(now?: Date | undefined): Promise<void>;
   /** 当前**未用且未过期**的令牌数（`/api/status` 用，便于确认"刚才那张卡是不是还有效"）。 */
   countActive(now?: Date | undefined): Promise<number>;
+  /**
+   * 当前**未用且未过期**的令牌（管理后台的只读列表）：按签发时间升序，列表稳定。
+   *
+   * **不返回哈希** —— 库里那份 `sha256(明文)` 是凭证材料，不出进程；管理面只按成员聚合展示
+   * 「谁手上还有几张未用的登录链接」，吊销也按成员做（见下）。
+   */
+  listActive(now?: Date | undefined): Promise<ActiveAdminToken[]>;
+  /**
+   * 立刻作废某个用户手上**全部未用**的登录令牌（含已过期的残行，顺手清掉）；返回作废条数。
+   *
+   * 用途：`/admin login` 发的链接发错了人 —— 不必等 TTL 到期。
+   * **只作用于未兑换的登录令牌**：已经兑换出来的会话是签名 cookie，不受这里影响。
+   */
+  revokeActiveForUser(userId: string): Promise<number>;
 }
 
 interface TokenRow {
   user_id: string;
   used_at: string | Date | null;
+  expires_at: string | Date;
+}
+
+interface ActiveTokenRow {
+  user_id: string;
+  created_at: string | Date;
   expires_at: string | Date;
 }
 
@@ -52,8 +81,27 @@ const COUNT_ACTIVE_SQL = `
 SELECT COUNT(*) AS n FROM admin_api_tokens WHERE used_at IS NULL AND expires_at > $1
 `.trim();
 
+/** 只读列表：**不选 token_hash** —— 哈希不出进程。 */
+const LIST_ACTIVE_SQL = `
+SELECT user_id, created_at, expires_at FROM admin_api_tokens
+WHERE used_at IS NULL AND expires_at > $1
+ORDER BY created_at ASC
+`.trim();
+
+/** `RETURNING` 用来数「到底作废了几张」（`Queryable` 只回 rows，没有 changes）。 */
+const REVOKE_ACTIVE_SQL = `
+DELETE FROM admin_api_tokens
+WHERE user_id = $1 AND used_at IS NULL
+RETURNING user_id
+`.trim();
+
 export function hashAdminToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+/** 数据库里的时间列可能是字符串（SQLite / PG 驱动不一），统一折算成 `Date`。 */
+function toDate(value: string | Date): Date {
+  return value instanceof Date ? value : new Date(value);
 }
 
 export class SqlAdminTokenRepository implements AdminTokenRepository {
@@ -111,6 +159,24 @@ export class SqlAdminTokenRepository implements AdminTokenRepository {
       [now.toISOString()],
     );
     return Number(result.rows[0]?.n ?? 0);
+  }
+
+  public async listActive(now: Date = new Date()): Promise<ActiveAdminToken[]> {
+    const result = await this.db.query<ActiveTokenRow>(LIST_ACTIVE_SQL, [
+      now.toISOString(),
+    ]);
+    return result.rows.map((row) => ({
+      userId: row.user_id,
+      createdAt: toDate(row.created_at),
+      expiresAt: toDate(row.expires_at),
+    }));
+  }
+
+  public async revokeActiveForUser(userId: string): Promise<number> {
+    const result = await this.db.query<{ user_id: string }>(REVOKE_ACTIVE_SQL, [
+      userId,
+    ]);
+    return result.rows.length;
   }
 }
 

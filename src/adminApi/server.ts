@@ -374,6 +374,39 @@ export interface AdminApiNotifySubscriptionsView {
   counts: AdminApiNotifyTopic[];
 }
 
+/** 一枚「未用登录令牌」按成员聚合后的一行（`GET /api/tokens`，平台超管 240）。 */
+export interface AdminApiTokenItem {
+  userId: string;
+  /** 展示口径：QQ号 → 短码 → 截断后的 openid（完整 openid 走「详情」）。 */
+  user: AdminApiEntityRef;
+  /** 该成员手上还有几张**未用且未过期**的登录令牌。 */
+  count: number;
+  /** 最早一张的签发时间（ISO）。 */
+  createdAt: string;
+  /** 最晚一张的到期时间（ISO）。 */
+  expiresAt: string;
+}
+
+export interface AdminApiTokensView {
+  /** 未用且未过期的登录令牌总数（与 `/api/status` 的 `activeTokens` 同口径）。 */
+  total: number;
+  items: AdminApiTokenItem[];
+  /**
+   * `.env`（`ADMIN_API_TOKENS`）里配的**机器令牌**：只报把数与 scope，**不回传密钥** ——
+   * 与配置页「密钥类只回配没配」同一口径；它们不落库，所以「吊销」要登服务器改 `.env`。
+   */
+  machine: Array<{ scopes: string[]; expiresAt?: string | undefined }>;
+}
+
+/** 吊销未用登录令牌的结果（`POST /api/tokens/revoke`，平台超管 240）。 */
+export interface AdminApiTokenRevokeResult {
+  userId: string;
+  user: AdminApiEntityRef;
+  /** 作废了几张（0 = 本来就没有未用的登录令牌）；两种情况都写审计。 */
+  revoked: number;
+  message: string;
+}
+
 /**
  * 降级模块「重试加载」的结果（运维写，平台超管 240）。
  *
@@ -550,6 +583,13 @@ export interface AdminApiReaders {
     | undefined;
   /** 身份映射只读（`GET /api/identities`，平台超管 240）。 */
   identities?: (() => Promise<AdminApiIdentitiesView>) | undefined;
+  /**
+   * 登录令牌只读（`GET /api/tokens`，平台超管 240）：**谁手上还有未用的登录链接**。
+   *
+   * 只按成员聚合（张数 + 最早签发 / 最晚到期），**不回传任何哈希或明文**；
+   * 只读巡检模式也装配（读的是同一张表）。
+   */
+  tokens?: (() => Promise<{ total: number; items: AdminApiTokenItem[] }>) | undefined;
 }
 
 /** 通过 / 拒绝入群申请后的回执。 */
@@ -654,6 +694,16 @@ export interface AdminApiWriters {
    * 只读巡检模式没有健康注册表，writer 抛 `unavailable`。
    */
   retryModule(key: string, actorId: string): Promise<AdminApiModuleRetryResult>;
+  /**
+   * 立刻作废某个成员手上**全部未用**的登录令牌（平台超管 240）。
+   *
+   * 用途：`/admin login` 的链接发错了人 —— 不必等 TTL 到期。
+   * 只作用于未兑换的登录令牌；已兑换出来的会话是签名 cookie，不受影响（会在回执里写明）。
+   */
+  revokeTokens(input: {
+    userId: string;
+    actorId: string;
+  }): Promise<AdminApiTokenRevokeResult>;
 
   // ---------------------------------------------------------------- P2 写操作
   /**
@@ -1614,6 +1664,74 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     const { key } = request.params as { key: string };
     const result = await writers.retryModule(key.trim(), actorOf(request));
     return { ok: result.recovered, result };
+  });
+
+  /**
+   * 登录令牌只读（`GET /api/tokens`，平台超管 240）。
+   *
+   * 回答「我发的登录链接还能不能被用掉」：按成员聚合列出手上还有未用令牌的人
+   * （张数 + 最早签发 / 最晚到期），外加 `.env` 里机器令牌的把数与 scope。
+   * **不回传任何哈希或明文**（库里那份哈希是凭证材料），所以没有单张的「列表 id」；
+   * 吊销按成员做（见下一段）——「发错人」的语义正好是一起作废。
+   */
+  app.get("/api/tokens", async (request, reply) => {
+    if (!(await allowPlatformRead(request, reply, "GET /api/tokens"))) {
+      return reply;
+    }
+    const reader = options.readers?.tokens;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(
+          errorBody(
+            "unavailable",
+            "登录令牌仓储未装配（内存模式 / 纯测试）：令牌列表看不了。",
+          ),
+        );
+    }
+    // 机器令牌是**进程配置**（`.env`），不在库里 —— 由 HTTP 层补上，只报把数与 scope，不回传密钥
+    const view: AdminApiTokensView = {
+      ...(await reader()),
+      machine: (options.config.machineTokens ?? []).map((token) => ({
+        scopes: [...token.scopes],
+        ...(token.expiresAt !== undefined
+          ? { expiresAt: token.expiresAt.toISOString() }
+          : {}),
+      })),
+    };
+    return view;
+  });
+
+  /**
+   * 吊销某个成员手上全部未用的登录令牌（平台超管 240）：
+   * `POST /api/tokens/revoke { user }`（openid / QQ号 / #短码）。
+   *
+   * 用途：链接发错了人不用等 TTL；**只作用于未兑换的令牌**，已建立的会话不受影响。
+   */
+  app.post("/api/tokens/revoke", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const user = typeof body.user === "string" ? body.user.trim() : "";
+    if (user.length === 0) {
+      return reply
+        .code(400)
+        .send(
+          errorBody(
+            "bad_request",
+            "需要 user（openid / 已绑定的 QQ号 / #短码）。",
+          ),
+        );
+    }
+    const result = await writers.revokeTokens({
+      userId: user,
+      actorId: actorOf(request),
+    });
+    return { ok: result.revoked > 0, result };
   });
 
   /** 同步官方入群申请队列（写但幂等）：与 `/sync` 同一服务，本群 120。 */

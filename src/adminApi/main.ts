@@ -7,7 +7,7 @@ import { loadEnvFile } from "../env.js";
 import { connectPersistence } from "../persistence.js";
 import { IdentityMapService } from "../services/identityMap.js";
 import { ShortCodeService } from "../services/shortCodes.js";
-import { buildNotifyTopicViews } from "./backend.js";
+import { aggregateActiveAdminTokens, buildNotifyTopicViews } from "./backend.js";
 import { adminLoginUrl, loadAdminApiConfig } from "./config.js";
 import { createAdminApiEntities } from "./entityRef.js";
 import { describeListenFailure } from "./listenFailure.js";
@@ -152,6 +152,12 @@ async function main(): Promise<void> {
       notifyTopics: async () =>
         buildNotifyTopicViews(
           await persistence.notificationSubscriptions.findAll(),
+        ),
+      // 登录令牌只读：巡检进程也读同一张表（按成员聚合，不回传哈希）
+      tokens: async () =>
+        aggregateActiveAdminTokens(
+          await persistence.adminTokens.listActive(),
+          entities,
         ),
       // 身份映射只读：直接读绑定表（巡检进程也看得到「什么时候绑的」）
       identities: async () => {

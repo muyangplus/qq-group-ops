@@ -103,6 +103,64 @@ describe("SqlAdminTokenRepository", () => {
     expect(call?.values).toEqual([now.toISOString()]);
   });
 
+  it("listActive：未用且未过期的行，按签发时间升序，且**不选哈希**", async () => {
+    const db = new FakeQueryable([
+      [
+        {
+          user_id: "op1",
+          created_at: "2026-10-01T00:00:00.000Z",
+          expires_at: "2026-10-01T00:10:00.000Z",
+        },
+        {
+          user_id: "op2",
+          created_at: "2026-10-01T00:02:00.000Z",
+          expires_at: "2026-10-01T00:12:00.000Z",
+        },
+      ],
+    ]);
+    const repository = new SqlAdminTokenRepository(db);
+    const now = new Date("2026-10-01T00:05:00.000Z");
+
+    const rows = await repository.listActive(now);
+
+    expect(rows).toEqual([
+      {
+        userId: "op1",
+        createdAt: new Date("2026-10-01T00:00:00.000Z"),
+        expiresAt: new Date("2026-10-01T00:10:00.000Z"),
+      },
+      {
+        userId: "op2",
+        createdAt: new Date("2026-10-01T00:02:00.000Z"),
+        expiresAt: new Date("2026-10-01T00:12:00.000Z"),
+      },
+    ]);
+    expect(rows[0]?.createdAt).toBeInstanceOf(Date);
+    const call = db.calls[0];
+    expect(call?.text).toContain("used_at IS NULL");
+    expect(call?.text).toContain("expires_at > $1");
+    expect(call?.text).toContain("ORDER BY created_at ASC");
+    // 只读列表**不选 token_hash**：哈希是凭证材料，不出进程
+    expect(call?.text).not.toContain("token_hash");
+    expect(call?.values).toEqual([now.toISOString()]);
+  });
+
+  it("revokeActiveForUser：作废该成员全部未用令牌并返回条数（没有就是 0）", async () => {
+    const db = new FakeQueryable([[{ user_id: "op1" }, { user_id: "op1" }]]);
+    const repository = new SqlAdminTokenRepository(db);
+
+    expect(await repository.revokeActiveForUser("op1")).toBe(2);
+    const call = db.calls[0];
+    expect(call?.text).toContain("DELETE FROM admin_api_tokens");
+    expect(call?.text).toContain("used_at IS NULL");
+    // `Queryable` 只回 rows：用 RETURNING 数「到底作废了几张」
+    expect(call?.text).toContain("RETURNING");
+    expect(call?.values).toEqual(["op1"]);
+
+    const empty = new FakeQueryable([[]]);
+    expect(await new SqlAdminTokenRepository(empty).revokeActiveForUser("op2")).toBe(0);
+  });
+
   it("hashAdminToken 是稳定的 sha256；tokensEqual 常量时间比较", () => {
     expect(hashAdminToken("abc")).toBe(hashAdminToken("abc"));
     expect(hashAdminToken("abc")).toHaveLength(64);

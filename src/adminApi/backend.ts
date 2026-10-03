@@ -14,7 +14,7 @@ import {
   runningVersionOf,
 } from "../core/buildInfo.js";
 import { getLogger } from "../core/logger.js";
-import type { AdminTokenRepository } from "../db/adminTokenRepository.js";
+import type { AdminTokenRepository, ActiveAdminToken } from "../db/adminTokenRepository.js";
 import type { GroupSettingsRepository } from "../db/groupSettingsRepository.js";
 import type { NotificationDeliveryRepository } from "../db/notificationRepository.js";
 import type { NotificationSubscriptionRepository } from "../db/notificationRepository.js";
@@ -130,6 +130,7 @@ import type {
   AdminApiStatusExtra,
   AdminApiSettingsView,
   AdminApiTasksView,
+  AdminApiTokenItem,
   AdminApiWriters,
 } from "./server.js";
 
@@ -891,6 +892,17 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
 
     reports: async (options) => collectReports(options),
 
+    /** 登录令牌只读（平台超管 240）：按成员聚合，**不暴露哈希**（见 `aggregateActiveAdminTokens`）。 */
+    tokens: async () => {
+      const repository = deps.adminTokens;
+      if (!repository) {
+        throw unavailable(
+          "登录令牌仓储未装配（内存模式 / 纯测试）：令牌列表看不了。",
+        );
+      }
+      return aggregateActiveAdminTokens(await repository.listActive(), entities);
+    },
+
     identities: async () => {
       const repository = deps.identityBindings;
       if (repository) {
@@ -1459,6 +1471,47 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         message: recovered
           ? `「${after.label}」已重新加载成功，功能立即恢复，不用重启进程。`
           : `「${after.label}」仍然起不来：${after.error ?? "未知原因"}。修好数据 / 环境后可再试一次。`,
+      };
+    },
+
+    /**
+     * 吊销某个成员手上**全部未用**的登录令牌（平台超管 240）。
+     *
+     * 用途：`/admin login` 的链接发错了人 —— 不必等 TTL（默认 10 分钟）。
+     * 只作用于未兑换的登录令牌；已兑换出来的**会话是签名 cookie**，不受这里影响（回执里写明）。
+     * 本来就没有未用令牌时如实回 `revoked: 0`（审计记 rejected），不假装成功。
+     */
+    revokeTokens: async (input) => {
+      requireGlobalSuperAdmin(input.actorId, "吊销登录令牌");
+      const repository = deps.adminTokens;
+      if (!repository) {
+        throw unavailable(
+          "登录令牌仓储未装配（内存模式 / 纯测试）：吊销不了。",
+        );
+      }
+      // 目标接受 openid / 已绑定的 QQ号 / #短码（与权限目标同一套解析）
+      const userId = resolvePermissionUser(input.userId);
+      const revoked = await repository.revokeActiveForUser(userId);
+      appendAudit({
+        groupId: "",
+        actorId: input.actorId,
+        action: "admin_api:token_revoke",
+        status: revoked > 0 ? AuditStatus.Executed : AuditStatus.Rejected,
+        reason: `目标=${userId} 作废未用登录令牌 ${revoked} 张`,
+      });
+      log.info("admin api revoked login tokens", {
+        userId,
+        actorId: input.actorId,
+        revoked,
+      });
+      return {
+        userId,
+        user: entities.user(userId),
+        revoked,
+        message:
+          revoked > 0
+            ? `已作废 ${revoked} 张未用的登录令牌（已建立的会话不受影响）。`
+            : "该成员没有未用的登录令牌（可能已经兑换或已过期）。",
       };
     },
 
@@ -2306,6 +2359,51 @@ export function buildNotifyTopicViews(
       groupScopes,
     };
   });
+}
+
+/**
+ * 未用登录令牌 → 按成员聚合的列表（`/api/tokens`；机器人进程与只读巡检共用同一份口径）。
+ *
+ * 为什么按成员聚合而不是一张一张列：**不暴露任何哈希/凭据**（库里只有 `sha256(明文)`，
+ * 那是凭证材料，不出进程）—— 所以没有「单张的列表 id」；而「发错人」的语义正好是把
+ * 那个人手上的链接一起作废。同一个人多张时给「张数 + 最早签发 + 最晚到期」。
+ * 排序按**最晚到期**升序（最快失效的在最前）。
+ */
+export function aggregateActiveAdminTokens(
+  rows: readonly ActiveAdminToken[],
+  entities: AdminApiEntities,
+): { total: number; items: AdminApiTokenItem[] } {
+  const byUser = new Map<
+    string,
+    { count: number; createdAt: Date; expiresAt: Date }
+  >();
+  for (const row of rows) {
+    const current = byUser.get(row.userId);
+    if (!current) {
+      byUser.set(row.userId, {
+        count: 1,
+        createdAt: row.createdAt,
+        expiresAt: row.expiresAt,
+      });
+      continue;
+    }
+    current.count += 1;
+    if (row.createdAt.getTime() < current.createdAt.getTime()) {
+      current.createdAt = row.createdAt;
+    }
+    if (row.expiresAt.getTime() > current.expiresAt.getTime()) {
+      current.expiresAt = row.expiresAt;
+    }
+  }
+  const items = [...byUser.entries()].map(([userId, aggregate]) => ({
+    userId,
+    user: entities.user(userId),
+    count: aggregate.count,
+    createdAt: aggregate.createdAt.toISOString(),
+    expiresAt: aggregate.expiresAt.toISOString(),
+  }));
+  items.sort((left, right) => left.expiresAt.localeCompare(right.expiresAt));
+  return { total: rows.length, items };
 }
 
 /** 活动在审计与回执里的标签（`#活动短码`）。 */

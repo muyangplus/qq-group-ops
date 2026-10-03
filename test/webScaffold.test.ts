@@ -125,6 +125,8 @@ describe("管理前台与后端的接口契约（E2-c）", () => {
       "/api/permissions",
       // P3 身份映射只读
       "/api/identities",
+      // 收尾批次：登录令牌（查看 / 吊销）
+      "/api/tokens",
     ]) {
       expect(source, `缺少端点 ${endpoint}`).toContain(endpoint);
     }

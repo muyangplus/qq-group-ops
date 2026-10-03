@@ -1450,6 +1450,153 @@ describe("管理 API HTTP 层", () => {
     await bareApp.close();
   });
 
+  it("/api/tokens：平台超管 240 才看得到；机器令牌只报 scope 不回传密钥；吊销要 CSRF", async () => {
+    const tokens = memoryTokens();
+    const revokes: Array<{ userId: string; actorId: string }> = [];
+    const config = loadAdminApiConfig({
+      ADMIN_API_ENABLED: "true",
+      ADMIN_API_SESSION_SECRET: "y".repeat(40),
+      ADMIN_API_PUBLIC_BASE_URL: "https://ops.example.com",
+      // 机器令牌：密钥里那个明文**绝不能**出现在响应里
+      ADMIN_API_TOKENS: "abcdef0123456789:read:audit@2027-01-01T00:00:00Z",
+    });
+    const app = buildAdminApiServer({
+      config,
+      tokens,
+      version: "test",
+      readAccessOf: async (userId) => ({
+        platformLevel: userId === "boss" ? 240 : 0,
+        groups: [],
+      }),
+      readers: {
+        pending: async () => [],
+        rules: async (groupId: string) => ({ groupId, override: null, settings: [] }),
+        notifyTopics: async () => [],
+        tokens: async () => ({
+          total: 1,
+          items: [
+            {
+              userId: "u1",
+              user: userRef("u1"),
+              count: 1,
+              createdAt: "2026-10-03T00:00:00.000Z",
+              expiresAt: "2026-10-03T00:10:00.000Z",
+            },
+          ],
+        }),
+      },
+      writers: {
+        revokeTokens: async (input) => {
+          revokes.push(input);
+          return {
+            userId: input.userId,
+            user: userRef(input.userId),
+            revoked: 1,
+            message: "已作废 1 张未用的登录令牌（已建立的会话不受影响）。",
+          };
+        },
+      },
+    }).app;
+
+    const modToken = await tokens.issue({ userId: "mod", ttlMs: 60_000 });
+    const modLogin = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: modToken.token },
+    });
+    const modCookie = cookieOf(modLogin);
+    const deniedRead = await app.inject({
+      method: "GET",
+      url: "/api/tokens",
+      headers: { cookie: modCookie },
+    });
+    expect(deniedRead.statusCode).toBe(403);
+    // 写端点的门槛在 writer 里（HTTP 层只取参数 / 校验）—— 这里用桩 writers，
+    // 所以 240 判定由 test/adminApiTokens.test.ts 在 writer 层覆盖。
+    expect(revokes).toHaveLength(0);
+
+    const bossToken = await tokens.issue({ userId: "boss", ttlMs: 60_000 });
+    const bossLogin = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: bossToken.token },
+    });
+    const bossCookie = cookieOf(bossLogin);
+    const list = await app.inject({
+      method: "GET",
+      url: "/api/tokens",
+      headers: { cookie: bossCookie },
+    });
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toMatchObject({
+      total: 1,
+      items: [{ userId: "u1", count: 1 }],
+      machine: [{ scopes: ["read:audit"], expiresAt: "2027-01-01T00:00:00.000Z" }],
+    });
+    // 机器令牌的**密钥**不回传（只报把数与 scope）
+    expect(list.body).not.toContain("abcdef0123456789");
+
+    // 吊销：缺 user → 400；缺 CSRF → 403；正常 → 原样进 writer
+    const noUser = await app.inject({
+      method: "POST",
+      url: "/api/tokens/revoke",
+      headers: { cookie: bossCookie, "x-admin-request": "1" },
+      payload: {},
+    });
+    expect(noUser.statusCode).toBe(400);
+    expect(noUser.json()).toMatchObject({ error: "bad_request" });
+    const noCsrf = await app.inject({
+      method: "POST",
+      url: "/api/tokens/revoke",
+      headers: { cookie: bossCookie },
+      payload: { user: "u1" },
+    });
+    expect(noCsrf.statusCode).toBe(403);
+    const revoked = await app.inject({
+      method: "POST",
+      url: "/api/tokens/revoke",
+      headers: { cookie: bossCookie, "x-admin-request": "1" },
+      payload: { user: "10001" },
+    });
+    expect(revoked.statusCode).toBe(200);
+    expect(revoked.json()).toMatchObject({ ok: true, result: { revoked: 1 } });
+    expect(revokes).toEqual([{ userId: "10001", actorId: "boss" }]);
+    await app.close();
+
+    // 只读巡检模式：没有令牌仓储 → 503（两个端点都是）
+    const bareTokens = memoryTokens();
+    const bareApp = buildAdminApiServer({
+      config: CONFIG,
+      tokens: bareTokens,
+      version: "test",
+      readAccessOf: async () => ({ platformLevel: 240, groups: [] }),
+    }).app;
+    const issued = await bareTokens.issue({ userId: "boss", ttlMs: 60_000 });
+    const bareLogin = await bareApp.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token: issued.token },
+    });
+    const bareCookie = cookieOf(bareLogin);
+    const bareGet = await bareApp.inject({
+      method: "GET",
+      url: "/api/tokens",
+      headers: { cookie: bareCookie },
+    });
+    expect(bareGet.statusCode).toBe(503);
+    const barePost = await bareApp.inject({
+      method: "POST",
+      url: "/api/tokens/revoke",
+      headers: { cookie: bareCookie, "x-admin-request": "1" },
+      payload: { user: "u1" },
+    });
+    expect(barePost.statusCode).toBe(503);
+    await bareApp.close();
+  });
+
   it("/api/activities 需要登录，可按群/状态过滤 + 分页", async () => {
     const tokens = memoryTokens();
     const readers = {
