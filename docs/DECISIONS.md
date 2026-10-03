@@ -1445,3 +1445,45 @@
   非超管不发请求、没有群时群角色被拦）。
   **能力边界**：不做批量 / 权限矩阵导入导出；不做「权限变更通知」。
 
+## ADR-0061：受理过重启的目标版本不再排第二轮（自动 / 手动重启共用一份「已受理」记忆）
+
+- 状态：已实现（未发版，见 CHANGELOG `[Unreleased]`）
+- 背景：v0.25.0 上线后真机报两条 —— ①**一次部署通知两次、机器人改版两次**（间隔 5s）；
+  ②**手动重启后又自己重启一次**（两条「新版本已上线」回执相隔约 3 分钟）。根因是同一条：
+  「重启被受理」（`runtime.restart.request` 返回 `true`）**不等于旧进程已经退出** ——
+  旧进程还要 `await runtime.flush()`、跑退出前自检、拉起 `scripts/respawn.mjs`、等新进程起来，
+  真机这段窗口有好几秒；期间统一扫描周期（`TickScheduler`，默认 60 秒）照跑。
+  `DeployWatcher` 受理时清掉了 `pendingState` 却**没记住目标版本**，于是同一个版本被当成
+  「没处理过」→ 再通知一次、再排一轮重启。手动 `/restart` 更是另一条入口，压根不告诉部署监测
+  「这次重启已经安排上了」—— 两条路撞车时会各自拉起一个助手、各写一条重启回执。
+- 决策：
+  1. `DeployWatcher` 新增**已受理记忆**（`scheduledVersion`）：`markScheduled(targetVersion)`
+     记下「这个目标版本已经排好重启」，`runOnce()` 对同一目标版本直接返回 —— 不提醒、不再排；
+  2. **受理即回写**：部署自动重启在 `fireRestart()` 受理后回写；手动 `/restart` 在
+     `runRestartFlow` 排好 respawn 助手后回写（同一入口，覆盖指令层 / 重启卡按钮 / 管理后台）；
+  3. 记忆随 `resetStreak()` 一起清掉（磁盘版本回落、撤回部署、读到 `unknown`）——
+     撤回部署后再重新上传同一版本仍会重新给机会；版本一变（`target !== scheduledVersion`）
+     也照旧重新走全流程；
+  4. `main.ts` 的重启流程加**单飞闸**：同一时刻只允许一条 `runRestartFlow`，后续请求直接
+     放行（记 warn `restart request ignored`），免得拉起两个 `scripts/respawn.mjs`、
+     写出两条重启回执、把进程拉起两次；闸门只在**没走成**时复位（自检没过 / 助手没起来 /
+     助手启动后立刻报错），**排好了就一直关着** —— 旧进程两三秒后就退出，这段时间再来一条
+     正是「第二次重启」最容易被触发的窗口；
+  5. 未捕获 rejection 收口：`restartHandler` 从裸 `void runRestartFlow(info)` 改成带 `catch`，
+     出错时记 error、`blockVersion` 拦掉同一版本的自动重试、并通知「等这次重启的人」；
+     部署自动重启的 `requestedBy` 是 `deploy-watcher` 占位符（不是真实用户），改发全部全局超管。
+- 理由：「受理」是**同步**承诺（命令层立刻回执），「退出」是**异步**结果 —— 两者的时间差
+  必须落在状态里，否则扫描周期会把同一次部署看两遍。把同一份记忆同时挂在自动与手动两条
+  入口上，才不用去猜第二次重启来自哪条路；闸门选「排好就关」而不是 `finally` 复位，
+  是因为复位的语义是「可以再排一次」。
+- 影响：`src/services/deployWatcher.ts`（`scheduledVersion` + `markScheduled` + `runOnce()`
+  早退 + `resetStreak()` 清记忆）、`src/main.ts`（单飞闸、回写 `markScheduled`、
+  助手起不来 / 启动后报错的通知与拦版本、`announceRestartAbort`）。
+  测试：`test/deployWatcher.test.ts`（受理后同版本不再通知 / 不再排第二轮、手动回写后不再排、
+  版本再变重新提醒、撤回再上传重新给机会；原「没有收件人」用例改走「未被受理」路径）、
+  `test/runtimeWiring.test.ts`（接线守卫：`markScheduled` 与单飞闸仍在）。
+  **能力边界**：`scheduledVersion` 是**进程内**记忆，进程活着才有效（重启本身就是它要拦的那个
+  动作，所以不需要跨进程持久化）；现象 ② 的「两条回执相隔 3 分钟」若来自 `respawn.mjs` /
+  自检路径本身拉起了两次，仍需真机 `logs/` 与 `data/restart-notice` 才能定论 ——
+  本次修复覆盖的是「重复排重启」这条已定位的路径。
+
