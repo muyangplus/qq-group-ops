@@ -44,7 +44,7 @@ jobs:
 
       - name: 失败或超时都保留报告
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: audit-report
           path: audit-report.txt
