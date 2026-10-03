@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+（暂无：以下内容已随 [0.26.0] 发布，见下一节。）
+
+## [0.26.0] - 2026-10-03
+
 ### 新增
 
 - **规则页能看「覆盖率总览」、也能一次改多项了**（收尾批次 E）：
@@ -1320,7 +1324,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.24.1...v0.25.0
 [0.18.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.0...v0.18.1
