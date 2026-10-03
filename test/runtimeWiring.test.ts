@@ -67,4 +67,19 @@ describe("runtime 仓储装配完整性", () => {
       fakeBlock.indexOf("persistence?.close()"),
     );
   });
+
+  it("重启流程的接线：排好助手后回写部署监测 + 单飞闸（重复重启回归）", () => {
+    // 背景：真机报「一次部署改版两次」「手动重启后又自己重启一次」（0.25.0 的 P0 BUG，
+    // 见 CHANGELOG 与 ADR-0061）。手动 /restart 与部署自动重启都走 runRestartFlow：
+    // ① 排好 respawn 助手后必须回写 `markScheduled`，否则旧进程退出窗口里部署监测会再排一轮；
+    // ② 同一时刻只允许一条流程，免得撞车拉起两个 `scripts/respawn.mjs`、写两条重启回执。
+    const source = readFileSync(
+      fileURLToPath(new URL("../src/main.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(source).toContain("deployWatcher.markScheduled(targetVersion)");
+    expect(source).toContain(
+      "restart request ignored: another restart flow is running",
+    );
+  });
 });

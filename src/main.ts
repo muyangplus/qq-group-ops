@@ -421,12 +421,59 @@ async function main(): Promise<void> {
    * 并让部署监测别再重试同一个目标版本。
    *
    * 手动再发 `/restart` 会**再检查一次**；「强制重启」按钮（`force`）才跳过自检。
+   *
+   * 同一时刻只允许一条流程在跑（单飞闸，见 `runRestartFlow`）—— 手动重启与部署自动重启
+   * 是两条独立入口，可能撞车。
    */
+  let restartFlowInFlight = false;
+
   restartHandler = (info) => {
-    void runRestartFlow(info);
+    void runRestartFlow(info).catch((error: unknown) => {
+      // 兜底：流程里任何意料之外的错误都不能变成 unhandled rejection（这里原本是裸 `void`）。
+      const detail = error instanceof Error ? error.message : String(error);
+      log.error("restart flow failed", {
+        requestedBy: info.requestedBy,
+        reason: info.reason ?? "manual",
+        error: detail,
+      });
+      deployWatcher.blockVersion(info.targetVersion ?? onDiskVersion(), detail);
+      void announceRestartAbort(info, detail);
+    });
   };
 
+  /**
+   * 单飞闸：**同一时刻只允许一条重启流程在跑**。
+   *
+   * 手动 `/restart`（指令层）与部署监测的自动重启是两条独立入口，都会被 `restartHandler`
+   * 接住，可能撞在同一时刻 —— 真机报过「手动重启后又自己重启一次」。第二条直接放行掉，
+   * 免得拉起两个 `scripts/respawn.mjs`、写出两条重启回执、把进程拉起两次。
+   *
+   * 闸门只在**没走成**时复位（自检没过 / 助手起不来）：真排好了重启就一直关着 ——
+   * 旧进程还要两三秒才退出，这段时间再来一条请求就是「第二次重启」。
+   * 手动重试因此不受影响（那些路径都会把闸门放开）。
+   */
   async function runRestartFlow(info: RestartRequestInfo): Promise<void> {
+    if (restartFlowInFlight) {
+      log.warn("restart request ignored: another restart flow is running", {
+        requestedBy: info.requestedBy,
+        reason: info.reason ?? "manual",
+        targetVersion: info.targetVersion ?? onDiskVersion(),
+      });
+      return;
+    }
+    restartFlowInFlight = true;
+    try {
+      if (!(await runRestartFlowOnce(info))) {
+        restartFlowInFlight = false;
+      }
+    } catch (error) {
+      restartFlowInFlight = false;
+      throw error;
+    }
+  }
+
+  /** 跑一条重启流程；返回 `true` = 已经排好重启（进程即将退出），`false` = 没走成。 */
+  async function runRestartFlowOnce(info: RestartRequestInfo): Promise<boolean> {
     const targetVersion = info.targetVersion ?? onDiskVersion();
     if (!info.force) {
       // 先排空写队列：尽量别和自检里的迁移抢 SQLite 写锁（busy_timeout 兜底）
@@ -456,7 +503,7 @@ async function main(): Promise<void> {
           restore,
           preflight.summary,
         );
-        return;
+        return false;
       }
       // 自检通过：这个构建没问题，清掉旧的失败记录
       failedVersions.forget(targetVersion);
@@ -470,8 +517,21 @@ async function main(): Promise<void> {
       args: process.argv.slice(1),
     });
     if (!respawn.ok) {
-      throw new Error(`重启助手启动失败：${respawn.detail}`);
+      // 助手没拉起来 = 这次重启**没有发生**（旧进程还在跑）：说清原因、别让部署监测
+      // 再赌同一个版本，然后如实回报「没走成」（闸门放开，手动重试不受影响）。
+      const detail = `重启助手启动失败：${respawn.detail}`;
+      log.error("restart aborted: respawn helper not started", {
+        requestedBy: info.requestedBy,
+        reason: info.reason ?? "manual",
+        detail,
+      });
+      deployWatcher.blockVersion(targetVersion, detail);
+      await announceRestartAbort(info, detail);
+      return false;
     }
+    // 助手已经起来了 = 这次重启**已经安排上**：回写部署监测，同一个目标版本别再排第二轮
+    // （手动 `/restart` 也走这里 —— 真机报过「手动重启后又自己重启一次」）。
+    deployWatcher.markScheduled(targetVersion);
     writeRestartNotice({
       userId: info.requestedBy,
       requestedAt: new Date().toISOString(),
@@ -491,13 +551,66 @@ async function main(): Promise<void> {
     });
     setTimeout(() => {
       if (respawn.failed()) {
-        // 助手在启动阶段就报错 → 撤销退出，并私信纠正刚才那张「正在重启」的回执
-        log.error("restart aborted: respawn helper errored before exit");
-        void notifyRestartAborted(runtime, info.requestedBy, respawn.detail);
+        // 助手在启动阶段就报错 → 撤销退出：这次重启没有发生（旧进程还在跑）。
+        // 别让部署监测再赌同一个版本，也必须告诉等这次重启的人。
+        log.error("restart aborted: respawn helper errored before exit", {
+          requestedBy: info.requestedBy,
+          detail: respawn.detail,
+        });
+        deployWatcher.blockVersion(targetVersion, respawn.detail);
+        restartFlowInFlight = false;
+        void announceRestartAbort(info, respawn.detail);
         return;
       }
       void shutdown();
     }, RESTART_EXIT_DELAY_MS);
+    return true;
+  }
+
+  /**
+   * 「这次重启没走成」的通知：助手没起来 / 起来后立刻报错 → **旧进程没有退出**。
+   *
+   * 不告诉一声的话，发起人只会以为「已经重启了」（命令行回执早发出去了），
+   * 自动部署那条尤其糟：`requestedBy` 是 `deploy-watcher` 占位符（不是真实用户），
+   * 私信过去没人收得到 —— 所以 `reason=deploy` 时改发全部全局超管。
+   */
+  async function announceRestartAbort(
+    info: RestartRequestInfo,
+    detail: string,
+  ): Promise<void> {
+    if (info.reason !== "deploy") {
+      await notifyRestartAborted(runtime, info.requestedBy, detail);
+      return;
+    }
+    const targetVersion = info.targetVersion ?? onDiskVersion();
+    const card = renderCard({
+      title: "自动重启没成功",
+      lines: [
+        `**新版本**：v${targetVersion}（服务器上已就绪）`,
+        "**自动重启失败了**：机器人仍在运行旧版本，这个版本**不会再自动重试**。",
+        `**原因**：${detail.length > 0 ? detail : "未知（详见启动日志）"}`,
+        "",
+        "可以在服务器上手动重启，或检查启动日志 / `data/restart-failed.json`。",
+      ],
+      rows: [
+        [
+          {
+            id: "proc",
+            label: "看看进程状态",
+            callbackData: encodeCallback("status", "proc"),
+          },
+        ],
+      ],
+    });
+    for (const userId of runtime.permissions.listSuperAdmins()) {
+      const result = await runtime.notifications.sendPrivateCard(userId, card);
+      if (!result.ok) {
+        log.warn("restart-aborted notice not delivered", {
+          userId,
+          detail: result.detail,
+        });
+      }
+    }
   }
   process.once("SIGINT", () => {
     void shutdown();

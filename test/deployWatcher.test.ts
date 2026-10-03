@@ -229,13 +229,88 @@ describe("DeployWatcher", () => {
       onDiskVersion: () => "0.21.0",
       recipients: () => [],
       notify: async () => undefined,
-      requestRestart: () => true,
+      // 不接受理：走「保留待重启状态、延后重试」那条路，卡片发不出去也不能崩
+      requestRestart: () => false,
       clock: () => 0,
     });
     for (let i = 0; i < 3; i += 1) {
       await watcher.runOnce();
     }
     expect(watcher.pending()?.targetVersion).toBe("0.21.0");
+  });
+
+  describe("受理过重启的目标版本（重复通知 / 重复重启回归）", () => {
+    it("受理重启后同一版本不再通知、不再排第二轮（旧进程还在退出的窗口里）", async () => {
+      // 真机报过：一次部署收到两张「发现新版本」、机器人改版两次（间隔 5s）。
+      // 原因：受理重启 ≠ 旧进程已退出，扫描周期还在跑，而「同一个版本已经安排过了」没被记住。
+      const h = createHarness({ delayMs: 0 });
+      h.setDisk("0.21.0");
+
+      await h.watcher.runOnce(); // 建 pending（宽限期 0 → deadline 就是现在）
+      await h.watcher.runOnce(); // 到点 → 受理重启
+      expect(h.restarts).toHaveLength(1);
+      expect(h.watcher.pending()).toBeUndefined();
+
+      // 旧进程还没退出，扫描周期又跑了几轮：不能再通知、不能再排重启
+      await h.watcher.runOnce();
+      await h.watcher.runOnce();
+      await h.watcher.runOnce();
+      expect(h.restarts).toHaveLength(1);
+      expect(h.notices.map((item) => item.userId)).toEqual(["root", "root2"]);
+      expect(h.watcher.pending()).toBeUndefined();
+    });
+
+    it("手动重启回写「已受理」后，部署监测不再为同一版本排一轮", async () => {
+      // 真机报过：手动重启一次后又自己重启一次（相隔约 3 分钟）。
+      // 手动 /restart 也会走 runRestartFlow → deployWatcher.markScheduled()。
+      const h = createHarness({ delayMs: 0 });
+      h.setDisk("0.21.0");
+      await h.watcher.runOnce(); // 部署监测已经在提醒
+      expect(h.watcher.pending()).toBeDefined();
+
+      h.watcher.markScheduled("0.21.0"); // 手动重启已安排
+      expect(h.watcher.pending()).toBeUndefined();
+
+      await h.watcher.runOnce();
+      await h.watcher.runOnce();
+      expect(h.restarts).toHaveLength(0);
+      expect(h.notices.map((item) => item.userId)).toEqual(["root", "root2"]);
+    });
+
+    it("受理后又部署了更新的版本 → 重新提醒并重启", async () => {
+      const h = createHarness({ delayMs: 0 });
+      h.setDisk("0.21.0");
+      await h.watcher.runOnce();
+      await h.watcher.runOnce();
+      expect(h.restarts).toHaveLength(1);
+
+      h.setDisk("0.22.0");
+      await h.watcher.runOnce();
+      expect(h.notices).toHaveLength(4);
+      expect(h.watcher.pending()?.targetVersion).toBe("0.22.0");
+
+      await h.watcher.runOnce();
+      expect(h.restarts.map((item) => item.targetVersion)).toEqual([
+        "0.21.0",
+        "0.22.0",
+      ]);
+    });
+
+    it("受理后磁盘版本回落（撤回部署）再重新上传同一版本 → 重新给机会", async () => {
+      const h = createHarness({ delayMs: 0 });
+      h.setDisk("0.21.0");
+      await h.watcher.runOnce();
+      await h.watcher.runOnce();
+      expect(h.restarts).toHaveLength(1);
+
+      h.setDisk("0.20.0"); // 撤回部署：磁盘版本追平运行版本
+      await h.watcher.runOnce();
+
+      h.setDisk("0.21.0"); // 重新上传同一版本
+      await h.watcher.runOnce();
+      expect(h.notices).toHaveLength(4);
+      expect(h.watcher.pending()?.targetVersion).toBe("0.21.0");
+    });
   });
 
   describe("构建指纹（版本号变了不等于代码换了）", () => {

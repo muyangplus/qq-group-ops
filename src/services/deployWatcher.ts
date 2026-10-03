@@ -93,8 +93,12 @@ export interface DeployWatcherOptions {
  * - 稳定窗口通过 → 私信全部全局超管一张卡：「当前 → 新版本，计划 X 后自动重启」+ 「取消自动重启 / 立即重启」；
  * - 宽限期内没人取消 → 走既有自我重启路径（`requestRestart`，reason=`deploy`）；
  * - 取消后**同一目标版本不再提醒**（版本再变才重新提醒）；
- * - 磁盘版本回落（撤回部署）或读到 `unknown` → 清除待重启状态；
- * - 自动重启没被受理（自我重启助手起不来）→ 保留待重启状态、延后 5 分钟重试并通知超管。
+ * - **受理过重启的目标版本不再排第二轮**（`markScheduled`；手动 `/restart` 也会回写它，
+ *   免得「手动重启」与「部署自动重启」撞成两次）；
+ * - 磁盘版本回落（撤回部署）或读到 `unknown` → 清除待重启状态（含「已受理」记忆）；
+ * - **自动重启没被受理**（`requestRestart` 返回 `false`，例如重启钩子没装配）→ 保留待重启状态、
+ *   延后 5 分钟重试并通知超管；**受理之后**助手才失败（起不来 / 起来就报错）→ 由 `main.ts`
+ *   拦掉同一目标版本并通知超管，不再走这条重试。
  *
  * 驱动方式：暴露 `runOnce()`，**意图是由统一扫描周期（`TickScheduler`）驱动**；
  * `start()/stop()` 只是过渡期的独立定时器（本地 `DEPLOY_CHECK_INTERVAL_MS`）。
@@ -118,6 +122,8 @@ export class DeployWatcher implements DeployControl {
   private streakVersion: string | undefined;
   private streak = 0;
   private pendingState: DeployPending | undefined;
+  /** 已经受理过重启（含手动 `/restart`）的目标版本（同一个不再提醒、不再排第二轮）。 */
+  private scheduledVersion: string | undefined;
   /** 用户取消过的目标版本（同一个不再提醒）。 */
   private cancelledVersion: string | undefined;
   /** 已经判定为「版本号变了但构建没变」的目标版本（免得每轮都记一条日志）。 */
@@ -145,6 +151,32 @@ export class DeployWatcher implements DeployControl {
 
   public pending(): DeployPending | undefined {
     return this.pendingState;
+  }
+
+  /**
+   * 记录「这个目标版本的重启已经受理」：**同一目标版本不再提醒、不再排第二轮**。
+   *
+   * 为什么必须记：受理 ≠ 旧进程已经退出。自检 + 拉起 `scripts/respawn.mjs` + 等新进程起来的
+   * 窗口有好几秒，而统一扫描周期一直在跑 —— 不记住「这个版本已经安排过了」，同一个目标版本
+   * 会被再当成一次新部署（真机报过「一次部署通知两次、机器人改版两次」，间隔 5s）。
+   *
+   * 手动 `/restart` 也会回写这里：手动重启已经安排上了，部署监测不该再排一轮
+   * （真机报过「手动重启后又自己重启一次」）。
+   *
+   * 记忆在「磁盘版本回落 / 已重启到目标版本」时随 `resetStreak()` 一起清掉 ——
+   * 撤回部署后再重新上传同一个版本，仍会重新给机会。
+   */
+  public markScheduled(targetVersion: string): void {
+    if (this.scheduledVersion === targetVersion) {
+      return;
+    }
+    this.scheduledVersion = targetVersion;
+    if (this.pendingState?.targetVersion === targetVersion) {
+      this.pendingState = undefined;
+    }
+    log.info("deploy restart armed, same target version will not be re-scheduled", {
+      targetVersion,
+    });
   }
 
   /**
@@ -200,6 +232,11 @@ export class DeployWatcher implements DeployControl {
         });
       }
       this.resetStreak();
+      return;
+    }
+
+    // 这个目标版本的重启已经受理过了（旧进程还在退出窗口里）→ 同一版本不再提醒、不再排第二轮。
+    if (this.scheduledVersion === target) {
       return;
     }
 
@@ -316,7 +353,7 @@ export class DeployWatcher implements DeployControl {
         current: pending.currentVersion,
         target: pending.targetVersion,
       });
-      this.pendingState = undefined;
+      this.markScheduled(pending.targetVersion);
       return true;
     }
     // 没受理（例如自我重启助手起不来）：保留状态、延后 5 分钟重试，并通知超管
@@ -387,6 +424,8 @@ export class DeployWatcher implements DeployControl {
   /** 清掉待重启状态与稳定计数（「没有新东西可加载」时统一走这里）。 */
   private resetStreak(): void {
     this.pendingState = undefined;
+    // 「已经安排过重启」的记忆也清掉：磁盘版本回落（撤回部署）后重新上传同一版本要重新给机会。
+    this.scheduledVersion = undefined;
     this.streakVersion = undefined;
     this.streak = 0;
   }
