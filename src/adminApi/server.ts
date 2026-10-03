@@ -348,6 +348,24 @@ export interface AdminApiDeliveriesView {
 }
 
 /**
+ * 降级模块「重试加载」的结果（运维写，平台超管 240）。
+ *
+ * 与机器人 `/status proc` 里那个「重试加载」按钮**同一个领域入口**（`HealthRegistry.retry`）：
+ * 只重跑该模块的 `load()`（幂等），不动业务数据、不重启进程。
+ */
+export interface AdminApiModuleRetryResult {
+  module: {
+    key: string;
+    label: string;
+    state: string;
+    error?: string | undefined;
+  };
+  /** 重试后是否恢复（`state === "ready"`）。仍失败时为 `false`，原因在 `module.error` 与 `message`。 */
+  recovered: boolean;
+  message: string;
+}
+
+/**
  * 处罚动作的结果（P2 写）。
  *
  * 动作本身与指令层 `/punish release|mute|kick|blacklist` 完全同源（同一个领域服务），
@@ -588,6 +606,13 @@ export interface AdminApiWriters {
     actorId: string,
     options: { group?: string | undefined; full: boolean },
   ): Promise<AdminApiCsvExport>;
+  /**
+   * 重试加载一个降级模块（平台超管 240；幂等，只重跑该模块的 `load()`）。
+   *
+   * 与机器人 `/status proc` 的「重试加载」同一入口 —— 修好数据 / 环境后不用重启进程。
+   * 只读巡检模式没有健康注册表，writer 抛 `unavailable`。
+   */
+  retryModule(key: string, actorId: string): Promise<AdminApiModuleRetryResult>;
 
   // ---------------------------------------------------------------- P2 写操作
   /**
@@ -1482,6 +1507,26 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
         );
     }
     return reader();
+  });
+
+  /**
+   * 重试加载一个降级模块（运维写，平台超管 240）：
+   * `POST /api/health/modules/:key/retry`。
+   *
+   * 与机器人 `/status proc` 的「重试加载」同一个领域入口，**幂等**（只重跑该模块的 `load()`，
+   * 不动业务数据、不重启进程）；只读巡检模式没有健康注册表 → 503。
+   * 仍失败不是 HTTP 错误：`ok: false` + `result.module.error` 如实回原因。
+   */
+  app.post("/api/health/modules/:key/retry", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { key } = request.params as { key: string };
+    const result = await writers.retryModule(key.trim(), actorOf(request));
+    return { ok: result.recovered, result };
   });
 
   /** 同步官方入群申请队列（写但幂等）：与 `/sync` 同一服务，本群 120。 */

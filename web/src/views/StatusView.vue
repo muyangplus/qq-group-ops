@@ -22,6 +22,10 @@ const tasks = ref<AdminApiTasksView | null>(null);
 const health = ref<AdminApiHealthView | null>(null);
 const loading = ref(false);
 const error = ref("");
+/** 正在重试加载的模块 key（空 = 没有请求在跑，按钮全可用）。 */
+const retrying = ref("");
+/** 上一次「重试加载」的结果（成功 / 仍失败都显示服务端给的原话）。 */
+const retryNotice = ref<{ ok: boolean; text: string } | null>(null);
 
 const allowed = computed(() => session.isSuperAdmin);
 
@@ -56,6 +60,40 @@ async function load(): Promise<void> {
 }
 
 onMounted(load);
+
+/**
+ * 重试加载一个降级模块（平台超管 240）。
+ *
+ * 与机器人 `/status proc` 的「重试加载」是**同一个领域入口**（幂等，只重跑该模块的 `load()`）。
+ * 重试后模块状态会变（恢复 / 原因更新），周期任务的「降级跳过」也跟着变 → 两处一起刷新。
+ */
+async function retryModule(key: string): Promise<void> {
+  if (retrying.value.length > 0) {
+    return;
+  }
+  retrying.value = key;
+  retryNotice.value = null;
+  try {
+    const response = await adminApi.retryModule(key);
+    retryNotice.value = {
+      ok: response.result.recovered,
+      text: response.result.message,
+    };
+    const [nextHealth, nextTasks] = await Promise.all([
+      adminApi.health().catch(nullOnUnavailable),
+      adminApi.tasks().catch(nullOnUnavailable),
+    ]);
+    health.value = nextHealth;
+    tasks.value = nextTasks;
+  } catch (err) {
+    retryNotice.value = {
+      ok: false,
+      text: err instanceof ApiError ? err.message : String(err),
+    };
+  } finally {
+    retrying.value = "";
+  }
+}
 
 function formatUptime(ms: number): string {
   const seconds = Math.floor(ms / 1000);
@@ -239,12 +277,13 @@ function formatBytes(bytes: number): string {
 
         <h3 class="row-title">模块健康</h3>
         <p v-if="health.modules.length === 0" class="hint">没有可展示的模块状态。</p>
-        <table v-else class="table">
+        <table v-else id="health-modules" class="table">
           <thead>
             <tr>
               <th>模块</th>
               <th>状态</th>
               <th>错误</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -258,12 +297,30 @@ function formatBytes(bytes: number): string {
                 <span v-if="module.error" class="error">{{ module.error }}</span>
                 <span v-else>—</span>
               </td>
+              <td>
+                <button
+                  type="button"
+                  class="link"
+                  :disabled="module.state === 'ready' || retrying.length > 0"
+                  @click="retryModule(module.key)"
+                >
+                  {{ retrying === module.key ? "重试中…" : "重试加载" }}
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
+        <p
+          v-if="retryNotice"
+          id="module-retry-notice"
+          :class="retryNotice.ok ? 'hint' : 'error'"
+        >
+          {{ retryNotice.text }}
+        </p>
         <p class="hint">
           模块降级后它负责的功能会停用（那一轮周期任务也会被整轮跳过）；
-          可以在机器人里用 <code>/status proc</code> 点「重试加载」把它拉回来，**不用重启**。
+          修好数据 / 环境后点「重试加载」就能恢复该功能域，<b>不用重启进程</b>
+          （与机器人 `/status proc` 的重试加载是同一个入口，幂等）。
         </p>
 
         <h3 class="row-title">恢复现场</h3>

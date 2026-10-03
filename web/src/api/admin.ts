@@ -485,6 +485,14 @@ export interface AdminApiHealthView {
   };
 }
 
+/** 降级模块「重试加载」的结果（运维写，平台超管 240）。 */
+export interface AdminApiModuleRetryResult {
+  module: { key: string; label: string; state: string; error?: string };
+  /** 重试后是否恢复（`state === "ready"`）；仍失败时原因在 `module.error` 与 `message`。 */
+  recovered: boolean;
+  message: string;
+}
+
 /** 处罚动作的结果（与指令层 `/punish …` 同一服务）。 */
 export interface AdminApiPunishmentActionResult {
   ok: boolean;
@@ -602,6 +610,17 @@ export const adminApi = {
   /** 运维只读（平台超管 240）：进程细节 / 模块健康 / 写队列 / 恢复现场。 */
   health: (): Promise<AdminApiHealthView> =>
     api.get<AdminApiHealthView>("/api/health"),
+
+  /**
+   * 重试加载一个降级模块（平台超管 240；幂等）：与机器人 `/status proc` 的「重试加载」
+   * 是同一个领域入口，只重跑该模块的 `load()`，不动数据、不重启进程。
+   */
+  retryModule: (
+    key: string,
+  ): Promise<{ ok: boolean; result: AdminApiModuleRetryResult }> =>
+    api.post<{ ok: boolean; result: AdminApiModuleRetryResult }>(
+      `/api/health/modules/${encodeURIComponent(key)}/retry`,
+    ),
 
   /** 处罚记录（只读）：平台超管不传 group 看全量，其余人必须带 group。 */
   punishments: (params: {

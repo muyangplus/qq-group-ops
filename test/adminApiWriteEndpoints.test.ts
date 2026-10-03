@@ -107,6 +107,13 @@ function stubWriters(
         rows: 1,
         full: false,
       }),
+    retryModule:
+      overrides.retryModule ??
+      record("retryModule", {
+        module: { key: "config", label: "群规则", state: "ready" },
+        recovered: true,
+        message: "「群规则」已重新加载成功，功能立即恢复，不用重启进程。",
+      }),
   };
 }
 
@@ -165,7 +172,68 @@ describe("管理 API 写端点（HTTP 层）", () => {
       headers: { cookie },
     });
     expect(csv.statusCode).toBe(503);
+
+    // 运维写（降级模块重试）在只读巡检模式下也一样：没有健康注册表 → 503
+    const retry = await app.inject({
+      method: "POST",
+      url: "/api/health/modules/config/retry",
+      headers: { cookie, "x-admin-request": "1" },
+    });
+    expect(retry.statusCode).toBe(503);
+    expect(retry.json()).toMatchObject({ error: "unavailable" });
     await app.close();
+  });
+
+  it("降级模块重试（运维写）：key 与登录账号原样进 writer，仍失败回 ok=false", async () => {
+    const writers = stubWriters();
+    const { app, cookie } = await loggedIn(writers);
+
+    const recovered = await app.inject({
+      method: "POST",
+      url: "/api/health/modules/config/retry",
+      headers: { cookie, "x-admin-request": "1" },
+    });
+    expect(recovered.statusCode).toBe(200);
+    expect(recovered.json()).toMatchObject({
+      ok: true,
+      result: { recovered: true, module: { key: "config", state: "ready" } },
+    });
+    expect(writers.calls[0]).toEqual({
+      method: "retryModule",
+      args: ["config", "op1"],
+    });
+
+    // 仍然起不来：HTTP 仍是 200，「没恢复」靠 ok=false + 原话原因表达
+    const still = stubWriters({
+      retryModule: async () => ({
+        module: { key: "config", label: "群规则", state: "degraded", error: "bad row" },
+        recovered: false,
+        message: "「群规则」仍然起不来：bad row。修好数据 / 环境后可再试一次。",
+      }),
+    });
+    const second = await loggedIn(still);
+    const response = await second.app.inject({
+      method: "POST",
+      url: "/api/health/modules/config/retry",
+      headers: { cookie: second.cookie, "x-admin-request": "1" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      result: { recovered: false, module: { error: "bad row" } },
+    });
+    expect(response.json().result.message).toContain("bad row");
+
+    // 缺 CSRF：写方法一律 403（全局钩子，不区分哪个端点）
+    const noCsrf = await app.inject({
+      method: "POST",
+      url: "/api/health/modules/config/retry",
+      headers: { cookie },
+    });
+    expect(noCsrf.statusCode).toBe(403);
+
+    await app.close();
+    await second.app.close();
   });
 
   it("通过 / 拒绝：actor 是登录账号，参数原样进 writer", async () => {

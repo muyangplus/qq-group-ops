@@ -45,7 +45,7 @@ import {
 } from "../services/distSnapshot.js";
 import type { ExportService } from "../services/export.js";
 import { DEFAULT_GROUP_ID, type GroupConfigStore } from "../services/groupConfig.js";
-import type { HealthRegistry } from "../services/health.js";
+import { MODULE_KEYS, type HealthRegistry, type ModuleKey } from "../services/health.js";
 import type { JoinApprovalService } from "../services/joinApproval.js";
 import type { JoinAuditService, JoinRequest } from "../services/joinAudit.js";
 import type { JoinRequestSyncService } from "../services/joinAuditSync.js";
@@ -1332,6 +1332,61 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         csv,
         rows: records.length,
         full: options.full,
+      };
+    },
+
+    /**
+     * 重试加载一个降级模块（运维写，平台超管 240）。
+     *
+     * 与机器人 `/status proc` 的「重试加载」按钮**同一个入口**（`HealthRegistry.retry`，
+     * 见 `adminCommands.moduleRetryCard`）：只重跑该模块的 `load()` —— 幂等、不动业务数据、
+     * 不重启进程。修好数据 / 环境后一次点击就能恢复该功能域。
+     */
+    retryModule: async (key, actorId) => {
+      requireGlobalSuperAdmin(actorId, "重试加载模块");
+      const health = deps.health?.();
+      if (!health) {
+        throw unavailable(
+          "模块健康注册表未装配（只读巡检模式 / 内存模式）：请用机器人进程内的管理监听口重试。",
+        );
+      }
+      const moduleKey = key.trim();
+      if (!(MODULE_KEYS as readonly string[]).includes(moduleKey)) {
+        throw badRequest(
+          `未知模块：${moduleKey.length > 0 ? moduleKey : "（空）"}。可用：${MODULE_KEYS.join(" / ")}`,
+        );
+      }
+      const before = health.statusOf(moduleKey as ModuleKey);
+      const after = await health.retry(moduleKey as ModuleKey);
+      const recovered = after.state === "ready";
+      const reason =
+        `模块=${after.key}(${after.label}) ${before.state}` +
+        `${before.error !== undefined ? `(${truncate(before.error, 80)})` : ""} → ${after.state}` +
+        `${after.error !== undefined ? `(${truncate(after.error, 80)})` : ""}`;
+      appendAudit({
+        groupId: "",
+        actorId,
+        action: "admin_api:module_retry",
+        status: recovered ? AuditStatus.Executed : AuditStatus.Rejected,
+        reason,
+      });
+      log.info("admin api retried module", {
+        module: after.key,
+        actorId,
+        before: before.state,
+        after: after.state,
+      });
+      return {
+        module: {
+          key: after.key,
+          label: after.label,
+          state: after.state,
+          ...(after.error !== undefined ? { error: after.error } : {}),
+        },
+        recovered,
+        message: recovered
+          ? `「${after.label}」已重新加载成功，功能立即恢复，不用重启进程。`
+          : `「${after.label}」仍然起不来：${after.error ?? "未知原因"}。修好数据 / 环境后可再试一次。`,
       };
     },
 

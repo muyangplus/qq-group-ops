@@ -50,7 +50,7 @@ export const ADMIN_API_SCOPE_DOMAINS: readonly AdminApiScopeDomainMeta[] = [
   { domain: "alias", label: "别名表", writable: true, platformOnly: true },
   { domain: "settings", label: "配置（热改项）", writable: true, platformOnly: true },
   { domain: "reports", label: "统计报表", writable: false, platformOnly: false },
-  { domain: "status", label: "状态 / 周期任务 / 运维健康", writable: false, platformOnly: true },
+  { domain: "status", label: "状态 / 周期任务 / 运维健康（含降级模块重试）", writable: true, platformOnly: true },
   { domain: "perm", label: "权限授予 / 撤销", writable: true, platformOnly: true },
   { domain: "identity", label: "身份映射（只读）", writable: false, platformOnly: true },
 ];
@@ -117,6 +117,7 @@ export const ADMIN_API_ROUTE_SCOPES: readonly AdminApiRouteScope[] = [
   { method: "GET", url: "/api/activities/:code/export.csv", scope: "read:activity" },
 
   // 写
+  { method: "POST", url: "/api/health/modules/:key/retry", scope: "write:status" },
   { method: "POST", url: "/api/join/sync", scope: "write:join" },
   { method: "POST", url: "/api/pending/:requestId/approve", scope: "write:join" },
   { method: "POST", url: "/api/pending/:requestId/reject", scope: "write:join" },
