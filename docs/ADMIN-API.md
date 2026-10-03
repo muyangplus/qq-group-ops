@@ -199,7 +199,7 @@
 | `alias` | `read:alias` | `write:alias` | 别名表（平台 240） |
 | `settings` | `read:settings` | `write:settings` | 热改配置（平台 240） |
 | `reports` | `read:reports` | —— | 统计报表（页面与 CSV） |
-| `status` | `read:status` | —— | 状态 / 周期任务 / 运维健康（平台 240） |
+| `status` | `read:status` | `write:status` | 状态 / 周期任务 / 运维健康 / 降级模块重试（平台 240） |
 | `perm` | `read:perm` | `write:perm` | 权限授予 / 撤销（P3） |
 
 
@@ -238,7 +238,7 @@
     **写队列**（待写 / 失败 / 最近错误）、**数据库**（driver + 迁移问题明细）、
     **通知**（订阅人数 / 投递条数）、**模块健康**（全部模块的 state 与降级原因）、
     **恢复现场**（`data/restart-failed.json`、`data/rollback-notice.json`、`data/dist-broken/` 是否存在）。
-    只读巡检进程没有这些内存态 → 503；
+    只读巡检进程没有这些内存态 → 503（**降级模块的「重试加载」**是写操作，见 E1-o）；
 38. `POST /api/join/sync { group }`：同步官方入群申请队列（与指令层 `/sync` **同一个服务**）。
     **写但幂等**、门槛是**本群审核员 120**（不是 130 —— 它只把官方队列拉下来，不改变任何人的状态），
     写审计 `admin_api:join_sync`；返回 `fetched` / `pending` / 人话 `message`；
@@ -383,6 +383,22 @@
 61. **不提供任何写**：绑定 / 改绑 / 解绑仍然只在机器人里用 `/bind`（代绑别人要 240）；
     后台连「解绑」按钮都没有 —— 这是有意为之，不是漏做。
 
+### E1-o 运维写：降级模块「重试加载」（P1 收尾）
+
+> 背景：模块降级（`HealthRegistry`）时后台**看得到却按不了** —— 想恢复必须回聊天窗口，
+> 在 `/status proc` 的降级卡上点「重试加载」。这条把那个按钮搬进「状态」页，与机器人**同一入口**。
+
+62. `POST /api/health/modules/:key/retry`（**平台超管 240**）：重试加载一个模块，
+    与机器人 `/status proc` 的「重试加载」按钮**同一个领域入口**（`HealthRegistry.retry` →
+    该模块的 `load()`）—— 幂等、不动业务数据、不重启进程；修好数据 / 环境后一次点击即恢复该功能域。
+    参数 `:key` 取 `MODULE_KEYS`（`platform` / `identity` / `audit` / `join` / `config` / `notify` /
+    `permissions` / `groupmessage` / `activity` / `sanction` / `blacklist` / `shortcode` /
+    `profile` / `alias` / `menu`），未知 key 回 400 并列出全部可用值；
+63. **「仍然起不来」是结果、不是 HTTP 错误**：HTTP 200 + `ok: false`，`result.module.error` 与
+    `result.message` 给原话原因（界面原样显示）；两种结局都写审计 —— 恢复 `executed`、
+    仍失败 `rejected`，理由形如 `模块=config(群规则) degraded(bad row) → ready`；
+    只读巡检模式没有健康注册表 → 503（与其它内存态端点一致）。
+
 ### E1-g 只读端点的逐路由门槛（P1）
 
 30. `GET /api/tasks`（平台超管 240）：**周期任务监测列表** —— 统一扫描周期 + 每个任务的
@@ -431,6 +447,7 @@
 | `GET /api/reports/export.csv` | 本群 130（脱敏长表）；`?full=1` 与不带 `group=` 的**全量**要平台 240 |
 | `GET /api/permissions`、`POST /api/permissions` | 平台超管 240（改的是判定权限的表，只有这一档）|
 | `GET /api/identities` | 平台超管 240（身份映射是平台级数据；只读，没有任何写端点）|
+| `POST /api/health/modules/:key/retry` | 平台超管 240（运维动作：重试加载降级模块，幂等、不重启进程）|
 
 - **不报错、只裁剪**：列表类端点（待审批 / 活动）对够不着的群直接少返回，而不是整条 403 ——
   多群管理员看到的自然是自己那几行；
