@@ -1024,6 +1024,113 @@ describe("管理 API HTTP 层", () => {
     await app.close();
   });
 
+  it("/api/audit 收尾筛选：时间范围 / 操作对象 / 只看被拒（QQ号与 #短码 都算命中）", async () => {
+    const tokens = memoryTokens();
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "test",
+      auditReader: {
+        list: async () => [
+          {
+            recordId: "r1",
+            groupId: "g1",
+            actorId: "openid-op",
+            action: "approve_join_request",
+            status: "executed",
+            reason: "",
+            // 用**本地时间**构造，避免用例依赖机器时区（筛的是本地日）
+            createdAt: new Date(2026, 9, 2, 12, 0, 0).toISOString(),
+            group: groupRef("g1"),
+            actor: {
+              kind: "user" as const,
+              officialId: "openid-op",
+              label: "10001",
+              externalId: "10001",
+            },
+            targetUserId: "openid-target",
+            target: {
+              kind: "user" as const,
+              officialId: "openid-target",
+              label: "#D4E5F6",
+              shortCode: "#D4E5F6",
+            },
+          },
+          {
+            recordId: "r2",
+            groupId: "g1",
+            actorId: "openid-other",
+            action: "admin_api:module_retry",
+            status: "rejected",
+            reason: "仍然起不来",
+            createdAt: new Date(2026, 9, 3, 12, 0, 0).toISOString(),
+            group: groupRef("g1"),
+            actor: {
+              kind: "user" as const,
+              officialId: "openid-other",
+              label: "10002",
+              externalId: "10002",
+            },
+          },
+        ],
+      },
+    }).app;
+    const { token } = await tokens.issue({ userId: "op1", ttlMs: 60_000 });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/token",
+      headers: { "x-admin-request": "1" },
+      payload: { token },
+    });
+    const cookie = cookieOf(login);
+
+    const rejected = await app.inject({
+      method: "GET",
+      url: "/api/audit?status=rejected",
+      headers: { cookie },
+    });
+    expect(rejected.json()).toMatchObject({
+      total: 1,
+      items: [{ recordId: "r2", status: "rejected" }],
+    });
+
+    // 操作对象按 `#短码`（忽略大小写）；`#` 要 URL 编码
+    const byTarget = await app.inject({
+      method: "GET",
+      url: "/api/audit?target=%23d4e5f6",
+      headers: { cookie },
+    });
+    expect(byTarget.json()).toMatchObject({ total: 1, items: [{ recordId: "r1" }] });
+
+    // 操作人按绑定的 QQ号
+    const byActor = await app.inject({
+      method: "GET",
+      url: "/api/audit?actor=10002",
+      headers: { cookie },
+    });
+    expect(byActor.json()).toMatchObject({ total: 1, items: [{ recordId: "r2" }] });
+
+    // 时间范围：本地 10-02 全天 → 只有 r1
+    const byDay = await app.inject({
+      method: "GET",
+      url: "/api/audit?from=2026-10-02&to=2026-10-02",
+      headers: { cookie },
+    });
+    expect(byDay.json()).toMatchObject({ total: 1, items: [{ recordId: "r1" }] });
+
+    // 坏时间如实 400（不静默忽略，否则会以为筛了其实没筛）
+    const bad = await app.inject({
+      method: "GET",
+      url: "/api/audit?from=%E6%98%A8%E5%A4%A9",
+      headers: { cookie },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json()).toMatchObject({ error: "bad_request" });
+    expect(bad.json().message).toContain("时间格式不认识");
+
+    await app.close();
+  });
+
   it("审计数据源未装配时回 503", async () => {
     const { app, tokens } = build();
     const { token } = await tokens.issue({ userId: "op1", ttlMs: 60_000 });

@@ -890,12 +890,22 @@ export const adminApi = {
       { reason },
     ),
 
+  /**
+   * 审计查询（只读）：群 / 操作人 / 操作对象 / 动作 / 状态 / 时间范围 + 分页。
+   *
+   * 操作人与操作对象按「人念得出来的名字」筛：内部 id、绑定的 QQ号、`#短码`、展示名都算命中；
+   * 时间用 `YYYY-MM-DD`（本地日，`to` 含当天）或 ISO 时间，坏值服务端回 400。
+   */
   audit: (params: {
     page?: number | undefined;
     pageSize?: number | undefined;
     group?: string | undefined;
     actor?: string | undefined;
+    target?: string | undefined;
     action?: string | undefined;
+    status?: string | undefined;
+    from?: string | undefined;
+    to?: string | undefined;
   } = {}): Promise<AdminApiPage<AdminApiAuditRecord>> =>
     api.get(`/api/audit${query(params)}`),
 

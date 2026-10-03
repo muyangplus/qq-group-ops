@@ -23,7 +23,13 @@ const page = ref(1);
 const pageSize = ref(30);
 const groupFilter = ref("");
 const actorFilter = ref("");
+const targetFilter = ref("");
 const actionFilter = ref("");
+/** 时间范围：`YYYY-MM-DD`（本地日；`to` 含当天）——服务端也认 ISO 时间，坏值回 400。 */
+const fromFilter = ref("");
+const toFilter = ref("");
+/** 只看「被拒」的记录（`status=rejected`）：一眼看清哪些动作没生效。 */
+const rejectedOnly = ref(false);
 const loading = ref(false);
 const error = ref("");
 
@@ -61,7 +67,11 @@ async function load(): Promise<void> {
       pageSize: pageSize.value,
       group: groupFilter.value || undefined,
       actor: actorFilter.value.trim() || undefined,
+      target: targetFilter.value.trim() || undefined,
       action: actionFilter.value.trim() || undefined,
+      ...(rejectedOnly.value ? { status: "rejected" } : {}),
+      from: fromFilter.value || undefined,
+      to: toFilter.value || undefined,
     });
     items.value = result.items;
     total.value = result.total;
@@ -158,18 +168,50 @@ function formatTime(value: string | number): string {
           {{ groupLabel(groupId) }}
         </option>
       </select>
-      <input v-model="actorFilter" type="text" placeholder="操作人（完整 id）" />
-      <input v-model="actionFilter" type="text" placeholder="动作（如 data_delete）" />
+      <input
+        v-model="actorFilter"
+        type="text"
+        placeholder="操作人（QQ号 / #短码 / 完整 id）"
+        @keyup.enter="search"
+      />
+      <input
+        id="audit-target"
+        v-model="targetFilter"
+        type="text"
+        placeholder="操作对象（QQ号 / #短码 / 完整 id）"
+        @keyup.enter="search"
+      />
+      <input
+        v-model="actionFilter"
+        type="text"
+        placeholder="动作（如 data_delete）"
+        @keyup.enter="search"
+      />
+      <label for="audit-from">时间</label>
+      <input id="audit-from" v-model="fromFilter" type="date" @change="search" />
+      <span class="hint">→</span>
+      <input id="audit-to" v-model="toFilter" type="date" @change="search" />
+      <label class="checkbox">
+        <input
+          id="audit-rejected"
+          v-model="rejectedOnly"
+          type="checkbox"
+          @change="search"
+        />
+        只看被拒
+      </label>
       <button type="button" :disabled="loading" @click="search">查询</button>
       <!--
         导出走**同源下载链接**（靠 cookie 鉴权，所以用 <a> 而不是 fetch）：
         默认那份是脱敏的（actor / target 只留首字符，与指令层 `/export audit` 同口径）；
         「含完整 openid」那份更进一步 —— 服务端要求平台超管 240，而且两种都写审计。
+        **注意**：导出的筛选面只有「群 / 全量」，不跟随上面的时间 / 对象 / 状态筛选
+        （服务端按原始审计行导出，见 docs/ADMIN-API.md 的 E1-i 第 39 条）。
       -->
       <a
         class="link"
         :href="adminApi.auditExportUrl({ group: groupFilter || undefined })"
-        title="导出当前筛选的 CSV（默认脱敏：actor / target 只留首字符）"
+        title="导出该群 / 全量的 CSV（默认脱敏：actor / target 只留首字符；不含上面的时间 / 对象 / 状态筛选）"
       >
         导出 CSV
       </a>
@@ -179,7 +221,7 @@ function formatTime(value: string | number): string {
         :href="
           adminApi.auditExportUrl({ group: groupFilter || undefined, full: true })
         "
-        title="导出含完整 openid 的 CSV（要平台超管，会写审计）"
+        title="导出含完整 openid 的 CSV（要平台超管，会写审计；同样不含上面的时间 / 对象 / 状态筛选）"
       >
         导出完整 CSV
       </a>

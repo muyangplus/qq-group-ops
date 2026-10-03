@@ -13,6 +13,7 @@ import { ACTIVITY_SETTING_FIELDS } from "../services/activitySettings.js";
 import { normalizeReportDays } from "./reports.js";
 import type { AdminApiReportsView } from "./reports.js";
 import { requiredScopeFor } from "./scopes.js";
+import { filterAuditRecords, parseAuditBound } from "./auditFilters.js";
 import {
   adminLoginUrl,
   machineTokenAllows,
@@ -1895,7 +1896,20 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     };
   });
 
-  /** 只读审计记录（E1-c）：按群 / 操作人 / 动作过滤 + 分页；全量只有平台超管能看。 */
+  /**
+   * 只读审计记录（E1-c）：按群 / 操作人 / 操作对象 / 动作 / 状态 / 时间范围过滤 + 分页；
+   * 全量只有平台超管能看。
+   *
+   * 口径（收尾批次 B）：
+   * - **操作人 / 操作对象按「人念得出来的名字」匹配** —— 内部 id、绑定的 QQ号、`#短码`、
+   *   展示名都算命中（页面上复制一个 QQ号过来就能筛，不必翻「详情」里的 openid）；
+   * - **时间范围**：`from` / `to` 收 `YYYY-MM-DD`（按本地日，`to` 含当天最后一毫秒）或 ISO 时间，
+   *   坏值回 400（**不静默忽略**，否则会以为筛了其实没筛）；
+   * - 响应始终带 `total`（筛选后的总数），与 `items` 同一次计算。
+   *
+   * 注意：**CSV 导出（`/api/audit/export.csv`）的筛选面不变**（`group` / `full`，按群或全量），
+   * 不跟随这里的筛选 —— 页面上的导出链接文案要如实写清。
+   */
   app.get("/api/audit", async (request, reply) => {
     const reader = options.auditReader;
     if (!reader) {
@@ -1908,7 +1922,26 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     const pageSize = Math.min(positiveQueryInt(query.pageSize, 50), 200);
     const group = queryString(query.group);
     const actor = queryString(query.actor);
+    const target = queryString(query.target);
     const action = queryString(query.action);
+    const status = queryString(query.status);
+    const rawFrom = queryString(query.from);
+    const rawTo = queryString(query.to);
+    let from: Date | undefined;
+    let to: Date | undefined;
+    try {
+      from = rawFrom === undefined ? undefined : parseAuditBound(rawFrom, "from");
+      to = rawTo === undefined ? undefined : parseAuditBound(rawTo, "to");
+    } catch (error) {
+      return reply
+        .code(400)
+        .send(
+          errorBody(
+            "bad_request",
+            error instanceof Error ? error.message : String(error),
+          ),
+        );
+    }
 
     const scope = scopeOf(await readAccessOf(request));
     if (scope) {
@@ -1937,12 +1970,15 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     }
 
     const all = await reader.list();
-    const filtered = all.filter(
-      (record) =>
-        (group === undefined || record.groupId === group) &&
-        (actor === undefined || record.actorId === actor) &&
-        (action === undefined || record.action === action),
-    );
+    const filtered = filterAuditRecords(all, {
+      ...(group !== undefined ? { group } : {}),
+      ...(actor !== undefined ? { actor } : {}),
+      ...(target !== undefined ? { target } : {}),
+      ...(action !== undefined ? { action } : {}),
+      ...(status !== undefined ? { status } : {}),
+      ...(from !== undefined ? { from } : {}),
+      ...(to !== undefined ? { to } : {}),
+    });
     const start = (page - 1) * pageSize;
     return {
       total: filtered.length,
