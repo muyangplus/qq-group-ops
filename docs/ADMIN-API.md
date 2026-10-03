@@ -460,6 +460,28 @@
     不受吊销影响（要立刻失效只能换 `ADMIN_API_SESSION_SECRET` 并重启）；机器令牌是进程配置，
     同理不在吊销范围内 —— 回执与弹窗文案都写明这一点，免得误以为「吊销 = 踢下线」。
 
+### E1-s 规则面收尾：覆盖率总览 + 一次改多项（收尾批次）
+
+> 功能全表 row 9（`/rules overrides` 覆盖率总览 ❌）与 row 6 的「一次改多项」在这里收口。
+
+71. `GET /api/rules/overrides`（**平台超管 240**）：`{ items, totalGroups, totalFields }` ——
+    每个**显式覆盖**过全局规则的群一行（`group` 展示信息、`fields` 规范字段名、`labels` 展示名、
+    `fieldCount`），与机器人 `/rules overrides`（`cb:rules:overrides`）**同一数据源**
+    （`GroupConfigStore.listOverrideSummaries()`）与同一排序；全局默认（`__default__`）是基线、
+    **不算某个群的覆盖**，所以不在 items 里。一次全给、不分页（机器人卡片才每页 5 个）；
+    只读巡检模式没有内存态 config store → 503；
+72. `PUT /api/rules` 支持**一次改多项**：`{ group, updates: [{ field, value }] }`（最多 20 项）。
+    三条口径：
+    - **先全部解析、再落库**：任一项不合法 → 整体 400 + 审计 `admin_api:rule_update` `rejected`，
+      **不写半套**；单字段形状 `{ group, field, value }` 是它的特例（行为不变，等价于传一项）；
+    - 回执新增 `changes`：`[{ field, label, before, after }]`，按**生效值**算的 旧值 → 新值
+      （与界面清单/审计同一份口径）；
+    - 门槛与单字段一致：本群群管理员 130，全局（`__default__`）平台超管 240；
+73. 规则页接上这两件事：顶部「覆盖率总览」（超管可见、只读）与「一次改多项」——
+    把改动攒进清单（同名字段只留最后一次）→ 确认框逐项列 diff → 一次提交。
+    清单里的「旧值」按**你填的字段名**在当前配置里查；填别名（`warning` → `warningMessage`）时
+    以提交后回执里的 diff 为准（界面已写明这一点）。
+
 ### E1-g 只读端点的逐路由门槛（P1）
 
 30. `GET /api/tasks`（平台超管 240）：**周期任务监测列表** —— 统一扫描周期 + 每个任务的
@@ -488,6 +510,8 @@
 | `GET /api/notify/topics`、`GET /api/status`、`GET /api/tasks`、`GET /api/settings` | 平台超管 240（平台级信息 / 全局话题门槛 / 运维面板）|
 | `GET /api/rules?group=__default__` | 平台超管 240（全局规则）|
 | `GET /api/rules?group=<群>` | 本群审核员 120（与 `/rules` 查看口径一致）|
+| `GET /api/rules/overrides` | 平台超管 240（覆盖率总览是全局视角，与机器人 `/rules overrides` 一致）|
+| `PUT /api/rules`（单字段或 `updates` 批量）| 本群群管理员 130；`group=__default__` 要平台 240（批量最多 20 项，先全校验再落库）|
 | `GET /api/audit` | 平台超管 240 拿全量；其余必须带 `?group=<群>`（缺参数 400）且本群 ≥120。筛选：`group` / `actor` / `target` / `action` / `status` / `from` / `to`（见 E1-q）|
 | `GET /api/pending` | 按**本群 ≥120 裁剪**（与 `/pending` 一致；通过 / 拒绝仍要 130）|
 | `GET /api/activities` | 按**本群 ≥120 裁剪**（带报名人数的管理视图）|
