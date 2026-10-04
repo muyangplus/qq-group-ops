@@ -1549,3 +1549,38 @@
   不做跳转链接按钮（现在的按钮只有指令按钮与回调按钮）；「引用回复」那条要真机取证 ——
   主动群消息带一个过期的 `msg_id` 会不会整条失败（失败要能自动剥掉引用重发），已记进 TODO §4。
 
+## ADR-0063：发送按 **at-most-once** 处理——结果未知就不重试（宁可少一条，不要重复两条）
+
+- 状态：已实现（未发版；发布时把这一行改成版本号，见 CHANGELOG `[Unreleased]`）
+- 背景：0.26.0 → 0.27.0 一次部署，超管仍然收到**两条**「发现新版本」（间隔 20s）。
+  排查后确认直接来源在**发送侧**（不是部署监测重复通知）：
+  - `FetchTransport` 用 `AbortSignal.timeout(10_000)`；**超时只说明「我们没等到响应」**，
+    平台很可能已经把这封私信投出去了；
+  - `SendThrottle` 默认对**所有**错误退避重试（`maxAttempts` 3、延迟 1s→2s），
+    `RichMessageSender` 失败后还会**逐级降级**（markdown+按钮 → markdown → 纯文本）再发一遍；
+  - 两条链路叠加就是「一条消息发成两条」：10s 超时 + 1s 退避 + 10s 超时 ≈ **20s**，
+    与真机观察的间隔对得上。
+- 决策：**消息发送按 at-most-once 处理**：
+  1. 新增 `isUnknownOutcomeError(error)`：拿不到 HTTP 响应（`TimeoutError` / `AbortError` /
+     `ECONNRESET` / `EPIPE` / socket hang up）→ **结果未知**；
+     「连都没连上」（`ENOTFOUND` / `ECONNREFUSED` / `EAI_AGAIN`）与「拿到响应的失败」
+     （`QQOfficialAPIError`：限流 / 4xx / 5xx）→ **已知失败**；
+  2. `SendThrottle` 加 `shouldRetry`：**结果未知不重试**；限流仍等冷却后重试
+     （它明确意味着「没发出去」），其余已知失败照旧退避重试；
+  3. `RichMessageSender`：结果未知**立刻停手**，不再换形态 / 换通道重发，如实回
+     「结果未知：没等到响应，未重试以免重复发送」—— 由调用方决定要不要告诉人；
+  4. 顺带修掉一个旧坑：以前超时会被 `classifyKeyboardFailure` 判成「平台不支持按钮」，
+     把该目标的键盘**永久关掉**（把「这次没等到」当成「以后都不行」）；现在只有已知失败才做这个判定。
+- 理由：官方没有消息幂等键，**「至少一次」在这里等于「会给用户发重复消息」**；
+  重复提醒比少一条提醒更糟（用户已经为这件事报过两次）。
+- 影响：`src/adapters/qqOfficialError.ts`（判据）、`src/adapters/sendThrottle.ts`（`shouldRetry`）、
+  `src/services/richMessages.ts`（未知结果直接返回）、`src/services/deployWatcher.ts`（日志补 `pid`）。
+  测试：`test/sendThrottle.test.ts`（超时只尝试一次 / `ECONNRESET` 不重试 / `ECONNREFUSED` 仍重试）、
+  `test/richMessages.test.ts`（超时只发一次、不降级、不关键盘；已知失败仍照旧降级）。
+- **代价与边界**：超时后这条消息**可能真的丢了**（部署提醒会少一条，但重启回执照旧会到）——
+  这是刻意的取舍：官方没有幂等键，精确一次做不到，只能选「宁少勿重」。
+  另外，**进程内记忆拦不住「两个进程各提醒一次」**：如果真机日志里
+  `new deploy detected` 出现**两次且 pid 不同**，那是「守护进程（pm2 / systemd / docker
+  restart:always）与自我重启助手各拉起一份」—— 要改的是守护方式（只留一个拉起者），
+  跟这条 ADR 无关；日志已补 `pid` 便于一眼分辨。
+
