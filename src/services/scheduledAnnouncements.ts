@@ -723,6 +723,18 @@ function parseContent(value: unknown): AnnouncementContent | undefined {
   };
 }
 
+/**
+ * 解析 `group_settings` 里存的定时发言 JSON（形状不对的条目跳过并记日志）。
+ *
+ * 导出给管理后台的**只读巡检模式**用：那台进程没有内存态服务，直接读同一张表。
+ */
+export function parseStoredAnnouncements(
+  groupId: string,
+  value: string,
+): ScheduledAnnouncement[] {
+  return parseAnnouncements(value, groupId);
+}
+
 function parseFires(raw: string): AnnouncementFireRecord[] {
   try {
     const parsed = JSON.parse(raw) as unknown;

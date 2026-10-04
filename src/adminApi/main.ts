@@ -6,8 +6,17 @@ import { loadSettings } from "../config.js";
 import { loadEnvFile } from "../env.js";
 import { connectPersistence } from "../persistence.js";
 import { IdentityMapService } from "../services/identityMap.js";
+import { PlatformSettingsStore } from "../services/platformSettings.js";
+import {
+  ANNOUNCEMENT_SETTING_KEY,
+  parseStoredAnnouncements,
+} from "../services/scheduledAnnouncements.js";
 import { ShortCodeService } from "../services/shortCodes.js";
-import { aggregateActiveAdminTokens, buildNotifyTopicViews } from "./backend.js";
+import {
+  aggregateActiveAdminTokens,
+  announcementsViewOf,
+  buildNotifyTopicViews,
+} from "./backend.js";
 import { adminLoginUrl, loadAdminApiConfig } from "./config.js";
 import { createAdminApiEntities } from "./entityRef.js";
 import { describeListenFailure } from "./listenFailure.js";
@@ -66,6 +75,14 @@ async function main(): Promise<void> {
     // 只查不造：巡检进程不该顺手给历史数据发短码
     shortCodeOf: (kind, targetId) => shortCodes.existingCode(kind, targetId),
   });
+
+  // 平台热配置（定时发言总开关 / 每小时上限等）：只读巡检进程也读同一份
+  // （`.env` 默认 + 库里的覆盖），这样页面上看到的「会不会触发」与机器人进程一致。
+  const platform = new PlatformSettingsStore(
+    settings,
+    persistence.platformSettings,
+  );
+  await platform.load();
 
   // 权限画像（E2-d）：与机器人共用两轴模型；每次请求重新加载（授权表很小）。
   // 群集合 = 授权行里的群 ∪ 有规则覆盖的群（这台进程没有内存态的群列表）。
@@ -187,8 +204,24 @@ async function main(): Promise<void> {
           groups: rows.filter((row) => row.kind === "group").map(item),
         };
       },
-      activities: async () => {
-        const [activities, details, registrations, groupRows] = await Promise.all([
+      // 定时发言只读：巡检进程没有内存态任务，直接从同一张 `group_settings` 表读；
+      // 换算（含「后五次执行时间」）与机器人进程共用 `announcementsViewOf`，形状不会漂。
+      scheduledAnnouncements: async (groupId: string) => {
+        const rows = await persistence.groupSettings.findAll();
+        const tasks = rows
+          .filter(
+            (row) =>
+              row.groupId === groupId && row.key === ANNOUNCEMENT_SETTING_KEY,
+          )
+          .flatMap((row) => parseStoredAnnouncements(groupId, row.value));
+        return announcementsViewOf({
+          tasks,
+          entities,
+          enabled: platform.get("scheduledAnnounceEnabled"),
+          hourlyLimit: platform.get("scheduledAnnounceHourlyLimit"),
+        });
+      },
+      activities: async () => {        const [activities, details, registrations, groupRows] = await Promise.all([
           persistence.activities.findActivities(),
           persistence.activityDetails.findAll(),
           persistence.activities.findRegistrations(),

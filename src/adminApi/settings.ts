@@ -71,6 +71,8 @@ export const ENV_LABELS: Readonly<Record<string, string>> = {
   AUTO_RESTART_ON_DEPLOY: "部署后自动重启",
   DEPLOY_RESTART_DELAY_MINUTES: "自动重启宽限（分钟）",
   DEPLOY_CHECK_INTERVAL_MS: "部署监测扫描间隔（毫秒）",
+  SCHEDULED_ANNOUNCE_ENABLED: "定时发言总开关",
+  SCHEDULED_ANNOUNCE_HOURLY_LIMIT: "定时发言每小时上限",
   DISPLAY_TIMEZONE: "展示时区覆盖",
 };
 

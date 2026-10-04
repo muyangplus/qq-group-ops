@@ -10,6 +10,7 @@ import { getLogger, type Logger } from "../core/logger.js";
 import type { AdminTokenRepository } from "../db/adminTokenRepository.js";
 import { DEFAULT_GROUP_ID } from "../services/groupConfig.js";
 import { ACTIVITY_SETTING_FIELDS } from "../services/activitySettings.js";
+import type { AnnouncementContentInput } from "../services/scheduledAnnouncements.js";
 import { normalizeReportDays } from "./reports.js";
 import type { AdminApiReportsView } from "./reports.js";
 import { requiredScopeFor } from "./scopes.js";
@@ -426,6 +427,58 @@ export interface AdminApiModuleRetryResult {
 }
 
 /**
+ * 一条定时发言（`GET /api/scheduled-announcements`；**本群群管 130** 看本群）。
+ *
+ * 与机器人 `/announce` 同一份数据（群配置 KV），因此页面看到的与群里看到的一致。
+ */
+export interface AdminApiAnnouncementItem {
+  id: string;
+  /** 内部群 ID（筛选用的就是它）；展示请用 `group`。 */
+  groupId: string;
+  group: AdminApiEntityRef;
+  /** cron 原文（标准 5 段，本地时区）。 */
+  cron: string;
+  /** 解析不了时的原因（正常时缺省；列表里照实标出来）。 */
+  cronError?: string | undefined;
+  enabled: boolean;
+  mode: "text" | "card";
+  title: string;
+  text: string;
+  quote?: string | undefined;
+  buttons: Array<{ label: string; command: string; reply: boolean }>;
+  /** 发送时是否尽力引用回复上一条机器人消息。 */
+  reference: boolean;
+  /** **后五次执行时间**（本地时区 `YYYY-MM-DD HH:mm`）—— 与 `/announce show` 同一口径。 */
+  nextTimes: string[];
+  /** 上次触发时刻（`YYYY-MM-DD HH:mm`）；没触发过时缺省。 */
+  lastFiredAt?: string | undefined;
+  createdBy: AdminApiEntityRef;
+  createdAt: string;
+  updatedBy?: AdminApiEntityRef | undefined;
+  updatedAt: string;
+}
+
+/** 定时发言列表视图（同时带上总开关与每小时上限，页面据此提示）。 */
+export interface AdminApiAnnouncementsView {
+  items: AdminApiAnnouncementItem[];
+  total: number;
+  /** 总开关（热配置）：关着时任务照旧保留，但一条都不会触发。 */
+  enabled: boolean;
+  /** 每群每小时上限（热配置；`0` = 不限）。 */
+  hourlyLimit: number;
+}
+
+/** 定时发言写回执（增 / 改 / 启停 / 删 / 试发都用它）。 */
+export interface AdminApiAnnouncementResult {
+  ok: boolean;
+  message: string;
+  /** 被操作的那一条（删除时缺省）。 */
+  announcement?: AdminApiAnnouncementItem | undefined;
+  /** 操作后的整列表（页面一次往返就能刷新）。 */
+  announcements: AdminApiAnnouncementsView;
+}
+
+/**
  * 处罚动作的结果（P2 写）。
  *
  * 动作本身与指令层 `/punish release|mute|kick|blacklist` 完全同源（同一个领域服务），
@@ -595,6 +648,14 @@ export interface AdminApiReaders {
    * 只读巡检模式也装配（读的是同一张表）。
    */
   tokens?: (() => Promise<{ total: number; items: AdminApiTokenItem[] }>) | undefined;
+  /**
+   * 定时发言（`GET /api/scheduled-announcements?group=`，本群群管 130）。
+   *
+   * 只读巡检模式也装配（读的是同一张 `group_settings` 表）。
+   */
+  scheduledAnnouncements?:
+    | ((groupId: string) => Promise<AdminApiAnnouncementsView>)
+    | undefined;
 }
 
 /** 通过 / 拒绝入群申请后的回执。 */
@@ -902,6 +963,42 @@ export interface AdminApiWriters {
     userId: string;
     actorId: string;
   }): Promise<AdminApiPermissionChangeResult>;
+
+  // ------------------------------------------------- 定时发言（本群群管 130 自治）
+  /**
+   * 新建一条定时发言（**默认停用**，与指令层 `/announce add` 同一服务）。
+   *
+   * 门槛：目标**本群群管 130**；校验（cron 5 段 / 正文 / 按钮上限 / 形态约束）全在领域服务里，
+   * 因此与群里的 `/announce` 完全同一份口径，不合法就 400 且不落库。
+   */
+  createAnnouncement(input: {
+    groupId: string;
+    cron: string;
+    content: AnnouncementContentInput;
+    actorId: string;
+  }): Promise<AdminApiAnnouncementResult>;
+  /** 改一条（cron / 内容 / 启停都可以只改一部分；门槛按**这条任务所属群**判本群 130）。 */
+  updateAnnouncement(input: {
+    id: string;
+    cron?: string | undefined;
+    enabled?: boolean | undefined;
+    content?: AnnouncementContentInput | undefined;
+    actorId: string;
+  }): Promise<AdminApiAnnouncementResult>;
+  /** 删除一条（本群 130）。 */
+  removeAnnouncement(input: {
+    id: string;
+    actorId: string;
+  }): Promise<AdminApiAnnouncementResult>;
+  /**
+   * 立即发一条试试（本群 130）。
+   *
+   * 这是**真实发送**（群里能看到），同样计入每小时上限 —— 免得被用来刷频。
+   */
+  sendAnnouncement(input: {
+    id: string;
+    actorId: string;
+  }): Promise<AdminApiAnnouncementResult>;
 }
 
 export interface AdminApiActivityItem {
@@ -1778,6 +1875,168 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
       actorId: actorOf(request),
     });
     return { ok: result.revoked > 0, result };
+  });
+
+  /**
+   * 定时发言列表（`GET /api/scheduled-announcements?group=<群 ID>`，本群群管 130）。
+   *
+   * 与机器人 `/announce` 同一份数据；每项都带**后五次执行时间**，
+   * 响应里同时给总开关与每小时上限（页面据此提示「配了也不会触发」）。
+   */
+  app.get("/api/scheduled-announcements", async (request, reply) => {
+    const query = request.query as Record<string, unknown>;
+    const group = queryString(query.group);
+    if (group === undefined) {
+      return reply
+        .code(400)
+        .send(
+          errorBody(
+            "bad_request",
+            "需要 ?group=<群 ID>：定时发言是按群配置的，没有跨群的「全部」。",
+          ),
+        );
+    }
+    if (
+      !(await allowGroupRead(
+        request,
+        reply,
+        "GET /api/scheduled-announcements",
+        group,
+        PermissionLevel.GroupAdmin,
+      ))
+    ) {
+      return reply;
+    }
+    const reader = options.readers?.scheduledAnnouncements;
+    if (!reader) {
+      return reply
+        .code(503)
+        .send(
+          errorBody(
+            "unavailable",
+            "定时发言未装配（本进程没有群配置仓储）：列表看不了。",
+          ),
+        );
+    }
+    return reader(group);
+  });
+
+  /**
+   * 新建一条定时发言（本群群管 130）：`{ group, cron, text, mode?, title?, quote?, buttons?, reference? }`。
+   *
+   * **默认停用** —— 与 `/announce add` 一致，先确认「要发什么 / 什么时候发」再启用。
+   */
+  app.post("/api/scheduled-announcements", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const group = typeof body.group === "string" ? body.group.trim() : "";
+    if (group.length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "需要 group（群 ID）。"));
+    }
+    const content = parseAnnouncementContent(body);
+    if (typeof content === "string") {
+      return reply.code(400).send(errorBody("bad_request", content));
+    }
+    if (typeof body.cron !== "string" || body.cron.trim().length === 0) {
+      return reply
+        .code(400)
+        .send(
+          errorBody(
+            "bad_request",
+            "需要 cron（标准 5 段：分 时 日 月 周；例：0 9 * * *）。",
+          ),
+        );
+    }
+    const result = await writers.createAnnouncement({
+      groupId: group,
+      cron: body.cron,
+      content,
+      actorId: actorOf(request),
+    });
+    return { ok: result.ok, result };
+  });
+
+  /**
+   * 改一条（本群群管 130）：`PUT /api/scheduled-announcements/:id`。
+   *
+   * 只传要改的字段（`cron` / `enabled` / 内容字段），与指令层 `/announce set` 同一份校验。
+   */
+  app.put("/api/scheduled-announcements/:id", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const content =
+      body.content === undefined && body.text === undefined
+        ? undefined
+        : parseAnnouncementContent(
+            typeof body.content === "object" && body.content !== null
+              ? (body.content as Record<string, unknown>)
+              : body,
+          );
+    if (typeof content === "string") {
+      return reply.code(400).send(errorBody("bad_request", content));
+    }
+    if (typeof body.cron === "string" && body.cron.trim().length === 0) {
+      return reply
+        .code(400)
+        .send(errorBody("bad_request", "cron 不能为空（要改就写完整 5 段）。"));
+    }
+    const result = await writers.updateAnnouncement({
+      id: id.trim(),
+      ...(typeof body.cron === "string" ? { cron: body.cron } : {}),
+      ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),
+      ...(content !== undefined ? { content } : {}),
+      actorId: actorOf(request),
+    });
+    return { ok: result.ok, result };
+  });
+
+  /** 删除一条（本群群管 130）：不可逆，界面要二次确认。 */
+  app.delete("/api/scheduled-announcements/:id", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { id } = request.params as { id: string };
+    const result = await writers.removeAnnouncement({
+      id: id.trim(),
+      actorId: actorOf(request),
+    });
+    return { ok: result.ok, result };
+  });
+
+  /**
+   * 立即发一条（本群群管 130）：`POST /api/scheduled-announcements/:id/send`。
+   *
+   * **真实发送**（群里能看到），同样计入每小时上限。
+   */
+  app.post("/api/scheduled-announcements/:id/send", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const { id } = request.params as { id: string };
+    const result = await writers.sendAnnouncement({
+      id: id.trim(),
+      actorId: actorOf(request),
+    });
+    return { ok: result.ok, result };
   });
 
   /** 同步官方入群申请队列（写但幂等）：与 `/sync` 同一服务，本群 120。 */
@@ -2985,6 +3244,66 @@ function queryString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * 定时发言请求体 → `AnnouncementContentInput`（**只做形状校验**）。
+ *
+ * 业务校验（cron 5 段 / 正文长度 / 按钮上限 / 「纯文本不能带按钮」这类形态约束）
+ * 全在领域服务里，与指令层 `/announce` 同一份；这里只把类型不对的挡在门外，
+ * 免得把 `NaN` / 对象之类的东西塞进去。返回字符串 = 给用户的 400 原因。
+ */
+function parseAnnouncementContent(
+  body: Record<string, unknown>,
+): AnnouncementContentInput | string {
+  const content: AnnouncementContentInput = {};
+  if (body.mode !== undefined) {
+    if (body.mode !== "text" && body.mode !== "card") {
+      return "mode 只能是 text（纯文本）或 card（卡片）。";
+    }
+    content.mode = body.mode;
+  }
+  for (const field of ["title", "text", "quote"] as const) {
+    const value = body[field];
+    if (value === undefined) {
+      continue;
+    }
+    if (typeof value !== "string") {
+      return `${field} 要是字符串。`;
+    }
+    content[field] = value;
+  }
+  if (body.reference !== undefined) {
+    if (typeof body.reference !== "boolean") {
+      return "reference 要是 true / false。";
+    }
+    content.reference = body.reference;
+  }
+  if (body.buttons !== undefined) {
+    if (!Array.isArray(body.buttons)) {
+      return "buttons 要是数组（[{ label, command, reply? }]）。";
+    }
+    const buttons: Array<{ label: string; command: string; reply?: boolean | undefined }> = [];
+    for (const item of body.buttons) {
+      if (typeof item !== "object" || item === null) {
+        return "buttons 里每一项要是 { label, command }。";
+      }
+      const raw = item as Record<string, unknown>;
+      if (typeof raw.label !== "string" || typeof raw.command !== "string") {
+        return "buttons 里每一项都要有字符串 label 与 command。";
+      }
+      if (raw.reply !== undefined && typeof raw.reply !== "boolean") {
+        return "buttons 的 reply 要是 true / false。";
+      }
+      buttons.push({
+        label: raw.label,
+        command: raw.command,
+        ...(raw.reply === true ? { reply: true } : {}),
+      });
+    }
+    content.buttons = buttons;
+  }
+  return content;
 }
 
 function positiveQueryInt(value: unknown, fallback: number): number {

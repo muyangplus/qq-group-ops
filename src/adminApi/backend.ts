@@ -64,6 +64,15 @@ import {
   type PermissionRole,
 } from "../services/permissionRoles.js";
 import type { NotifyTopicLevelStore } from "../services/notifyTopics.js";
+import {
+  ANNOUNCEMENT_NEXT_TIMES,
+  DEFAULT_ANNOUNCEMENT_HOURLY_LIMIT,
+  minuteKeyOf,
+  nextTimesOfCron,
+  parseCronExpression,
+  type ScheduledAnnouncement,
+  type ScheduledAnnouncementService,
+} from "../services/scheduledAnnouncements.js";
 import type { ClassAliasService } from "../services/classAliases.js";
 import {
   CLASS_ALIAS_KIND_LABELS,
@@ -99,6 +108,8 @@ import {
 } from "./permissions.js";
 import type {
   AdminApiActivityItem,
+  AdminApiAnnouncementItem,
+  AdminApiAnnouncementsView,
   AdminApiAppealItem,
   AdminApiAuditRecord,
   AdminApiBlacklistEntry,
@@ -161,6 +172,12 @@ export interface AdminApiBackendDeps {
     | undefined;
   /** 登录令牌仓储（`/api/status` 的 `activeTokens`）；内存模式为 undefined。 */
   adminTokens?: AdminTokenRepository | undefined;
+  /**
+   * 定时发言（本群群管 130 自治）：与群里 `/announce` **同一个领域服务**。
+   *
+   * 只读巡检进程没有内存态任务 → 不传（那个进程用自己的 reader 直接读 `group_settings`）。
+   */
+  scheduledAnnouncements?: ScheduledAnnouncementService | undefined;
   /** 话题订阅计数（只读原始行）；未接数据库时为 undefined。 */
   notificationSubscriptions?: NotificationSubscriptionRepository | undefined;
   /** 原始 `group_settings` 行（只读视图用；生效值一律以 `configStore` 为准）。 */
@@ -328,6 +345,21 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
   };
 
   /**
+   * 定时发言的领域服务（与群里 `/announce` 同一个）：没装配就 503。
+   *
+   * 只读巡检进程没有内存态任务 → 只装配 reader（直接读 `group_settings`），写不了。
+   */
+  const requireAnnouncements = (): ScheduledAnnouncementService => {
+    const service = deps.scheduledAnnouncements;
+    if (!service) {
+      throw unavailable(
+        "定时发言未装配（只读巡检进程没有内存态任务）：请用机器人进程内的管理监听口改。",
+      );
+    }
+    return service;
+  };
+
+  /**
    * 本群**审核员 120** 门槛：与指令层 `/sync` 一致（比审批低一档）。
    *
    * 为什么单独一个：同步申请队列只是「把官方队列拉下来」，不改变任何人的状态，
@@ -350,6 +382,23 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     });
     throw forbidden("权限不足：需要该群的审核员或以上权限。");
   };
+
+  // ---------------------------------------------------------- 定时发言（本群 130 自治）
+
+  /** 总开关 / 每小时上限都是热配置；没装配 platform 时按「关 + 默认上限」如实回。 */
+  const announceSettings = (): { enabled: boolean; hourlyLimit: number } => ({
+    enabled: deps.platform?.get("scheduledAnnounceEnabled") ?? false,
+    hourlyLimit:
+      deps.platform?.get("scheduledAnnounceHourlyLimit") ??
+      DEFAULT_ANNOUNCEMENT_HOURLY_LIMIT,
+  });
+
+  const announcementsView = (groupId: string): AdminApiAnnouncementsView =>
+    announcementsViewOf({
+      tasks: requireAnnouncements().list(groupId),
+      entities,
+      ...announceSettings(),
+    });
 
   // ---------------------------------------------------------- P1 只读补齐：视图换算
 
@@ -887,6 +936,16 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     },
 
     notifyTopics: notifyTopicViews,
+
+    /**
+     * 定时发言列表（本群群管 130；HTTP 层已判过门槛）。
+     *
+     * 每项都带**后五次执行时间**（与 `/announce show` 同一口径），
+     * 响应里带上总开关与每小时上限，页面据此提示「总开关关着，配了也不会发」。
+     */
+    scheduledAnnouncements: async (
+      groupId: string,
+    ): Promise<AdminApiAnnouncementsView> => announcementsView(groupId),
 
     /**
      * 订阅关系只读（平台超管 240）：谁订了哪些话题、订的哪个范围、现在够不够门槛。
@@ -1612,6 +1671,125 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
           revoked > 0
             ? `已作废 ${revoked} 张未用的登录令牌（已建立的会话不受影响）。`
             : "该成员没有未用的登录令牌（可能已经兑换或已过期）。",
+      };
+    },
+
+    // ------------------------------------------------- 定时发言（本群群管 130 自治）
+    /**
+     * 新建一条定时发言：与 `/announce add` 同一个领域服务、同一份校验。
+     *
+     * **默认停用**（服务层写死 `enabled: false`），要显式开启才会触发；
+     * 审计由领域服务统一写（`announce_create`，actor = 操作人），与指令层同一条记录。
+     */
+    createAnnouncement: async (input) => {
+      requireGroupAdmin(input.actorId, input.groupId, "配置定时发言");
+      const created = requireAnnouncements().create({
+        groupId: input.groupId,
+        cron: input.cron,
+        content: input.content,
+        actorId: input.actorId,
+      });
+      if (!created.ok) {
+        throw badRequest(created.error);
+      }
+      log.info("admin api created announcement", {
+        groupId: input.groupId,
+        actorId: input.actorId,
+        cron: created.announcement.cron,
+      });
+      return {
+        ok: true,
+        message: "已新建定时发言（默认停用；确认内容与时间表后再启用）。",
+        announcement: announcementItemOf({
+          task: created.announcement,
+          entities,
+        }),
+        announcements: announcementsView(input.groupId),
+      };
+    },
+
+    /**
+     * 改一条：门槛按**这条任务所属群**判本群 130（不接受客户端传 group，
+     * 免得「用 A 群的权限改 B 群的任务」）。
+     */
+    updateAnnouncement: async (input) => {
+      const service = requireAnnouncements();
+      const task = service.find(input.id);
+      if (!task) {
+        throw badRequest("定时发言不存在（可能刚被删掉）。");
+      }
+      requireGroupAdmin(input.actorId, task.groupId, "修改定时发言");
+      const updated = service.update(
+        input.id,
+        {
+          ...(input.cron !== undefined ? { cron: input.cron } : {}),
+          ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+          ...(input.content !== undefined ? { content: input.content } : {}),
+        },
+        input.actorId,
+      );
+      if (!updated.ok) {
+        throw badRequest(updated.error);
+      }
+      log.info("admin api updated announcement", {
+        groupId: task.groupId,
+        actorId: input.actorId,
+        enabled: updated.announcement.enabled,
+      });
+      return {
+        ok: true,
+        message: input.enabled === undefined
+          ? "已保存定时发言。"
+          : updated.announcement.enabled
+            ? "已启用：下一次到点就会发出。"
+            : "已停用：不会触发（任务保留）。",
+        announcement: announcementItemOf({ task: updated.announcement, entities }),
+        announcements: announcementsView(task.groupId),
+      };
+    },
+
+    /** 删除一条（本群 130）：不可逆，界面要二次确认。 */
+    removeAnnouncement: async (input) => {
+      const service = requireAnnouncements();
+      const task = service.find(input.id);
+      if (!task) {
+        throw badRequest("定时发言不存在（可能刚被删掉）。");
+      }
+      requireGroupAdmin(input.actorId, task.groupId, "删除定时发言");
+      const removed = service.remove(input.id, input.actorId);
+      if (!removed.ok) {
+        throw badRequest(removed.error);
+      }
+      return {
+        ok: true,
+        message: `已删除定时发言（\`${removed.announcement.cron}\`）。`,
+        announcements: announcementsView(task.groupId),
+      };
+    },
+
+    /**
+     * 立即发一条：**真实发送**（群里能看到），同样计入每小时上限。
+     *
+     * 用途：配完先在群里看一眼效果，别等到点了才发现文案 / 按钮不对。
+     */
+    sendAnnouncement: async (input) => {
+      const service = requireAnnouncements();
+      const task = service.find(input.id);
+      if (!task) {
+        throw badRequest("定时发言不存在（可能刚被删掉）。");
+      }
+      requireGroupAdmin(input.actorId, task.groupId, "试发定时发言");
+      const result = await service.sendNow(input.id, input.actorId);
+      if (!result.ok) {
+        throw badRequest(result.detail);
+      }
+      return {
+        ok: true,
+        message:
+          "已立即发一条（这是真实发送，同样计入每小时上限）。" +
+          (task.enabled ? "" : " 注意：这条任务还是停用状态。"),
+        announcement: announcementItemOf({ task, entities }),
+        announcements: announcementsView(task.groupId),
       };
     },
 
@@ -2506,8 +2684,74 @@ export function aggregateActiveAdminTokens(
   return { total: rows.length, items };
 }
 
-/** 规则值在界面上的「当前值」口径（与 `RulesView.currentValue` 一致：覆盖优先，其次生效值）。 */
-function ruleValueOf(view: AdminApiRulesView, field: string): unknown {
+/**
+ * 一条定时发言 → API 形状（`/api/scheduled-announcements` 与只读巡检共用同一份换算）。
+ *
+ * 展示口径与其他列表一致：配置者 / 修改者出「QQ号 → 短码 → 截断 id」，长 id 留给详情；
+ * 每次换算都顺带算**后五次执行时间**（`nextTimesOfCron`，与 `/announce show` 同一个函数）。
+ */
+export function announcementItemOf(options: {
+  task: ScheduledAnnouncement;
+  entities: AdminApiEntities;
+  now?: Date;
+}): AdminApiAnnouncementItem {
+  const { task, entities } = options;
+  const now = options.now ?? new Date();
+  const parsed = parseCronExpression(task.cron);
+  return {
+    id: task.id,
+    groupId: task.groupId,
+    group: entities.group(task.groupId),
+    cron: task.cron,
+    ...(parsed.ok ? {} : { cronError: parsed.error }),
+    enabled: task.enabled,
+    mode: task.content.mode,
+    title: task.content.title,
+    text: task.content.text,
+    ...(task.content.quote !== undefined ? { quote: task.content.quote } : {}),
+    buttons: task.content.buttons.map((button) => ({
+      label: button.label,
+      command: button.command,
+      reply: button.reply === true,
+    })),
+    reference: task.content.reference,
+    nextTimes: nextTimesOfCron(task.cron, now, ANNOUNCEMENT_NEXT_TIMES).map(
+      minuteKeyOf,
+    ),
+    ...(task.lastFiredAt !== undefined ? { lastFiredAt: task.lastFiredAt } : {}),
+    createdBy: entities.user(task.createdBy),
+    createdAt: task.createdAt,
+    ...(task.updatedBy !== undefined
+      ? { updatedBy: entities.user(task.updatedBy) }
+      : {}),
+    updatedAt: task.updatedAt,
+  };
+}
+
+/** 定时发言列表视图：条目 + 总数 + 总开关 / 每小时上限（热配置，页面据此提示）。 */
+export function announcementsViewOf(options: {
+  tasks: readonly ScheduledAnnouncement[];
+  entities: AdminApiEntities;
+  enabled: boolean;
+  hourlyLimit: number;
+  now?: Date;
+}): AdminApiAnnouncementsView {
+  const items = options.tasks.map((task) =>
+    announcementItemOf({
+      task,
+      entities: options.entities,
+      ...(options.now !== undefined ? { now: options.now } : {}),
+    }),
+  );
+  return {
+    items,
+    total: items.length,
+    enabled: options.enabled,
+    hourlyLimit: options.hourlyLimit,
+  };
+}
+
+/** 规则值在界面上的「当前值」口径（与 `RulesView.currentValue` 一致：覆盖优先，其次生效值）。 */function ruleValueOf(view: AdminApiRulesView, field: string): unknown {
   const own = view.override?.[field];
   return own !== undefined ? own : view.effective?.[field];
 }
