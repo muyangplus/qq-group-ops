@@ -225,6 +225,18 @@
     的逐文件兜底路径静默失效（包模式本身不受影响：安装器不读它）；
   - 修法：`onDiskVersion()` 优先读 `dist/build-info.json`（跟着 `dist/` 一起换），读不到才回落
     根 `package.json`；落点 `src/core/buildInfo.ts` + 三条新用例；详见 CHANGELOG 的 `[Unreleased]`。
+- [x] **两种上传模式共用 `state-name` → 包模式 CD 删掉服务器上的 `package.json`**（真机事故，已修未发版）
+  - 现场：0.29.1 的 Release 触发包模式 CD 的**投递标记**那一步，日志里出现
+    `📄 Delete: package.json` / `removing "package.json"`（1.28 kB）—— 它和「逐文件模式的
+    `package.json` 版本标记步」共用 `ftp-sync-state-marker.json`，而后者的上一次状态里记着
+    `package.json`，这次本地目录（`deploy-pkg/`）里没有它 → FTP 同步把它**从服务器删掉**；
+  - 后果：25 秒后新进程启动时 `appVersion()` 读不到根 `package.json` → 重启回执写成
+    `v0.29.0 → vunknown`（`DeployWatcher` 的逐文件兜底判据同时失效）；0.29.1 的
+    「优先读 `dist/build-info.json`」修好之后，只要装上 0.29.1 版本号就自己恢复；
+  - 修法：逐文件模式的版本标记步改用 `ftp-sync-state-files-marker.json`；守卫从「包模式两段不同」
+    收紧成「四个 FTP 步骤两两不同」；事故与口径写进 `docs/CD.md` 与 CHANGELOG 的 `[Unreleased]`；
+  - 待办：把服务器上被删的 `package.json` 补回去（跑一次修好后的逐文件模式 CD 即可，
+    新状态名首次使用 = 不会删任何东西）。
 - [ ] **自检进程仍会写库（小，既有行为）**：`node dist/main.js --check` 在早退前会跑 `runtime.load()`，
   其中「给现有超管补默认通知订阅」（`seedSuperAdminDefaults` → `NotificationService.subscribe`）
   是带写库的，`finishStartupCheck` 的 `runtime.flush()` 会把它落库（ADR-0066 审查时实测：

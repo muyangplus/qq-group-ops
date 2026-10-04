@@ -227,15 +227,21 @@ describe("CI/CD 工作流审计", () => {
 
     // **每段必须有自己的 state-name**：共用一份同步状态时，一段会把另一段传过的文件
     // 判成「本地没有 → 从服务器删掉」—— v0.24.0 发布就这么删掉过服务器的 dist/ scripts/ web/
-    // （见 ADR-0057 的「事故与修正」）。包模式的两段必须互不相同。
-    const packageSteps = ftpSteps.slice(0, 2);
-    const packageStateNames = packageSteps.map(
+    // （见 ADR-0057 的「事故与修正」）。
+    // ⚠️ 0.29.1 的真机事故补上了更强的一条：**四种模式组合（包模式 2 段 + 逐文件 2 段）
+    // 必须两两不同** —— 逐文件模式的 `package.json` 步曾经与包模式的投递标记步共用
+    // `ftp-sync-state-marker.json`，于是「Release 触发包模式 CD」把服务器上的 `package.json`
+    // 删掉了（版本源随即 `unknown`；回执写成 `v0.29.0 → vunknown`）。
+    const stateNames = ftpSteps.map(
       (step) => (step.with as Record<string, string>)["state-name"],
     );
-    expect(packageStateNames.every((name) => typeof name === "string" && name.length > 0)).toBe(
-      true,
+    expect(stateNames.every((name) => typeof name === "string" && name.length > 0)).toBe(true);
+    expect(new Set(stateNames).size, `state-name 必须两两不同：${stateNames.join(", ")}`).toBe(
+      stateNames.length,
     );
-    expect(new Set(packageStateNames).size).toBe(packageStateNames.length);
+    // 逐文件模式的版本标记步要能与包模式的投递标记步同时存在（名字不同）
+    expect(stateNames).toContain("ftp-sync-state-files-marker.json");
+    expect(stateNames).toContain("ftp-sync-state-marker.json");
     // 同时显式关闭 dangerous-clean-slate（默认即 false，写出来是不让人顺手改成 true）
     for (const step of ftpSteps) {
       expect((step.with as Record<string, unknown>)["dangerous-clean-slate"]).toBe(false);

@@ -5,6 +5,24 @@
 `0.1.0` 之后按「改动性质」定版本：**含用户可见新功能的版本按 MINOR 递增**（`0.2.0` → `0.9.0`），**只有修复与安全、行为修正的版本按 PATCH 递增**（`0.6.1`）；版本按时间倒序，日期格式 `YYYY-MM-DD`。
 变更分类为 `新增` / `变更` / `修复` / `备注`；`备注` 用于记录能力边界与已知限制，不作为独立变更分类。
 
+## [Unreleased]
+
+### 修复
+
+- **两种上传模式共用 `state-name` 会把对方的文件从服务器删掉**（真机事故，0.29.1 发布时触发）：
+  逐文件模式的「上传 `package.json` 版本标记」那一段与包模式的「上传投递标记
+  `incoming/deploy-<版本>.json`」那段**共用 `ftp-sync-state-marker.json`**，而 FTP 同步的删除动作
+  来自「上次传过什么」的本地状态 —— 于是 0.29.1 的 Release 触发包模式 CD 时，把服务器上的
+  `package.json` 当成「这次本地没有」**删掉了**（日志原文：`📄 Delete: package.json` /
+  `removing "package.json"`，1.28 kB）。后果：`appVersion()` 读不到根 `package.json` → 版本变成
+  `unknown`（重启回执写成 `v0.29.0 → vunknown`），`DeployWatcher` 的逐文件兜底判据也跟着失效。
+  这与 ADR-0057 的事故**同一类**（那次是两段共用状态把 `dist/` 删了），差别只是这次跨了模式。
+  修法：逐文件模式的版本标记步改用独立状态名 `ftp-sync-state-files-marker.json`；
+  守卫从「包模式两段互不相同」收紧成「**四个 FTP 步骤的 state-name 两两不同**」。
+  落点：`.github/workflows/cd-ftp.yml` + `test/workflows.test.ts`。
+- （同批）**版本号优先读产物自证**：见 `[0.29.1]` 那一条 —— 正因为它，`package.json` 被删之后
+  只要装上 0.29.1 版本号就会自己恢复（`dist/build-info.json` 跟着 `dist/` 一起换）。
+
 ## [0.29.1] - 2026-10-04
 
 ### 修复

@@ -94,8 +94,15 @@ deploy-<版本>.json    # 投递标记：版本 / commit / sha256 / dist 指纹 
 > `ftp-sync-state-marker.json`）并保持 `dangerous-clean-slate: false` ——
 > 这个 Action 是双向同步，共用一份状态时会把对方的文件判成「本地没有 → 从服务器删掉」，
 > 2026-10-02 的 v0.24.0 发布就这么删过服务器上的 `dist/` / `scripts/` / `web/` /
-> `pnpm-lock.yaml`（ADR-0057 的事故与修正）。`test/workflows.test.ts` 已把
-> 「所有 FTP 步骤必须显式声明 `state-name` 且互不相同」钉成断言。
+> `pnpm-lock.yaml`（ADR-0057 的事故与修正）。`test/workflows.test.ts` 把
+> 「**四个 FTP 步骤的 `state-name` 两两不同**」钉成断言。
+>
+> ⚠️ **跨模式也不能复用**（2026-10-04 的真机事故）：逐文件模式那段「上传 `package.json` 版本标记」
+> 曾经和包模式的「上传投递标记 `incoming/deploy-<版本>.json`」共用 `ftp-sync-state-marker.json` ——
+> 结果 0.29.1 的 Release 触发包模式 CD 时，把服务器上的 `package.json` 当成本次「本地没有」
+> **删掉了**（日志原文：`📄 Delete: package.json` / `removing "package.json"`）：版本源随即变成
+> `unknown`（重启回执 `v0.29.0 → vunknown`），逐文件的兜底判据也一起失效。
+> 现在逐文件模式用 `ftp-sync-state-files-marker.json`（自己的那份），**四种组合两两不同**。
 >
 > **应急开关**：`workflow_dispatch` 的 `mode=files` 会退回老的逐文件上传
 > （`dist-deploy/` + `dist-marker/package.json` 两段，同样两个 state-name）。

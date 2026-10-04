@@ -418,6 +418,12 @@ jobs:
             **/*.map
 
       # 第二段（`mode=files`）：`package.json` 版本标记最后单独落地。
+      #
+      # ⚠️ `state-name` 必须与**包模式**第二段（`ftp-sync-state-marker.json`）**不同**：
+      # 两者一个传 `dist-marker/package.json`、一个传 `deploy-pkg/incoming/deploy-*.json`，
+      # 共用一份同步状态时，后跑的那次会把「上次传过、这次本地没有」的那个文件**从服务器删掉** ——
+      # 真机就发生过：0.29.1 的 Release 触发包模式 CD，把服务器上的 `package.json` 删了
+      # （版本源随即变成 `unknown`，与 ADR-0057 的事故同一类）。
       - name: 上传版本标记 package.json（逐文件模式，最后落地）
         if: env.DEPLOY_MODE == 'files'
         uses: SamKirkland/FTP-Deploy-Action@v4.4.0
@@ -429,7 +435,7 @@ jobs:
           port: ${{ vars.FTP_PORT || 21 }}
           local-dir: ./dist-marker/
           server-dir: ${{ vars.FTP_SERVER_DIR }}
-          state-name: ftp-sync-state-marker.json
+          state-name: ftp-sync-state-files-marker.json
           dry-run: ${{ inputs.dry_run }}
           timeout: 120000
           log-level: standard
