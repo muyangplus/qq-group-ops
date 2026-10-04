@@ -237,6 +237,15 @@
     收紧成「四个 FTP 步骤两两不同」；事故与口径写进 `docs/CD.md` 与 CHANGELOG 的 `[Unreleased]`；
   - 待办：把服务器上被删的 `package.json` 补回去（跑一次修好后的逐文件模式 CD 即可，
     新状态名首次使用 = 不会删任何东西）。
+- [ ] **包模式应用成功时没有任何前置提醒（用户反馈 2026-10-04）**：`DeployInstaller` **只在失败时**发卡
+  （`reportFailure`），成功时唯一的信号是几秒后的重启回执「新版本已上线」。用户的实际感受是
+  「部署完了、没有重启提醒、机器人自己重启了」。
+  - 选项 A（最小）：成功应用时也发一张卡（「已应用 vX（sha 前 8 位），正在重启…」），
+    与回执区分开；风险是短时间两张卡。
+  - 选项 B（对齐逐文件模式）：包落地后**先提醒**（「发现新版本 vX，N 分钟后自动重启」）再应用 ——
+    需要给安装器加一个宽限期/取消入口，与 `DeployWatcher` 的 `AUTO_RESTART_ON_DEPLOY` 口径对齐
+    （复杂度更高，要考虑与部署监测的 `markScheduled` 去重）。
+  - 现状：只有**逐文件模式**（`DeployWatcher`）会提前提醒；包模式是「到了就应用」。先记着，等定口径。
 - [ ] **自检进程仍会写库（小，既有行为）**：`node dist/main.js --check` 在早退前会跑 `runtime.load()`，
   其中「给现有超管补默认通知订阅」（`seedSuperAdminDefaults` → `NotificationService.subscribe`）
   是带写库的，`finishStartupCheck` 的 `runtime.flush()` 会把它落库（ADR-0066 审查时实测：
