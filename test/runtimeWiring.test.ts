@@ -68,8 +68,7 @@ describe("runtime 仓储装配完整性", () => {
     );
   });
 
-  it("重启流程的接线：排好助手后回写部署监测 + 单飞闸（重复重启回归）", () => {
-    // 背景：真机报「一次部署改版两次」「手动重启后又自己重启一次」（0.25.0 的 P0 BUG，
+  it("重启流程的接线：排好助手后回写部署监测 + 单飞闸（重复重启回归）", () => {    // 背景：真机报「一次部署改版两次」「手动重启后又自己重启一次」（0.25.0 的 P0 BUG，
     // 见 CHANGELOG 与 ADR-0061）。手动 /restart 与部署自动重启都走 runRestartFlow：
     // ① 排好 respawn 助手后必须回写 `markScheduled`，否则旧进程退出窗口里部署监测会再排一轮；
     // ② 同一时刻只允许一条流程，免得撞车拉起两个 `scripts/respawn.mjs`、写两条重启回执。
@@ -81,5 +80,30 @@ describe("runtime 仓储装配完整性", () => {
     expect(source).toContain(
       "restart request ignored: another restart flow is running",
     );
+  });
+
+  /**
+   * 单实例闸接线（ADR-0064）：真机上曾经**两份 `node dist/main.js` 同时跑**，
+   * 一次部署各发一张「发现新版本」、各自重启一次（`ps` 里两个 pid 的父进程都是 1）。
+   * 这条守卫钉住三件事：抢锁在**接数据库之前**、退出时放开、拒绝启动时留证据并非零退出。
+   */
+  it("单实例闸：接库之前抢锁、退出时放开、拒绝启动要留证据", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../src/main.ts", import.meta.url)),
+      "utf8",
+    );
+
+    const acquireAt = source.indexOf("acquireInstanceLock({ version: runningVersionOf() })");
+    const connectAt = source.indexOf("connectPersistence(settings)");
+    expect(acquireAt).toBeGreaterThan(0);
+    expect(connectAt).toBeGreaterThan(0);
+    // 必须在连库 / 连网关之前挡住第二份（否则它已经抢了端口、连着同一个 SQLite）
+    expect(acquireAt).toBeLessThan(connectAt);
+
+    expect(source).toContain("releaseInstanceLock();");
+    expect(source).toContain("writeDuplicateEvidence(");
+    expect(source).toContain("duplicate bot instance detected: refusing to start");
+    // 以非零退出码结束，别让「拒绝启动」看起来像正常退出
+    expect(source).toContain("process.exitCode = 1;");
   });
 });

@@ -45,6 +45,11 @@ import {
   takeRestartNotice,
   writeRestartNotice,
 } from "./services/restartNotice.js";
+import {
+  acquireInstanceLock,
+  releaseInstanceLock,
+  writeDuplicateEvidence,
+} from "./services/instanceLock.js";
 import type {
   RestartRequestHandler,
   RestartRequestInfo,
@@ -130,6 +135,34 @@ async function main(): Promise<void> {
     color: settings.logColor,
   });
   const log = getLogger("main");
+
+  /**
+   * 单实例闸：**同一个应用目录只允许一份机器人进程**（见 ADR-0064）。
+   *
+   * 真机踩过：两个 `node dist/main.js` 同时从 `/www/wwwroot/qqbot` 跑（都是自我重启
+   * 助手拉起的游离进程），于是每次部署**各发一张**「发现新版本」、各自重启一次，
+   * 而且各自连网关、各跑一套周期任务（定时发言会重复发言）、同时写同一个 SQLite。
+   * 部署监测的「同一目标版本不再排第二轮」是进程内记忆，拦不住这种情形 ——
+   * 所以在**接数据库 / 连网关之前**就把第二份挡掉：日志记 error + 留 `data/duplicate-instance.json`，
+   * 然后以退出码 1 结束（旧进程继续服务，不会有两份同时跑）。
+   */
+  const instanceLock = acquireInstanceLock({ version: runningVersionOf() });
+  if (!instanceLock.ok) {
+    log.error("duplicate bot instance detected: refusing to start", {
+      pid: process.pid,
+      holderPid: instanceLock.holder.pid,
+      holderStartedAt: instanceLock.holder.startedAt,
+      holderVersion: instanceLock.holder.version,
+      hint: "同一个应用目录只能跑一份：ps -ef | grep dist/main.js 只留一行",
+    });
+    writeDuplicateEvidence({
+      holder: instanceLock.holder,
+      pid: process.pid,
+    });
+    process.exitCode = 1;
+    await closeLogging();
+    return;
+  }
 
   const persistence = await connectPersistence(settings);
   /**
@@ -409,6 +442,8 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     scheduler.stop();
     deployWatcher.stop();
+    // 放开单实例锁：下一份进程（自我重启助手拉起的）才能顺利接管
+    releaseInstanceLock();
     await adminApiHost?.close();
     await gateway.stop();
     await runtime.flush();
