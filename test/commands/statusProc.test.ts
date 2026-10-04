@@ -76,6 +76,13 @@ describe("AdminCommandService · /status 进程信息", () => {
     expect(bySys.rich.markdown).toContain("**待写数据库**：");
   });
 
+  it("进程卡带构建自证（ADR-0065）：指纹 / commit 有就显示，没有就如实说", () => {
+    const card = processCard(contextWith({}), "root");
+    expect(card.ok).toBe(true);
+    // 测试进程没有 `dist/build-info.json`（源码运行）→ 如实说明，而不是编一个指纹
+    expect(card.rich.markdown).toContain("**构建自证**：");
+  });
+
   it("postgres 只显示 host/db，绝不把 URL 里的口令打出来", () => {
     const card = processCard(
       contextWith({

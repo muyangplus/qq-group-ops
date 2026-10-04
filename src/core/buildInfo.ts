@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { getLogger } from "./logger.js";
@@ -49,6 +49,31 @@ export function runningVersionOf(): string {
   return capturedVersion ?? appVersion();
 }
 
+/**
+ * **本进程加载的那份 `build-info.json`**（启动时固化，与 `captureRunningVersion` 同一刻）。
+ *
+ * 为什么不在用时现读磁盘：部署替换 `dist/` 之后，磁盘上的 `build-info.json` 会变成新版本的，
+ * 而这个进程跑的还是旧代码 —— 现读会把「运行中的构建」标错。所以启动时读一次就钉住，
+ * `/status proc`、`/api/health` 与启动日志看的是同一份。
+ */
+let capturedBuildInfo: BuildInfo | undefined;
+
+export function captureRunningBuildInfo(dir: string = DIST_DIR): BuildInfo | undefined {
+  capturedBuildInfo ??= readBuildInfo(dir);
+  return capturedBuildInfo;
+}
+
+/** 本进程固化的构建自证（没读到时 `undefined`：源码运行 / 老产物包没有这个文件）。 */
+export function runningBuildInfo(): BuildInfo | undefined {
+  return capturedBuildInfo;
+}
+
+/** 本进程固化的 commit（没有自证文件时 `undefined`，展示层据此省略该字段）。 */
+export function runningCommit(): string | undefined {
+  const commit = capturedBuildInfo?.commit;
+  return commit !== undefined && commit.length > 0 ? commit : undefined;
+}
+
 /** 运行产物目录（CD 上传的就是它）；指纹只看它，不看版本号文件。 */
 export const DIST_DIR = "dist";
 
@@ -63,6 +88,8 @@ export const DIST_DIR = "dist";
  *
  * 实现口径：
  * - 只哈希相对路径 + 每个文件的 sha1（**不用 mtime**：CD 重传同内容会改 mtime，那是假信号）；
+ * - **跳过 `BUILD_INFO_FILE`**（`dist/build-info.json`）：它是构建期写的「自证」文件，
+ *   里面记着**不含自己的**指纹（ADR-0065），把它算进去就永远对不上；
  * - `dist/` 不存在（源码直跑 `pnpm dev`）或读不动 → 返回 `undefined`，调用方**退回版本号判据**；
  * - 指纹只是判据优化，任何异常都只记日志，绝不让部署监测失效。
  */
@@ -74,6 +101,9 @@ export function distFingerprint(dir: string = DIST_DIR): string | undefined {
     }
     const hash = createHash("sha1");
     for (const file of files) {
+      if (file === BUILD_INFO_FILE) {
+        continue;
+      }
       hash.update(file);
       hash.update("\0");
       hash.update(createHash("sha1").update(readFileSync(join(dir, file))).digest("hex"));
@@ -106,6 +136,129 @@ export function appVersion(): string {
   }
   cachedVersion = onDiskVersion();
   return cachedVersion;
+}
+
+/**
+ * 构建自证文件（**相对 `dist/` 的路径**）：CD 在构建期写进产物包，机器人侧读它做自证。
+ *
+ * 为什么要它（ADR-0065）：「版本号」只是 CD 跑过的标记，可能骗人（真机出现过
+ * `package.json` 是 0.27.3、`dist/**` 却还是旧代码）。`build-info.json` 把
+ * **版本 + commit + 构建时间 + `dist` 指纹**钉在产物里，于是：
+ * - **CD 上传完成 ≠ 版本生效**：安装器解包后先用 `distFingerprint()` 与它比对，
+ *   对不上就拒绝这次部署（半传 / 混装 / 改了一字节的坏包都拦在替换之前）；
+ * - 启动时把它记进日志、`/healthz` 与 `/status proc`，现场一眼看出「跑的是哪次构建」。
+ *
+ * 关键实现：`distFingerprint()` **跳过本文件**，所以字段里的指纹就是「不含自己的那一份」——
+ * 否则指纹会随自身内容变化，永远自证不过。
+ */
+export const BUILD_INFO_FILE = "build-info.json";
+
+/** `dist/build-info.json` 的结构（构建期写入）。 */
+export interface BuildInfo {
+  version: string;
+  /** 构建来源 commit（CD 的 `GITHUB_SHA`；本地构建可为空串）。 */
+  commit: string;
+  /** 构建时刻（ISO）。 */
+  builtAt: string;
+  /** `dist/` 的构建指纹（**不含 `build-info.json` 本身**）。 */
+  distFingerprint?: string | undefined;
+}
+
+/** 写 `dist/build-info.json`（构建期用；指纹缺省按目标目录现算）。 */
+export function writeBuildInfo(
+  info: {
+    version: string;
+    commit: string;
+    builtAt?: string;
+    dir?: string;
+    distFingerprint?: string | undefined;
+  },
+): BuildInfo {
+  const dir = info.dir ?? DIST_DIR;
+  const payload: BuildInfo = {
+    version: info.version,
+    commit: info.commit,
+    builtAt: info.builtAt ?? new Date().toISOString(),
+    distFingerprint: info.distFingerprint ?? distFingerprint(dir),
+  };
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, BUILD_INFO_FILE),
+    `${JSON.stringify(payload, null, 2)}\n`,
+    "utf8",
+  );
+  return payload;
+}
+
+/**
+ * 读一份 `build-info.json`（缺省 `dist/build-info.json`）。
+ *
+ * 读不到 / 不是对象 / 版本不是非空字符串 → `undefined`：**诊断与自证失败都不该抛异常**
+ * （调用方按「没有自证文件」处理，例如源码运行、老产物包）。
+ */
+export function readBuildInfo(dir: string = DIST_DIR): BuildInfo | undefined {
+  return readBuildInfoFile(join(dir, BUILD_INFO_FILE));
+}
+
+/** 直接读某个 `build-info.json` 文件（安装器解包目录与归档包都能用）。 */
+export function readBuildInfoFile(file: string): BuildInfo | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    log.debug("build-info.json unreadable", { file, error: String(error) });
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  const version = record.version;
+  if (typeof version !== "string" || version.length === 0) {
+    return undefined;
+  }
+  return {
+    version,
+    commit: typeof record.commit === "string" ? record.commit : "",
+    builtAt: typeof record.builtAt === "string" ? record.builtAt : "",
+    ...(typeof record.distFingerprint === "string"
+      ? { distFingerprint: record.distFingerprint }
+      : {}),
+  };
+}
+
+/** 自证结果：`ok` + 人话原因（失败时说清「谁和谁对不上」）。 */
+export interface BuildInfoCheck {
+  ok: boolean;
+  detail: string;
+}
+
+/**
+ * 用 `distFingerprint()` 与包内 `build-info.json` **自证**（ADR-0065 第 2 条）。
+ *
+ * 三种「不过」都算失败（半传 / 混装 / 坏包）：读不到自证文件、自证文件里没有指纹、
+ * 或者现算指纹与它对不上。**没有指纹的旧产物包**因此不会被安装器接受 —— 这是有意的：
+ * 自证是这次改动的核心，宁可在替换之前拒绝，也不要装上一份「不知道是什么」的代码。
+ */
+export function verifyBuildInfo(dir: string = DIST_DIR): BuildInfoCheck {
+  const info = readBuildInfo(dir);
+  if (!info) {
+    return { ok: false, detail: `${dir}/${BUILD_INFO_FILE} 缺失或不可读` };
+  }
+  if (info.distFingerprint === undefined) {
+    return { ok: false, detail: `${dir}/${BUILD_INFO_FILE} 里没有 distFingerprint` };
+  }
+  const actual = distFingerprint(dir);
+  if (actual === undefined) {
+    return { ok: false, detail: `${dir} 里没有可指纹的文件` };
+  }
+  if (actual !== info.distFingerprint) {
+    return {
+      ok: false,
+      detail: `dist 指纹对不上：现算 ${actual}，build-info 记 ${info.distFingerprint}`,
+    };
+  }
+  return { ok: true, detail: `指纹自证通过（${actual}）` };
 }
 
 /** 进程启动时刻（`process.uptime()` 反推）。 */

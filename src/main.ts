@@ -54,7 +54,7 @@ import type {
   RestartRequestHandler,
   RestartRequestInfo,
 } from "./services/restart.js";
-import { appVersion, captureRunningVersion, distFingerprint, onDiskVersion, runningVersionOf } from "./core/buildInfo.js";
+import { appVersion, captureRunningBuildInfo, captureRunningVersion, distFingerprint, onDiskVersion, runningBuildInfo, runningCommit, runningVersionOf } from "./core/buildInfo.js";
 import { encodeCallback } from "./services/callbackData.js";
 import { spawnRespawnHelper } from "./services/respawn.js";
 import { sendWelcome } from "./services/welcome.js";
@@ -128,6 +128,9 @@ async function main(): Promise<void> {
   // 同一刻固化「这份进程加载的产物内容」：只看版本号会在「新代码已落地、package.json 还没落地」
   // 的上传窗口里白跳一次重启，指纹能把「版本号变了」与「代码真的换了」分开（见 distFingerprint）。
   const bootFingerprint = distFingerprint();
+  // 构建自证（ADR-0065）：产物包里的 `dist/build-info.json` 也在此刻固化 ——
+  // 部署替换 `dist/` 之后磁盘上的是新版本的，现读会把「运行中的构建」标错。
+  const bootBuildInfo = captureRunningBuildInfo();
   configureLogging({
     level: settings.logLevel,
     file: settings.logFile,
@@ -135,6 +138,12 @@ async function main(): Promise<void> {
     color: settings.logColor,
   });
   const log = getLogger("main");
+  // 现场自证三件套：跑的是哪个版本、哪份产物（指纹）、哪次构建（commit）。
+  log.info("running build identity", {
+    version: runningVersionOf(),
+    distFingerprint: bootFingerprint ?? "unavailable",
+    buildInfoCommit: bootBuildInfo?.commit || "unknown",
+  });
 
   /**
    * 单实例闸：**同一个应用目录只允许一份机器人进程**（见 ADR-0064）。
@@ -1135,6 +1144,9 @@ async function startAdminApiIfEnabled(
       tokens: source.tokens,
       backend: source.backend,
       version: appVersion(),
+      // 构建自证（ADR-0065）：`/healthz` 与 `/status proc` 看得到「跑的是哪份产物、哪次构建」
+      distFingerprint: runningBuildInfo()?.distFingerprint,
+      buildInfoCommit: runningCommit(),
       uptimeMs: () => Math.round(process.uptime() * 1000),
       logger: getLogger("admin-api"),
     });

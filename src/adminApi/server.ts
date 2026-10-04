@@ -66,6 +66,12 @@ export interface AdminApiServerOptions {
   now?: (() => Date) | undefined;
   logger?: Logger | undefined;
   version?: string | undefined;
+  /**
+   * 构建自证（ADR-0065）：`dist/` 指纹与构建来源 commit，暴露在 `/healthz` 与
+   * `/api/health` 的进程信息里。留空表示「没有自证文件」（源码直接跑）。
+   */
+  distFingerprint?: string | undefined;
+  buildInfoCommit?: string | undefined;
   uptimeMs?: (() => number) | undefined;
   /**
    * 只读状态来源（E1-c）：数据库类型与启动期迁移问题数由入口注入；
@@ -307,6 +313,14 @@ export interface AdminApiDeliveriesView {
     runningVersion: string;
     /** 磁盘上的版本（部署后可能已经更新）。 */
     diskVersion: string;
+    /**
+     * 本进程加载的产物指纹（`distFingerprint()`，启动时固化）；没有自证文件时缺省。
+     *
+     * 与 `/status proc`、启动日志同一份（ADR-0065）：回答「这份进程跑的到底是哪份 dist」。
+     */
+    distFingerprint?: string | undefined;
+    /** 本进程加载的构建来源 commit（`build-info.json`）；没有自证文件时缺省。 */
+    buildInfoCommit?: string | undefined;
     uptimeMs: number;
     startedAt: string;
     pid: number;
@@ -1235,6 +1249,9 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     ok: true,
     version: options.version ?? "unknown",
     uptimeMs: options.uptimeMs?.() ?? Date.now() - startedAt,
+    // 构建自证（ADR-0065）：现场不用翻日志就能确认「跑的是哪份产物、哪次构建」。
+    distFingerprint: options.distFingerprint ?? "unavailable",
+    buildInfoCommit: options.buildInfoCommit ?? "unknown",
   }));
 
   app.post("/auth/token", async (request, reply) => {

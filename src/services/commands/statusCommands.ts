@@ -15,7 +15,7 @@ import {
   PermissionLevel,
   PlatformLevel,
 } from "../../core/enums.js";
-import { appVersion, formatBytes, formatUptime, processStartedAt } from "../../core/buildInfo.js";
+import { appVersion, distFingerprint, formatBytes, formatUptime, processStartedAt, runningBuildInfo } from "../../core/buildInfo.js";
 import { moduleStatusLines } from "./healthCommands.js";
 import { formatDisplayTime } from "../../core/timeFormat.js";
 import type { KeyboardModal } from "../../adapters/qqOfficial.js";
@@ -279,6 +279,27 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
     )} / ${formatBytes(mem.heapTotal)}）`,
     `**待审批申请**：${ctx.joinAudit.pendingCount()} 条`,
   ];
+  // 构建自证（ADR-0065）：跑的是哪份产物（指纹）、哪次构建（commit），以及和磁盘上那份是否一致。
+  const buildInfo = runningBuildInfo();
+  if (buildInfo) {
+    const diskFingerprint = distFingerprint();
+    const same =
+      diskFingerprint !== undefined && diskFingerprint === buildInfo.distFingerprint;
+    lines.push(
+      `**构建自证**：指纹 ${buildInfo.distFingerprint ?? "unknown"}${
+        buildInfo.commit.length > 0 ? ` · commit ${buildInfo.commit}` : ""
+      }${buildInfo.builtAt.length > 0 ? ` · 构建于 ${formatDisplayTime(new Date(buildInfo.builtAt))}` : ""}`,
+      `**磁盘产物**：${
+        diskFingerprint === undefined
+          ? "读不到 dist/ 指纹（源码运行？）"
+          : same
+            ? "指纹与运行中的一致"
+            : "指纹与运行中的**不一致**（磁盘已被新版本替换，重启后才生效）"
+      }`,
+    );
+  } else {
+    lines.push("**构建自证**：（没有 `dist/build-info.json`：源码运行或老产物包）");
+  }
   const diagnostics = ctx.diagnostics;
   if (!diagnostics) {
     lines.push("**运行配置**：（未装配诊断依赖，只显示进程自身信息）");

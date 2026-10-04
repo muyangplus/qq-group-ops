@@ -7,6 +7,9 @@ dist/
 coverage/
 # CD 组包目录（.github/workflows/cd-ftp.yml 生成，不提交）
 dist-deploy/
+# CD 的「投递箱」：服务器上由 FTP 写入 `deploy-*.tgz` / `deploy-*.json`，
+# 机器人 `DeployInstaller` 解开后清理；本地构建也可能生成同名目录（ADR-0065）
+incoming/
 
 # Environment
 .env

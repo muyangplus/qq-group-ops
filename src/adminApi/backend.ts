@@ -11,6 +11,8 @@ import {
   distFingerprint,
   onDiskVersion,
   processStartedAt,
+  runningBuildInfo,
+  runningCommit,
   runningVersionOf,
 } from "../core/buildInfo.js";
 import { getLogger } from "../core/logger.js";
@@ -1178,10 +1180,17 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
       const notify = deps.notifications?.stats();
       const failure = readRestartFailure();
       const rollback = readRollbackNotice();
+      // 构建自证（ADR-0065）：与启动日志、`/status proc`、`/healthz` 同一份（启动时固化）
+      const buildInfo = runningBuildInfo();
+      const commit = runningCommit();
       return {
         process: {
           runningVersion: runningVersionOf(),
           diskVersion: onDiskVersion(),
+          ...(buildInfo?.distFingerprint !== undefined
+            ? { distFingerprint: buildInfo.distFingerprint }
+            : {}),
+          ...(commit !== undefined ? { buildInfoCommit: commit } : {}),
           uptimeMs: Math.round(process.uptime() * 1000),
           startedAt: processStartedAt().toISOString(),
           pid: process.pid,
