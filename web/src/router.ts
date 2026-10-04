@@ -4,6 +4,7 @@ import { onUnauthorized } from "@/api/client";
 import { useSessionStore } from "@/stores/session";
 import ActivitiesView from "@/views/ActivitiesView.vue";
 import AliasesView from "@/views/AliasesView.vue";
+import AnnouncementsView from "@/views/AnnouncementsView.vue";
 import AppealsView from "@/views/AppealsView.vue";
 import AuditView from "@/views/AuditView.vue";
 import BlacklistView from "@/views/BlacklistView.vue";
@@ -41,6 +42,8 @@ export const router = createRouter({
     // 别名表是平台级数据（只给平台超管 240）：入口在超管那组导航里
     { path: "/aliases", name: "aliases", component: AliasesView },
     { path: "/activities", name: "activities", component: ActivitiesView },
+    // 定时发言（P0）：每群群管 130 各自配本群，入口对所有人可见（页面里选自己够 130 的群）
+    { path: "/announcements", name: "announcements", component: AnnouncementsView },
     // 报表（E5）：平台超管看全量，其余人看本群（页面里选自己 ≥130 的群）
     { path: "/reports", name: "reports", component: ReportsView },
     // 权限（P3）：改的是判定权限的表，只有平台超管（240）能用

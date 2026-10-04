@@ -28,6 +28,7 @@ const NAV_ROUTES = [
   "blacklist",
   "rules",
   "activities",
+  "announcements",
   "reports",
   "status",
   "notify",

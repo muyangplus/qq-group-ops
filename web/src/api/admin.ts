@@ -568,9 +568,61 @@ export interface AdminApiTokenRevokeResult {
   message: string;
 }
 
+/** 一条定时发言（`GET /api/scheduled-announcements?group=`，本群群管 130）。 */
+export interface AdminApiAnnouncementItem {
+  id: string;
+  /** 内部群 ID（详情行里给完整值，列表用 `group`）。 */
+  groupId: string;
+  group: AdminApiEntityRef;
+  /** cron 原文（标准 5 段，本地时区）。 */
+  cron: string;
+  /** 解析不了时的原因（正常时缺省）。 */
+  cronError?: string;
+  enabled: boolean;
+  mode: "text" | "card";
+  title: string;
+  text: string;
+  quote?: string;
+  buttons: Array<{ label: string; command: string; reply: boolean }>;
+  reference: boolean;
+  /** 后五次执行时间（`YYYY-MM-DD HH:mm`，本地时区）。 */
+  nextTimes: string[];
+  lastFiredAt?: string;
+  createdBy: AdminApiEntityRef;
+  createdAt: string;
+  updatedBy?: AdminApiEntityRef;
+  updatedAt: string;
+}
+
+/** 定时发言列表（外加总开关与每小时上限，页面据此提示）。 */
+export interface AdminApiAnnouncementsView {
+  items: AdminApiAnnouncementItem[];
+  total: number;
+  /** 总开关（热配置）：关着时任务照旧保留，但一条都不会触发。 */
+  enabled: boolean;
+  hourlyLimit: number;
+}
+
+/** 定时发言的新建 / 修改入参（只传要改的字段）。 */
+export interface AdminApiAnnouncementInput {
+  mode?: "text" | "card";
+  title?: string;
+  text?: string;
+  quote?: string;
+  reference?: boolean;
+  buttons?: Array<{ label: string; command: string; reply?: boolean }>;
+}
+
+/** 定时发言写回执（增 / 改 / 启停 / 删 / 试发）。 */
+export interface AdminApiAnnouncementResult {
+  ok: boolean;
+  message: string;
+  announcement?: AdminApiAnnouncementItem;
+  announcements: AdminApiAnnouncementsView;
+}
+
 /** 降级模块「重试加载」的结果（运维写，平台超管 240）。 */
-export interface AdminApiModuleRetryResult {
-  module: { key: string; label: string; state: string; error?: string };
+export interface AdminApiModuleRetryResult {  module: { key: string; label: string; state: string; error?: string };
   /** 重试后是否恢复（`state === "ready"`）；仍失败时原因在 `module.error` 与 `message`。 */
   recovered: boolean;
   message: string;
@@ -1012,6 +1064,49 @@ export const adminApi = {
   /** 规则覆盖率总览（平台超管 240）：哪些群覆盖了哪些字段。 */
   ruleOverrides: (): Promise<AdminApiRuleOverridesView> =>
     api.get<AdminApiRuleOverridesView>("/api/rules/overrides"),
+
+  /**
+   * 定时发言列表（本群群管 130）：与群里 `/announce` 同一份数据，
+   * 每项都带**后五次执行时间**。
+   */
+  announcements: (groupId: string): Promise<AdminApiAnnouncementsView> =>
+    api.get<AdminApiAnnouncementsView>(
+      `/api/scheduled-announcements${query({ group: groupId })}`,
+    ),
+
+  /** 新建一条定时发言（默认停用；形态 / 正文 / 按钮的校验与指令层同一份）。 */
+  createAnnouncement: (
+    group: string,
+    cron: string,
+    content: AdminApiAnnouncementInput,
+  ): Promise<AdminApiAnnouncementResult> =>
+    api.post<AdminApiAnnouncementResult>("/api/scheduled-announcements", {
+      group,
+      cron,
+      ...content,
+    }),
+
+  /** 改一条（只传要改的：`cron` / `enabled` / 内容字段）。 */
+  updateAnnouncement: (
+    id: string,
+    patch: AdminApiAnnouncementInput & { cron?: string; enabled?: boolean },
+  ): Promise<AdminApiAnnouncementResult> =>
+    api.put<AdminApiAnnouncementResult>(
+      `/api/scheduled-announcements/${encodeURIComponent(id)}`,
+      patch,
+    ),
+
+  /** 删除一条（不可逆；页面要二次确认）。 */
+  removeAnnouncement: (id: string): Promise<AdminApiAnnouncementResult> =>
+    api.del<AdminApiAnnouncementResult>(
+      `/api/scheduled-announcements/${encodeURIComponent(id)}`,
+    ),
+
+  /** 立即发一条试试（真实发送，计入每小时上限）。 */
+  sendAnnouncement: (id: string): Promise<AdminApiAnnouncementResult> =>
+    api.post<AdminApiAnnouncementResult>(
+      `/api/scheduled-announcements/${encodeURIComponent(id)}/send`,
+    ),
 
   activities: (params: {
     page?: number | undefined;
