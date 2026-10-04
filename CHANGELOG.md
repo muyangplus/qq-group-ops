@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+（暂无：以下内容已随 [0.27.0] 发布，见下一节。）
+
+## [0.27.0] - 2026-10-04
+
 ### 新增
 
 - **机器人会按 cron 定时发言了**（`/announce` + 管理后台「定时发言」页；口径见
@@ -27,8 +31,6 @@
   - 管理面：`GET|POST|PUT|DELETE /api/scheduled-announcements` 与 `POST …/:id/send`（试发）
     都在**本群群管 130** 门槛下（见 ADMIN-API.md 的 E1-t，机器令牌新域 `announce`）；
     「试发」是真实发送，界面二次确认写明这一点。
-
-（以下内容已随 [0.26.0] 发布，见下一节。）
 
 ## [0.26.0] - 2026-10-03
 
@@ -1345,7 +1347,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.24.1...v0.25.0
 [0.18.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.18.1...v0.18.2
