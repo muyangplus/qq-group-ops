@@ -5,7 +5,7 @@
 `0.1.0` 之后按「改动性质」定版本：**含用户可见新功能的版本按 MINOR 递增**（`0.2.0` → `0.9.0`），**只有修复与安全、行为修正的版本按 PATCH 递增**（`0.6.1`）；版本按时间倒序，日期格式 `YYYY-MM-DD`。
 变更分类为 `新增` / `变更` / `修复` / `备注`；`备注` 用于记录能力边界与已知限制，不作为独立变更分类。
 
-## [Unreleased]
+## [0.29.1] - 2026-10-04
 
 ### 修复
 
@@ -1564,7 +1564,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.29.1...HEAD
+[0.29.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.29.0...v0.29.1
 [0.29.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.3...v0.29.0
 [0.27.3]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.2...v0.27.3
 [0.27.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.1...v0.27.2
