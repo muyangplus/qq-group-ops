@@ -5,10 +5,13 @@
 `0.1.0` 之后按「改动性质」定版本：**含用户可见新功能的版本按 MINOR 递增**（`0.2.0` → `0.9.0`），**只有修复与安全、行为修正的版本按 PATCH 递增**（`0.6.1`）；版本按时间倒序，日期格式 `YYYY-MM-DD`。
 变更分类为 `新增` / `变更` / `修复` / `备注`；`备注` 用于记录能力边界与已知限制，不作为独立变更分类。
 
-## [Unreleased]
+## [0.29.0] - 2026-10-04
 
-> 本段攒着的几块内容**合并成一个版本发**（**0.29.0**；**0.28.0 跳过** —— 少一次 CD、服务器只跳一次）：
+> 本版把三块内容**合并发布**（**0.28.0 跳过** —— 少一次 CD、服务器只跳一次）：
 > 「发布流程包化」（ADR-0065）、「精简 `.env`」（ADR-0066）、「CI/CD 触发次数收敛」（ADR-0067）。
+> ⚠️ 升级提示：这次是包化部署的**首跳**，服务器上如果是 0.27.x（没有 `DeployInstaller`），
+> 要用 `mode=files` 交付或按 [OPERATIONS.md](./docs/OPERATIONS.md) 的「首跳」手工解包；
+> `.env` 里的热改项会在**第一次正常启动**时导入库一次并私信回执（见「变更」一节与 OPERATIONS.md「配置搬家」）。
 
 ### 新增
 
@@ -1547,7 +1550,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.3...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.3...v0.29.0
 [0.27.3]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.2...v0.27.3
 [0.27.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.1...v0.27.2
 [0.27.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.0...v0.27.1
