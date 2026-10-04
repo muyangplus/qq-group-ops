@@ -121,6 +121,8 @@ export interface Runtime {
   platform: PlatformSettingsStore;
   auditLog: AuditLogStore;
   joinAudit: JoinAuditService;
+  /** 与官方待审批列表对账（`/sync` 与周期对账任务共用）。 */
+  joinSync: JoinRequestSyncService;
   configStore: GroupConfigStore;
   groupMessageMode: GroupMessageModeRegistry;
   identityMap: IdentityMapService;
@@ -1245,6 +1247,7 @@ export function createRuntime(
     platform,
     auditLog,
     joinAudit,
+    joinSync,
     configStore,
     groupMessageMode,
     identityMap,

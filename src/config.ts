@@ -93,6 +93,14 @@ export interface Settings {
   /** 部署监测的扫描间隔（`DEPLOY_CHECK_INTERVAL_MS`，默认 60000；`0` = 关闭监测）。 */
   deployCheckIntervalMs: number;
   /**
+   * 入群申请**对账**周期（`JOIN_SYNC_INTERVAL_MS`，默认 600000 = 10 分钟；`0` = 关闭）。
+   *
+   * 周期任务会按绑定群拉一次官方待审批列表，把「官方已经不再返回」的本地待审批标记过期 ——
+   * 别人在群管理后台 / 其它机器人处理掉的申请不会一直挂在 `/pending` 里
+   * （真机报过：点「通过」收到 `400 申请已经被处理`，那条却没被自动删除）。
+   */
+  joinSyncIntervalMs: number;
+  /**
    * 机器人定时发言（`SCHEDULED_ANNOUNCE_ENABLED`，**默认关**）。
    *
    * 每群群管可以按 cron 给本群配机器人的定时发言；这个开关是**总开关**，
@@ -301,6 +309,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
       env.DEPLOY_CHECK_INTERVAL_MS,
       60_000,
     ),
+    joinSyncIntervalMs: asNonNegativeInt(env.JOIN_SYNC_INTERVAL_MS, 600_000),
     scheduledAnnounceEnabled: asBool(env.SCHEDULED_ANNOUNCE_ENABLED, false),
     scheduledAnnounceHourlyLimit: asNonNegativeInt(
       env.SCHEDULED_ANNOUNCE_HOURLY_LIMIT,

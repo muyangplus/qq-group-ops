@@ -11,6 +11,34 @@ const log = getLogger("join-approval");
 /** 黑名单自动拒绝的审核人标记（审计里可区分于规则引擎）。 */
 const BLACKLIST_ACTOR = "bot:blacklist";
 
+/** 官方已经处理过这条申请时，本地移出待审批的审计理由。 */
+export const ALREADY_HANDLED_REASON =
+  "官方侧提示该申请已被处理（其它管理员 / 群管理后台），自动移出待审批";
+
+/** 给操作者看的人话（审批/拒绝都会带这个前缀：审批失败：…）。 */
+export const ALREADY_HANDLED_MESSAGE =
+  "这条申请在 QQ 那边已经处理过了（可能是其它管理员或群管理后台），已从待审批里移除。";
+
+/**
+ * 官方是不是在说「这条申请已经被处理了」。
+ *
+ * 真机原文：`QQ official API error 400: 申请已经被处理` —— 说明这条申请在群管理后台
+ * （或别的机器人）已经被通过 / 拒绝，官方那边已经没有它了；本地**不能**再把它留在待审批里
+ * （否则每条都点一下报一次错、还占着「待审批 N 条」）。
+ *
+ * 判据用**消息文本**（官方没给稳定 error code）：只认「已经处理 / 已被处理 / 不存在」这类
+ * 明确的终态措辞 —— 不能宽到把限流、超时、权限错误也当成「处理过了」。
+ */
+export function isAlreadyHandledError(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error ?? "");
+  if (text.length === 0) {
+    return false;
+  }
+  return /已经被处理|已被处理|已经处理过|已被审批|申请不存在|不存在该申请|请求不存在/u.test(
+    text,
+  );
+}
+
 /**
  * 入群审批。
  *
@@ -69,6 +97,11 @@ export class JoinApprovalService {
         });
         return { action: "reject", opinion: reason, notify: notifyAuto };
       } catch (error) {
+        // 官方说「已经被处理」→ 本地立即移出待审批，并如实说明（不是「保持人工审核」）
+        if (isAlreadyHandledError(error)) {
+          this.dropAlreadyHandled(requestId, groupId);
+          return { action: "manual", opinion: ALREADY_HANDLED_MESSAGE, notify: false };
+        }
         log.error("blacklist auto reject failed, keeping manual review", {
           groupId,
           requestId,
@@ -147,6 +180,11 @@ export class JoinApprovalService {
         notify: notifyAuto,
       };
     } catch (error) {
+      // 已经被别处处理掉了：不必再推给审核员（推了也是点一下报错），本地顺手清掉
+      if (isAlreadyHandledError(error)) {
+        this.dropAlreadyHandled(requestId, groupId);
+        return { action: "manual", opinion: ALREADY_HANDLED_MESSAGE, notify: false };
+      }
       log.error("auto join decision failed, keeping manual review", {
         groupId,
         requestId,
@@ -163,10 +201,14 @@ export class JoinApprovalService {
     reason = "",
   ): Promise<JoinRequest> {
     const request = this.requireRequest(groupId, requestId);
-    await this.api.approveJoinRequest(groupId, request.userId, true, {
-      joinRequestId: requestId,
-      ...(reason ? { reason } : {}),
-    });
+    try {
+      await this.api.approveJoinRequest(groupId, request.userId, true, {
+        joinRequestId: requestId,
+        ...(reason ? { reason } : {}),
+      });
+    } catch (error) {
+      this.throwOrDropAlreadyHandled(error, groupId, requestId);
+    }
     log.info("approved join request", { groupId, requestId, reviewerId });
     return this.joinAudit.approve(requestId, reviewerId);
   }
@@ -181,10 +223,14 @@ export class JoinApprovalService {
     // 人工拒绝的理由是审核员手写的自由文本（`/reject <短码> <自定义理由>`）：
     // 压成单行并截断，避免长文/换行撑坏官方 `reject_reason`
     const normalizedReason = buildRejectReason(reason);
-    await this.api.approveJoinRequest(groupId, request.userId, false, {
-      joinRequestId: requestId,
-      ...(normalizedReason ? { reason: normalizedReason } : {}),
-    });
+    try {
+      await this.api.approveJoinRequest(groupId, request.userId, false, {
+        joinRequestId: requestId,
+        ...(normalizedReason ? { reason: normalizedReason } : {}),
+      });
+    } catch (error) {
+      this.throwOrDropAlreadyHandled(error, groupId, requestId);
+    }
     log.info("rejected join request", {
       groupId,
       requestId,
@@ -192,6 +238,39 @@ export class JoinApprovalService {
       hasReason: normalizedReason.length > 0,
     });
     return this.joinAudit.reject(requestId, reviewerId, normalizedReason);
+  }
+
+  /**
+   * 官方返回「申请已经被处理」时：本地立即移出待审批（复用对账那条路径 + `expire_join_request`
+   * 审计），然后**抛一条人话**给操作者；其它错误原样抛出（该申请保持待审批，可重试）。
+   *
+   * 为什么这里要抛：审批**确实没成功**（别人已经在官方那边定了结果），不能假装通过；
+   * 但本地队列必须干净 —— 真机现象就是「每条申请点一下报一次 `400 申请已经被处理`，
+   * 而它一直挂在待审批里没被自动删除」。
+   */
+  private throwOrDropAlreadyHandled(
+    error: unknown,
+    groupId: string,
+    requestId: string,
+  ): never {
+    if (!isAlreadyHandledError(error)) {
+      throw error;
+    }
+    this.dropAlreadyHandled(requestId, groupId);
+    throw new Error(ALREADY_HANDLED_MESSAGE);
+  }
+
+  /** 把「官方已处理」的本地申请移出待审批（幂等；已经不是待审批就什么都不做）。 */
+  private dropAlreadyHandled(requestId: string, groupId: string): void {
+    const removed = this.joinAudit.markHandledExternally(
+      requestId,
+      ALREADY_HANDLED_REASON,
+    );
+    log.warn("official already handled this join request, removed from pending", {
+      groupId,
+      requestId,
+      removed,
+    });
   }
 
   private requireRequest(groupId: string, requestId: string): JoinRequest {

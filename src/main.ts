@@ -353,6 +353,29 @@ async function main(): Promise<void> {
       await deployWatcher.runOnce();
     },
   });
+  // 入群申请**对账**：按绑定群拉一次官方待审批列表，把「官方已不再返回」的本地待审批
+  // 标记过期 —— 别人在群管理后台 / 其它机器人处理掉的申请不会一直挂在 /pending 里
+  // （真机报过：点「通过」收到 `400 申请已经被处理`，那条却没被自动删除）。
+  scheduler.register({
+    name: "join-reconcile",
+    minIntervalMs: () => runtime.platform.get("joinSyncIntervalMs"),
+    enabled: () =>
+      runtime.platform.get("joinSyncIntervalMs") > 0 &&
+      runtime.health.isAvailable("join"),
+    run: async () => {
+      for (const group of runtime.identityMap.listGroups()) {
+        try {
+          await runtime.joinSync.syncGroup(group.officialId);
+        } catch (error) {
+          // 单群失败（限流 / 未开审核 / 网络）不打断其它群，也不刷 error
+          log.debug("join reconcile skipped", {
+            groupId: group.officialId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    },
+  });
   // 定时发言（TODO §2 的 P0）：总开关关着就整条跳过（任务保留，只是不触发）；
   // 精度 = 扫描周期（最小 1 分钟），够 cron 的分钟粒度用。
   scheduler.register({
