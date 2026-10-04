@@ -53,6 +53,7 @@
 | **P0** | **精简 .env**（能搬的全搬进系统配置：全搬 / 导入 / 去掉默认值链）（⏳ 已列入，等开工） | 用户 2026-10-04 拍定：.env 只留密钥 / 引导 / 进程与网络 / 日志 / 路径 |
 | **P0** | **机器人定时发言**（✅ 已完成，随 0.27.0 发布；默认关闭 / 每群群管 130 自治 / cron 5 段 / 文本 · 引用 · 卡片 · 按钮） | 用户 2026-10-03 提出：不依赖环境与外部取证，落点全是已有能力 —— `TickScheduler` 加一个任务、群配置 KV 存任务、`RichMessageSender` 发送；口径见 ADR-0062，实现见 CHANGELOG 的 `[0.27.0]` |
 | **P1** | **管理后台：只读面补齐**（✅ 已完成） | 不需要环境、不需要新领域能力：全是已有服务的读路径，做完「看得清」就闭环（§5 的 P1） |
+| P1 | **CI / CD 触发次数收敛**（路径过滤 + concurrency + CD 复用 CI + 一次 push）（⏳ 已列入，等开工） | 用户 2026-10-04：近 200 次 run 里 CI 171 次、push 触发 167 次，纯文档 push 也跑全量 —— 明显过量（§2 的 P1） |
 | P1 | **D8-b 生产库备份 / 恢复演练** + **D2 Docker Compose 启停补测** | 只差环境（部署机 / Docker 引擎）：一有环境就先做这两项，紧接着跑 §4（备份恢复的流程已在本机演练过：D8-a） |
 | P2 | **管理后台：写操作**（✅ 已完成，§3 的 P2 全部落地） | 会改用户状态，每条都先定了口径（二次确认 / 通知话术 / 审计）再动手（§5 的 P2） |
 | P2 | **前端组件测试底座**（✅ 已完成） | 前端只有扫源码的契约守卫，页面逻辑改错没测试拦 —— 现在有 jsdom 组件测试（CI/CD 都跑） |
@@ -138,6 +139,34 @@
   - 已完成：`docker compose config --quiet` 通过、`--profile postgres` 服务列表正确、
     `.dockerignore` 实测少传约 106 MB。
   - 待补：镜像 build + postgres 启停（用独立项目名 `-p qqops-smoke`，收尾 `down -v`，避免污染真实数据卷）。
+
+- [ ] **CI / CD 触发次数收敛**（2026-10-04 用户提出，**指定列入 P1**；不卡环境，纯代码侧可做）
+  - **现状（实测近 200 次 run）**：CI **171** 次 / CD 24 次 / Dependabot 5 次；触发来源 **push 167** /
+    release 18 / workflow_dispatch 6 / PR 4；09-26～10-04 九天共 200 次，峰值 **47 次/天**（10-02）、
+    10-04 当天已 24 次；累计 run 时长约 **194 分钟**（不含排队）。
+  - **为什么这么多**：① **每次 push 都跑全量 CI**（包括纯文档提交）；② 本仓库要求「代码与文档分开**提交**」，
+    我按「每提交一 push」做 → 一次改动就是 **2 次 run**；③ **release 时 CD 又把同一套门禁重跑一遍**
+    （install + typecheck + 全量 vitest + web test + build），与 CI 完全重复；④ CI 没有 `concurrency`，
+    同一分支连续 push 会**排队跑全部**而不是只跑最后一次。
+  - **优化（按收益排序，都不削弱门禁）**：
+    1. **`concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }`** —— 连续 push 只跑最后一次（估省 ~30%）；
+    2. **路径拆分**：`paths-ignore: ['docs/**', '**.md']` 只触发一个「**文档守卫**」job
+       （`test/privacyGuard.test.ts`、`test/workflows.test.ts` 这类扫 md/.env.example 的守卫，秒级）；
+       代码路径（`src/**`、`test/**`、`web/**`、workflows、`.env.example`、`package.json`）跑**全量**；
+    3. **CD 复用 CI**：CD 的 `build` job 在「同名 commit 的 CI 已绿」时只做 `pnpm install --frozen-lockfile` +
+       `pnpm build` + `web build`（跳过 typecheck / 全量 vitest / web test）；保留 `full_gate=true` 输入做应急
+       （或改成 `workflow_run` 由 CI 成功后触发部署）；
+    4. **流程侧**：同一个 item 的「代码 + 文档」两个提交**一次 push**（提交仍然分开，符合仓库口径）——
+       这条我立刻改，不再「每提交一 push」；
+    5. 其它：`security-audit` / Dependabot 收敛到**每周** schedule + 手动 dispatch；CD 的
+       `log-level: verbose` → `standard`（只影响日志量与排队时长）。
+  - **边界（不许动的）**：代码 push **必须**跑全量门禁；**发布前门禁不削弱**；文档路径只跳过**全量**、
+    **不跳过守卫**（否则「CHANGELOG 里写了真实群号」这种就没人拦了）。
+  - **验收**：连续两周对比 run 数 —— 目标「日峰值 47 → ≤15」「纯文档 push 不再产生全量 run」；
+    同时故意做两个回归证明门禁还在：① 破坏一个测试 → CI 红；② 往 `CHANGELOG.md` 塞一个真实群号
+    → **文档守卫必须红**（`test/privacyGuard.test.ts`）。
+  - **文档**：`docs/OPERATIONS.md`（或新 `docs/CD.md`）补一节「CI/CD 触发策略：什么会触发、什么只跑守卫」；
+    `test/workflows.test.ts` 守卫同步（例如断言 CI 带 `concurrency`、断言文档路径只进守卫 job）。
 
 ### P2（可延后）
 
