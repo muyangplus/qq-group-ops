@@ -38,7 +38,7 @@
 > 更早的三段（部署重复重启修复、展示口径扩到全站、管理后台收尾五件 A–E）
 > 已在 0.26.0 一起发出并部署。
 >
-> **P0（2026-10-03 提出）：机器人定时发言 —— 已实现并随 0.27.0 发布**（见 CHANGELOG 的 `[0.27.0]`、
+> **P0 现在有两条（2026-10-04 列入，等开工）：① 发布流程包化（单文件产物包 + 自解 + 备份/回滚 + 关自动重启也提醒）② 精简 `.env`（全搬/导入/去掉默认值链）** —— 见 §2。以下是已完成的：机器人定时发言 —— 已实现并随 0.27.0 发布**（见 CHANGELOG 的 `[0.27.0]`、
 > [ADR-0062](./docs/DECISIONS.md)、ADMIN-API.md 的 E1-t 与管理前台的「定时发言」页）。
 > **管理后台收尾五件（A–E）已完成并随 0.26.0 发布**
 > （见 §5；实现见 CHANGELOG 的 `[0.26.0]` 与 ADMIN-API.md 的 E1-o / E1-p / E1-q / E1-r / E1-s），
@@ -49,6 +49,8 @@
 
 | 优先级 | 条目 | 为什么排在这里 |
 |---|---|---|
+| **P0** | **发布流程包化**（单文件产物包 + 机器人自解 + 备份/回滚 + 关自动重启也提醒）（⏳ 已列入，等开工） | 用户 2026-10-04 拍定方案 A：FTP 逐文件 8m33s 太慢、回滚造成混装 dist（版本号 0.27.3 / 代码 0.27.0）—— 包化同时解决「慢」与「不可靠」 |
+| **P0** | **精简 .env**（能搬的全搬进系统配置：全搬 / 导入 / 去掉默认值链）（⏳ 已列入，等开工） | 用户 2026-10-04 拍定：.env 只留密钥 / 引导 / 进程与网络 / 日志 / 路径 |
 | **P0** | **机器人定时发言**（✅ 已完成，随 0.27.0 发布；默认关闭 / 每群群管 130 自治 / cron 5 段 / 文本 · 引用 · 卡片 · 按钮） | 用户 2026-10-03 提出：不依赖环境与外部取证，落点全是已有能力 —— `TickScheduler` 加一个任务、群配置 KV 存任务、`RichMessageSender` 发送；口径见 ADR-0062，实现见 CHANGELOG 的 `[0.27.0]` |
 | **P1** | **管理后台：只读面补齐**（✅ 已完成） | 不需要环境、不需要新领域能力：全是已有服务的读路径，做完「看得清」就闭环（§5 的 P1） |
 | P1 | **D8-b 生产库备份 / 恢复演练** + **D2 Docker Compose 启停补测** | 只差环境（部署机 / Docker 引擎）：一有环境就先做这两项，紧接着跑 §4（备份恢复的流程已在本机演练过：D8-a） |
@@ -81,10 +83,51 @@
 
 ### P0（现在就能做）
 
-（**暂无**：刚做完的「机器人定时发言」已随 **0.27.0** 发布 —— 实现与口径见 CHANGELOG 的 `[0.27.0]`、
-    [ADR-0062](./docs/DECISIONS.md)（默认关 / 每群群管 130 自治 / cron 5 段 / 重启不重发与错过不补发）、
-    管理 API 见 ADMIN-API.md 的 E1-t、后台页是管理前台的「定时发言」页；
-    代码侧剩下的都要环境（P1 / §4）或官方取证。）
+- [ ] **发布流程包化：单文件产物包 + 机器人自解（含备份 / 回滚，且关掉自动重启也要提醒）**（2026-10-04 拍定方案 A）
+  - **为什么做**（两次真机事故的账）：FTP 是逐文件一次往返（≈1s/文件）→ 一次部署传 `dist/**` 要 **8m33s**；
+    而回滚是「覆盖式还原 dist」+ FTP 同步状态文件（`ftp-sync-state-code.json`）按「上次传过什么」跳过 →
+    这次真机出现 **`package.json` 是 0.27.3、`dist/adminApi/backend.js` 与 `dist/services/platformSettings.js` 却是旧的**
+    （`grep -c boundGroupIds` / `grep -c 定时发言总开关` 都是 0，而 `main.js` 是新的）→ 版本号骗人、功能没上来。
+  - **口径（用户 2026-10-04 选定）**：**一个 tar.gz 的产物包 + 机器人进程自己校验并解开**；
+    包同时当**备份**用（回滚就是重新应用上一个包）；**没有开自动重启时也要发「发现新版本」提醒**。
+  - **落点**：
+    - CD 两段保留，但内容变成 **2 个文件**：先传 `incoming/deploy-<版本>.tgz`
+      （`dist/ web/dist/ scripts/ pnpm-lock.yaml .env.example`），**最后**传 `incoming/deploy-<版本>.json`
+      （版本 / commit / **sha256** / **dist 指纹** / 构建时间）—— 后者就是「传完了」的标记（与 ADR-0057 同构）；
+      同时写 `dist/build-info.json`（版本 + commit + 指纹）随包进来；
+    - 机器人新建 `DeployInstaller`：扫 `incoming/` → **sha256 校验**（防半传）→ 解到 `data/incoming/<版本>/`
+      → 用 `distFingerprint()` 与包内 `build-info.json` **自证** → **整目录原子替换**（`dist` / `web/dist` / `scripts`，
+      `data/` `.env` `logs/` 绝不碰）→ 走既有「自检 → respawn」；成功写回执 + 记 `data/deploy-state.json`，
+      失败则还原上一个包 + 坏包改名 `*.failed-<ts>` 留着 + 私信超管；
+    - **备份 / 回滚**：应用成功的包归档到 `data/packages/`（保留最近 **3** 个），`deploy-state.json` 记
+      `{appliedVersion, appliedSha, previousVersion, previousSha}`；提供「**回滚到上一版本**」入口
+      （`/status proc` 卡片按钮 + 后台「状态」页按钮，平台超管 240、二次确认、写审计、回执写明 `vX → vY`）；
+    - **提醒与自动重启解耦**：`DeployWatcher` 的生效判据从 `AUTO_RESTART_ON_DEPLOY && interval>0`
+      改成 **只按 `DEPLOY_CHECK_INTERVAL_MS`（0 才是关闭监测）**；卡片两版文案（开着 → 含计划重启时间；
+      **关着 → 「自动重启已关闭，请手动重启加载新版本」**）；到点**不动手**；同一目标版本只提醒一次；
+    - 顺手：`restoreDistFromBackup()` 改成**整目录替换**（不再覆盖式还原），回滚时 `rm -f ftp-sync-state-*.json`
+      （自己作废同步状态，下一轮自动全量）；「**版本号变了但 `dist` 指纹没变**」从静默日志改成**私信超管**提示
+      「可能上传被跳过（回滚过？），请检查 dist/」。
+  - **验收**：① 真机部署实测上传耗时（目标 < 1 分钟）+ 部署后 `grep -c boundGroupIds dist/adminApi/backend.js`、
+    `grep -c 定时发言总开关 dist/services/platformSettings.js`、`grep -c isStartupCheck dist/main.js` 全部 ≥1；
+    ② 故意传坏包（改 1 字节）→ 拒绝这次部署 + 私信，运行中的机器人不受影响；③ 点一次「回滚到上一版本」→
+    版本真的退回去且指纹自证通过；④ `AUTO_RESTART_ON_DEPLOY=off` 时**仍然收到**「发现新版本」卡（且不会自动重启）；
+    ⑤ `incoming/` 与 `data/packages/` 只保留最近 3 个包（自清理）。
+  - **文档**：新 ADR（包化发布 + 提醒与自动重启解耦）、ADMIN-API.md（回滚端点）、OPERATIONS.md
+    （手工救急：怎么手动应用 / 回滚包、怎么清理同步状态）、CHANGELOG。
+- [ ] **精简 `.env`：能搬的全搬进系统配置（全搬 / 老值一次性导入 / 去掉 `.env` 默认值链）**（2026-10-04 拍定）
+  - **只留 `.env`**（改了必须重启、或 DB 之前就要用）：密钥类（`QQ_BOT_*` / `WEBHOOK_SECRET` /
+    `ADMIN_API_SESSION_SECRET` / `ADMIN_API_TOKENS`）、引导（`DATABASE_URL` / `SQLITE_PATH` / `ADMIN_USER_IDS`）、
+    进程与网络形态（`EVENT_MODE` / `WEBHOOK_HOST|PORT|PATH` / `ADMIN_API_ENABLED|HOST|PORT|PUBLIC_BASE_URL|COOKIE_SECURE|WEB_DIR` /
+    `QQ_BOT_SANDBOX`）、日志（`LOG_LEVEL|FILE|CONSOLE|COLOR` / `TZ`）、路径（`CLASS_INDEX_FILE` / `QQ_BOT_CACHE_FILE`）、
+    `ADMIN_API_ALLOWED_OPENIDS`；
+  - **搬进系统配置**（热改项）：`ADMIN_API_SESSION_TTL_MINUTES`、`ADMIN_API_TOKEN_TTL_MINUTES`、
+    `ADMIN_API_RATE_LIMIT_PER_MINUTE`（读它们的地方改成「用的时候取当前值」）；
+  - **一次性迁移**：启动时若 `.env` 里写了这些键、而库里没有覆盖行 → **以 `.env` 为准写库一次** + 记日志/审计
+    「从 `.env` 导入」，保证行为不漂移；此后 `.env` 里删掉这些行没有任何影响（迁移前备份 `data/.env`）；
+  - **去掉默认值链**：`Settings` 里这些字段不再从 `.env` 读（只当迁移来源），一切以库为准；
+  - **文档**：`.env.example` 砍到只剩必要项（每项一行「为什么必须在这里」）、`docs/CONFIGURATION.md`、
+    `ADMIN-API.md`（配置页那段）、CHANGELOG；发 **0.29.0**（删配置项 + 新热改项 = 用户可见变更）。
 
 ### P1（只差环境；一有环境就先做）
 
