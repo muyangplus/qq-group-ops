@@ -1,6 +1,7 @@
-import type {
-  PlatformSettingsStore,
-  SettingView,
+import {
+  findDefinition,
+  type PlatformSettingsStore,
+  type SettingView,
 } from "../services/platformSettings.js";
 
 /**
@@ -137,11 +138,20 @@ export function toSettingItem(view: SettingView): AdminApiSettingItem {
   };
 }
 
-/** `.env` 只读项：按 `ENV_LABELS` 的顺序给，值一律以「进程环境」为准（含 `.env` 载入结果）。 */
+/**
+ * `.env` 只读项：按 `ENV_LABELS` 的顺序给，值一律以「进程环境」为准（含 `.env` 载入结果）。
+ *
+ * **热改项不在这里重复出现**：同一个键（例如 `SCHEDULED_ANNOUNCE_ENABLED`）如果在
+ * 「可改项」里已经能改，再列进只读段只会让人以为「它不能改」（真机反馈）。
+ * `ENV_LABELS` 仍然保留这些键 —— 配置页的覆盖守卫要求「`config.ts` 读到的每个 env 键
+ * 都能在配置页看到」，而它们确实看得到（就在可改项那一段，且带 `.env` 名字与来源）。
+ */
 export function buildEnvItems(
   env: NodeJS.ProcessEnv = process.env,
 ): AdminApiEnvItem[] {
-  return Object.entries(ENV_LABELS).map(([key, label]) => {
+  return Object.entries(ENV_LABELS)
+    .filter(([key]) => findDefinition(key) === undefined)
+    .map(([key, label]) => {
     const raw = env[key];
     const configured = raw !== undefined && raw.trim().length > 0;
     const secret = SECRET_KEY_PATTERN.test(key);
