@@ -55,6 +55,12 @@ export interface CardButton {
    */
   fillOnly?: boolean | undefined;
   /**
+   * 指令按钮专用：点击后的指令**带引用回复本消息**（官方 `action.reply`）。
+   *
+   * 只有指令按钮有这个开关（回调按钮官方不支持）；默认 `false`，与旧行为一致。
+   */
+  reply?: boolean | undefined;
+  /**
    * 回调按钮（`action.type = 1`）：点击后官方推送 `INTERACTION_CREATE`，
    * `data` 原样回传给机器人（`data.resolved.button_data`）。
    *
@@ -266,9 +272,9 @@ function toKeyboardButton(
             ? { permission: button.permission }
             : {}),
           // `enter: false` = 只填入输入框、不发送（留给用户补参数）；
-          // `reply: false` = 不把指令当被动回复的 msg_id。
+          // `reply: true` = 点击后的指令带引用回复本消息（官方 `action.reply`）。
           enter: button.fillOnly !== true,
-          reply: false,
+          reply: button.reply === true,
           unsupportTips: button.unsupportTips ?? DEFAULT_UNSUPPORT_TIPS,
           ...(button.modal !== undefined ? { modal: clampModal(button.modal) } : {}),
         },

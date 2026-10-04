@@ -18,6 +18,13 @@ export interface RichSendResult {
   /** 成功时为降级说明（空 = 完整富消息），失败时为错误信息。 */
   detail: string;
   mode: RichSendMode | "none";
+  /**
+   * 发送成功时官方返回的消息 id（`id`）。
+   *
+   * 目前只有「定时发言」这种**主动消息**会用它：被动窗口内拿它去引用回复。
+   * 拿不到（平台没回、或降级路径没带）时缺省，调用方按「没有引用目标」处理。
+   */
+  messageId?: string | undefined;
 }
 
 export interface RichReplyOptions {
@@ -97,8 +104,8 @@ export class RichMessageSender {
     content: string,
   ): Promise<RichSendResult> {
     try {
-      await this.api.sendGroupMessage(groupId, content);
-      return { ok: true, detail: "", mode: "text" };
+      const response = await this.api.sendGroupMessage(groupId, content);
+      return { ok: true, detail: "", mode: "text", ...messageIdField(response) };
     } catch (error) {
       return {
         ok: false,
@@ -114,8 +121,8 @@ export class RichMessageSender {
     content: string,
   ): Promise<RichSendResult> {
     try {
-      await this.api.sendPrivateMessage(userOpenid, content);
-      return { ok: true, detail: "", mode: "text" };
+      const response = await this.api.sendPrivateMessage(userOpenid, content);
+      return { ok: true, detail: "", mode: "text", ...messageIdField(response) };
     } catch (error) {
       return {
         ok: false,
@@ -174,7 +181,7 @@ export class RichMessageSender {
     let lastError = "";
     for (const attempt of attempts) {
       try {
-        await this.sendOnce(
+        const response = await this.sendOnce(
           target,
           targetId,
           message,
@@ -185,6 +192,7 @@ export class RichMessageSender {
           ok: true,
           detail: describeAttempt(attempt, primary, Boolean(msgId)),
           mode: attempt.mode,
+          ...messageIdField(response),
         };
       } catch (error) {
         const failure = describeError(error);
@@ -322,6 +330,22 @@ function countButtons(message: RichMessage): number {
       0,
     ) ?? 0
   );
+}
+
+/**
+ * 从官方响应里取消息 id（`id`；少数接口回 `message_id` 也认）。
+ *
+ * 取不到时返回空对象，方便用 `...messageIdField(response)` 直接摊进结果里。
+ */
+function messageIdField(
+  response: unknown,
+): { messageId?: string | undefined } {
+  if (typeof response !== "object" || response === null) {
+    return {};
+  }
+  const raw = response as Record<string, unknown>;
+  const id = raw.id ?? raw.message_id;
+  return typeof id === "string" && id.length > 0 ? { messageId: id } : {};
 }
 
 /** 官方错误里可用的定位信息：`errorCode` 与响应体里的 `trace_id`（日志用）。 */
