@@ -41,3 +41,56 @@ export class QQOfficialAPIError extends Error {
 export function isRateLimitedError(error: unknown): boolean {
   return error instanceof QQOfficialAPIError && error.isRateLimited;
 }
+
+/**
+ * 「**结果未知**」的失败：我们**没等到 HTTP 响应**（超时 / 连接被掐断 / fetch 直接抛）。
+ *
+ * 为什么要单独判：消息发送是**非幂等**的 —— 超时只说明「我们没收到响应」，
+ * 平台很可能已经把它发出去了。这时候再自动重试（或换一种形态再发一次）就会让用户
+ * 看到**两条一样的消息**（真机报过「一次部署两条『发现新版本』」，间隔正好是
+ * 超时 + 退避的时间）。所以发送路径上：**结果未知 = 不重试**（宁可少一条，不要重复两条），
+ * 只有**明确失败**（拿到响应、限流、连都没连上）才继续退避重试（见 ADR-0063）。
+ *
+ * 判据故意保守：
+ * - 拿不到响应且不是「连接压根没建立」（`ENOTFOUND` / `ECONNREFUSED` 这类）→ 结果未知；
+ * - 有 HTTP 响应（`QQOfficialAPIError`）→ 已知失败（请求确实没被接受）；
+ * - 形态像超时 / 连接中断（`TimeoutError` / `AbortError` / `ECONNRESET` / socket hang up …）→ 结果未知。
+ */
+export function isUnknownOutcomeError(error: unknown): boolean {
+  if (error instanceof QQOfficialAPIError) {
+    return false;
+  }
+  const raw = error as
+    | { name?: unknown; code?: unknown; cause?: { code?: unknown } | undefined }
+    | null
+    | undefined;
+  const name = typeof raw?.name === "string" ? raw.name : "";
+  if (name === "TimeoutError" || name === "AbortError") {
+    return true;
+  }
+  const code =
+    typeof raw?.cause?.code === "string"
+      ? raw.cause.code
+      : typeof raw?.code === "string"
+        ? raw.code
+        : "";
+  // 连都没连上：请求肯定没有送到平台，可以安全重试
+  if (["ENOTFOUND", "ECONNREFUSED", "EAI_AGAIN"].includes(code)) {
+    return false;
+  }
+  if (
+    [
+      "ECONNRESET",
+      "EPIPE",
+      "ETIMEDOUT",
+      "UND_ERR_SOCKET",
+      "UND_ERR_CONNECT_TIMEOUT",
+      "UND_ERR_HEADERS_TIMEOUT",
+      "UND_ERR_BODY_TIMEOUT",
+    ].includes(code)
+  ) {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : "";
+  return /timeout|timed out|aborted|socket hang up|ECONNRESET|EPIPE/iu.test(message);
+}

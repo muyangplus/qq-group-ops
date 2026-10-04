@@ -119,4 +119,72 @@ describe("SendThrottle", () => {
 
     await expect(throttle.run("b", async () => "ok")).resolves.toBe("ok");
   });
+
+  /**
+   * 「结果未知的失败不重试」（ADR-0063）：发送消息是**非幂等**的 —— 超时只说明我们没等到
+   * 响应，平台很可能已经发出去了。真机现象：一次部署收到**两条**「发现新版本」，
+   * 间隔正好等于「超时（10s）+ 退避」的时间。
+   */
+  it("超时（结果未知）不再重试：只尝试一次", async () => {
+    let attempts = 0;
+    const sleeps: number[] = [];
+    const throttle = new SendThrottle({
+      minIntervalMs: 0,
+      maxAttempts: 3,
+      initialRetryDelayMs: 1_000,
+      jitterRatio: 0,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+
+    await expect(
+      throttle.run("user:u1", async () => {
+        attempts += 1;
+        throw timeout;
+      }),
+    ).rejects.toThrow(/timeout/u);
+
+    expect(attempts).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("连接被掐断（ECONNRESET）也按结果未知处理；连都没连上（ECONNREFUSED）仍可重试", async () => {
+    let socketAttempts = 0;
+    const socketThrottle = new SendThrottle({
+      minIntervalMs: 0,
+      maxAttempts: 3,
+      jitterRatio: 0,
+      sleep: async () => {},
+    });
+    const reset = new TypeError("fetch failed");
+    (reset as { cause?: unknown }).cause = { code: "ECONNRESET" };
+    await expect(
+      socketThrottle.run("group:g1", async () => {
+        socketAttempts += 1;
+        throw reset;
+      }),
+    ).rejects.toThrow();
+    expect(socketAttempts).toBe(1);
+
+    let refusedAttempts = 0;
+    const refusedThrottle = new SendThrottle({
+      minIntervalMs: 0,
+      maxAttempts: 3,
+      jitterRatio: 0,
+      sleep: async () => {},
+    });
+    const refused = new TypeError("fetch failed");
+    (refused as { cause?: unknown }).cause = { code: "ECONNREFUSED" };
+    await expect(
+      refusedThrottle.run("group:g1", async () => {
+        refusedAttempts += 1;
+        throw refused;
+      }),
+    ).rejects.toThrow();
+    // 请求根本没出去 → 可以安全重试
+    expect(refusedAttempts).toBe(3);
+  });
 });

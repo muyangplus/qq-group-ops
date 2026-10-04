@@ -292,6 +292,9 @@ export class DeployWatcher implements DeployControl {
       target,
       deadlineAt: pending.deadlineAt,
       stableChecks: this.streak,
+      // 进程 id：真机报过「一次部署两条『发现新版本』」，用它区分「同一进程重复提醒」与
+      // 「两个进程各提醒一次」（每行日志都带 pid，一眼看得出来）。
+      pid: process.pid,
     });
     await this.broadcast(this.noticeCard(pending));
   }
@@ -393,6 +396,8 @@ export class DeployWatcher implements DeployControl {
       } catch (error) {
         log.warn("deploy notice delivery failed", {
           userId,
+          // 配合「new deploy detected」那行的 pid：一眼看出是哪个进程在发这条卡
+          pid: process.pid,
           error: error instanceof Error ? error.message : String(error),
         });
       }

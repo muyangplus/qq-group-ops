@@ -1,5 +1,5 @@
 import { defaultSleep, retryWithBackoff, type SleepFn } from "../core/retry.js";
-import { isRateLimitedError } from "./qqOfficialError.js";
+import { isRateLimitedError, isUnknownOutcomeError } from "./qqOfficialError.js";
 
 export interface SendThrottleOptions {
   /** 两次发送之间的最小间隔，避免短时间连发触发 22009。 */
@@ -82,6 +82,9 @@ export class SendThrottle {
       random: this.random,
       sleep: this.sleep,
       label: `send:${label}`,
+      // **结果未知的失败不重试**：消息是非幂等的，超时后平台可能已经发出去了，
+      // 再退避重试就是第二条（见 `isUnknownOutcomeError` 与 ADR-0063）。
+      shouldRetry: (error) => !isUnknownOutcomeError(error),
       delayFor: (error) =>
         this.isRateLimited(error) ? this.rateLimitDelayMs : undefined,
       ...(this.onRetry ? { onRetry: this.onRetry } : {}),

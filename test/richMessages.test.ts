@@ -116,8 +116,7 @@ describe("RichMessageSender", () => {
     expect(result.detail.length).toBeGreaterThan(0);
   });
 
-  it("sends plain text where inline mentions (@user / @everyone) can work", async () => {
-    const api = new FakeQQOfficialAPI();
+  it("sends plain text where inline mentions (@user / @everyone) can work", async () => {    const api = new FakeQQOfficialAPI();
     const sender = new RichMessageSender(api);
 
     const plain = await sender.sendPlainToGroup("g1", "hello <@!u1>");
@@ -140,5 +139,48 @@ describe("RichMessageSender", () => {
     expect(failed.ok).toBe(false);
     expect(failed.mode).toBe("none");
     expect(failed.detail).toContain("fake group message failure");
+  });
+
+  /**
+   * 「结果未知」时不再换形态重发（ADR-0063）：真机报过「一次部署两条『发现新版本』」——
+   * 超时（我们没等到响应）之后又降级重发了一次，用户就看到两条。
+   * 同时钉住一个旧坑：超时不该被当成「平台不支持按钮」而把该目标的键盘永久关掉。
+   */
+  it("超时（结果未知）只发一次、不降级重发，也不关掉键盘", async () => {
+    const api = new FakeQQOfficialAPI();
+    const sender = new RichMessageSender(api);
+    let calls = 0;
+    const original = api.sendGroupMessage.bind(api);
+    api.sendGroupMessage = async (groupId, content, msgId, options) => {
+      calls += 1;
+      if (calls === 1) {
+        const timeout = new Error("The operation was aborted due to timeout");
+        timeout.name = "TimeoutError";
+        throw timeout;
+      }
+      return original(groupId, content, msgId, options);
+    };
+
+    const result = await sender.sendToGroup("g1", menuMessage);
+
+    expect(calls).toBe(1);
+    expect(result.ok).toBe(false);
+    expect(result.mode).toBe("none");
+    expect(result.detail).toContain("结果未知");
+    expect(api.sentMessages).toHaveLength(0);
+    // 一次超时不能把「自定义按钮」判成不受支持（否则该群后续卡片全丢按钮）
+    expect(sender.keyboardAvailable).toBe(true);
+  });
+
+  it("已知失败（拿到响应）仍然照旧逐级降级", async () => {
+    const api = new FakeQQOfficialAPI();
+    const sender = new RichMessageSender(api);
+    api.failGroupRichMessages = true;
+
+    const result = await sender.sendToGroup("g1", menuMessage);
+
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe("text");
+    expect(result.detail).toContain("text_fallback");
   });
 });

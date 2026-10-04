@@ -1,4 +1,5 @@
 import type { KeyboardPayload, QQOfficialAPI } from "../adapters/qqOfficial.js";
+import { isUnknownOutcomeError } from "../adapters/qqOfficialError.js";
 import { getLogger } from "../core/logger.js";
 
 const log = getLogger("rich-messages");
@@ -197,9 +198,25 @@ export class RichMessageSender {
       } catch (error) {
         const failure = describeError(error);
         lastError = failure.text;
-        // 只有「主动发送也带不上按钮」才能断定平台不支持自定义按钮。
-        // 被动回复失败往往只是 msg_id 无效/越权（实测：群聊里把 interaction id 当
-        // msg_id 会返回 400），把它当成键盘被拒会让后续卡片全部丢按钮。
+        // **结果未知**（没等到响应：超时 / 连接被掐）→ 立刻停手：再换形态 / 换通道重发一次，
+        // 用户就可能看到两条一样的消息（发送是非幂等的，见 ADR-0063）。
+        // 顺带避免一个旧坑：以前的超时会被 `classifyKeyboardFailure` 判成「平台不支持按钮」，
+        // 把这个目标的按钮**永久关掉** —— 那是把「这次没等到」当成了「以后都不行」。
+        if (isUnknownOutcomeError(error)) {
+          log.warn("rich message outcome unknown, not retrying", {
+            target,
+            mode: attempt.mode,
+            passive: attempt.passive,
+            error: lastError,
+            cardTitle: cardTitleOf(message),
+          });
+          return {
+            ok: false,
+            detail: `${lastError}（结果未知：没等到响应，未重试以免重复发送）`,
+            mode: "none",
+          };
+        }
+        // 只有「已知失败」（拿到响应 / 连都没连上）才继续降级与键盘判定
         if (attempt.mode === "markdown+keyboard" && !attempt.passive) {
           this.handleKeyboardFailure(target, failure, message);
         }
