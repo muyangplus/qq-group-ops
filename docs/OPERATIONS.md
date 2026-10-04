@@ -465,3 +465,102 @@ ps -ef | grep "dist/main.js" | grep -v grep     # 应无输出
 # 用你平时的启动方式拉起**一份**（例如 nohup node dist/main.js >> logs/stdout.log 2>&1 &）
 ps -ef | grep "dist/main.js" | grep -v grep     # 应只有一行
 ```
+
+## 手工救急：包化部署（ADR-0065）
+
+从这一版起 CD 不再逐文件同步，而是**两个文件、两段上传**：
+
+| 文件 | 谁写 | 作用 |
+|---|---|---|
+| `incoming/deploy-<版本>.tgz` | CD 第一段 | 产物包：`dist/` + `web/dist/` + `scripts/` + `pnpm-lock.yaml` + `.env.example`，内含 `dist/build-info.json` |
+| `incoming/deploy-<版本>.json` | CD 第二段（**最后落地**） | 投递标记：版本 / commit / **sha256** / **dist 指纹** / 构建时间。「它到了 = 传完了」 |
+
+机器人每个扫描周期扫一次 `incoming/`，看到标记才动手：
+**sha256 校验**（防半传）→ 解到 `data/incoming/<版本>/` → 用 `distFingerprint()` 与包内
+`build-info.json` **自证** → **整目录替换** `dist/` `web/dist/` `scripts/`
+（`data/`、`.env`、`logs/` **绝不碰**）→ 走既有「自检 → respawn」重启。
+成功写 `data/deploy-state.json` 与 `data/deploy-receipt.json`，把包归档到 `data/packages/`
+（**只留最近 3 个**），并作废 FTP 同步状态。失败则坏包改名 `*.failed-<ts>` 留证 + 私信超管，
+**运行中的机器人不受影响**。
+
+### 怎么手动应用一个包（CD 挂了 / 只想手工上一次）
+
+```bash
+cd /www/wwwroot/qqbot
+
+# ① 把两个文件放好（版本号换成你要上的那个；`incoming/` 与 dist/ 同级）
+ls -l incoming/deploy-<版本>.tgz incoming/deploy-<版本>.json   # 都应该有
+
+# ② 先自己校验一遍 sha256（与标记里的 sha256 对上才继续）
+sha256sum incoming/deploy-<版本>.tgz
+grep -o '"sha256":[^,]*' incoming/deploy-<版本>.json
+
+# ③ 剩下的交给机器人：它下个扫描周期（SCAN_INTERVAL_MS，默认 1 分钟）就会应用。
+#    想立刻看结果：
+tail -f logs/qq-group-ops.log | grep -i deploy
+cat data/deploy-receipt.json          # 最近一次部署结果（成功/失败与原话原因）
+cat data/deploy-state.json            # 当前生效 / 上一个版本
+```
+
+### 怎么手动回滚
+
+**首选**：机器人 `/status proc` 卡片上的「回滚上一版」按钮，或管理后台「状态」页的同名按钮
+（都是「重新应用 `data/packages/` 里的上一个包」，同一套校验）。手工等价操作：
+
+```bash
+cd /www/wwwroot/qqbot
+cat data/deploy-state.json            # 看 previousVersion / previousSha
+ls -l data/packages/                  # 上一个包还在不在（只保留最近 3 个）
+# 把归档里的包当成新投递重新放一份（sha256 用归档包的实算值）
+cp data/packages/deploy-<上一个版本>.tgz incoming/
+sha256sum incoming/deploy-<上一个版本>.tgz
+# 按上面的「手动应用」写一份 deploy-<上一个版本>.json 放进去（sha256 用刚算的值，
+# distFingerprint 用 `node -p "require('./data/incoming/<上一个版本>/dist/build-info.json').distFingerprint"`）
+# 没有现成的 build-info 就从归档里解出来看一眼：
+tar -xzf data/packages/deploy-<上一个版本>.tgz -C /tmp/peek dist/build-info.json && cat /tmp/peek/dist/build-info.json
+```
+
+> 回滚**不是**「把文件换回去就完事」：它同样要过 sha / 指纹自证，所以拿不准就点按钮 ——
+> 手工拼标记写错一个字段只会被拒绝（并私信说明原因），不会装上半个版本。
+
+### 怎么清理 FTP 同步状态（上传被跳过时）
+
+`ftp-sync-state-code.json` / `ftp-sync-state-marker.json` 是 FTP Action 记「上次传过什么」的
+状态文件 —— **正常包化流程已经不需要它**（每轮只传 2 个文件 = 每次全量）。
+机器人自己动过 `dist/`（自解包 / 回滚）之后会**主动删掉**它们，让下一轮 CD 全量。
+手工清（例如怀疑上传被跳过、版本号升了代码没升）：
+
+```bash
+cd /www/wwwroot/qqbot
+ls -l ftp-sync-state-*.json 2>/dev/null      # 有就说明还在
+rm -f ftp-sync-state-code.json ftp-sync-state-marker.json
+# 下一轮 CD 会因此全量上传（一次性，不是每次都全量）
+```
+
+### 三连 `grep -c`：确认 dist 真的是新的
+
+「版本号变了」不代表「代码真的上来了」（0.27.3 真机事故：`package.json` 是新版、
+`dist/adminApi/backend.js` 却是旧的）。**部署后**在服务器上跑这三条，三条都必须 ≥ 1：
+
+```bash
+cd /www/wwwroot/qqbot
+grep -c boundGroupIds dist/adminApi/backend.js          # 后台群列表用绑定表当权威来源
+grep -c 定时发言总开关 dist/services/platformSettings.js   # 定时发言总开关
+grep -c isStartupCheck dist/main.js                     # 自检进程不参与单实例锁
+```
+
+- 任何一条是 `0` → 这次上传/替换**没真的生效**；先看 `data/deploy-receipt.json` 与日志，
+  再按上面的「清理 FTP 同步状态」处理，然后重新发布。
+- 另外看一眼 `dist/build-info.json` 与 `/healthz` 的 `distFingerprint` 是否一致 ——
+  不一致说明「进程跑的产物」与「磁盘上的产物」不是同一份（等重启或重新部署）。
+
+### 现场自证：跑的是哪份产物
+
+```bash
+curl -s http://127.0.0.1:8787/healthz | tee /dev/stderr | head -c 400
+# { "ok": true, "version": "...", "distFingerprint": "...", "buildInfoCommit": "...",
+#   "appliedVersion": "...", "rollbackVersion": "..." }
+```
+
+或者机器人里 `/status proc`（仅平台超管）：「构建自证」行给指纹 / commit / 构建时间，
+「磁盘产物」行告诉你指纹是否与运行中的一致。

@@ -7,7 +7,55 @@
 
 ## [Unreleased]
 
-（暂无：以下内容已随 [0.27.3] 发布，见下一节。）
+### 新增
+
+- **发布流程包化：单文件产物包 + 机器人自解**（ADR-0065；TODO §2 的 P0 第 1 条）。CD 从
+  「FTP 逐文件同步」改成**两个文件、两段上传**：先传 `incoming/deploy-<版本>.tgz`
+  （`dist/` + `web/dist/` + `scripts/` + `pnpm-lock.yaml` + `.env.example`，内含构建期生成的
+  `dist/build-info.json`），**最后**传 `incoming/deploy-<版本>.json`（版本 / commit / **sha256** /
+  **dist 指纹** / 构建时间）——它就是「传完了」的标记。机器人侧新增 `DeployInstaller`：
+  扫到标记才动手 → **sha256 校验**（防半传）→ 解到 `data/incoming/<版本>/` →
+  用 `distFingerprint()` 与包内 `build-info.json` **自证** → **整目录替换**
+  `dist/` `web/dist/` `scripts/`（`data/`、`.env`、`logs/` **绝不碰**）→ 走既有「自检 → respawn」重启。
+  真机逐文件上传一次要 **8m33s**（≈1s/文件），包化后只传 2 个文件。
+- **包同时当备份：回滚 = 重新应用上一个包**。应用成功的包归档到 `data/packages/`（**只留最近 3 个**），
+  `data/deploy-state.json` 记 `{appliedVersion, appliedSha, previousVersion, previousSha}`。
+  回滚入口三条路：机器人 `/status proc` 卡片的「回滚上一版」按钮（平台超管 240、**二次确认弹窗**）、
+  管理 API 的 `POST /api/deploy/rollback`（新 scope 域 `write:deploy`，写审计 `admin_api:deploy_rollback`）、
+  后台「状态」页的「回滚到 vX」按钮（二次确认）。回执写明 `vX → vY`。
+- **构建产物自证**：构建期生成 `dist/build-info.json`（版本 / commit / 构建时间 / dist 指纹），
+  启动时把 `{version, distFingerprint, buildInfoCommit}` 记进日志；`GET /healthz` 与
+  `/status proc`（还有 `GET /api/health`）都能看到「跑的是哪份产物、哪次构建」，外加
+  `appliedVersion` / `rollbackVersion`（现场不用翻日志）。
+- **部署提醒与自动重启解耦**：`DeployWatcher` 的生效判据只看 `DEPLOY_CHECK_INTERVAL_MS`
+  （`<= 0` 才是关闭监测）；`AUTO_RESTART_ON_DEPLOY` 只决定「到点要不要自己重启」——
+  **关着时照样提醒**（卡片文案改成「**自动重启已关闭**，请手动重启加载新版本」），到点不动手，
+  同一目标版本仍然只提醒一次；用户之后把开关打开，下一轮按原计划继续。
+
+### 修复
+
+- **回滚不再制造混装 `dist`**：`restoreDistFromBackup()` 从**覆盖式还原**改成**整目录替换**
+  （先清空目标再拷快照）。真机事故现场就是覆盖式还原留下的：`package.json` 是 0.27.3、
+  `main.js` 是新的、`adminApi/backend.js` 与 `services/platformSettings.js` 却还是旧的。
+  回滚时还会主动 `rm -f ftp-sync-state-*.json`（自己绕过了 FTP 同步器改文件，主动作废状态，
+  下一轮 CD 因此全量）。
+- **「版本号变了但 `dist` 指纹没变」不再静默**：从只记一行日志改成**私信超管**
+  （「可能是上传被跳过（回滚过？），请检查 `dist/`」），同一目标版本只提醒一次。
+
+### 备注
+
+- **能力边界**：**不碰** `data/`、`.env`、`logs/`——替换面只有 `dist/`、`web/dist/`、`scripts/` 三项。
+  `incoming/` 与 `data/packages/` **各只保留最近 3 个包**（按落地时刻自清理）；坏包改名
+  `*.failed-<ts>` 留证，**同一份失败的包不会反复重试刷屏**（想再试就重新上传一次）。
+- `workflow_dispatch` 保留 `mode=files` 应急开关（退回老的逐文件上传 + `package.json` 版本标记）；
+  它**不生成** `build-info.json` 自证，属于「先别把机器人堵死」的最小兜底。
+- 产物包的解包用自带的只读 tar 解析（gzip + POSIX tar / GNU 长名 / pax，拒绝 `..` 与绝对路径），
+  不依赖系统 `tar`；`workflow_dispatch` 的 `dry-run` 输入与「人工放行」Environment 都不变。
+- 手工救急（手动应用 / 回滚包、清同步状态、`grep -c` 三连确认 `dist` 真的是新的、现场自证）
+  见 [docs/OPERATIONS.md](./docs/OPERATIONS.md) 的「手工救急：包化部署」一节；
+  回滚端点的逐条口径见 [docs/ADMIN-API.md](./docs/ADMIN-API.md) 的 E1-u。
+- 真机验收（上传耗时、坏包拒绝、回滚、关自动重启也提醒、保留 3 个包）待有环境时按
+  [docs/ACCEPTANCE.md](./docs/ACCEPTANCE.md) 与 TODO §4 跑一遍。
 
 ## [0.27.3] - 2026-10-04
 

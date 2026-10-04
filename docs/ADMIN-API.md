@@ -165,6 +165,7 @@
 19. **进程模型**：管理 API 作为机器人进程内的第二个 Fastify 监听口（`src/adminApi/host.ts`），
     读写都与指令层共用同一份服务图（`src/adminApi/backend.ts`：审批 / 规则 / 活动都调领域服务，
     审计读 `auditLog.all()`）；`pnpm admin:api` 降级为只读巡检。
+    （部署回滚这条写端点见 **E1-u**：`POST /api/deploy/rollback`，平台超管 240。）
 
 权限判据与指令层**同一口径**（不新造一套）：审批 / 活动 / 群规则要本群 130，全局规则要平台 240；
 越权与「值不合法」都会先写一条 `admin_api:denied` / `admin_api:rule_update`（`status = rejected`）
@@ -205,6 +206,7 @@
 | `perm` | `read:perm` | `write:perm` | 权限授予 / 撤销（P3） |
 | `token` | `read:token` | `write:token` | 登录令牌查看 / 吊销（平台 240） |
 | `announce` | `read:announce` | `write:announce` | 定时发言查看 / 增删改 / 试发（本群 130） |
+| `deploy` | `read:deploy` | `write:deploy` | 部署回滚到上一个包（平台 240，见 E1-u） |
 
 
 ### E1-f 可观测性与运维（P1）
@@ -519,6 +521,33 @@
     所以群里 `/announce` 与后台页留下的是**同一条记录**（这正是「同源」要的效果），
     管理 API 不重复写 `admin_api:announce_*`；权限被拒仍然是 `admin_api:denied`。
 
+### E1-u 部署回滚（P0，2026-10-04 拍定）
+
+> 口径见 [DECISIONS.md](./DECISIONS.md) 的 **ADR-0065**（包化发布 + 备份 / 回滚）。
+> **回滚 = 重新应用 `data/packages/` 里的上一个包**（同一安装器、同一套 sha / 指纹自证、
+> 同一套整目录替换与重启钩子），管理 API 不新造通路。
+
+80. `POST /api/deploy/rollback`（**平台超管 240**；scope `write:deploy`）：回滚到上一个版本。
+    无请求体。返回 `{ ok, result: { ok, fromVersion, toVersion, message } }`：
+    - `fromVersion` = 回滚前的生效版本（`vX`），`toVersion` = 回滚到的版本（`vY`，失败时为空串），
+      `message` 是**服务端原话**（成功时写 `vX → vY`，失败时写清原因）；
+    - 与机器人 `/status proc` 卡片上的「回滚上一版」是**同一个入口**（`DeployInstaller.rollback`）：
+      重新应用归档里的上一个包 → 指纹自证 → 整目录替换 → 重启钩子 → 回执 + `data/deploy-state.json`；
+      回滚还会**作废 FTP 同步状态**（`rm -f ftp-sync-state-*.json`），下一轮 CD 因此全量；
+    - 「没有可回滚的上一个版本」**不是 HTTP 错误**：仍然 200，靠 `result.ok === false` + `message`
+      如实回（界面直接显示原话）。归档里没有那个包时同理（`no_package`）；
+    - 只读巡检模式（`pnpm admin:api`）没有安装器 → **503** 并说明去机器人进程那口操作；
+    - 审计：`admin_api:deploy_rollback`（成功 `executed`、失败与「没得回滚」`rejected`，
+      理由里带 `vX → vY`）；权限被拒仍是 `admin_api:denied`；
+81. **前端入口**：后台「状态」页（`web/src/views/StatusView.vue`）的「部署」小节读
+    `GET /api/health` 的 `deploy: { appliedVersion, rollbackVersion? }`：有 `rollbackVersion`
+    才渲染「回滚到 vX」按钮（**二次确认弹窗**后发 POST，成功刷新健康表）；
+    没有就不渲染。
+82. **`GET /healthz` 也带部署与构建自证**（公开端点，不鉴权）：
+    `{ ok, version, uptimeMs, distFingerprint, buildInfoCommit, appliedVersion, rollbackVersion }`。
+    指纹与 commit 来自启动时固化的 `dist/build-info.json`（ADR-0065），没读到就回
+    `unavailable` / `unknown`，**不编值**。
+
 ### E1-g 只读端点的逐路由门槛（P1）
 
 30. `GET /api/tasks`（平台超管 240）：**周期任务监测列表** —— 统一扫描周期 + 每个任务的
@@ -554,7 +583,7 @@
 | `GET /api/activities` | 按**本群 ≥120 裁剪**（带报名人数的管理视图）|
 | `GET /api/punishments`、`GET /api/appeals`、`GET /api/notify/deliveries` | 平台超管 240 拿全量；其余必须带 `?group=<群>`（缺参数 400）且本群 ≥120 |
 | `GET /api/blacklist?group=` | 本群那组 ≥120；**全局那组只有平台 240**（拿不到时 `globalVisible: false`）|
-| `GET /api/health` | 平台超管 240（进程 / 队列 / 模块健康 / 恢复现场）|
+| `GET /api/health` | 平台超管 240（进程 / 队列 / 模块健康 / 恢复现场 / 部署状态）|
 | `POST /api/join/sync`（写但幂等） | 本群**审核员 120**（与 `/sync` 一致：只拉官方队列，不改用户状态）|
 | `GET /api/audit/export.csv` | 本群 130（脱敏）；`?full=1` 与不带 `group=` 的**全量**要平台 240 |
 | `POST /api/punishments/:code/release\|mute\|kick`、`POST /api/appeals/:code/accept\|reject` | 本群**审核员 120**（与指令层一致）|

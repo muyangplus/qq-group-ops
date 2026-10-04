@@ -49,47 +49,61 @@ Settings → **Environments** → 新建 `production-ftp` 后可以：
 
 ## 3. 上传了什么 / 没上传什么
 
-部署的是**运行产物**，不是仓库快照。工作流在部署前显式白名单组包，**分两段上传**：
+部署的是**运行产物**，不是仓库快照。工作流在部署前显式白名单组包，**分两段上传 2 个文件**
+（ADR-0065；两段式与「标记最后落地」的结构沿用 ADR-0057）：
 
-第一段（`dist-deploy/`，代码与清单）：
+第一段（`incoming/deploy-<版本>.tgz`，一个包）：
 
 ```
 dist/                 # 编译产物；`node dist/main.js` 自包含（不引 ../src）
+dist/build-info.json  # 构建自证：版本 + commit + 构建时间 + dist 指纹（门禁里生成，见下）
 web/dist/             # 管理前台静态资源（Vite 产物，由服务器上的 nginx 托管；门禁里先 vue-tsc 再 vite build）
 scripts/              # build-class-index.mjs / classIndex.mjs（`pnpm class:index`，纯 node 内置模块）
 pnpm-lock.yaml        # 锁定依赖版本，服务器上 pnpm install --prod
 .env.example          # 配置对照模板（不含真实值）
 ```
 
-第二段（`dist-marker/`，**只有一个文件**）：
+第二段（`incoming/deploy-<版本>.json`，**只有一个文件**）：
 
 ```
-package.json          # 版本标记：最后落地（见下）
+deploy-<版本>.json    # 投递标记：版本 / commit / sha256 / dist 指纹 / builtAt —— 最后落地（见下）
 ```
 
-**为什么要把 `package.json` 单独放最后一段**：部署监测（新版本自动重启）认的就是它的版本号。
-原来一次上传里它是「其中一个文件」，顺序取决于 Action 的遍历 —— 上传还没完版本号就可能已经变了，
-那台机器会在**半个构建**上计时重启。拆成两段之后，「服务器上的版本号变了」严格等于
-「代码已经全部就位」，部署监测的宽限期只需要兜「重启时机」，不用再猜「传完没完」（ADR-0057）。
-代价是多一次 FTP 会话；若第二段失败，job 会变红，而服务器上是「新代码 + 旧版本号」——
-不会重启，旧进程继续服务，重跑一次发布即可。
+**为什么投递标记要单独放最后一段**：机器人侧 `DeployInstaller` 扫到它才动手 ——
+先按 `sha256` 校验包（防半传），再解包、用 `distFingerprint()` 与包内 `build-info.json` 自证，
+最后整目录替换 `dist/` / `web/dist/` / `scripts/` 并重启。标记没落地 = 「还没传完」，
+机器人什么都不会做（旧进程继续服务）；标记一落地，包一定已经完整在服务器上了。
 
-> ⚠️ **两段必须各用自己的 `state-name`**（当前是 `ftp-sync-state-code.json` 与
-> `ftp-sync-state-marker.json`），并保持 `dangerous-clean-slate: false`。
-> 这个 Action 是**双向同步**：它的删除动作由「上次传了什么」的状态文件驱动，
-> 两段共用一份状态时会把对方的文件判成「本地没有 → 从服务器删掉」——
-> 2026-10-02 的 v0.24.0 发布就这么删掉过服务器上的 `dist/` / `scripts/` / `web/` / `pnpm-lock.yaml`
-> （机器人靠内存继续跑，但管理前台 404、任何重启都会失败）。`test/workflows.test.ts` 已把
+**为什么生成 `dist/build-info.json`**：版本号只是「CD 跑过」的标记，可能骗人
+（0.27.3 真机：`package.json` 是新的，`dist/adminApi/backend.js` 却是旧的）。把
+**版本 + commit + 构建时间 + dist 指纹**钉进产物，机器人在**替换之前**就能用
+`distFingerprint()` 对一遍 —— 半传 / 混装 / 坏包全被拦在替换之前。
+关键实现细节：指纹**不含 `build-info.json` 自己**，且 CD 里「删 `.map`」这一步必须在
+**算指纹之前**（否则指纹按带 map 的 dist 算、传上去的是不带 map 的，自证永远不过）。
+
+> **不再需要同步状态**（这是相对老方案最大的变化）：老方案是逐文件同步，
+> 必须靠 `ftp-sync-state-*.json` 记住「上次传过什么」才能只传差异 —— 代价是
+> 「服务器上的文件被别的路径改过（回滚 / 机器人自解包）时，下一轮上传会被静默跳过」，
+> 真机因此出现过「版本号是新的、代码是旧的」。现在每轮只传 2 个文件（耗时不再由文件数决定），
+> **每次都是全量**，不存在「同步状态与服务器实况不一致」这种失败模式；
+> 机器人自己动过 `dist/` 之后还会主动删掉旧的 `ftp-sync-state-*.json`（那份状态对它已无意义，
+> 保留只为兼容）。两段仍各用**不同**的 `state-name`（`ftp-sync-state-package.json` /
+> `ftp-sync-state-marker.json`）并保持 `dangerous-clean-slate: false` ——
+> 这个 Action 是双向同步，共用一份状态时会把对方的文件判成「本地没有 → 从服务器删掉」，
+> 2026-10-02 的 v0.24.0 发布就这么删过服务器上的 `dist/` / `scripts/` / `web/` /
+> `pnpm-lock.yaml`（ADR-0057 的事故与修正）。`test/workflows.test.ts` 已把
 > 「所有 FTP 步骤必须显式声明 `state-name` 且互不相同」钉成断言。
-> 恢复办法（记着备用）：用**单段上传时代的 tag**（`v0.23.2`）跑一次 `workflow_dispatch`，
-> 那份 workflow 一次传全套、不删东西。
+>
+> **应急开关**：`workflow_dispatch` 的 `mode=files` 会退回老的逐文件上传
+> （`dist-deploy/` + `dist-marker/package.json` 两段，同样两个 state-name）。
+> 它不生成 `build-info.json` 自证，是「先别把机器人堵死」的最小兜底，别长期用。
 
 **不上服务器**：
 
 - `src/`、`tsconfig.json`：生产运行不需要（`dist` 自包含）；服务器上要改代码请改仓库再走一次发布；
 - `docs/`、`README.md`、`CHANGELOG.md`、`Dockerfile`、`docker-compose.yml`：仓库侧资料，运行不需要；
-- `*.map`：没有 `src` 时 sourcemap 无法对照，组包时直接删除（体积少一半）；若你希望在服务器上看可读堆栈，
-  把 `src/` 加进白名单并去掉删 `.map` 那行即可；
+- `*.map`：没有 `src` 时 sourcemap 无法对照，**构建阶段就删除**（体积少一半，且必须在算指纹之前）；
+  若你希望在服务器上看可读堆栈，把 `src/` 加进白名单并去掉删 `.map` 那行即可；
 - 敏感与噪音：`.env` / `.env.*`、`data/`、`logs/`、`test/`、`.git*`、`.github/`、`node_modules/`、`coverage/`、`*.log`
   —— 组包不拷贝 + Action `exclude` 双层兜底。
 
@@ -157,11 +171,24 @@ Dependabot 每周会给 npm 依赖与 GitHub Actions 开分组 PR（`.github/dep
 
 ## 5. 回滚
 
+**首选：机器人自己回滚**（ADR-0065）—— `data/packages/` 里保留着最近 **3 个**应用成功的包，
+回滚 = **重新应用上一个包**（同一安装器、同一套 sha / 指纹自证、同一套整目录替换与重启）：
+
+1. 机器人里 `/status proc`（平台超管）→ 点「回滚上一版」；或管理后台「状态」页 → 点「回滚到 vX」；
+2. 也可以走 API：`POST /api/deploy/rollback`（平台超管 240，scope `write:deploy`），
+   回执写 `vX → vY`；
+3. 回滚会作废 `ftp-sync-state-*.json`，所以**下一轮 CD 自动全量**（一次性，不是每次都全量）。
+
+**备选：重新发布一个旧 tag**（包化流程同样适用）：
+
 1. Actions → `CD · FTP 发布` → **Run workflow**，`ref` 填要回滚到的 tag（例如 `v0.16.0`）；
-2. 走完门禁 + 审批后，旧版本的运行产物会被重新上传
-   （注意：**不会自动删除**新版多出来的文件；改动文件清单时请手动清理服务器上的遗留文件）；
-3. 服务器上 `pnpm install --prod` → 重启进程（`pnpm start`）；
+2. 走完门禁 + 审批后，旧版本的产物包会重新上传，机器人自解并重启；
+3. 注意：整目录替换只覆盖 `dist/` / `web/dist/` / `scripts/` 这三个面，
+   服务器上多出来的**其它**文件不会被删 —— 改动文件清单时手工清理遗留文件；
 4. 如果改动涉及数据库结构（例如 0.16.0 的 `punishActions` 是键值表，无迁移风险），优先用备份恢复。
+
+手工救急（手动放包 / 手动回滚 / 清同步状态 / `grep -c` 三连）见
+[OPERATIONS.md](./OPERATIONS.md) 的「手工救急：包化部署」一节。
 
 ## 7. FTP 被动模式排障（首次联调必看）
 
