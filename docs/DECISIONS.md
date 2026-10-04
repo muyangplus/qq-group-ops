@@ -1617,3 +1617,51 @@
   **不要再依赖自我重启**（`/restart` 仍可用，但守护进程也会拉起一份 → 从 0.27.1 起
   第二份会被单实例闸拒绝并把原因写进日志与 `data/duplicate-instance.json`）。
   真机上先 `ps -ef | grep dist/main.js` 确认只有一份，再启动。
+
+## ADR-0065：部署形态改成「单文件产物包 + 机器人自解」，提醒与自动重启解耦
+
+- 状态：已定口径，待实现（TODO §2 的 P0 第 1 条；实现时把这一行改成版本号）
+- 背景（两次真机事故）：
+  1. **慢**：CD 是 FTP **逐文件**同步，一次部署传 `dist/**` 要 **8m33s**（实测 ≈1s/文件）；
+     慢的原因是**文件数**，不是体积；
+  2. **不可靠**：自检失败触发回滚时，`restoreDistFromBackup()` 是**覆盖式还原**（往现有
+     `dist/` 上拷快照，不清空），同时绕过了 FTP 的 `ftp-sync-state-*.json` —— 于是
+     ① 产出**混装 dist**（真机：`package.json` 是 0.27.3，`main.js` 是新的，
+     `adminApi/backend.js` 与 `services/platformSettings.js` 却是旧的）；
+     ② 之后的上传被同步状态**跳过**，版本号升了、代码没升，功能迟迟不生效；
+  3. **误导**：部署监测「版本号变了但 `dist` 指纹没变」是**静默跳过**，等于对这种情况哑巴；
+     而且 `AUTO_RESTART_ON_DEPLOY=off` 时**连提醒都没有**（用户明确要求：没配自动重启也要提醒）。
+- 决策：
+  1. **两段上传、只传 2 个文件**（保留 ADR-0057 的「标记最后落地」）：
+     先传 `incoming/deploy-<版本>.tgz`（`dist/ web/dist/ scripts/ pnpm-lock.yaml .env.example`），
+     **最后**传 `incoming/deploy-<版本>.json`（版本 / commit / **sha256** / **dist 指纹** / 构建时间）；
+     包里另带 `dist/build-info.json`（版本 + commit + 指纹，构建期生成）。**不再需要同步状态文件**；
+  2. **机器人自解**（`DeployInstaller`，由统一扫描周期驱动）：扫 `incoming/` → **sha256 校验**
+     （防半传）→ 解到 `data/incoming/<版本>/` → 用 `distFingerprint()` 与包内 `build-info.json`
+     **自证** → **整目录原子替换**（`dist` / `web/dist` / `scripts`；`data/`、`.env`、`logs/` 绝不碰）
+     → 走既有「自检 → respawn」；成功写回执 + 记 `data/deploy-state.json`，
+     失败则还原上一个包 + 坏包改名 `*.failed-<ts>` 留着 + 私信超管；
+  3. **包同时当备份**：应用成功的包归档到 `data/packages/`（保留最近 **3** 个），
+     `deploy-state.json` 记 `{appliedVersion, appliedSha, previousVersion, previousSha}`；
+     「**回滚到上一版本**」= 重新应用上一个包（同一安装器、同一套校验），
+     入口在 `/status proc` 卡片与后台「状态」页（平台超管 240、二次确认、写审计、回执写明 `vX → vY`）；
+  4. **提醒与自动重启解耦**：`DeployWatcher` 的生效判据只看 `DEPLOY_CHECK_INTERVAL_MS`
+     （`0` = 关闭监测）；`AUTO_RESTART_ON_DEPLOY` 只决定「到点要不要自己重启」：
+     关着时**照样提醒**（卡片文案改成「自动重启已关闭，请手动重启加载新版本」），到点不动手，
+     同一目标版本仍然只提醒一次；
+  5. **回滚不再制造混装**：`restoreDistFromBackup()` 改成**整目录替换**（先清空再拷快照），
+     并在回滚时 **`rm -f ftp-sync-state-*.json`**（它自己知道「我绕过了同步器改文件」，主动作废状态，
+     下一轮 CD 因此全量；这是「回滚后一次性全量」而不是「每次都全量」）；
+  6. **不允许再静默**：「版本号变了但 `dist` 指纹没变」从日志改成**私信超管**
+     （「可能是上传被跳过（回滚过？），请检查 `dist/`」）；启动时把
+     `{version, distFingerprint, buildInfoCommit}` 记进日志、`/healthz` 与 `/status proc`。
+- 理由：把「传输方式」从**一堆小文件**换成**一个包**，同时解决慢与不可靠两件事；
+  校验与指纹自证让「版本号骗人」在**上线前**就暴露；包天然是备份与回滚的载体（不再依赖快照）；
+  提醒与自动重启解耦是用户明确要求（没配自动重启时至少要知道有新版本）。
+- 影响：`.github/workflows/cd-ftp.yml`（改打包 + 两段上传）、新 `src/services/deployInstaller.ts`、
+  `src/services/deployWatcher.ts`（判据与文案）、`src/main.ts`（装配 + 回滚钩子）、
+  `src/core/buildInfo.ts`（`build-info.json` 读取与自证）、`src/services/distSnapshot.ts` /
+  回滚路径（整目录替换 + 作废状态）、`src/adminApi/*`（回滚端点与页面按钮）、
+  `docs/ADMIN-API.md` / `docs/OPERATIONS.md`（手工应用 / 回滚 / 清状态 SOP）、`CHANGELOG`。
+  **能力边界**：不碰 `data/` `.env` `logs/`；`incoming/` 与 `data/packages/` 自动只留最近 3 个；
+  `workflow_dispatch` 保留 `mode=files` 应急开关（退回老的逐文件上传）。
