@@ -1,6 +1,8 @@
 # CD：打 tag 发 Release 自动发布到 FTP
 
-> 工作流文件：[`.github/workflows/cd-ftp.yml`](../.github/workflows/cd-ftp.yml)
+> 工作流文件：[`.github/workflows/cd-ftp.yml`](../.github/workflows/cd-ftp.yml)、
+> [`ci.yml`](../.github/workflows/ci.yml)、[`docs-guard.yml`](../.github/workflows/docs-guard.yml)、
+> [`security-audit.yml`](../.github/workflows/security-audit.yml)
 > 相关：[`docs/OPERATIONS.md`](./OPERATIONS.md)（部署与运行）、
 > [`.github/dependabot.yml`](../.github/dependabot.yml)（依赖与 Action 的安全更新）
 
@@ -13,6 +15,7 @@
 
 部署来源解析顺序：`Release 的 tag` → 手动输入的 `ref` → 当前分支。
 同一次发布**同时只允许一个部署**（`concurrency` 按 ref 排队），避免并发写坏服务器目录。
+部署门禁默认**复用同一 commit 的 CI 结论**（详见 **§8**）。
 
 > 想改成「推 tag 就部署」：把 `release:` 那段换成
 > `push: { tags: ["v*"] }`。**不要两者都开**，否则同一次发布会跑两遍。
@@ -96,7 +99,14 @@ deploy-<版本>.json    # 投递标记：版本 / commit / sha256 / dist 指纹 
 >
 > **应急开关**：`workflow_dispatch` 的 `mode=files` 会退回老的逐文件上传
 > （`dist-deploy/` + `dist-marker/package.json` 两段，同样两个 state-name）。
-> 它不生成 `build-info.json` 自证，是「先别把机器人堵死」的最小兜底，别长期用。
+> 它与包模式**共用同一个构建产物**（也带 `build-info.json`），只是不走 `incoming/` 那套
+> 「sha256 + 自证 + 整目录替换」，而是退回「部署监测按版本 + 指纹判据」的老路径 ——
+> 是「包化路径出问题时别把机器人堵死」的最小兜底，别长期用。
+> ⚠️ **它同时是「首跳」的正规做法**：服务器上还是 0.27.x（没有 `DeployInstaller`）时，
+> 包模式的产物只有新代码解得开、而新代码又得先上服务器 —— 所以带包化的那个版本要用
+> `mode=files` 交付，之后才走包模式。首跳的完整步骤（含「Release 触发的那次包模式 CD 已经在
+> `incoming/` 留了一个包、新进程起来后会被再应用一次」怎么处理）见
+> [OPERATIONS.md](./OPERATIONS.md) 的「手工救急：包化部署」。
 
 **不上服务器**：
 
@@ -190,6 +200,21 @@ Dependabot 每周会给 npm 依赖与 GitHub Actions 开分组 PR（`.github/dep
 手工救急（手动放包 / 手动回滚 / 清同步状态 / `grep -c` 三连）见
 [OPERATIONS.md](./OPERATIONS.md) 的「手工救急：包化部署」一节。
 
+## 6. 排障速查
+
+| 现象 | 先看 |
+|---|---|
+| Release 发布了但工作流没跑 | 触发的是 **Release published** 而不是 tag push；检查是否建了 Release（draft 不算） |
+| `Timeout when trying to open data connection to ***:<端口>` | **被动模式**问题，见 §7 逐条检查（端口范围 / 防火墙 / 云安全组 / NAT 的 `ForcePassiveIP`） |
+| `缺少配置：FTP_SERVER_DIR(variable)` | 忘了配 Variable（不是 Secret），见 §2.2 |
+| 连接失败 / TLS 报错 | `FTP_PROTOCOL` 与服务端是否匹配（显式 FTPS 通常是 21 端口 + `AUTH TLS`）；服务器证书是否有效 |
+| 上传成功但服务器跑不起来 | `dist/` 是否上传（门禁里 `pnpm build` 成功才有）、服务器是否 `pnpm install --prod`、`.env` 是否自己放好 |
+| 堆栈全是 `dist/xxx.js` 看不出源码行 | 只发运行产物时 `.map` 已删除；需要可读堆栈就把 `src/` 加进白名单并去掉删 `.map` 那步，运行时加 `NODE_OPTIONS=--enable-source-maps` |
+| 服务器上残留旧文件 | 部署不会删除多余文件（`dangerous-clean-slate` 关闭）；改过文件清单后手动清理一次 |
+| 部署到一半失败 | 组包是白名单、`dangerous-clean-slate` 关闭，所以不会删服务器文件；修好配置重跑即可 |
+| 想只部署某个分支 | 手动 dispatch 时 `ref` 填分支名（Environment 的 branch 限制要放行） |
+| 日志里看不到逐个文件的传输细节 | `log-level` 已从 `verbose` 收到 `standard`（打包后只有 2 个文件）；排查 FTP 时临时改回 `verbose` |
+
 ## 7. FTP 被动模式排障（首次联调必看）
 
 失败长这样：
@@ -236,26 +261,58 @@ Error: None of the available transfer strategies work.
 
 4. **在 Actions 里空跑验证**（不写服务器文件）：
    Actions → `CD · FTP 发布` → Run workflow → 勾 **`dry_run`** → 观察是否还报数据连接超时。
-   工作流已加 `timeout: 120000` 与 `log-level: verbose`，日志里能看到 PASV/EPSV 交互细节。
+   工作流带 `timeout: 120000`，`dry_run` 会走完 PASV 数据连接与差异比对。
+   `log-level` 平时是 `standard`（打包成 2 个文件后日志量没必要那么大，也少占排队时间）；
+   要连 PASV/EPSV 交互细节一起看，临时把它改回 `verbose`。
 
 > 如果这段端口**实在没法开**（例如服务器在严格的内网策略后面），换 **SFTP/SSH** 是更省心的路：
 > 单条连接、无被动端口、无 NAT 伪装问题；代价是要在服务器上放一把部署专用 SSH 公钥，
 > 并给仓库加 `SSH_PRIVATE_KEY` 等 Secrets（见 §4.2 第 1 条）。
 
-> 如果这段端口**实在没法开**（例如服务器在严格的内网策略后面），换 **SFTP/SSH** 是更省心的路：
-> 单条连接、无被动端口、无 NAT 伪装问题；代价是要在服务器上放一把部署专用 SSH 公钥，
-> 并给仓库加 `SSH_PRIVATE_KEY` 等 Secrets（见 §4.2 第 1 条）。
+## 8. CI/CD 触发策略：什么会触发、什么只跑守卫
 
-## 6. 排障速查
+> 口径见 [ADR-0067](./DECISIONS.md)。标题里的「省」不是靠少测，而是靠**不重复测**：
+> 近 200 次 run 里 CI 171 次、push 触发 167 次，一半以上来自「纯文档 push 也跑全量门禁」
+> 与「一次改动分两次 push」。
 
-| 现象 | 先看 |
-|---|---|
-| Release 发布了但工作流没跑 | 触发的是 **Release published** 而不是 tag push；检查是否建了 Release（draft 不算） |
-| `Timeout when trying to open data connection to ***:<端口>` | **被动模式**问题，见 §7 逐条检查（端口范围 / 防火墙 / 云安全组 / NAT 的 `ForcePassiveIP`） |
-| `缺少配置：FTP_SERVER_DIR(variable)` | 忘了配 Variable（不是 Secret），见 §2.2 |
-| 连接失败 / TLS 报错 | `FTP_PROTOCOL` 与服务端是否匹配（显式 FTPS 通常是 21 端口 + `AUTH TLS`）；服务器证书是否有效 |
-| 上传成功但服务器跑不起来 | `dist/` 是否上传（门禁里 `pnpm build` 成功才有）、服务器是否 `pnpm install --prod`、`.env` 是否自己放好 |
-| 堆栈全是 `dist/xxx.js` 看不出源码行 | 只发运行产物时 `.map` 已删除；需要可读堆栈就把 `src/` 加进白名单并去掉删 `.map` 那步，运行时加 `NODE_OPTIONS=--enable-source-maps` |
-| 服务器上残留旧文件 | 部署不会删除多余文件（`dangerous-clean-slate` 关闭）；改过文件清单后手动清理一次 |
-| 部署到一半失败 | 组包是白名单、`dangerous-clean-slate` 关闭，所以不会删服务器文件；修好配置重跑即可 |
-| 想只部署某个分支 | 手动 dispatch 时 `ref` 填分支名（Environment 的 branch 限制要放行） |
+### 8.1 一张表
+
+| 你改了什么 | 跑什么 | 为什么 |
+|---|---|---|
+| `src/**`、`test/**`、`web/**`、`.github/**`、`package.json`、`pnpm-lock.yaml`、`.env.example`… | **CI：全量门禁**（typecheck + 全量 vitest + build + 前端三项） | 代码路径必须全量验；`.env.example` 也在部署白名单里 |
+| **只有** `docs/**` 与 `*.md`（README / CHANGELOG / TODO / ADR…） | **文档守卫：秒级**（`test/privacyGuard.test.ts` + `test/workflows.test.ts`） | 纯文档不该白等 2–3 分钟，但「CHANGELOG 里写了真实群号」必须有人拦 |
+| 两者都改 | 两个都跑 | 门禁不削弱 |
+| 连续 push 同一分支 | 只跑**最后一次**（`concurrency.cancel-in-progress`） | 中间那次的结果已经过时 |
+| 建 Release（published）或手动 dispatch CD | **CD**：默认**复用同一 commit 的 CI 结论**（只装依赖 + 构建 + 自证），查不到绿 CI 就回落全套门禁；`full_gate=true` 强制全套 | 内容是同一份，重复跑只是等 2–3 分钟 |
+| 只推 tag、不建 Release | 什么也不跑 | 触发面是 `release: published`（ADR-0057 起） |
+
+**边界（不许动的）**：代码 push 必须跑全量门禁；**发布前门禁不削弱**；文档路径只跳过**全量**、
+**不跳过守卫**（`test/privacyGuard.test.ts` 扫 README / CHANGELOG / `.env.example`，并对全仓库做
+形状规则检查）。
+
+### 8.2 流程侧：本地提交不推送（省得最多）
+
+0.29.0 起按用户口径执行：**本地提交之后不推送**；代码与文档照样分开提交，但都留在本地，
+**发版时把该版本的全部提交一次性 push** —— 于是一次发版只产生 **1 次 CI（main push）+
+1 次 CD（Release published）**。
+
+代价与纪律（必须一起遵守）：
+
+- 未推送的提交**没有远端备份**（发版前别只留在一台机器上）；
+- CI 只会跑最后一次 → **发版前本地必须自己跑过** `pnpm typecheck` + `pnpm test`
+  （有前端改动再加 `pnpm web:typecheck` / `web:test` / `web:build`）—— 不能指望 CI 替我们提前发现；
+- 如果分支保护要求「CI / test」这个 check，**纯文档 PR 会等不到它**（`ci.yml` 被 `paths-ignore` 跳过）：
+  要么给文档守卫也加一条 required check，要么把文档改动并进代码 PR。
+
+### 8.3 紧急开关与非默认路径
+
+- 手动 dispatch CD 时可指定：`ref`（补发 / 回滚旧 tag）、`dry_run`（只试连比对，不写文件）、
+  `mode=files`（退回逐文件上传）、`full_gate=true`（不复用 CI）；
+- 查 CI 结论失败（API / 权限 / 网络）时**按「没有绿 CI」处理**：宁可多跑一遍门禁，不可少跑；
+- 安全审计（`security-audit.yml`）与 Dependabot 都是**每周**一次 + 手动 dispatch，不天天开 run / PR；
+- 本地复现守卫（不用等 CI）：
+
+  ```bash
+  node node_modules/vitest/vitest.mjs run --configLoader runner test/privacyGuard.test.ts test/workflows.test.ts
+  ```
+

@@ -1742,3 +1742,45 @@
 - 能力边界：**不碰密钥类**（永不进库、永不回传）；**不做**运行期改监听口 / 换数据库；
   **不删** `platform_settings` 里已有的覆盖行（要删就 `/config clear`，或后台「恢复默认」）；
   未知 / 预留键原样留在 `.env` 里、导入器不报错也不管。
+
+## ADR-0067：CI/CD 触发次数收敛 —— 不重复测，而不是少测
+
+- 状态：已实现（未发版）—— 见 CHANGELOG 的 `[Unreleased]`
+- 背景（实测近 200 次 run）：
+  - 谁在跑：CI **171** 次 / CD 24 次 / Dependabot 5 次；触发来源 push **167** / release 18 /
+    dispatch 6 / PR 4；09-26～10-04 九天共 200 次，峰值 **47 次/天**（10-02），累计约 **194 分钟**；
+  - 为什么这么多：① 每次 push 都跑全量 CI，**包括纯文档提交**；② 本仓库要求「代码与文档分开提交」，
+    按「每提交一 push」做 → 一次改动 2 次 run；③ 发布时 CD 又把同一套门禁重跑一遍
+    （install + typecheck + 全量 vitest + web test + build），与 CI 完全重复；
+    ④ CI 没有 `concurrency`，同一分支连续 push 会排队跑全部而不是只跑最后一次。
+- 决策（按收益排序，**都不削弱门禁**）：
+  1. **`concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }`**：同一分支连续 push
+     只跑最后一次（旧运行取消，它的结果已经过时）；
+  2. **路径拆分**：`ci.yml` 加 `paths-ignore: [docs/**, **.md]`（纯文档 push 不跑全量门禁），
+     新增 `docs-guard.yml`（`paths: [docs/**, **.md, .env.example]`）只跑秒级守卫：
+     `test/privacyGuard.test.ts`（扫 README / CHANGELOG / `.env.example`，并对全仓库做数字 / openid
+     形状检查）+ `test/workflows.test.ts`；一个 commit 里两者都有 → 两个工作流都跑；
+     **代码路径一个都不 exclude**（改错这个方向就是回归）；
+  3. **CD 复用 CI**：CD 的门禁 job 先记下**实际检出的 commit**（`git rev-parse HEAD` ——
+     手动 dispatch 可以指定 `ref`，与 `GITHUB_SHA` 不是同一个），再查
+     `ci.yml` 在这个 commit 上有没有绿的 run（`gh api …/actions/workflows/ci.yml/runs?head_sha=…&status=success`）：
+     有 → 只做 `pnpm install --frozen-lockfile` + `pnpm build` + `pnpm web:build` + 自证（跳过
+     typecheck / 全量 vitest / web test）；没有（或查询失败、或手动 `full_gate=true`）→ 跑**全套**。
+     为此 `permissions` 加 `actions: read`（仍然没有任何写权限）；
+  4. **流程侧**（用户 2026-10-04 定死）：**本地提交不推送**；代码与文档照样分开提交，但都留在本地，
+     **发版时一次性 push** → 一次发版只产生 **1 次 CI（main push）+ 1 次 CD（Release published）**；
+  5. `security-audit` 与 Dependabot 收敛到**每周** + 手动 dispatch（本来就已是每周，加守卫钉住）；
+     CD 各段 FTP 的 `log-level: verbose → standard`（每轮只传 2 个文件，没必要刷全量 FTP 日志）。
+- 理由：门禁的价值在「拦得住」，不在「跑得勤」。同一份内容重复跑三遍不会多发现一个 bug，
+  只会让发布变慢、让 run 列表淹没真信号。路径拆分把「守卫」与「全量门禁」分开：文档改动仍然有人拦
+  （往 CHANGELOG 里塞真实群号会红 —— 本地按守卫命令实测过一次），但不必等 2–3 分钟。
+- 影响：`.github/workflows/{ci,docs-guard,cd-ftp}.yml`、`.github/dependabot.yml`（守卫）、
+  `test/workflows.test.ts`（新增 3 条守卫：触发面与守卫分工 / 复用 CI 的回落 / FTP 日志量）、
+  `docs/CD.md` 新增 §8「CI/CD 触发策略」（含本地纪律与本地复现守卫的命令）。
+- 能力边界与已知代价：
+  - **不削弱发布前门禁**：CD 复用的是**同一个 commit** 上 CI 的结论，不是「跳过检查」；
+  - 纯文档 PR 若被分支保护要求「CI / test」那个 check，会等不到它（要么给文档守卫也加一条
+    required check，要么把文档改动并进代码 PR）——这是路径拆分的固有代价，写在 CD.md §8.2；
+  - 本地不推送期间的提交**没有远端备份**，且 CI 只跑最后一次 → **发版前本地必须自己跑全量**
+    （`pnpm typecheck` + `pnpm test`；有前端改动再加前端三项）；
+  - 「日峰值 47 → ≤15」只能事后看两周的实际 run 数，代码侧只能保证触发面。

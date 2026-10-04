@@ -524,6 +524,40 @@ ps -ef | grep "dist/main.js" | grep -v grep     # 应只有一行
 （**只留最近 3 个**），并作废 FTP 同步状态。失败则坏包改名 `*.failed-<ts>` 留证 + 私信超管，
 **运行中的机器人不受影响**。
 
+### 首跳：服务器上还是「没有安装器」的老版本怎么办
+
+包模式的产物**只有带 `DeployInstaller` 的新代码才解得开**，而新代码又得先上服务器 ——
+所以「第一个带包化的版本」（0.29.0）要走**老路径**交付，之后再走包模式。三条路，任选一条：
+
+**A. 用 CD 的 `mode=files`（推荐，最短）**
+
+1. 先在服务器上备份配置（这一步永远值得做）：`cp data/.env data/.env.bak-$(date +%Y%m%d_%H%M%S)`；
+2. Actions → `CD · FTP 发布` → Run workflow：
+   - `ref` 填**要上的 tag**（例 `v0.29.0`，留空 = 当前分支）；
+   - `mode` 选 **`files`**（逐文件上传 + `package.json` 版本标记最后落地，ADR-0057 的老路径）；
+3. 老进程按「版本 + 指纹」判据发现新版本 → 自检 → respawn → 新代码起来（这一步就是 0.27.x 能做的）；
+4. **注意**：如果这次发布同时建过 Release，那次包模式 CD 已经把 `incoming/deploy-<版本>.{tgz,json}`
+   留在服务器上了 —— 新进程起来后 `DeployInstaller` 会**再应用一次同一个包**（多一次重启，
+   同时把包归档进 `data/packages/`、让「回滚上一版」按钮可用）。
+   不想多这一次重启就先删掉再放行：`rm -f incoming/deploy-<版本>.tgz incoming/deploy-<版本>.json`。
+
+**B. 手工解包（CD 完全不可用时）**
+
+```bash
+cd /www/wwwroot/qqbot
+cp data/.env data/.env.bak-$(date +%Y%m%d_%H%M%S)
+tar -xzf incoming/deploy-<版本>.tgz -C /tmp/new-<版本>          # 包里是 dist/ web/dist/ scripts/ …
+rm -rf dist web/dist scripts && mv /tmp/new-<版本>/{dist,web,scripts} .   # 其余文件（.env/data/logs）不动
+node dist/main.js --check                                       # 自检通过再重启
+nohup node dist/main.js >> logs/stdout.log 2>&1 &               # 用你平时的启动方式
+```
+
+**C. 先不动服务器**：什么都不做 —— 老版本继续跑，等你方便时再按 A / B 来。
+（包模式的那两个文件会一直留在 `incoming/` 里，不会自己生效。）
+
+> 之后的版本回到默认的包模式（`Release published` 自动跑）就行：新代码会扫 `incoming/`、
+> 校验 sha256、自证指纹、整目录替换 —— 这也是「混装 `dist`」这类事故**根治**的地方。
+
 ### 怎么手动应用一个包（CD 挂了 / 只想手工上一次）
 
 ```bash

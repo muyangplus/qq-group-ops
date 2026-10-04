@@ -194,6 +194,9 @@ test/
 - 提交前跑：`tsc --noEmit` + 全量 `vitest` + `test/privacyGuard.test.ts`（禁止真实 QQ号/群号/openid，
   示例只用 `10001` / `654321` / `0123456789ABCDEF0123456789ABCDEF` 这类占位值）；
 - 提交信息用中文 Conventional Commits（`feat(...)`、`fix(...)`、`refactor(...)`、`docs:`），**代码与文档分开提交**；
+- **本地提交之后不推送**（0.29.0 起的口径）：代码与文档照样分开提交，发版时一次性 push ——
+  一次发版只产生 1 次 CI + 1 次 CD；代价是「发版前本地必须自己跑全绿」（详见
+  [CD.md](./CD.md) 的 §8.2 与 [TODO.md](../TODO.md) §2 的 P1）；
 - 版本与变更记录见 [CHANGELOG.md](../CHANGELOG.md)（Keep a Changelog + SemVer），待办见 [TODO.md](../TODO.md)。
 
 ## 8. 文档地图

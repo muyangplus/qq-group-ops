@@ -52,6 +52,8 @@
 | R17 | **机器人能不能自己 @全体**（决定活动「提醒全体」能不能做） | 群里发 `/testat all`（仅超管，会给全群发 11 条），观察**哪几条真的提醒了全群**（昵称/「全体成员」高亮、手机通知）；把汇总卡里对应编号回报 | ✅ **已确认（2026-09-26，否定）**：8 条候选（含 R1 抓到的官方原文形态 `<@all>` 卡片/纯文本、纯文本 `@everyone`）**全部不会提醒任何人** → 定论「**机器人无法 @全体**」。活动 `提醒@全体`（`mentionAll on`）保持现状：只提示操作者手动 @，不假装能 @；除平台后续开放能力，无需再跑本条 |
 | R18 | **好友申请 / 机器人被拉进群有没有事件**（A2） | ① 让一个小号**加机器人为好友**；② 把机器人**拉进一个新群**（或先退群再被拉回）；然后 `grep "unhandled official event" logs/qq-group-ops.log` | 官方文档有[「用户添加好友」](https://bot.qq.com/wiki/develop/api-v2/autogen/event/friend_add.html)与[「机器人加入群聊」](https://bot.q.qq.com/wiki/develop/api-v2/autogen/event/group_add_robot.html)两页，说明事件存在；真机日志里应出现对应 `eventType` + `dataKeys`。**若一条都没有** → 可能是当前 intent 没订阅到（把日志发我，我加 intent 覆盖项再试），或平台未对这些场景推事件 |
 | R19 | **定时发言真机一遍**（2026-10-03 新增功能） | 群里 `/announce add */5 * * * * 测试一下` → `/announce show 1`（看后五次执行时间）→ `/announce on 1`；到点观察是否发出、`/announce off 1` 后是否停；再试 `/announce set 1 mode=card title=提醒 quote=原文 btn=菜单 /menu` + `/announce send 1`；最后手动 `/restart` 一次看是否重发 | ① 回执里的**后五次执行时间**与钟对得上；② 到点**确实发出**一条、停用后不再发；③ 卡片形态的标题 / 引用块 / 按钮都在，点按钮等于发送对应指令；④ 重启后**不重发**、停过的时间点**不补发**；⑤ cron 写成 `* * * * *` 时第 7 条被拒（只私信配置者）；⑥ `ref=on` 时：没有可用 `msg_id` 也照常发出，带上过期 `msg_id` 的表现如实记录（结论参见 TODO §4.6） |
+| R20 | **包化部署一遍**（2026-10-04 新增机制，ADR-0065） | 6 条步骤见 **TODO §4.7**（上传耗时 / 三连 `grep -c` / 坏包拒绝 / 回滚 / 关自动重启也提醒 / 保留 3 个包） | 逐条判定也见 TODO §4.7；手工救急与三连 `grep -c` 的命令在 [OPERATIONS.md](./OPERATIONS.md) 的「手工救急：包化部署」一节 |
+| R21 | **配置搬家：`.env` → 系统配置**（2026-10-04 新增，ADR-0066；0.29.0 起） | 6 条步骤见 **TODO §4.8**（首次启动真的导入 + 回执 / 删行后行为不变 / `/config clear` 回默认 / 后台三项立即生效 / `/status proc` 与 `/config` 一致 / `--check` 不写库） | 逐条判定见 TODO §4.8；搬迁与备份 SOP 在 [OPERATIONS.md](./OPERATIONS.md) 的「配置搬家」一节 |
 
 ## 回填方式
 

@@ -7,8 +7,8 @@
 
 ## [Unreleased]
 
-> 本段攒着**两块待发**内容，发版时各自归档：**0.28.0 = 发布流程包化**（ADR-0065，见下面
-> 「发布流程包化」相关条目）、**0.29.0 = 精简 `.env`**（ADR-0066，见「变更」一节）。
+> 本段攒着的几块内容**合并成一个版本发**（**0.29.0**；**0.28.0 跳过** —— 少一次 CD、服务器只跳一次）：
+> 「发布流程包化」（ADR-0065）、「精简 `.env`」（ADR-0066）、「CI/CD 触发次数收敛」（ADR-0067）。
 
 ### 新增
 
@@ -37,6 +37,18 @@
 
 ### 变更
 
+- **CI/CD 触发次数收敛：不重复测，而不是少测**（ADR-0067）。实测近 200 次 run 里 CI **171** 次、
+  push 触发 **167** 次（峰值 47 次/天），一半以上是「纯文档 push 也跑全量门禁」与「同一份内容
+  被 CI 与 CD 各测一遍」。这次做四件事（**都不削弱门禁**）：
+  ① `ci.yml` 加 `concurrency`（同分支连续 push 只跑最后一次）；
+  ② 路径拆分：`ci.yml` 用 `paths-ignore: [docs/**, **.md]` 跳过**纯文档**的全量门禁，
+  新增 `docs-guard.yml` 只跑秒级守卫（`privacyGuard` + 工作流审计）—— 往 CHANGELOG 里塞真实群号
+  照样会红；一个 commit 里代码与文档都有时两个工作流都跑，**代码路径一个都不 exclude**；
+  ③ **CD 复用 CI**：同一 commit 的 `ci.yml` 已绿就不再重复 typecheck / 全量 vitest / 前端测试，
+  只装依赖 + 构建 + 自证；**查不到绿 CI 就回落到全套门禁**，`full_gate=true` 可手动强制；
+  ④ 流程侧（用户口径）：**本地提交不推送**，发版时一次性 push —— 一次发版 = 1 次 CI + 1 次 CD。
+  另外安全审计与 Dependabot 保持**每周**（加守卫钉住），CD 的 FTP 日志从 `verbose` 收到 `standard`。
+  口径与代价见 [ADR-0067](./docs/DECISIONS.md) 与 [docs/CD.md](./docs/CD.md) §8。
 - **精简 `.env`：能搬的全搬进系统配置**（ADR-0066；TODO §2 的 P0 第 2 条；**0.29.0**）。
   `.env` 只留**核心项** —— 密钥（`QQ_BOT_*` / `WEBHOOK_SECRET` / `ADMIN_API_SESSION_SECRET` /
   `ADMIN_API_TOKENS`）、引导（`DATABASE_URL` / `SQLITE_PATH` / `ADMIN_USER_IDS`）、
@@ -91,8 +103,10 @@
 - **能力边界**：**不碰** `data/`、`.env`、`logs/`——替换面只有 `dist/`、`web/dist/`、`scripts/` 三项。
   `incoming/` 与 `data/packages/` **各只保留最近 3 个包**（按落地时刻自清理）；坏包改名
   `*.failed-<ts>` 留证，**同一份失败的包不会反复重试刷屏**（想再试就重新上传一次）。
-- `workflow_dispatch` 保留 `mode=files` 应急开关（退回老的逐文件上传 + `package.json` 版本标记）；
-  它**不生成** `build-info.json` 自证，属于「先别把机器人堵死」的最小兜底。
+- `workflow_dispatch` 保留 `mode=files` 应急开关（退回老的逐文件上传 + `package.json` 版本标记）：
+  它与包模式**共用同一个构建产物**（也带 `build-info.json`），只是不走 `incoming/` 那套
+  「sha256 + 自证 + 整目录替换」，而是退回「部署监测按版本 + 指纹判据」的老路径 ——
+  属于「包化路径出问题时别把机器人堵死」的最小兜底，别长期用。
 - 产物包的解包用自带的只读 tar 解析（gzip + POSIX tar / GNU 长名 / pax，拒绝 `..` 与绝对路径），
   不依赖系统 `tar`；`workflow_dispatch` 的 `dry-run` 输入与「人工放行」Environment 都不变。
 - 手工救急（手动应用 / 回滚包、清同步状态、`grep -c` 三连确认 `dist` 真的是新的、现场自证）
@@ -108,6 +122,10 @@
   `menuFirstPush` 就固定成 `memory` 了，想换回入库去重：`/config set menuFirstPush persistent`。
 - 真机验收（升级后第一次启动真的导入 + 私信回执、`.env` 删行后行为不变、后台改会话 TTL 立即生效、
   `--check` 不写库）见 TODO §4.8。
+- **CI/CD 收敛的验收**（ADR-0067）：代码侧把触发面与回落都钉进了 `test/workflows.test.ts`；
+  「往 `CHANGELOG.md` 塞真实群号 → 文档守卫必须红」已在本机按守卫命令实测（红 → 还原 → 绿）；
+  「纯文档 push 不再产生全量 run」「日峰值 47 → ≤15」要连看两周的实际 run 数，不在代码里保证。
+  纯文档 PR 若被分支保护要求「CI / test」那个 check 会等不到它（详见 docs/CD.md §8.2）。
 
 ## [0.27.3] - 2026-10-04
 

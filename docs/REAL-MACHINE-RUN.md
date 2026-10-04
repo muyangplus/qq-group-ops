@@ -1,4 +1,4 @@
-# 真机跑批手册（一次跑完 R2–R18 + 交付验证）
+# 真机跑批手册（一次跑完 R2–R21 + 交付验证）
 
 > 配套文件：[REAL-MACHINE-CHECKLIST.md](./REAL-MACHINE-CHECKLIST.md)（每项的背景与判定标准）、
 > [ACCEPTANCE.md](./ACCEPTANCE.md)（J 系列 66 条详细验收）、[OPERATIONS.md](./OPERATIONS.md)（启动与排障）。
@@ -156,6 +156,19 @@ grep -E "gateway ready|identify|ERROR|WARN" logs/qq-group-ops.log | tail -40   #
 
 ---
 
+### ⑪ R19–R21 定时发言 / 包化部署 / 配置搬家（0.27.0 与 0.29.0 新增）
+
+| # | 步骤 | 回填什么 |
+|---|---|---|
+| R19 | `/announce add */5 * * * * 测试一下` → `show 1` 看后五次时间 → `on 1` 等到点 → `off 1`；再试 `mode=card` + `quote` + `btn` 与 `send 1`；最后 `/restart` 看是否重发 | 六个观察点按 TODO §4.6 逐条答（是否发出 / 是否停 / 卡片形态 / 重启不重发 / 每小时上限 / `ref=on` 的边界） |
+| R20 | 包化部署 6 条（**上传耗时**、三连 `grep -c`、坏包拒绝、回滚、关自动重启也提醒、保留 3 个包） | 按 TODO §4.7 逐条答：耗时秒数、三条 `grep -c` 的数字、坏包被改名后的文件名、回执里的 `vX → vY`、是否收到「自动重启已关闭」卡、`ls incoming/` 与 `ls data/packages/` 的条数 |
+| R21 | 配置搬家 6 条（升级后第一次启动的导入回执、删 `.env` 行后行为不变、`/config clear` 回默认、后台改会话 TTL / 限流立即生效、`/status proc` 与 `/config` 一致、`--check` 不写库） | 按 TODO §4.8 逐条答：私信回执里被导入的键、`platform_settings` 里能看到哪些行、清掉后再重启的值、会话过期 / 429 的表现、`--check` 前后的行数 |
+
+> 升级前先备份：`cp data/.env data/.env.bak-$(date +%Y%m%d_%H%M%S)`（配置搬家 SOP 见
+> [OPERATIONS.md](./OPERATIONS.md) 的「配置搬家」；包化部署的手工救急见同文件的「手工救急：包化部署」）。
+
+---
+
 ## 2. 回填模板（直接复制改数字）
 
 ```text
@@ -180,6 +193,9 @@ R12 审核日志导出：__
 R13 Docker Compose：__
 R14 快速开始复现：__
 R15 J 系列未通过项：__
+R19 定时发言：__
+R20 包化部署：__（耗时__s；三连 grep -c：__/__/__；坏包__；回滚 v__→v__；保留__个）
+R21 配置搬家：__（导入__项；删行后值__；clear 后__；后台三项__；--check 前后行数__/__）
 【异常/疑问】
 __
 ```
