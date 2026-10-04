@@ -106,4 +106,18 @@ describe("runtime 仓储装配完整性", () => {
     // 以非零退出码结束，别让「拒绝启动」看起来像正常退出
     expect(source).toContain("process.exitCode = 1;");
   });
+
+  /**
+   * 自检进程不参与单实例锁（0.27.1 的真机事故）：`--check` 只是「跑一遍加载」，
+   * 旧进程还活着时它一抢锁就被拒 → 退出码 1 → 「自检 JSON ok:true 但退出码 1」→
+   * 重启被取消、**健康的新构建被回滚**，版本再也升不上去。
+   */
+  it("自检进程不抢单实例锁（否则健康的新版本会被自己拦下并回滚）", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../src/main.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(source).toContain("const instanceLock = isStartupCheck()");
+    expect(source).toContain("? { ok: true as const }");
+  });
 });

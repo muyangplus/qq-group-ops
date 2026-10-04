@@ -139,14 +139,15 @@ async function main(): Promise<void> {
   /**
    * 单实例闸：**同一个应用目录只允许一份机器人进程**（见 ADR-0064）。
    *
-   * 真机踩过：两个 `node dist/main.js` 同时从 `/www/wwwroot/qqbot` 跑（都是自我重启
-   * 助手拉起的游离进程），于是每次部署**各发一张**「发现新版本」、各自重启一次，
-   * 而且各自连网关、各跑一套周期任务（定时发言会重复发言）、同时写同一个 SQLite。
-   * 部署监测的「同一目标版本不再排第二轮」是进程内记忆，拦不住这种情形 ——
-   * 所以在**接数据库 / 连网关之前**就把第二份挡掉：日志记 error + 留 `data/duplicate-instance.json`，
-   * 然后以退出码 1 结束（旧进程继续服务，不会有两份同时跑）。
+   * ⚠️ **自检进程（`--check`）不参与这把锁**：它只是「跑一遍加载、看看能不能起来」，
+   * 从来就不是第二个服务进程。真机踩过（0.27.1 的自检被自己拦下）：旧进程还活着（它没有锁，
+   * 因为它是更早的版本启动的），自检进程一进来就抢锁 → 被拒 → **退出码 1**，
+   * 于是「自检 JSON 明明写着 ok:true、退出码却是 1」→ 重启被取消、**健康的新构建被回滚**，
+   * 版本再也升不上去。所以这里用 `isStartupCheck()` 短路掉抢锁。
    */
-  const instanceLock = acquireInstanceLock({ version: runningVersionOf() });
+  const instanceLock = isStartupCheck()
+    ? { ok: true as const }
+    : acquireInstanceLock({ version: runningVersionOf() });
   if (!instanceLock.ok) {
     log.error("duplicate bot instance detected: refusing to start", {
       pid: process.pid,
