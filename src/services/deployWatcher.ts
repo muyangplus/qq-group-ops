@@ -20,6 +20,9 @@ export const DEPLOY_RESTART_ACTOR = "deploy-watcher";
  * **默认 1 = 检测到就提醒**：FTP 逐文件上传没有「传完」信号，但通知之后还有宽限期
  * （`DEPLOY_RESTART_DELAY_MINUTES`，默认 10 分钟）兜着 —— 上传还没完就点「取消自动重启」即可，
  * 没必要靠连续几轮来猜（那只是把提醒往后拖）。
+ *
+ * 注意（ADR-0065）：`AUTO_RESTART_ON_DEPLOY=off` 时**没有宽限期可兜**，但提醒仍然照发 ——
+ * 用户明确要求「没配自动重启也要知道有新版本」，到点只是不动手。
  */
 export const DEFAULT_DEPLOY_STABLE_CHECKS = 1;
 
@@ -44,7 +47,12 @@ export interface DeployControl {
 }
 
 export interface DeployWatcherOptions {
-  /** 总开关（`AUTO_RESTART_ON_DEPLOY`）。 */
+  /**
+   * 到点要不要**自己动手重启**（`AUTO_RESTART_ON_DEPLOY`）。
+   *
+   * ⚠️ 它**不再是生效判据**（ADR-0065）：关着也照样提醒，只是到点不动手 ——
+   * 「生效判据」只看 `checkIntervalMs`（`<= 0` 才是关闭监测）。
+   */
   enabled: Provider<boolean>;
   /** 扫描间隔；`<= 0` = 关闭监测。 */
   checkIntervalMs: Provider<number>;
@@ -80,22 +88,28 @@ export interface DeployWatcherOptions {
 /**
  * 部署监测（P0）：**新版本已推送成功**时通知超管，并在一段宽限期后自动重启。
  *
- * 为什么这样判断：CD 是 FTP 逐文件上传，没有「传完」的信号；所以用「磁盘 `package.json`
+ * 为什么这样判断：CD 是两段上传（`incoming/deploy-<版本>.tgz` → `incoming/deploy-<版本>.json`），
+ * 但「磁盘 `package.json` 的版本」仍是全局通用的落地标记；所以用「磁盘 `package.json`
  * 的版本 ≠ 进程启动时固化的版本」作为信号，并要求**连续 N 轮稳定**才认定上传完成
  * （压掉传到一半就当新版的窗口）。
  *
  * 判据补充（0.23.3）：版本号只是「CD 跑过」的标记，**是否值得重启要看产物内容** ——
  * 进程可能在「新代码已落地、`package.json` 还没落地」的窗口里启动过，那种情况下它已经跑着
  * 最新代码，可随后落地的版本号仍会被当成新部署，宽限期到点就白跳一次重启。所以传了
- * `fingerprint` 时，指纹没变就不再排重启（真机报「一次部署跳两次」即此）。
+ * `fingerprint` 时，指纹没变就不再排重启（真机报「一次部署跳两次」即此）；ADR-0065 起
+ * 这种情况还会**私信超管**提示「可能是上传被跳过（回滚过？），请检查 `dist/`」。
  *
  * 行为：
  * - 稳定窗口通过 → 私信全部全局超管一张卡：「当前 → 新版本，计划 X 后自动重启」+ 「取消自动重启 / 立即重启」；
+ *   **`AUTO_RESTART_ON_DEPLOY` 关着时照样提醒**，只是卡片写明「自动重启已关闭，请手动重启加载新版本」；
  * - 宽限期内没人取消 → 走既有自我重启路径（`requestRestart`，reason=`deploy`）；
+ *   **开关关着就到点不动手**（同一目标版本仍只提醒一次；之后把开关打开，下一轮按原计划继续）；
  * - 取消后**同一目标版本不再提醒**（版本再变才重新提醒）；
  * - **受理过重启的目标版本不再排第二轮**（`markScheduled`；手动 `/restart` 也会回写它，
  *   免得「手动重启」与「部署自动重启」撞成两次）；
  * - 磁盘版本回落（撤回部署）或读到 `unknown` → 清除待重启状态（含「已受理」记忆）；
+ * - **版本号变了但 `dist` 指纹没变** → 私信超管「可能是上传被跳过（回滚过？），请检查 `dist/`」，
+ *   同一目标版本只提醒一次（ADR-0065：不允许再静默）；
  * - **自动重启没被受理**（`requestRestart` 返回 `false`，例如重启钩子没装配）→ 保留待重启状态、
  *   延后 5 分钟重试并通知超管；**受理之后**助手才失败（起不来 / 起来就报错）→ 由 `main.ts`
  *   拦掉同一目标版本并通知超管，不再走这条重试。
@@ -130,7 +144,6 @@ export class DeployWatcher implements DeployControl {
   private matchedVersion: string | undefined;
   private timer: unknown;
   private running = false;
-
   public constructor(options: DeployWatcherOptions) {
     // 热配置：这三项都在用的时候取当前值（`/config` 改完立即生效）
     this.enabledProvider = options.enabled;
@@ -242,6 +255,7 @@ export class DeployWatcher implements DeployControl {
 
     // 版本号变了：再确认**产物内容**是不是真的变了。没变 → 这份进程已经跑着最新代码，
     // 不该为一次「上传窗口里启动」白跳一次重启（见 options.fingerprint 的说明）。
+    // ADR-0065 起这种情况**不再静默**：私信超管「可能是上传被跳过」，同一目标版本只提醒一次。
     if (this.buildUnchanged()) {
       if (this.matchedVersion !== target) {
         this.matchedVersion = target;
@@ -249,6 +263,7 @@ export class DeployWatcher implements DeployControl {
           current,
           target,
         });
+        await this.broadcast(buildUnchangedCard(target, current));
       }
       this.resetStreak();
       return;
@@ -266,7 +281,9 @@ export class DeployWatcher implements DeployControl {
     }
 
     if (this.pendingState?.targetVersion === target) {
-      if (this.clock() >= Date.parse(this.pendingState.deadlineAt)) {
+      // 只在**开着自动重启**时到点动手（ADR-0065）：关着时保留待提醒状态到
+      // 「版本回落 / 取消 / 用户把开关打开」为止 —— 用户之后打开开关，下一轮就按原计划继续。
+      if (valueOf(this.enabledProvider) && this.clock() >= Date.parse(this.pendingState.deadlineAt)) {
         this.fireRestart(this.pendingState, "deadline");
       }
       return;
@@ -287,15 +304,22 @@ export class DeployWatcher implements DeployControl {
       deadlineAt: new Date(now + valueOf(this.delayMs)).toISOString(),
     };
     this.pendingState = pending;
-    log.info("new deploy detected, auto-restart scheduled", {
-      current,
-      target,
-      deadlineAt: pending.deadlineAt,
-      stableChecks: this.streak,
-      // 进程 id：真机报过「一次部署两条『发现新版本』」，用它区分「同一进程重复提醒」与
-      // 「两个进程各提醒一次」（每行日志都带 pid，一眼看得出来）。
-      pid: process.pid,
-    });
+    const autoRestart = valueOf(this.enabledProvider);
+    log.info(
+      autoRestart
+        ? "new deploy detected, auto-restart scheduled"
+        : "new deploy detected, auto-restart disabled (notice only)",
+      {
+        current,
+        target,
+        deadlineAt: pending.deadlineAt,
+        stableChecks: this.streak,
+        autoRestart,
+        // 进程 id：真机报过「一次部署两条『发现新版本』」，用它区分「同一进程重复提醒」与
+        // 「两个进程各提醒一次」（每行日志都带 pid，一眼看得出来）。
+        pid: process.pid,
+      },
+    );
     await this.broadcast(this.noticeCard(pending));
   }
 
@@ -321,7 +345,14 @@ export class DeployWatcher implements DeployControl {
     }
   }
 
-  /** 通知卡：说清「发生了什么 / 什么时候重启 / 你能做什么」。 */
+  /**
+   * 通知卡：说清「发生了什么 / 什么时候重启 / 你能做什么」。
+   *
+   * **两版文案**（ADR-0065：提醒与自动重启解耦）：
+   * - `AUTO_RESTART_ON_DEPLOY` 开着 → 现状（含计划重启时间）；
+   * - 关着 → 明确写「自动重启已关闭，请手动重启加载新版本」，到点**不会**动手；
+   *   按钮仍是「取消自动重启 / 立即重启」（同一目标版本仍然只提醒一次）。
+   */
   public noticeCard(pending: DeployPending): RichMessage {
     const rows: CardButton[][] = [
       [
@@ -330,16 +361,26 @@ export class DeployWatcher implements DeployControl {
       ],
       [callbackButton("proc", "进程状态", encodeCallback("status", "proc"))],
     ];
+    const autoRestart = valueOf(this.enabledProvider);
     return renderCard({
       title: "发现新版本",
-      lines: [
-        `**服务器上**：v${pending.targetVersion}（已就绪）`,
-        `**当前运行**：v${pending.currentVersion}`,
-        `**自动重启**：${formatDisplayTime(new Date(pending.deadlineAt))}`,
-        "",
-        "到点会自动重启加载新版本；重启期间机器人约几秒不可用，重启完成后会私信你一条回执。",
-        "想改期就点「取消自动重启」（同一版本不会再提醒），想马上生效就点「立即重启」。",
-      ],
+      lines: autoRestart
+        ? [
+            `**服务器上**：v${pending.targetVersion}（已就绪）`,
+            `**当前运行**：v${pending.currentVersion}`,
+            `**自动重启**：${formatDisplayTime(new Date(pending.deadlineAt))}`,
+            "",
+            "到点会自动重启加载新版本；重启期间机器人约几秒不可用，重启完成后会私信你一条回执。",
+            "想改期就点「取消自动重启」（同一版本不会再提醒），想马上生效就点「立即重启」。",
+          ]
+        : [
+            `**服务器上**：v${pending.targetVersion}（已就绪）`,
+            `**当前运行**：v${pending.currentVersion}`,
+            "**自动重启已关闭**，到点**不会**自动重启 —— 请手动重启加载新版本。",
+            "",
+            "点下面的「立即重启」现在就能换到新版本；重启期间机器人约几秒不可用，完成后会私信你一条回执。",
+            "想先不动，就点「取消自动重启」（同一版本不会再提醒，部署了更新的版本才会重新提醒）。",
+          ],
       rows,
     });
   }
@@ -421,9 +462,15 @@ export class DeployWatcher implements DeployControl {
     }, valueOf(this.checkIntervalMs));
   }
 
-  /** 当前是否生效：开关为真且检查周期为正（热配置，随时可能变）。 */
+  /**
+   * 当前是否生效：**只看 `DEPLOY_CHECK_INTERVAL_MS`（`<= 0` 才是关闭监测）**。
+   *
+   * ADR-0065：生效判据不再看 `AUTO_RESTART_ON_DEPLOY` —— 关掉自动重启也要提醒
+   * （「没配自动重启」不等于「不想知道有新版本」）。开关只在 `runOnce()` 里决定
+   * 「到点要不要自己动手」与卡片文案。
+   */
   private active(): boolean {
-    return valueOf(this.enabledProvider) && valueOf(this.checkIntervalMs) > 0;
+    return valueOf(this.checkIntervalMs) > 0;
   }
 
   /** 清掉待重启状态与稳定计数（「没有新东西可加载」时统一走这里）。 */
@@ -457,4 +504,30 @@ function callbackButton(
   callbackData: string,
 ): CardButton {
   return { id, label, callbackData };
+}
+
+/**
+ * 「版本号变了但 `dist` 指纹没变」的提示卡（ADR-0065 第 6 条：不允许再静默）。
+ *
+ * 这是**版本号骗人**的典型现场：`package.json` 已经落地，`dist/**` 却还是旧的
+ * （0.27.3 真机就这么来的 —— `grep -c boundGroupIds dist/adminApi/backend.js` 是 0）。
+ * 所以不再只记一行日志，而是私信超管去查「是不是上传被跳过（回滚过？）」。
+ */
+function buildUnchangedCard(targetVersion: string, currentVersion: string): RichMessage {
+  return renderCard({
+    title: "版本号变了，但代码没变",
+    lines: [
+      `**服务器上的版本**：v${targetVersion}`,
+      `**当前运行**：v${currentVersion}（dist/ 指纹与运行时完全一致）`,
+      "",
+      "**可能是上传被跳过（回滚过？），请检查 `dist/`**：现在的 `dist/` 与当前进程加载的产物一模一样，",
+      "说明新版本的代码并没有真的落地（典型是「回滚过 + FTP 同步状态把上传跳过了」）。",
+      "",
+      "发现新版本的功能不会生效，**也不会**为它重启。请在服务器上确认 `dist/` 的内容与版本号对得上",
+      "（`grep -c` 三个关键词），必要时手工清掉 `ftp-sync-state-*.json` 再重新发布。",
+    ],
+    rows: [
+      [callbackButton("proc", "进程状态", encodeCallback("status", "proc"))],
+    ],
+  });
 }
