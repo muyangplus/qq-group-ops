@@ -1,10 +1,23 @@
 name: CD · FTP 发布
 
 # 触发方式：在 GitHub 上把 tag 发布成 Release（release: published），或手动触发。
-# 上传内容是**运行产物**：dist/ + scripts/ + package.json + pnpm-lock.yaml + .env.example
+# 上传内容是**运行产物**：`dist/` + `web/dist/` + `scripts/` + `pnpm-lock.yaml` + `.env.example`
 # （不含 src / docs / tsconfig / Dockerfile / test / data / logs / *.map）。
-# **两段式上传**：代码与清单先传，`package.json`（部署监测认的版本标记）最后单独传 ——
-# 这样「服务器上的版本号变了」才严格等于「代码已经全部就位」（ADR-0057）。
+#
+# **两个文件、两段上传**（ADR-0065；结构沿用 ADR-0057 的「标记最后落地」）：
+#   ① `incoming/deploy-<版本>.tgz` —— 一个包，里面就是上面那份运行产物 + `dist/build-info.json`；
+#   ② `incoming/deploy-<版本>.json` —— 版本 / commit / **sha256** / **dist 指纹** / 构建时间。
+# 机器人侧 `DeployInstaller` 扫到 **②** 才开始干活（①还没传完时它看不到标记）：
+# 先按 sha256 校验包（防半传），再解包、用 `distFingerprint()` 与包内 `build-info.json`
+# 自证，最后整目录替换 `dist/` `web/dist/` `scripts/`。
+#
+# **为什么不再需要同步状态**：老方案是 FTP 逐文件同步，必须靠 `ftp-sync-state-*.json`
+# 记住「上次传过什么」才能只传差异 —— 而它的代价是「服务器上的文件被别的路径改过（回滚 /
+# 机器人自解包）时，下一轮上传会被静默跳过」，真机因此出现过「版本号是新的、代码是旧的」。
+# 现在每轮只传 2 个文件（体积小、耗时不再由文件数决定），**每次都是全量**，
+# 所以不存在「同步状态与服务器实况不一致」这种失败模式；机器人自己动过 `dist/` 之后
+# 还会主动删掉旧的 `ftp-sync-state-*.json`，那份状态对它来说已经无意义（保留只为兼容）。
+#
 # 注意：只推 tag 但不创建 Release **不会**触发本工作流；要改成 tag 推送即部署，
 # 把 `release:` 换成 `push: { tags: ["v*"] }`（两者都开会导致同一次发布跑两遍）。
 on:
@@ -21,6 +34,14 @@ on:
         type: boolean
         required: false
         default: false
+      mode:
+        description: "package = 单文件产物包（默认）；files = 退回老的逐文件上传（应急）"
+        type: choice
+        required: false
+        default: package
+        options:
+          - package
+          - files
 
 # 最小权限：部署只用 FTP 凭据（secrets），不需要 GITHUB_TOKEN 的写权限。
 permissions:
@@ -34,6 +55,9 @@ concurrency:
 env:
   # 部署来源：优先 Release 的 tag，其次手动输入的 ref，最后当前 ref。
   DEPLOY_REF: ${{ github.event.release.tag_name || inputs.ref || github.ref_name }}
+  # 部署模式：`package`（默认，ADR-0065）/ `files`（老口径应急开关）。
+  # Release 触发时没有 inputs，`||` 兜到 package。
+  DEPLOY_MODE: ${{ inputs.mode || 'package' }}
 
 jobs:
   # 部署前门禁：类型检查 + 全量测试 + 构建；任何一步失败都不会碰服务器。
@@ -82,6 +106,45 @@ jobs:
       - name: Build web（类型检查 + vite build）
         run: pnpm web:build
 
+      # 不传源码时 sourcemap 没有可对照的源文件：**构建阶段就删掉**。
+      # 必须在生成 `build-info.json` 之前删 —— 否则指纹是按「带 map」的 dist 算的，
+      # 而传上去的包是「不带 map」的，机器人自证会永远对不上（ADR-0065）。
+      - name: 删除 sourcemap（产物不含 src，留着没有对照）
+        run: find dist web/dist -name '*.map' -type f -delete
+
+      # 构建自证（ADR-0065）：把版本 / commit / dist 指纹钉进产物，机器人侧解包后据此自证。
+      # 关键：`distFingerprint()` **跳过 build-info.json 自己**，所以先写文件、指纹里不含它。
+      - name: 生成 dist/build-info.json（构建自证）
+        run: |
+          set -eu
+          node -e '
+            const { readFileSync, writeFileSync } = require("node:fs");
+            const { createHash } = require("node:crypto");
+            const { readdirSync } = require("node:fs");
+            const { join } = require("node:path");
+            const list = (dir, prefix = "") =>
+              readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+                const name = prefix.length > 0 ? `${prefix}/${entry.name}` : entry.name;
+                return entry.isDirectory() ? list(join(dir, entry.name), name) : [name];
+              });
+            const files = list("dist").filter((f) => f !== "build-info.json").sort();
+            const hash = createHash("sha1");
+            for (const file of files) {
+              hash.update(file);
+              hash.update("\0");
+              hash.update(createHash("sha1").update(readFileSync(join("dist", file))).digest("hex"));
+              hash.update("\n");
+            }
+            const info = {
+              version: JSON.parse(readFileSync("package.json", "utf8")).version,
+              commit: process.env.GITHUB_SHA || "",
+              builtAt: new Date().toISOString(),
+              distFingerprint: hash.digest("hex"),
+            };
+            writeFileSync("dist/build-info.json", `${JSON.stringify(info, null, 2)}\n`);
+            console.log("build-info.json:", JSON.stringify(info));
+          '
+
       - name: 记录部署来源（审计线索）
         run: |
           {
@@ -91,6 +154,7 @@ jobs:
             echo "- commit: \`${GITHUB_SHA}\`"
             echo "- 触发: ${GITHUB_EVENT_NAME}"
             echo "- 执行者: ${GITHUB_ACTOR}"
+            echo "- 模式: \`${DEPLOY_MODE}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 上传构建产物
@@ -122,14 +186,43 @@ jobs:
           name: dist
           path: .
 
-      # 只发布**运行产物**：dist（`node dist/main.js` 自包含）+ web/dist（管理前台静态资源，
-      # 交给服务器上的 nginx 托管）+ scripts（class:index，纯 node 内置模块）+ 依赖清单。
+      # 打包（`mode=package`）：一个 `.tgz` + 一个投递标记 `.json`。
+      # 包内容是**运行产物白名单**：dist（`node dist/main.js` 自包含，含 build-info.json）
+      # + web/dist（管理前台静态资源）+ scripts（class:index，纯 node 内置模块）+ 依赖清单。
       # 不传 src / docs / tsconfig / Dockerfile / test —— 生产机器不需要它们。
-      #
-      # **两段式**：`package.json` 是部署监测认的**版本标记**，要**最后**单独传（下一步）。
-      # 先传代码再传它，「版本号一变 = 代码已经全部就位」才成立；否则上传途中版本号就变了，
-      # 部署监测可能在半个构建上计时重启（ADR-0057）。
-      - name: 准备部署目录（运行产物白名单）
+      - name: 组装产物包（单文件产物包模式）
+        if: env.DEPLOY_MODE != 'files'
+        run: |
+          set -eu
+          rm -rf deploy-pkg
+          mkdir -p deploy-pkg/incoming
+          version="$(node -p "require('./package.json').version")"
+          test -f dist/build-info.json
+          tar --create --gzip --file "deploy-pkg/incoming/deploy-${version}.tgz" \
+            --exclude='*.map' \
+            dist web/dist scripts pnpm-lock.yaml .env.example
+          sha256="$(sha256sum "deploy-pkg/incoming/deploy-${version}.tgz" | awk '{print $1}')"
+          fingerprint="$(node -p "require('./dist/build-info.json').distFingerprint")"
+          committed="$(node -p "require('./dist/build-info.json').commit")"
+          built="$(node -p "require('./dist/build-info.json').builtAt")"
+          cat > "deploy-pkg/incoming/deploy-${version}.json" <<JSON
+          {
+            "version": "${version}",
+            "commit": "${committed}",
+            "sha256": "${sha256}",
+            "distFingerprint": "${fingerprint}",
+            "builtAt": "${built}"
+          }
+          JSON
+          echo "产物包："
+          ls -l deploy-pkg/incoming
+          echo "sha256=${sha256}"
+          echo "distFingerprint=${fingerprint}"
+
+      # 打包（`mode=files`，应急）：退回 ADR-0057 的逐文件两段上传 —— 代码与清单先传，
+      # `package.json`（部署监测认的版本标记）最后单独传。只在新包路径出问题时临时用。
+      - name: 准备部署目录（逐文件模式，应急）
+        if: env.DEPLOY_MODE == 'files'
         run: |
           set -eu
           rm -rf dist-deploy dist-marker
@@ -140,7 +233,6 @@ jobs:
               cp -R "$item" "dist-deploy/$(dirname "$item")/"
             fi
           done
-          # 不传源码时 sourcemap 没有可对照的源文件，删掉省一半体积
           find dist-deploy -name '*.map' -type f -delete
           cp package.json dist-marker/package.json
           echo "第一批（代码与清单）："
@@ -167,9 +259,11 @@ jobs:
             exit 1
           fi
           echo "目标：$FTP_SERVER  目录：$FTP_SERVER_DIR（凭据不回显）"
+          echo "模式：$DEPLOY_MODE"
 
-      # 第一段：代码与依赖清单（不含版本标记）
-      - name: 上传运行产物（代码与清单）
+      # 第一段：**包先落地**（`mode=package`）。
+      - name: 上传产物包 incoming/deploy-*.tgz（第一段）
+        if: env.DEPLOY_MODE != 'files'
         uses: SamKirkland/FTP-Deploy-Action@v4.4.0
         with:
           server: ${{ secrets.FTP_SERVER }}
@@ -178,22 +272,20 @@ jobs:
           # 默认 FTPS（显式 TLS）；服务器只支持明文 FTP 时才把变量改成 ftp（不推荐）
           protocol: ${{ vars.FTP_PROTOCOL || 'ftps' }}
           port: ${{ vars.FTP_PORT || 21 }}
-          local-dir: ./dist-deploy/
+          local-dir: ./deploy-pkg/
           server-dir: ${{ vars.FTP_SERVER_DIR }}
-          # ⚠️ 必须与第二段用**不同的** state-name：这个 Action 的删除动作来自它「上次传过什么」
-          # 的同步状态（默认 `.ftp-deploy-sync-state.json`，存在 server-dir 里）。两段共用一个
-          # 状态文件时会互相把对方的文件判成「本地没有 → 从服务器删掉」—— 2026-10-02 的 v0.24.0
-          # 发布就这么把服务器上的 dist/ scripts/ web/ 删了（ADR-0057 的「事故与修正」）。
-          state-name: ftp-sync-state-code.json
+          # 两段各用**不同**的 state-name：这个 Action 的删除动作来自它「上次传过什么」
+          # 的同步状态，共用一份会互相把对方的文件判成「本地没有 → 从服务器删掉」
+          # （ADR-0057 的事故：v0.24.0 发布就这么删掉过服务器的 dist/ scripts/ web/）。
+          state-name: ftp-sync-state-package.json
           # 只试连：dry-run 会走完 PASV 数据连接与差异比对，但不写服务器文件
           dry-run: ${{ inputs.dry_run }}
           # 被动模式数据连接建立慢时多等一会儿（默认 30s 偏紧）
           timeout: 120000
-          # 首次联调用 verbose 看清 PASV/EPSV 交互；稳定后可改回 standard
           log-level: verbose
           # 显式写死：绝不删除状态文件之外的东西（默认即 false）
           dangerous-clean-slate: false
-          # 第二层保险：即使组包时漏了，也不上传这些（含 sourcemap）
+          # 第二层保险：即使组包时漏了，也不上传这些
           exclude: |
             **/.git*
             **/.github/**
@@ -207,14 +299,73 @@ jobs:
             **/test/**
             **/*.map
 
-      # 第二段：**版本标记最后落地**（ADR-0057）。
-      # 在它落地之前，服务器上的 package.json 还是旧版本号 → 部署监测不会在「传了一半」时触发；
-      # 它一落地，代码已经全在服务器上了，宽限期到点重启加载的就是完整构建。
-      # 这一段**必须用自己的 state-name**（见上一段的说明），否则它的同步状态里只有
-      # package.json，会把代码目录全判成「该删」。
-      # 这一步失败会让 job 变红：代码是新的但版本号还是旧的 → 不重启（旧进程继续服务），
-      # 重新跑一次发布即可（或下次版本更新时一并落地）。
-      - name: 上传版本标记 package.json（最后落地）
+      # 第二段：**投递标记最后落地**（ADR-0065 与 ADR-0057 同构）。
+      # 在它落地之前，机器人看不到 `deploy-<版本>.json` → `DeployInstaller` 不会动手；
+      # 它一落地就说明 `.tgz` 已经完整在服务器上了，安装器这才开始校验与替换。
+      # 这一步失败会让 job 变红：包在服务器上但没人会应用它（旧进程继续服务），
+      # 重新跑一次发布即可（或手工按 docs/OPERATIONS.md 的 SOP 处理）。
+      - name: 上传投递标记 incoming/deploy-*.json（第二段，最后落地）
+        if: env.DEPLOY_MODE != 'files'
+        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ${{ vars.FTP_PROTOCOL || 'ftps' }}
+          port: ${{ vars.FTP_PORT || 21 }}
+          local-dir: ./deploy-pkg/
+          server-dir: ${{ vars.FTP_SERVER_DIR }}
+          state-name: ftp-sync-state-marker.json
+          dry-run: ${{ inputs.dry_run }}
+          timeout: 120000
+          log-level: verbose
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.github/**
+            **/node_modules/**
+            **/data/**
+            **/logs/**
+            **/coverage/**
+            **/.env
+            **/.env.*
+            **/*.log
+            **/test/**
+            **/*.map
+
+      # 第一段（`mode=files`）：代码与依赖清单（不含版本标记）。
+      - name: 上传运行产物（逐文件模式，代码与清单）
+        if: env.DEPLOY_MODE == 'files'
+        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ${{ vars.FTP_PROTOCOL || 'ftps' }}
+          port: ${{ vars.FTP_PORT || 21 }}
+          local-dir: ./dist-deploy/
+          server-dir: ${{ vars.FTP_SERVER_DIR }}
+          state-name: ftp-sync-state-code.json
+          dry-run: ${{ inputs.dry_run }}
+          timeout: 120000
+          log-level: verbose
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.github/**
+            **/node_modules/**
+            **/data/**
+            **/logs/**
+            **/coverage/**
+            **/.env
+            **/.env.*
+            **/*.log
+            **/test/**
+            **/*.map
+
+      # 第二段（`mode=files`）：`package.json` 版本标记最后单独落地。
+      - name: 上传版本标记 package.json（逐文件模式，最后落地）
+        if: env.DEPLOY_MODE == 'files'
         uses: SamKirkland/FTP-Deploy-Action@v4.4.0
         with:
           server: ${{ secrets.FTP_SERVER }}
@@ -231,9 +382,16 @@ jobs:
           dangerous-clean-slate: false
           exclude: |
             **/.git*
+            **/.github/**
             **/node_modules/**
             **/data/**
             **/logs/**
+            **/coverage/**
+            **/.env
+            **/.env.*
+            **/*.log
+            **/test/**
+            **/*.map
 
       - name: 部署摘要（审计线索）
         run: |
@@ -243,7 +401,15 @@ jobs:
             echo "- 目标：\`${{ vars.FTP_SERVER_DIR }}\`"
             echo "- 来源：\`${DEPLOY_REF}\`（commit \`${GITHUB_SHA}\`）"
             echo "- 协议：\`${{ vars.FTP_PROTOCOL || 'ftps' }}\`"
-            echo "- 顺序：代码与清单 → **版本标记 package.json 最后落地**（ADR-0057）"
-            echo "  于是「服务器上的版本号变了」严格意味着代码已经全部就位，"
-            echo "  部署监测不会在半份构建上计时重启。"
+            echo "- 模式：\`${DEPLOY_MODE}\`"
+            if [ "$DEPLOY_MODE" = "files" ]; then
+              echo "  （逐文件应急模式：代码与清单 → **版本标记 package.json 最后落地**，ADR-0057）"
+            else
+              echo "  顺序：\`incoming/deploy-<版本>.tgz\` → **\`incoming/deploy-<版本>.json\` 最后落地**（ADR-0065）"
+              echo "  机器人扫到标记才动手：sha256 校验 → 解包 → 指纹自证 → 整目录替换 → 重启。"
+            fi
+            echo ""
+            echo "  每轮只传 2 个文件 = **每次全量**：不再依赖 \`ftp-sync-state-*.json\`"
+            echo "  记住「上次传过什么」，因此也没有「服务器被别的路径改过 → 上传被静默跳过」这种失败模式。"
+            echo "  机器人自己动过 \`dist/\`（自解包 / 回滚）后会主动删掉那份旧状态。"
           } >> "$GITHUB_STEP_SUMMARY"

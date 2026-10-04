@@ -140,31 +140,39 @@ describe("CI/CD 工作流审计", () => {
     const deploy = Object.values(jobsOf(cdWorkflow!.doc)).find((job) =>
       stepsOf(job).some((step) => String(step.uses ?? "").includes("FTP-Deploy-Action")),
     )!;
-    const ftpStep = stepsOf(deploy).find((step) =>
+    const ftpSteps = stepsOf(deploy).filter((step) =>
       String(step.uses ?? "").includes("FTP-Deploy-Action"),
-    )!;
-    const withInput = (ftpStep.with ?? {}) as Record<string, string>;
-    // 服务器 / 账号 / 密码都必须来自 secrets，且不能是硬编码字面量
-    for (const key of ["server", "username", "password"]) {
-      expect(withInput[key], key).toMatch(/^\$\{\{\s*secrets\./u);
+    );
+    // 每一段（内含应急模式）都必须是「凭据来自 secrets + 默认 FTPS + 排除兜底」
+    for (const step of ftpSteps) {
+      const withInput = (step.with ?? {}) as Record<string, string>;
+      // 服务器 / 账号 / 密码都必须来自 secrets，且不能是硬编码字面量
+      for (const key of ["server", "username", "password"]) {
+        expect(withInput[key], key).toMatch(/^\$\{\{\s*secrets\./u);
+      }
+      // 默认 FTPS（显式 TLS），只在显式配置时才退回明文 ftp
+      expect(withInput.protocol).toContain("ftps");
+      expect(String(withInput["local-dir"])).toMatch(/^\.\/[a-z-]+\/$/u);
+      // 敏感文件与 sourcemap 兜底排除
+      expect(withInput.exclude).toContain("**/.env");
+      expect(withInput.exclude).toContain("**/data/**");
+      expect(withInput.exclude).toContain("**/*.map");
     }
-    // 默认 FTPS（显式 TLS），只在显式配置时才退回明文 ftp
-    expect(withInput.protocol).toContain("ftps");
-    // 只上传仓库在 CI 里重新组装的白名单目录（避免直接把仓库根传上去）
-    expect(withInput["local-dir"]).toBe("./dist-deploy/");
-    // 敏感文件与 sourcemap 兜底排除
-    expect(withInput.exclude).toContain("**/.env");
-    expect(withInput.exclude).toContain("**/data/**");
-    expect(withInput.exclude).toContain("**/test/**");
-    expect(withInput.exclude).toContain("**/*.map");
+    // 只上传 CI 里重新组装的白名单目录（避免直接把仓库根传上去）
+    const dirs = ftpSteps.map((step) => (step.with as Record<string, string>)["local-dir"]);
+    expect(dirs).toContain("./deploy-pkg/");
+    expect(dirs).toContain("./dist-deploy/");
   });
 
-  it("only ships the runtime artifacts to the server", () => {
+  it("只把运行产物组进产物包（不把源码 / 文档 / 构建配置传上服务器）", () => {
     const commands = runCommands(cdWorkflow!);
-    // 组包白名单就是「运行产物」这一份清单：多一个都算回归（源码/文档/构建配置不上服务器）。
-    // 注意这里**没有** package.json：它是版本标记，单独走第二段上传（见下一条用例）。
-    const match = /for item in ([^;]+);/u.exec(commands);
-    expect(match, "找不到组包白名单").not.toBeNull();
+    // 组包白名单就是「运行产物」这一份清单：多一个都算回归。
+    // 注意：这里**没有** package.json —— 它与版本号一起钉进 `dist/build-info.json`
+    // 与投递标记 `deploy-<版本>.json`，不再单独上传（ADR-0065）。
+    const match = /tar --create --gzip --file[^\n]*\\?\n\s+--exclude='\*\.map'\s*\\?\n\s*([^\n]+)/u.exec(
+      commands,
+    );
+    expect(match, "找不到产物包的打包清单").not.toBeNull();
     expect(match![1]!.split(/\s+/u).filter(Boolean)).toEqual([
       "dist",
       "web/dist",
@@ -172,50 +180,74 @@ describe("CI/CD 工作流审计", () => {
       "pnpm-lock.yaml",
       ".env.example",
     ]);
-    // sourcemap 在组包阶段被删除（没有 src 时无法对照）
+    // sourcemap 在**构建阶段**（算指纹之前）就被删除 —— 否则指纹按「带 map」的 dist 算、
+    // 传上去的包却是「不带 map」的，机器人自证永远对不上（ADR-0065）
+    expect(commands).toContain("find dist web/dist -name '*.map' -type f -delete");
     expect(commands).toContain("*.map");
+    // 构建自证文件由门禁生成（与运行产物一起进包）
+    expect(commands).toContain("dist/build-info.json");
+    expect(commands).toContain("sha256sum");
+    // 产物包里绝不带 src / docs / test / tsconfig（白名单之外一个都不打包）
+    for (const banned of ["src", "docs", "tsconfig.json", "Dockerfile"]) {
+      expect(match![1]!.split(/\s+/u)).not.toContain(banned);
+    }
   });
 
-  it("版本标记 package.json 最后单独上传（部署监测靠它认「传完了」）", () => {
-    const commands = runCommands(cdWorkflow!);
-    // 只有一份白名单循环（一次组包），版本标记单独拷进第二段目录
-    expect([...commands.matchAll(/for item in /gu)]).toHaveLength(1);
-    expect(commands).toContain("cp package.json dist-marker/package.json");
-
+  it("两个文件、两段上传，投递标记最后落地（部署监测 / 安装器靠它认「传完了」）", () => {
     const deploy = Object.values(jobsOf(cdWorkflow!.doc)).find((job) =>
       stepsOf(job).some((step) => String(step.uses ?? "").includes("FTP-Deploy-Action")),
     )!;
     const ftpSteps = stepsOf(deploy).filter((step) =>
       String(step.uses ?? "").includes("FTP-Deploy-Action"),
     );
-    // 两段式：先代码与清单，再版本标记
-    expect(ftpSteps).toHaveLength(2);
-    const dirs = ftpSteps.map(
-      (step) => (step.with as Record<string, string>)["local-dir"],
-    );
-    expect(dirs).toEqual(["./dist-deploy/", "./dist-marker/"]);
-    // 顺序也要对：文件中标记那一段在后面（YAML 数组顺序就是执行顺序，这里再钉一道）
+    // 包模式两段 + 应急（files）模式两段 = 4 段
+    expect(ftpSteps).toHaveLength(4);
+
     const text = cdWorkflow!.text;
+    // 两段的位置关系：tgz 那段在 json 那段之前（YAML 数组顺序就是执行顺序，这里再钉一道）
+    expect(text.indexOf("上传产物包 incoming/deploy-*.tgz（第一段）")).toBeLessThan(
+      text.indexOf("上传投递标记 incoming/deploy-*.json（第二段，最后落地）"),
+    );
+    // 应急模式：退回老的逐文件上传（ADR-0057 的两段结构原样保留）
+    expect(text).toContain("上传运行产物（逐文件模式，代码与清单）");
+    expect(text).toContain("上传版本标记 package.json（逐文件模式，最后落地）");
     expect(text.indexOf("local-dir: ./dist-deploy/")).toBeLessThan(
       text.indexOf("local-dir: ./dist-marker/"),
     );
     expect(text).toContain("ADR-0057");
+    expect(text).toContain("ADR-0065");
+    // dry-run 输入保持不变
+    expect(text).toContain("dry-run: ${{ inputs.dry_run }}");
+    // 应急开关（`workflow_dispatch` 的 mode）默认 package
+    const dispatch = triggersOf(cdWorkflow!.doc).workflow_dispatch as {
+      inputs?: Record<string, { default?: unknown; options?: unknown }>;
+    };
+    expect(dispatch.inputs?.mode?.default).toBe("package");
+    expect(dispatch.inputs?.mode?.options).toEqual(["package", "files"]);
 
-    // **两段必须用各自的 state-name**：共用一个同步状态文件时，这一段会把另一段传过的文件
+    // **每段必须有自己的 state-name**：共用一份同步状态时，一段会把另一段传过的文件
     // 判成「本地没有 → 从服务器删掉」—— v0.24.0 发布就这么删掉过服务器的 dist/ scripts/ web/
-    // （见 ADR-0057 的「事故与修正」）。所有 FTP 步骤都必须显式写 state-name 且互不相同。
-    const stateNames = ftpSteps.map(
+    // （见 ADR-0057 的「事故与修正」）。包模式的两段必须互不相同。
+    const packageSteps = ftpSteps.slice(0, 2);
+    const packageStateNames = packageSteps.map(
       (step) => (step.with as Record<string, string>)["state-name"],
     );
-    expect(stateNames.every((name) => typeof name === "string" && name.length > 0)).toBe(
+    expect(packageStateNames.every((name) => typeof name === "string" && name.length > 0)).toBe(
       true,
     );
-    expect(new Set(stateNames).size).toBe(stateNames.length);
+    expect(new Set(packageStateNames).size).toBe(packageStateNames.length);
     // 同时显式关闭 dangerous-clean-slate（默认即 false，写出来是不让人顺手改成 true）
-    const cleanSlate = ftpSteps.map(
-      (step) => (step.with as Record<string, unknown>)["dangerous-clean-slate"],
-    );
-    expect(cleanSlate).toEqual([false, false]);
+    for (const step of ftpSteps) {
+      expect((step.with as Record<string, unknown>)["dangerous-clean-slate"]).toBe(false);
+    }
+  });
+
+  it("workflow 注释说清「为什么不再需要同步状态」（ADR-0065）", () => {
+    const text = cdWorkflow!.text;
+    expect(text).toContain("为什么不再需要同步状态");
+    // 机器人自己动过 dist/ 之后会主动作废旧状态（注释与摘要都要能对上）
+    expect(text).toContain("ftp-sync-state");
+    expect(text).toContain("每次都是全量");
   });
 
   it("管理前台随 CD 一起发布：门禁先构建前端，产物路径覆盖 web/dist", () => {
