@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ROLLBACK_NOTICE_FILE,
   removeSyncStateFiles,
+  restoreDistFromBackup,
   snapshotDist,
   takeRollbackNotice,
   writeRollbackNotice,
@@ -91,6 +99,74 @@ describe("distSnapshot", () => {
     writeFileSync(file, "{不是 JSON", "utf8");
     expect(takeRollbackNotice(file)).toBeUndefined();
     expect(ROLLBACK_NOTICE_FILE).toBe("data/rollback-notice.json");
+  });
+
+  /** 回滚（ADR-0065 第 5 条）：整目录替换，不再是覆盖式还原。 */
+  describe("restoreDistFromBackup", () => {
+    it("整目录替换：快照里没有的旧文件必须消失（真机混装 dist 的根因）", () => {
+      // ① 快照：main.js 是 v1
+      mkdirSync(join(dir, "dist"), { recursive: true });
+      writeFileSync(join(dir, "dist/main.js"), "v1\n", "utf8");
+      writeFileSync(join(dir, "dist/keep.js"), "keep\n", "utf8");
+      snapshotDist(join(dir, "dist"), join(dir, "data/dist-backup"), []);
+
+      // ② 现役 dist 变成「半新半旧」：新增了 fresh.js、main.js 变了
+      writeFileSync(join(dir, "dist/main.js"), "v2\n", "utf8");
+      writeFileSync(join(dir, "dist/fresh.js"), "fresh\n", "utf8");
+      writeFileSync(join(dir, "dist/sub-stale.js"), "stale\n", "utf8");
+
+      const result = restoreDistFromBackup(
+        join(dir, "dist"),
+        join(dir, "data/dist-backup"),
+        join(dir, "data/dist-broken"),
+        [],
+      );
+
+      expect(result.ok).toBe(true);
+      // 快照内容回来了
+      expect(readFileSync(join(dir, "dist/main.js"), "utf8")).toBe("v1\n");
+      expect(existsSync(join(dir, "dist/keep.js"))).toBe(true);
+      // **覆盖式还原会留下的两个文件**：必须被清掉
+      expect(existsSync(join(dir, "dist/fresh.js"))).toBe(false);
+      expect(existsSync(join(dir, "dist/sub-stale.js"))).toBe(false);
+      // 现场留证
+      expect(readFileSync(join(dir, "data/dist-broken/dist/main.js"), "utf8")).toBe("v2\n");
+      expect(readFileSync(join(dir, "data/dist-broken/dist/fresh.js"), "utf8")).toBe("fresh\n");
+    });
+
+    it("顺带作废 FTP 同步状态（下一轮 CD 全量），别的文件不碰", () => {
+      mkdirSync(join(dir, "dist"), { recursive: true });
+      writeFileSync(join(dir, "dist/main.js"), "v1\n", "utf8");
+      snapshotDist(join(dir, "dist"), join(dir, "data/dist-backup"), []);
+      writeFileSync(join(dir, "ftp-sync-state-code.json"), "{}", "utf8");
+      writeFileSync(join(dir, "ftp-sync-state-marker.json"), "{}", "utf8");
+      writeFileSync(join(dir, "deploy-0.28.0.json"), "{}", "utf8");
+
+      const result = restoreDistFromBackup(
+        join(dir, "dist"),
+        join(dir, "data/dist-backup"),
+        join(dir, "data/dist-broken"),
+        [],
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.detail).toContain("作废 FTP 同步状态");
+      expect(existsSync(join(dir, "ftp-sync-state-code.json"))).toBe(false);
+      expect(existsSync(join(dir, "ftp-sync-state-marker.json"))).toBe(false);
+      // 投递标记不是同步状态，绝不能被顺手删掉
+      expect(existsSync(join(dir, "deploy-0.28.0.json"))).toBe(true);
+    });
+
+    it("没有快照时如实报失败（不抛错）", () => {
+      const result = restoreDistFromBackup(
+        join(dir, "dist"),
+        join(dir, "data/dist-backup"),
+        join(dir, "data/dist-broken"),
+        [],
+      );
+      expect(result.ok).toBe(false);
+      expect(result.detail).toContain("没有可回滚的构建快照");
+    });
   });
 
   it("removeSyncStateFiles：只删 ftp-sync-state-*.json（下一轮 CD 全量），别的文件一律不碰", () => {

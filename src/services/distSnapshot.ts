@@ -103,8 +103,15 @@ export interface RestoreResult {
 /**
  * 用快照**换回上一版**（自检不过时该做的兜底）。
  *
- * 现场（现役 `dist/`）挪到 `data/dist-broken/` 留证，再从 `data/dist-backup/` 还原
- * `dist/` 与元文件。返回失败原因时调用方只记日志 —— 换不回来也不该影响当前进程继续跑。
+ * **整目录替换，不是覆盖式还原**（ADR-0065 第 5 条修正）：先清空目标目录再拷快照。
+ * 覆盖式还原会留下快照里没有的旧文件 —— 真机事故现场就是这么做出**混装 dist** 的
+ * （`package.json` 是 0.27.3，`main.js` 是新的，`adminApi/backend.js` 与
+ * `services/platformSettings.js` 却还是旧的）。
+ *
+ * 现场（现役 `dist/`）先挪到 `data/dist-broken/` 留证，再从 `data/dist-backup/` 还原
+ * `dist/` 与元文件。顺带**作废 FTP 同步状态**（`rm -f ftp-sync-state-*.json`）：
+ * 我们绕过了同步器改文件，下一轮 CD 因此全量（「回滚后一次性全量」而不是「每次都全量」）。
+ * 返回失败原因时调用方只记日志 —— 换不回来也不该影响当前进程继续跑。
  */
 export function restoreDistFromBackup(
   dist: string = DIST_DIR,
@@ -122,7 +129,10 @@ export function restoreDistFromBackup(
   try {
     rmSync(broken, { recursive: true, force: true });
     mkdirSync(dirname(broken), { recursive: true });
-    cpSync(dist, join(broken, basename(dist)), { recursive: true });
+    if (existsSync(dist)) {
+      cpSync(dist, join(broken, basename(dist)), { recursive: true });
+    }
+    // **整目录替换**：先删干净再拷，绝不与旧文件混装
     rmSync(dist, { recursive: true, force: true });
     cpSync(source, dist, { recursive: true });
     for (const extra of extras) {
@@ -131,10 +141,16 @@ export function restoreDistFromBackup(
         cpSync(from, join(dirname(dist), extra));
       }
     }
-    log.warn("dist restored from backup", { dist, backup, broken });
+    // 自己绕过了 FTP 同步器 → 主动作废状态（下一轮 CD 全量）
+    const removedState = removeSyncStateFiles(dirname(dist));
+    log.warn("dist restored from backup", { dist, backup, broken, removedState });
     return {
       ok: true,
-      detail: `坏构建已挪到 ${broken}，并从快照还原 ${dist}`,
+      detail:
+        `坏构建已挪到 ${broken}，并从快照整目录还原 ${dist}` +
+        (removedState.length > 0
+          ? `；已作废 FTP 同步状态（${removedState.join(" / ")}），下一轮 CD 会全量上传`
+          : ""),
     };
   } catch (error) {
     const detail = describeError(error);
