@@ -1,3 +1,4 @@
+import { HOT_SETTING_KEYS, definitionOf } from "../src/services/platformSettings.js";
 import { describe, expect, it } from "vitest";
 
 import { loadSettings } from "../src/config.js";
@@ -91,5 +92,27 @@ describe("热配置立即生效", () => {
     tick.restart();
     expect(scheduler.delays.at(-1)).toBe(5_000);
     expect(tick.started).toBe(false);
+  });
+});
+
+/**
+ * 漂移守卫：`HOT_SETTING_KEYS` 里的每一项都必须在 `SETTING_DEFINITIONS` 里有定义。
+ *
+ * 为什么值得守：配置项注册是**两处**（键的联合类型 + 定义表），漏了定义的表现是
+ * 「配置页里根本没有这一项、/config 也报未知配置项」—— 真机就这么漏过
+ * `scheduledAnnounceEnabled`（定时发言总开关），于是它只能改 `.env` 后重启，
+ * 而设计上它是热改项。这条测试专门拦这种「只加了一半」。
+ */
+describe("热改项注册完整性", () => {
+  it("每个 HOT_SETTING_KEYS 都有对应定义（否则配置页根本不显示它）", () => {
+    const missing = HOT_SETTING_KEYS.filter((key) => {
+      try {
+        definitionOf(key);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    expect(missing, `这些热改键没有定义：${missing.join(", ")}`).toEqual([]);
   });
 });

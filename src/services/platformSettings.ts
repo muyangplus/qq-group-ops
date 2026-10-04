@@ -144,6 +144,7 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
   intSetting("joinSyncIntervalMs", "JOIN_SYNC_INTERVAL_MS", "入群申请对账周期", "申请对账", "毫秒", 0, 86_400_000, (value) =>
     value === 0 ? "关闭（只在 /sync 时对账）" : `每 ${Math.round(value / 60_000)} 分钟对一次账`,
   ),
+  boolSetting("scheduledAnnounceEnabled", "SCHEDULED_ANNOUNCE_ENABLED", "定时发言总开关", "定时发言"),
   intSetting("scheduledAnnounceHourlyLimit", "SCHEDULED_ANNOUNCE_HOURLY_LIMIT", "定时发言每小时上限", "发言上限", "条", 0, 100, (value) =>
     value === 0 ? "不限制" : `每群每小时 ${value} 条`,
   ),
