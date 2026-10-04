@@ -6,7 +6,7 @@
 
 | 目的 | 命令 |
 |---|---|
-| 本地开发 | `pnpm dev`（`tsx watch`，读 `.env`，`MENU_FIRST_PUSH` 自动为 memory） |
+| 本地开发 | `pnpm dev`（`tsx watch`，读 `.env`；会把 `menuFirstPush=memory` 作为**第一次导入**的来源，见 ADR-0066） |
 | 类型检查 | `pnpm typecheck` |
 | 全量测试 | `pnpm test` |
 | 单文件测试 | `node node_modules/vitest/vitest.mjs run --configLoader runner test/xxx.test.ts` |
@@ -35,24 +35,43 @@
 > `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`、
 > `node node_modules/vitest/vitest.mjs run --configLoader runner`（`--configLoader runner` 用来避开 `spawn EPERM`）。
 
-### 配置改动：三份 `.env` 要一起改（维护者约定）
+### 配置改动：核心项三份 `.env` 一起改；热改项只改代码（维护者约定）
 
-| 文件 | 角色 | 进 Git？ | 随 CD 上传？ |
+| 文件 / 落点 | 角色 | 进 Git？ | 随 CD 上传？ |
 |---|---|---|---|
-| `.env.example` | 模板与文档（全部键 + 默认值 + 说明） | ✅ | ✅（部署白名单里有它）→ **只放占位符** |
-| `.env` | 本地调试实际生效的那份 | ❌ | ❌ |
-| `data/.env` | 线上配置的母本（部署时覆盖服务器上的 `.env`） | ❌（`data/` 整体忽略） | ❌ |
+| `src/config.ts` 的 `DEFAULT_*` + `platformSettings.ts` 的 `SETTING_DEFINITIONS` | **热改项**的唯一落点（默认值 + 校验 + 展示） | ✅ | ✅（在 `dist/` 里） |
+| `.env.example` | 模板与文档（**只列留在 `.env` 里的核心项** + 末尾注释列出热改项名字） | ✅ | ✅（部署白名单里有它）→ **只放占位符** |
+| `.env` | 本地调试实际生效的那份（核心项） | ❌ | ❌ |
+| `data/.env` | 线上配置的母本 | ❌（`data/` 整体忽略） | ❌ |
 
-代码里新增 / 改名一个键时，**三份一起改**：只改模板会让本地与线上「查无此项」→
-进程悄悄用代码默认值，现象是「配置改了却没生效」。改完自检（只看键名、不打印值）：
+**核心项**（密钥 / 引导 / 进程与网络 / 日志 / 路径，见 ADR-0066）新增或改名时，三份 `.env` 一起改：
+只改模板会让本地与线上「查无此项」→ 进程悄悄用代码默认值，现象是「配置改了却没生效」。
+
+**热改项**（保留期 / 周期 / 部署监测 / 定时发言 / 管理后台会话·令牌·限流）**不进任何 `.env`**：
+新增一项 = 改三处**代码**，`test/hotSettings.test.ts` 会守着不让漏（漏了的表现是
+「配置页里根本没有这一项、`/config` 报未知项」）：
+
+1. `src/config.ts`：加 `DEFAULT_<名字>` + `Settings` 字段（默认值）；
+2. `src/services/platformSettings.ts`：加进 `HOT_SETTING_KEYS` **并且**在 `SETTING_DEFINITIONS` 里
+   加定义（`envKey` 只是历史来源键，用于说明「以前在哪配」与迁移）；
+3. 用它：服务里保留**取值函数**（`() => platform.get("<名字>")`），在**用的时候**读 ——
+   这样 `/config` 改完立即生效、不用重启。
+
+核心项自检（只看键名、不打印值）：
 
 ```bash
 grep -ohE '^[A-Za-z_][A-Za-z0-9_]*=' .env.example | tr -d '=' | sort -u > /tmp/ex.txt
 grep -ohE '^[A-Za-z_][A-Za-z0-9_]*=' .env data/.env | tr -d '=' | sort -u > /tmp/real.txt
 comm -23 /tmp/ex.txt /tmp/real.txt   # 模板有、真实配置没有 → 漏改，补上
-comm -13 /tmp/ex.txt /tmp/real.txt   # 真实配置有、模板没有 → 模板缺说明，补注释
+comm -13 /tmp/ex.txt /tmp/real.txt   # 真实配置有、模板没有：
+                                     #   热改项的旧键（0.29.0 之前留下的）可以删掉；
+                                     #   核心项则是模板缺说明，补注释
 ```
 
+> `.env` / `data/.env` 里**还留着** 0.29.0 之前写下的热改项键是正常的：升级后第一次启动会把它们
+> 导入系统配置一次（行为不漂移，并私信超管回执），之后删掉这些行即可，见
+> [OPERATIONS.md](./OPERATIONS.md)「配置搬家」。
+>
 > 外部贡献者只需要自己的 `.env`：`data/.env` 是**本项目维护者**的线上配置副本，
 > 别人 clone 下来不会有这个文件，忽略即可。
 
@@ -186,7 +205,7 @@ test/
 | [README.md](../README.md) | 项目定位、技术栈、目标/非目标、权限模型发生变化（保持 ≤250 行，细节放 docs/） |
 | [COMMANDS.md](./COMMANDS.md) | 指令用法、按钮语义、示例输出变化 |
 | [OPERATIONS.md](./OPERATIONS.md) | 部署方式、启动参数、运营流程示例变化 |
-| [CONFIGURATION.md](./CONFIGURATION.md) | 新增/修改环境变量（同时更新 `.env.example`） |
+| [CONFIGURATION.md](./CONFIGURATION.md) | 新增 / 修改配置项：**核心项**同时更新 `.env.example`；**热改项**更新「系统配置（热改项）」那张表与 `SETTING_DEFINITIONS` |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 分层、目录、组件职责变化 |
 | [DECISIONS.md](./DECISIONS.md) | 做了需要留痕的技术取舍（追加 ADR，不修改历史条目） |
 | [CARD-STANDARD.md](./CARD-STANDARD.md) | 卡片交互规范变化 |

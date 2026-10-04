@@ -1255,7 +1255,9 @@
   前端 `web/src/components/EntityLabel.vue`、`web/src/lib/entity.ts`、`web/src/views/*`、
   `web/src/views/SettingsView.vue`（新增）、`web/src/api/{admin,client}.ts`、`router.ts`、`App.vue`。
   测试：`test/adminApiEntityRef.test.ts`、`test/adminApiSettings.test.ts`（含**漂移守卫**：
-  扫源码断言 `config.ts` / `adminApi/config.ts` 读的每个 env 键都出现在配置页的表里）、
+  扫源码断言 `config.ts` / `adminApi/config.ts` 读的每个 env 键都出现在配置页的表里；
+  ⚠️ ADR-0066 之后守卫扩成「读取点 ∪ `SETTING_DEFINITIONS[].envKey`」—— 热改项不再被
+  `config.ts` 读到，但仍然必须在配置页看得到）、
   `test/tickScheduler.test.ts`（快照）、`test/adminApi{Backend,Server,Permissions}.test.ts`（扩写）、
   `test/webScaffold.test.ts`（端点 / 配置页 / 任务监测 / 路由表契约）。
   **能力边界**：后台仍然**不**提供指令层的写操作（拉黑 / 处罚 / 活动增删改 / 通知发送 / 重启），
@@ -1665,3 +1667,78 @@
   `docs/ADMIN-API.md` / `docs/OPERATIONS.md`（手工应用 / 回滚 / 清状态 SOP）、`CHANGELOG`。
   **能力边界**：不碰 `data/` `.env` `logs/`；`incoming/` 与 `data/packages/` 自动只留最近 3 个；
   `workflow_dispatch` 保留 `mode=files` 应急开关（退回老的逐文件上传）。
+
+## ADR-0066：`.env` 只留核心项 —— 能搬的全搬进系统配置，老值一次性导入
+
+- 状态：已实现（未发版）—— 见 CHANGELOG 的 `[Unreleased]`；真机验收项在 TODO §4.8
+- 背景：
+  1. `.env` 里混着两类东西：**核心项**（密钥 / 数据库 / 监听口 / 日志 / 路径 —— 改了必须重启，
+     或连库之前就要用）与**本来就能热改的运行参数**（保留期 / 各种周期 / 部署监测 / 定时发言…）。
+     后者早就有 `/config` 与管理后台「配置」页（`platform_settings` 表）可改，但**默认值仍然只能从
+     `.env` 改** —— 于是「能热改」变成半句空话：想改默认行为还得登服务器改文件 + 重启，而且
+     「`.env` 与库里的覆盖值谁赢」得靠人记。
+  2. 用户 2026-10-04 拍定：**能搬的全搬**（`.env` 只留密钥 / 引导 / 进程与网络形态 / 日志 / 路径 /
+     `ADMIN_API_ALLOWED_OPENIDS`），并点名把管理后台的 `ADMIN_API_SESSION_TTL_MINUTES` /
+     `ADMIN_API_TOKEN_TTL_MINUTES` / `ADMIN_API_RATE_LIMIT_PER_MINUTE` 也搬进来。
+  3. 硬约束：**升级瞬间行为不能漂移** —— 老部署的 `.env` 里往往写着这些键（很多是从
+     `.env.example` 抄下来的默认值），直接删掉读取链会让生效值悄悄变回代码里的默认值。
+- 决策：
+  1. **两个来源、边界清楚**：`.env` 只读**核心项**；热改项的**默认值写在代码里**
+     （`src/config.ts` 的 `DEFAULT_*`），**生效值一律以 `platform_settings` 表为准**。
+     唯一例外是展示时区（`displayTimezone` / `TZ`）：日志时间在连库之前就要用，所以它仍是
+     「`.env` 启动默认 + 库覆盖」（定义里标 `envBacked: true`）。
+  2. **启动时一次性导入**（新 `src/services/settingsImport.ts`）：对每个非 `envBacked` 的热改项，
+     若进程环境里**存在**该键（`.env` 载入的结果也算）：
+     ① 有「已导入」留痕 → 跳过（见第 3 条）；
+     ② 库里已有覆盖行 → **忽略 `.env`**（以库为准）；
+     ③ 值与内置默认相同 → **不写库**（生效行为本来就一致，不制造无意义的覆盖行）；
+     ④ 值不合法 → **不拦启动**（老实现里整数项是直接抛错拦启动、布尔项是静默当成 `false`，
+       都比这更糟）：只记 warn 日志 + 一条 `platform_config_import_problem`（`Rejected`）审计 +
+       **一次**私信提醒；
+     ⑤ 其余情形写库一次 + 留痕 —— 之后 `sourceOf` 是 `override`，`.env` 里这一项再改也没有作用。
+     空串：整数 / 布尔项视为「没填」→ 回落内置默认（与老行为一致：老 `asInt` / `asBool` 对空串
+     都是「返回 fallback」，fallback 就是同一个内置默认值）；文本项（`activityStatsFontUrl`）
+     的空串是**合法值**（= 只用系统字体）。
+  3. **「迁移做过没有」单独留痕，不看覆盖行**：判断依据是 `platform_settings` 里一行只写一次的
+     留痕（键名 `__env_import__:<配置项key>`，值是 `{envKey, raw, importedAt}`），
+     `PlatformSettingsStore` 读它、跳过它（不进面板、不算坏值），`clear()` **不动**它。
+     为什么不能用「库里有没有覆盖行」：那样 `/config clear`（后台「恢复默认」）删掉覆盖行之后，
+     下一次启动会把 `.env` 里的旧值**又导回来** —— 「回内置默认」只在本次进程内成立，与面板文案、
+     `.env.example` 的说法直接矛盾（审查时用真库 + tsx 实测复现过）。
+     留痕**只在真的写库之后**才写：坏值 / 与默认值相同的项不留痕 —— 用户把 `.env` 那一行改好之后
+     还要能重新导入（留了痕就永远不生效了）。
+     回执：真的导入了就写 `platform_config_import` 审计并**私信全部超管**（列出导入 / 忽略 /
+     之前已导入 / 与默认值相同 / 没导入的键，并说明「`.env` 里这些行现在可以删掉了」）；
+     同一个「值不合法」的问题集合**只提醒一次**（靠审计里的同签名记录去重 —— 不新造状态文件，
+     否则每重启一次就多一张卡；代价是审计被保留期清掉后会再提醒一次，可接受）。
+  4. **导入不参与自检**：导入排在 `isStartupCheck()` 早退**之后**，`node dist/main.js --check`
+     不会导入、不写留痕（真机踩过：自检里的副作用会让「自检 JSON 说 ok、退出码却是 1」这类事故更难查）。
+     ⚠️ 措辞边界：**「自检完全只读」不成立** —— 早退前它会跑 `runtime.load()`，其中
+     「给现有超管补默认通知订阅」（`seedSuperAdminDefaults`）是带写库的。那是**既有行为**，
+     已单列成 TODO（§2 的 P2），本条只保证「导入器不写库」。
+  5. **读点改成「用的时候取当前值」**：管理后台三项（会话 TTL / 令牌 TTL / 限流）的所有读点都换成
+     取值函数 —— `SessionStore` / `WindowRateLimiter` 接受 `number | (() => number)`，
+     `AdminApiConfig` 只留**内置默认**（现取值由 `hotConfig` 注入），`AdminApiLinkService.issueFor`
+     的默认 TTL、`/auth/token` 回执与 cookie 的 `Max-Age` 全部现取。CLI（`pnpm admin:token`）
+     也读同一份库 —— `.env` 删掉旧键后，紧急签发仍拿得到生效值。
+  6. **展示口径跟着改**：可改项接口多回一个 `envBacked`，界面据此区分「内置默认」与「`.env` 默认」；
+     `.env` 只读段**只列真正留在 `.env` 里的核心项**（热改项一律只在可改项那段出现 —— `TZ`
+     以前因为「`.env` 名 ≠ 配置项键」被两段同时列出，现在按 `envKey` 也一并过滤）。
+  7. **模板与文档**：`.env.example` 砍到只剩核心项（每组一行「为什么必须在这里」），末尾用注释
+     列出全部热改项名字并指向 `/config`；CONFIGURATION.md 的「数据保留」改成「系统配置（热改项）」；
+     OPERATIONS.md 补「配置搬家」SOP（备份 `data/.env` → 升级 → 看私信回执 → 删行 →
+     `/config clear <项>` 回默认）。
+- 理由：让「必须重启才能改」的只剩真正必须重启的项；热改项只剩一个真源（库），
+  「`.env` 与库谁赢」这类问题从此不存在；一次性导入保证升级不漂移，并且自带回执与审计，
+  不需要人工执行迁移脚本。
+- 影响：`src/config.ts`（默认值搬进来、不再读这些 env）、`src/services/platformSettings.ts`
+  （`envBacked` / `IMPORTED_FROM_ENV_KEYS` / 3 个新项 / `persistent` / 导入留痕
+  `wasImportedFromEnv` + `markImportedFromEnv`）、新 `src/services/settingsImport.ts`、
+  `src/main.ts`（导入 + 审计 + 私信）、`src/adminApi/{config,session,rateLimit,server,host,loginLink,cliToken,main,settings}.ts`、
+  `src/runtime.ts`、`src/services/commands/{configCommands,statusCommands}.ts`（文案 + `/status proc` 显示生效值）、
+  `web/src/api/admin.ts` 与 `web/src/views/SettingsView.vue`、`test/settingsImport.test.ts` +
+  配置页漂移守卫扩展、`.env.example` / `README.md` / `docs/{CONFIGURATION,ADMIN-API,ARCHITECTURE,SECURITY,OPERATIONS}.md`、CHANGELOG。
+- 版本：**0.29.0**（删配置项 + 新增热改项 = 用户可见变更）。
+- 能力边界：**不碰密钥类**（永不进库、永不回传）；**不做**运行期改监听口 / 换数据库；
+  **不删** `platform_settings` 里已有的覆盖行（要删就 `/config clear`，或后台「恢复默认」）；
+  未知 / 预留键原样留在 `.env` 里、导入器不报错也不管。

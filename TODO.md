@@ -9,7 +9,7 @@
 > **所有需要真实 QQ 群环境的条目统一收在最后一节 §4**：等有环境时照
 > [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md) 一次跑完并回填。
 >
-> 当前状态（2026-10-04，包化部署落地后）：测试 **160 文件 / 1421 用例**全绿（后端）+ **13 文件 / 51 用例**全绿
+> 当前状态（2026-10-04，包化部署 + `.env` 精简落地后）：测试 **161 文件 / 1431 用例**全绿（后端）+ **13 文件 / 51 用例**全绿
 > （管理前台组件测试，`pnpm web:test`）；**0.27.3 已发版并部署**（纯修复：自检进程不参与单实例锁），**0.27.2 已发版并部署**（纯修复：后台群列表补「绑过群号」来源 / 配置页补回「定时发言总开关」+ 注册完整性守卫 / 定时发言「详情」改弹窗 / 热改项不再在 .env 只读段重复列出），**0.27.1 已发版并部署**（单实例闸 / 发送 at-most-once / 入群申请自动移出待审批 + 周期对账），**0.27.0 已发版并部署**
 > （0.27.0 =「机器人定时发言」：`/announce` + 管理后台「定时发言」页 —— 默认关闭、每群群管 130 自治、
 > 标准 cron 5 段、文本 · 引用 · 卡片 · 按钮，口径见 ADR-0062、后台面见 ADMIN-API.md 的 E1-t）；
@@ -32,8 +32,12 @@
 > 已完成：A1–A5、B1–B3、B6–B11、C1–C3、C5–C6、C9、D1、D3、D5、D6、D7、D10、**D8-a**（本机备份 / 恢复演练）、
 > **E1 全部（a–h）**、**E2 全部（a–f）**、F1–F2、H1–H8、D9（0.19.0 起）。
 >
-> **`[Unreleased]` 里攒着「发布流程包化」**（ADR-0065：单文件产物包 + 机器人自解 + 备份/回滚 +
-> 提醒与自动重启解耦 + 回滚改成整目录替换 + 三连 `grep -c` 的手工 SOP），**已实现、未发版**；
+> **`[Unreleased]` 里攒着两块待发内容**：
+> ① 「**发布流程包化**」（ADR-0065：单文件产物包 + 机器人自解 + 备份/回滚 + 提醒与自动重启解耦 +
+> 回滚改成整目录替换 + 三连 `grep -c` 的手工 SOP）→ 发 **0.28.0**；
+> ② 「**精简 `.env`**」（ADR-0066：`.env` 只留核心项 / 热改项默认值搬进代码 / 老值一次性导入 /
+> 读点全部现取现用 / 新增管理后台会话·令牌·限流三项）→ 发 **0.29.0**。
+> 两块都**已实现、未发版**（按新流程只做本地提交，发版时一次性 push —— 见 §2 的 P1「CI/CD 收敛」）。
 > 0.27.0 定时发言、0.27.1 三处真机修复、0.27.2 四处修复、0.27.3 自检不参与单实例锁都已发布。
 > 0.26.0 之后攒的那条「**机器人定时发言**」（默认关闭 /
 > 每群群管 130 自治 / 标准 cron 5 段 / 文本 · 引用 · 卡片 · 按钮）已在 **0.27.0** 发出并部署
@@ -41,9 +45,10 @@
 > 更早的三段（部署重复重启修复、展示口径扩到全站、管理后台收尾五件 A–E）
 > 已在 0.26.0 一起发出并部署。
 >
-> **P0 现在只剩一条（2026-10-04 列入，等开工）：精简 `.env`（全搬/导入/去掉默认值链）** —— 见 §2。
-> **「发布流程包化」已实现（未发版）**，口径见 [ADR-0065](./docs/DECISIONS.md)、逐条见 CHANGELOG 的
-> `[Unreleased]`、回滚端点见 ADMIN-API.md 的 E1-u、手工 SOP 见 OPERATIONS.md；真机验收项在 §4。
+> **P0 两条都已实现**：「发布流程包化」（ADR-0065，真机验收 §4.7）与
+> 「精简 `.env`」（ADR-0066，真机验收 §4.8）—— 见 §2；逐条变更见 CHANGELOG 的 `[Unreleased]`，
+> 包化回滚端点见 ADMIN-API.md 的 E1-u、手工救急 SOP 见 OPERATIONS.md 的「手工救急：包化部署」、
+> 配置迁移 SOP 见 OPERATIONS.md 的「配置搬家」。
 > 以下是已完成的：「机器人定时发言」已随 0.27.0 发布（见 CHANGELOG 的 `[0.27.0]`、
 > [ADR-0062](./docs/DECISIONS.md)、ADMIN-API.md 的 E1-t 与管理前台的「定时发言」页）。
 > **管理后台收尾五件（A–E）已完成并随 0.26.0 发布**
@@ -56,7 +61,7 @@
 | 优先级 | 条目 | 为什么排在这里 |
 |---|---|---|
 | **P0** | **发布流程包化**（单文件产物包 + 机器人自解 + 备份/回滚 + 关自动重启也提醒）（✅ 已实现，未发版；口径 ADR-0065） | 用户 2026-10-04 拍定方案 A：FTP 逐文件 8m33s 太慢、回滚造成混装 dist（版本号 0.27.3 / 代码 0.27.0）—— 包化同时解决「慢」与「不可靠」；实现见 CHANGELOG 的 `[Unreleased]`，回滚端点见 ADMIN-API.md 的 E1-u，手工 SOP 见 OPERATIONS.md |
-| **P0** | **精简 .env**（能搬的全搬进系统配置：全搬 / 导入 / 去掉默认值链）（⏳ 已列入，等开工） | 用户 2026-10-04 拍定：.env 只留密钥 / 引导 / 进程与网络 / 日志 / 路径 |
+| **P0** | **精简 .env**（能搬的全搬进系统配置：全搬 / 一次性导入 / 去掉默认值链）（✅ 已实现，未发版；口径 ADR-0066） | 用户 2026-10-04 拍定：`.env` 只留密钥 / 引导 / 进程与网络 / 日志 / 路径；实现见 CHANGELOG 的 `[Unreleased]`「变更」一节，迁移 SOP 见 OPERATIONS.md 的「配置搬家」，真机验收项在 §4.8 |
 | **P0** | **机器人定时发言**（✅ 已完成，随 0.27.0 发布；默认关闭 / 每群群管 130 自治 / cron 5 段 / 文本 · 引用 · 卡片 · 按钮） | 用户 2026-10-03 提出：不依赖环境与外部取证，落点全是已有能力 —— `TickScheduler` 加一个任务、群配置 KV 存任务、`RichMessageSender` 发送；口径见 ADR-0062，实现见 CHANGELOG 的 `[0.27.0]` |
 | **P1** | **管理后台：只读面补齐**（✅ 已完成） | 不需要环境、不需要新领域能力：全是已有服务的读路径，做完「看得清」就闭环（§5 的 P1） |
 | P1 | **CI / CD 触发次数收敛**（路径过滤 + concurrency + CD 复用 CI + 一次 push）（⏳ 已列入，等开工） | 用户 2026-10-04：近 200 次 run 里 CI 171 次、push 触发 167 次，纯文档 push 也跑全量 —— 明显过量（§2 的 P1） |
@@ -71,9 +76,11 @@
 | 末 | **§4 真机验证** | 需要真实环境；不阻塞上面任何代码工作，有环境时一次跑完 |
 | P3 | **暂缓**：E3 / E4 / E6（AI）+ E5 的 AI 策略闭环 | 按决定跳过排期；要动之前先做评估（见 §2 的 P3 一节） |
 
-> **P0 现在只剩一条待开工**（2026-10-04 列入，见 §2）：**精简 `.env`**（能搬的全搬进系统配置）。
-> **「发布流程包化」已实现（未发版）**：口径见 [ADR-0065](./docs/DECISIONS.md)，逐条变更见 CHANGELOG 的
-> `[Unreleased]`，回滚端点见 ADMIN-API.md 的 E1-u，手工救急 SOP 见 OPERATIONS.md；真机验收项在 §4。
+> **P0 两条都已实现**（2026-10-04 拍定并当天做完，均**未发版**）：
+> **「发布流程包化」**（口径见 [ADR-0065](./docs/DECISIONS.md)，逐条变更见 CHANGELOG 的 `[Unreleased]`，
+> 回滚端点见 ADMIN-API.md 的 E1-u，手工救急 SOP 见 OPERATIONS.md，真机验收项在 §4.7 → 发 **0.28.0**）与
+> **「精简 `.env`」**（口径见 [ADR-0066](./docs/DECISIONS.md)，迁移 SOP 见 OPERATIONS.md 的「配置搬家」，
+> 真机验收项在 §4.8 → 发 **0.29.0**）。
 > 已完成的那条：「**机器人定时发言**」已实现并**随 0.27.0 发布**
 > （默认关闭 / 每群群管 130 自治 / cron 5 段 / 文本 · 引用 · 卡片 · 按钮；口径见
 > [ADR-0062](./docs/DECISIONS.md)，变更见 CHANGELOG 的 `[0.27.0]`）。v0.25.0 上线后那条
@@ -82,8 +89,8 @@
 > 若来自 `respawn.mjs` / 自检路径本身，仍需真机日志定论 —— 已记进 §4.3）。除此之外 0.25.0 与 D8-a 都已完成，
 > D8-b / D2 / §4 要环境，B4 / B5 / A2 要取证，AI 已跳排期。
 > **管理后台的 P1 只读面、全部 P2、P3 的权限授予 / 撤销与身份映射只读都已落地**
-> —— 除了上面 §2 剩下的那条 P0（精简 `.env`），代码侧没有别的必做项；
-> 包化部署已实现（未发版，真机验收项见 §4.7），§4 要真机环境，其余要官方取证。
+> —— 代码侧的必做项（两条 P0）都已实现，剩下要做的只有 §2 的 **P1「CI/CD 触发次数收敛」**
+> （纯代码侧、不卡环境）与两个环境项；§4 要真机环境，其余要官方取证。
 >
 > 排期只定「先做什么」，不代表放弃后面的：每条的验收 / 落点见 §2、§4 与 §5 明细。
 
@@ -94,19 +101,26 @@
 
 ### P0（现在就能做）
 
-- [ ] **精简 `.env`：能搬的全搬进系统配置（全搬 / 老值一次性导入 / 去掉 `.env` 默认值链）**（2026-10-04 拍定）
+- [x] **精简 `.env`：能搬的全搬进系统配置（全搬 / 老值一次性导入 / 去掉 `.env` 默认值链）**（2026-10-04 拍定并实现，**未发版**）
+  - 口径见 [ADR-0066](./docs/DECISIONS.md)，逐条变更见 CHANGELOG 的 `[Unreleased]`「变更」一节；
   - **只留 `.env`**（改了必须重启、或 DB 之前就要用）：密钥类（`QQ_BOT_*` / `WEBHOOK_SECRET` /
     `ADMIN_API_SESSION_SECRET` / `ADMIN_API_TOKENS`）、引导（`DATABASE_URL` / `SQLITE_PATH` / `ADMIN_USER_IDS`）、
     进程与网络形态（`EVENT_MODE` / `WEBHOOK_HOST|PORT|PATH` / `ADMIN_API_ENABLED|HOST|PORT|PUBLIC_BASE_URL|COOKIE_SECURE|WEB_DIR` /
     `QQ_BOT_SANDBOX`）、日志（`LOG_LEVEL|FILE|CONSOLE|COLOR` / `TZ`）、路径（`CLASS_INDEX_FILE` / `QQ_BOT_CACHE_FILE`）、
-    `ADMIN_API_ALLOWED_OPENIDS`；
-  - **搬进系统配置**（热改项）：`ADMIN_API_SESSION_TTL_MINUTES`、`ADMIN_API_TOKEN_TTL_MINUTES`、
-    `ADMIN_API_RATE_LIMIT_PER_MINUTE`（读它们的地方改成「用的时候取当前值」）；
-  - **一次性迁移**：启动时若 `.env` 里写了这些键、而库里没有覆盖行 → **以 `.env` 为准写库一次** + 记日志/审计
-    「从 `.env` 导入」，保证行为不漂移；此后 `.env` 里删掉这些行没有任何影响（迁移前备份 `data/.env`）；
-  - **去掉默认值链**：`Settings` 里这些字段不再从 `.env` 读（只当迁移来源），一切以库为准；
-  - **文档**：`.env.example` 砍到只剩必要项（每项一行「为什么必须在这里」）、`docs/CONFIGURATION.md`、
-    `ADMIN-API.md`（配置页那段）、CHANGELOG；发 **0.29.0**（删配置项 + 新热改项 = 用户可见变更）。
+    `ADMIN_API_ALLOWED_OPENIDS` —— 落点 `.env.example`（每组一行「为什么必须在这里」）；
+  - **搬进系统配置**（热改项）：新增 `adminApiSessionTtlMinutes` / `adminApiTokenTtlMinutes` /
+    `adminApiRateLimitPerMinute`，读点全部改成「用的时候取当前值」（`AdminApiConfig` 只留内置默认 +
+    `hotConfig` 注入；`SessionStore` / `WindowRateLimiter` 接受取值函数；CLI 也读同一份库）；
+  - **一次性迁移**：`src/services/settingsImport.ts` —— 库里已有覆盖行则**以库为准**；与内置默认相同
+    **不写库**；坏值**不拦启动**（只记日志 + 一次私信 + Rejected 审计）；其余写库一次，并写
+    `platform_config_import` 审计 + 私信超管回执（含「`.env` 里这些行可以删掉了」）；幂等、自检不写库；
+  - **去掉默认值链**：`Settings` 里这些字段不再从 `.env` 读（默认值搬成 `src/config.ts` 的 `DEFAULT_*`），
+    一切以库为准；唯一例外 `displayTimezone`（`TZ`，`envBacked: true`）；
+  - **文档**：`.env.example` / `docs/CONFIGURATION.md`（「数据保留」→「系统配置（热改项）」）/
+    `README.md` / `ADMIN-API.md`（E1-a 与配置页那段）/ `OPERATIONS.md`（新增「配置搬家」）/
+    `DEVELOPMENT.md` / `ARCHITECTURE.md` / `SECURITY.md` / CHANGELOG；发 **0.29.0**；
+  - **验收**：`tsc` 0 错、根 vitest **161 文件 / 1431 用例**全绿、前端 `typecheck` / `test`（13 文件 51 用例）/ `build`
+    全绿；真机 6 条在 **§4.8**。
 
 ### P1（只差环境；一有环境就先做）
 
@@ -191,6 +205,16 @@
 - [x] **审计页的「操作人」过滤只认完整 id**（小）→ 已在 0.26.0 的 E1-q 落地（操作人与操作对象都按 QQ号 / `#短码` / openid / 展示名多形态匹配）
   - 后端 `/api/audit?actor=` 是内部 id 精确匹配，页面只能提示「填完整 id」；要根治得让后端
     同时接受 QQ号 / 短码（复用 `DisplayNameService.resolveUser`），属于读端点的小增强。
+- [ ] **自检进程仍会写库（小，既有行为）**：`node dist/main.js --check` 在早退前会跑 `runtime.load()`，
+  其中「给现有超管补默认通知订阅」（`seedSuperAdminDefaults` → `NotificationService.subscribe`）
+  是带写库的，`finishStartupCheck` 的 `runtime.flush()` 会把它落库（ADR-0066 审查时实测：
+  一次 `--check` 给 `notification_subscriptions` 插了 6 行）。自检的语义应该是「这份构建能不能起来」，
+  顺手改持久化状态不合适。
+  - 落点：把 `seedSuperAdminDefaults` 挪到 `isStartupCheck()` 早退**之后**（或给它加一个
+    「自检模式只读」的开关），并补一条守卫；`src/startupCheck.ts` 的注释当时按「导入器不写库」
+    收窄过，改完可以再把措辞放宽。
+  - 边界：影响很小（订阅行本来就是幂等的「默认开」），但它会让「自检是只读演练」这句话不成立 ——
+    排查启动期怪异现象时容易误判，所以记在这。ADR-0066 已明确把这条排除在「导入不写库」之外。
 
 ### 阻塞中（等官方能力 / 权限集取证，取证动作在 §4.4）
 
@@ -359,6 +383,33 @@
 - [ ] **保留 3 个包（自清理）**：连做 4~5 次部署 → `ls incoming/` 与 `ls data/packages/`
   都只剩最近 3 个；`*.failed-*` 留证不被顺手清掉；
   再看一眼 `data/deploy-receipt.json` / `data/deploy-state.json` 的字段是否如文档所写。
+
+### 4.8 精简 `.env`（2026-10-04 新增，ADR-0066 起，0.29.0）
+
+> 代码侧已全绿（161 文件 / 1431 用例 + 前端三项），单测盖住了导入的四种分支、幂等、坏值、
+> 纯内存模式与三个新热改项的现取现用；下面这 6 条只能真机看（真实 `.env`、真实库、真实私信）。
+> 步骤与备份见 [docs/OPERATIONS.md](./docs/OPERATIONS.md) 的「配置搬家」一节。
+
+- [ ] **升级后的第一次启动真的导入**：升级前先在 `data/.env` 里写几个**与默认不同**的项
+  （例：`RAW_MESSAGE_RETENTION_DAYS=7`、`SCHEDULED_ANNOUNCE_ENABLED=1`、`ADMIN_API_TOKEN_TTL_MINUTES=3`）
+  → 启动后应收到「**配置已从 .env 导入**」卡（列出这几项），
+  `sqlite3 data/qq-group-ops.db "select setting_key, setting_value from platform_settings"` 能看到对应行，
+  审计里有一条 `platform_config_import`（actor `env-import`）；`/config` 面板里它们的来源是「已覆盖」。
+- [ ] **删行后行为不变**：确认上面的值真的生效（例：`/announce on` 后到点真的发；
+  保留期 7 天 → `/status proc` 显示 7 天）→ 从 `.env` 里删掉那些行 → 重启 →
+  **值与 `/config` 面板的「来源」都不变**（仍然「已覆盖」），也不再收到导入卡。
+- [ ] **`/config clear` 回默认**：对某一项发 `/config clear rawMessageRetentionDays` →
+  面板来源变「内置默认」、值回到 `0`，库里的覆盖行被删掉；重启后仍然是默认值（不会又被 `.env` 导回去）。
+- [ ] **管理后台三项立即生效**（不用重启）：把 `adminApiSessionTtlMinutes` 改成 `1` →
+  等 1 分钟以上再点页面 → 会话过期跳登录页（或 `/auth/me` 回 401）；
+  把 `adminApiRateLimitPerMinute` 改成 `2` → 连点 3 次 → 第 3 次 429；
+  改回原值 → 行为立刻恢复。顺带确认 `/status` 页改这些项的审计是 `admin_api:setting_update`。
+- [ ] **`/status proc` 与 `/config` 一致**：热改项（保留期 / 时区 / 首次菜单）在 `/status proc` 里显示的
+  就是 `/config` 面板里的**生效值**，不是 `.env` 里的旧值。
+- [ ] **自检不写库**：记下 `platform_settings` 的行数与内容 → 跑一次 `node dist/main.js --check`
+  → 行数 / 内容**完全不变**（自检是只读演练，不会导入）；再确认自检期间**没有**收到导入卡。
+  另外 `pnpm admin:token --user=<超管 openid>` 在 `.env` 删掉
+  `ADMIN_API_TOKEN_TTL_MINUTES` 之后，签出来的令牌有效期仍然是库里那个值（回执里会写分钟数）。
 
 ## 5. 管理后台功能覆盖（按优先级）
 

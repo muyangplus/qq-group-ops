@@ -7,6 +7,9 @@
 
 ## [Unreleased]
 
+> 本段攒着**两块待发**内容，发版时各自归档：**0.28.0 = 发布流程包化**（ADR-0065，见下面
+> 「发布流程包化」相关条目）、**0.29.0 = 精简 `.env`**（ADR-0066，见「变更」一节）。
+
 ### 新增
 
 - **发布流程包化：单文件产物包 + 机器人自解**（ADR-0065；TODO §2 的 P0 第 1 条）。CD 从
@@ -32,6 +35,47 @@
   **关着时照样提醒**（卡片文案改成「**自动重启已关闭**，请手动重启加载新版本」），到点不动手，
   同一目标版本仍然只提醒一次；用户之后把开关打开，下一轮按原计划继续。
 
+### 变更
+
+- **精简 `.env`：能搬的全搬进系统配置**（ADR-0066；TODO §2 的 P0 第 2 条；**0.29.0**）。
+  `.env` 只留**核心项** —— 密钥（`QQ_BOT_*` / `WEBHOOK_SECRET` / `ADMIN_API_SESSION_SECRET` /
+  `ADMIN_API_TOKENS`）、引导（`DATABASE_URL` / `SQLITE_PATH` / `ADMIN_USER_IDS`）、
+  进程与网络形态（`EVENT_MODE` / `WEBHOOK_HOST|PORT|PATH` /
+  `ADMIN_API_ENABLED|HOST|PORT|PUBLIC_BASE_URL|COOKIE_SECURE|WEB_DIR` / `QQ_BOT_SANDBOX`）、
+  日志（`LOG_LEVEL|FILE|CONSOLE|COLOR` / `TZ`）、本地路径（`CLASS_INDEX_FILE` / `QQ_BOT_CACHE_FILE`）、
+  `ADMIN_API_ALLOWED_OPENIDS`。
+  其余「热改项」（保留期 / 各种周期 / 部署监测 / 定时发言 / 管理后台会话·令牌·限流）
+  **默认值搬进代码**（`src/config.ts` 的 `DEFAULT_*`）、**生效值一律以库里的 `platform_settings` 为准**；
+  `.env` 里再写这些键只在**升级后的第一次启动**被导入一次。
+  读点全部保留成「用的时候取当前值」，所以 `/config`（或后台「配置」页）改完**立即生效、不用重启**。
+  唯一例外是展示时区 `displayTimezone`（`TZ`）：日志时间在连库之前就要用，仍然「`.env` 启动默认 + 库覆盖」。
+- **管理后台新增三项热改配置**：`adminApiSessionTtlMinutes`（会话滑动过期，默认 `720`）、
+  `adminApiTokenTtlMinutes`（一次性登录令牌有效期，默认 `10`）、
+  `adminApiRateLimitPerMinute`（每会话每分钟请求上限，默认 `60`；`0` = 不限）。
+  这三项从 `.env` 搬进系统配置：会话按新的 TTL 判定、限流按新上限算，改完**不用重启**；
+  `pnpm admin:token`（CLI）也读同一份库里的生效值。
+- **`.env` 里的老值一次性导入库**（`src/services/settingsImport.ts`）：启动时对每个热改项，
+  ① 有「已导入」留痕 → 跳过；② 库里已有覆盖值 → **忽略 `.env`**（以库为准）；
+  ③ 值与内置默认相同 → **不写库**（行为本来就一致）；④ 值不合法 → **不拦启动**（老实现里整数项
+  会直接抛错、布尔项会静默当成 `false`），只记日志 + 一次私信提醒 + 一条
+  `platform_config_import_problem` 审计；⑤ 其余写库一次。真的导入了会写
+  `platform_config_import` 审计并**私信全部超管**（列出导入 / 忽略 / 与默认值相同 / 没导入的键，
+  并提示「`.env` 里这些行现在可以删掉了」）。同一个坏值问题**只提醒一次**。
+- **「迁移只做一次」有独立留痕**：判断依据是 `platform_settings` 里一行只写一次的
+  `__env_import__:<配置项>`（`clear()` 不动它），**不是**「库里有没有覆盖行」—— 否则
+  `/config clear` / 后台「恢复默认」删掉覆盖行之后，下次启动会把 `.env` 里的旧值又导回来，
+  「回内置默认」就只在本次进程内成立（审查时实测复现过）。留痕只在**真写库之后**才有：
+  坏值与「和默认值相同」的项不留痕，用户修好 `.env` 之后还能重新导入。
+- **`.env.example` 砍到只剩核心项**：每组一行「为什么必须在这里」，末尾用注释列出全部热改项名字
+  并指向 `/config`；README / CONFIGURATION.md 的配置章节按「核心项 vs 热改项」重写，
+  OPERATIONS.md 新增「配置搬家」SOP（备份 `data/.env` → 升级 → 看回执 → 删行 → `/config clear` 回默认）。
+- **配置页来源口径**：可改项多回一个 `envBacked`，界面据此区分「**内置默认**」与「**`.env` 默认**」
+  （只有时区属于后者）；`.env` 只读段**只列真正留在 `.env` 里的核心项** —— `TZ` 以前因为
+  「`.env` 名 ≠ 配置项键」被两段同时列出，现在按 `envKey` 也一并过滤（同一个键两处出现，
+  运维会以为不能改）。
+- **`/status proc` 显示生效值**：保留期 / 时区 / 首次菜单那三行以前读的是 `.env` 里的启动默认值，
+  被 `/config` 覆盖过就对不上；现在读热配置的当前值。
+
 ### 修复
 
 - **回滚不再制造混装 `dist`**：`restoreDistFromBackup()` 从**覆盖式还原**改成**整目录替换**
@@ -56,6 +100,14 @@
   回滚端点的逐条口径见 [docs/ADMIN-API.md](./docs/ADMIN-API.md) 的 E1-u。
 - 真机验收（上传耗时、坏包拒绝、回滚、关自动重启也提醒、保留 3 个包）待有环境时按
   [docs/ACCEPTANCE.md](./docs/ACCEPTANCE.md) 与 TODO §4 跑一遍。
+- **配置项能力边界**（ADR-0066）：**密钥类永不进库、也永不通过接口回传**（能改热配置 ≠ 能拿到密钥）；
+  不做运行期改监听口 / 换数据库；导入器**不删**库里已有的覆盖行（要回默认值用 `/config clear`）；
+  未知 / 预留键原样留在 `.env` 里，导入器不报错也不管。
+- **`pnpm dev` 的 `menuFirstPush`**：dev 入口仍然会把 `MENU_FIRST_PUSH=memory` 交给进程环境，
+  但 ADR-0066 之后它只作为「第一次启动导入库」的来源 —— 本地库上跑过一次 `pnpm dev` 之后
+  `menuFirstPush` 就固定成 `memory` 了，想换回入库去重：`/config set menuFirstPush persistent`。
+- 真机验收（升级后第一次启动真的导入 + 私信回执、`.env` 删行后行为不变、后台改会话 TTL 立即生效、
+  `--check` 不写库）见 TODO §4.8。
 
 ## [0.27.3] - 2026-10-04
 

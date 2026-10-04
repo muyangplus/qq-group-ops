@@ -116,8 +116,11 @@
    `/healthz` 不鉴权，只回 `{ ok, version, uptime }`（不暴露群 / 用户信息）；
 2. 配置项进 `.env.example`：`ADMIN_API_ENABLED` / `ADMIN_API_HOST` / `ADMIN_API_PORT` /
    `ADMIN_API_SESSION_SECRET` / `ADMIN_API_COOKIE_SECURE` / `ADMIN_API_PUBLIC_BASE_URL` /
-   `ADMIN_API_TOKEN_TTL_MINUTES` / `ADMIN_API_ALLOWED_OPENIDS`（可选）/
-   `ADMIN_API_RATE_LIMIT_PER_MINUTE`；**这些属于核心安全项，不进 `/config` 热改**；
+   `ADMIN_API_ALLOWED_OPENIDS`（可选）/ `ADMIN_API_TOKENS` / `ADMIN_API_WEB_DIR`；
+   **监听口与密钥属于核心安全项，不进 `/config` 热改**。
+   ⚠️ 从 **ADR-0066（0.29.0）** 起，**会话有效期 / 令牌有效期 / 每会话限流**这三项搬进了系统配置
+   （热改项 `adminApiSessionTtlMinutes` / `adminApiTokenTtlMinutes` / `adminApiRateLimitPerMinute`）：
+   `.env` 里的旧键只在升级后的第一次启动被导入一次，之后改完立即生效、不用重启；
 3. 令牌表 `admin_api_tokens(token_hash PK, user_id, created_at, expires_at, used_at)` + 仓储：
    `issue(userId, ttl)` 只把明文令牌返给调用方、库里只存 `sha256`；`redeem(token)` 一次性
    （校验未用过 + 未过期 → 立刻写 `used_at`）；顺手清过期行；
@@ -555,16 +558,21 @@
     （目标版本 / 当前版本 / 检测与计划重启时刻）。数据来自 `TickScheduler.snapshot()`
     （只读、不触发任务、不更新 `lastRun`）；只读巡检进程没有调度器 → 503 并说明该去哪看。
     与 `SCAN_INTERVAL_MS` 的关系：**全项目只有一个定时器**，每个任务只声明自己的最小间隔；
-31. `GET /api/settings`（平台超管 240）：可改的热改项（当前生效值 + 来源 `env` / `override`）
-    + `.env` 只读项。**密钥类（`*_SECRET` / `*_TOKEN` / `*_PASSWORD` / `*_KEY`）不回传值**，
+31. `GET /api/settings`（平台超管 240）：可改的热改项（当前生效值 + 来源 `env` / `override`，
+    外加 `envBacked` 告诉界面「启动默认值到底来自 `.env` 还是代码」）+ `.env` 只读项
+    （**只列真正留在 `.env` 的核心项**：热改项一律只出现在可改项那段，避免「同一个键两处都有、
+    看起来像不能改」）。**密钥类（`*_SECRET` / `*_TOKEN` / `*_PASSWORD` / `*_KEY`）不回传值**，
     只回「配没配」—— 值不经过浏览器（免得进缓存 / 截图）；
 32. `PUT /api/settings { key, value }`、`DELETE /api/settings/:key`（平台超管 240）：
-    改一项热改配置 / 恢复 `.env` 默认值。**走机器人 `/config` 的同一套存储**
-    （`PlatformSettingsStore.set` / `clear`：校验 → 落库 → 立即生效），不新造配置通路；
-    校验失败回 400（中文原因原样给界面，**不落库、不写审计**），成功写
-    `admin_api:setting_update` / `admin_api:setting_clear` 审计（理由里带旧值 → 新值）。
-    可改范围**只限** `SETTING_DEFINITIONS` 里的项：`.env` 的密钥 / 端口 / 数据库等仍然只能
-    登服务器改文件后重启 —— 后台不提供「改线上密钥」这种能力。
+    改一项热改配置 / 恢复**启动默认值**（除 `displayTimezone` 是 `.env` 值外，其余都是代码内置值）。
+    **走机器人 `/config` 的同一套存储**（`PlatformSettingsStore.set` / `clear`：校验 → 落库 →
+    立即生效），不新造配置通路；校验失败回 400（中文原因原样给界面，**不落库、不写审计**），
+    成功写 `admin_api:setting_update` / `admin_api:setting_clear` 审计（理由里带旧值 → 新值）。
+    可改范围**只限** `SETTING_DEFINITIONS` 里的项（19 项，见 [CONFIGURATION.md](./CONFIGURATION.md)
+    的「系统配置（热改项）」）：`.env` 的密钥 / 端口 / 数据库等仍然只能登服务器改文件后重启
+    —— 后台不提供「改线上密钥」这种能力。
+    生效方式：读点全部「用的时候取当前值」（会话 TTL / 令牌 TTL / 限流三项也是），所以改完
+    **立即生效、不用重启**（ADR-0066）。
 
 ### E1-g 只读端点的逐路由门槛（P1）
 

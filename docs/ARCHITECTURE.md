@@ -114,7 +114,9 @@ Web 管理 API + 管理后台（Phase 2）
 | `src/services/` | 规则引擎、审核流程、审计、权限、活动报名、信息导出、命令 |
 | `src/db/` | 数据库 schema、查询抽象、方言适配、写穿透队列与仓储 |
 | `src/persistence.ts` | 数据库目标解析、连接、迁移与仓储装配 |
-| `src/config.ts` | 环境变量加载与校验 |
+| `src/config.ts` | **核心**环境变量加载与校验（密钥 / 引导 / 进程与网络 / 日志 / 路径）+ 热改项的代码内置默认值（ADR-0066）|
+| `src/services/platformSettings.ts` | 热改项注册表（校验 / 展示 / 生效值 + 库覆盖）|
+| `src/services/settingsImport.ts` | 启动时把 `.env` 里的热改项**一次性导入**库（ADR-0066）|
 | `src/core/logger.ts` | 结构化日志：控制台 + 文件 |
 | `src/core/instrumentation.ts` | 官方 API、HTTP、数据库、事件网关的调试包装 |
 | `src/runtime.ts` | 运行时装配：按配置选择真实/测试 API、注入仓储、提供 `load()` / `flush()` |
@@ -134,7 +136,7 @@ Web 管理 API + 管理后台（Phase 2）
 │   ├── core/                # 领域模型与枚举
 │   ├── db/                  # schema、迁移、SQLite/PostgreSQL 适配、写穿透队列与仓储
 │   ├── services/            # 规则、审核、权限、活动、导出、命令
-│   ├── config.ts            # 环境配置
+│   ├── config.ts            # 核心环境配置 + 热改项的内置默认值（ADR-0066）
 │   ├── persistence.ts       # 数据库目标解析、连接与仓储装配
 │   └── main.ts              # 入口
 ├── test/                    # Vitest 测试

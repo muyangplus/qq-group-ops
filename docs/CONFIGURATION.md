@@ -1,6 +1,18 @@
 # 配置说明（Configuration）
 
-本文说明 QQ Group Ops 当前支持的环境变量。项目使用 `.env` 加载配置；仓库只提交 `.env.example`。
+本文说明 QQ Group Ops 当前支持的配置项。项目使用 `.env` 加载配置；仓库只提交 `.env.example`。
+
+> **配置分两类（ADR-0066，0.29.0 起）**：
+> 1. **核心项 —— 留在 `.env`**：密钥 / 引导（数据库、初始超管）/ 进程与网络形态
+>    （事件通道、webhook 与管理 API 的监听口）/ 日志 / 本地路径 / `ADMIN_API_ALLOWED_OPENIDS`。
+>    判断标准只有两条：**改了必须重启**，或者**连库之前就要用**。
+> 2. **热改项 —— 存在系统配置（`platform_settings` 表）**：保留期 / 各种周期 / 部署监测 /
+>    定时发言 / 管理后台会话·令牌·限流。默认值在代码里，改法是私信 `/config set <项> <值>`
+>    或管理后台「配置」页，**改完立即生效、不用重启**。
+>
+> `.env` 里写了热改项会怎样：**升级后的第一次启动**把它们导入库一次（行为不漂移），
+> 之后 `.env` 再改这些键**没有任何影响** —— 一切以库为准。搬迁步骤与备份见
+> [OPERATIONS.md](./OPERATIONS.md) 的「配置搬家」一节。
 
 > 部署/启动/排障见 [OPERATIONS.md](./OPERATIONS.md)，指令用法见 [COMMANDS.md](./COMMANDS.md)。
 
@@ -15,7 +27,8 @@
 - 个人资料与活动
 - 数据库
 - 日志
-- 数据保留
+- 系统配置（热改项，`/config`）
+- 管理 API
 - 预留配置
 - 安全提醒
 
@@ -25,11 +38,15 @@
 
 ```bash
 cp .env.example .env
-# 然后编辑 .env
+# 然后编辑 .env（只填核心项：凭据、数据库、日志、监听口）
 ```
 
-`pnpm dev`、`pnpm start` 会自动读取项目根目录的 `.env`。如果系统环境变量已经存在，则优先使用系统环境变量。
+`pnpm dev`、`pnpm start` 会自动读取项目根目录的 `.env`（线上是 `data/.env`）。如果系统环境变量已经存在，则优先使用系统环境变量。
 
+> **热改项不要写进 `.env`**：写了只在启动时被导入一次，之后改文件不再生效。想看当前有哪些、
+> 现在是什么值、默认值来自哪：私信机器人 `/config`（全局超管），或看管理后台「配置」页；
+> 逐项说明见本文「系统配置（热改项）」一节。
+>
 > 真实值只写在 `.env` 里：`.env.example` 是模板，会提交进仓库、也会**随 CD 部署一起上传**
 > （部署白名单里有它，见 [CD.md](./CD.md)）—— 所以它只放占位符与默认值，
 > **不要**往里填凭据、真实域名或会话密钥。
@@ -369,10 +386,11 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 管理 / 超管菜单
 - 自定义按钮是官方**内邀白名单**能力，未开通时自动降级为纯文本菜单，正文里同样列出指令；
 - 需要参数的指令（如 `/approve <申请ID>`）在菜单正文里给用法，不提供点不动的死按钮；
 - 群里 `@机器人` 不带内容、私信里第一次与机器人交互，都会收到主菜单；
-- 私信「首次推送」的记录方式由 `MENU_FIRST_PUSH` 控制：
-  - `pnpm dev` 默认 `memory`（只记内存，重启可以再验证一次）；
-  - 正式启动默认 `persistent`（入库 `menu_deliveries`，重启不重复推送）；
-  - 想显式指定时在 `.env` 写 `MENU_FIRST_PUSH=memory|persistent`。
+- 私信「首次推送」的记录方式由热改项 `menuFirstPush` 控制（改完立即生效）：
+  - `pnpm dev` 的启动默认值是 `memory`（只记内存，重启可以再验证一次）；
+  - 正式启动的启动默认值是 `persistent`（入库 `menu_deliveries`，重启不重复推送）；
+  - 想切换：私信 `/config set menuFirstPush memory|persistent`（全局超管），或管理后台「配置」页；
+  - `.env` 里的 `MENU_FIRST_PUSH` 只在升级后的第一次启动被导入一次（见文件开头的两类配置）。
 
 ### 回调按钮翻页（`/testmenu`）
 
@@ -657,13 +675,15 @@ QQ 端的系统交互菜单，三级结构：主菜单 → 管理 / 超管菜单
 |---|---|
 | `@napi-rs/canvas` | **可选依赖**，用变量拼包名的动态 `import()` 加载；没装 → `render()` 返回 `undefined` → 文字统计卡 |
 | 系统字体（优先） | Windows `C:/Windows/Fonts/msyh.ttc` 等；Linux `/usr/share/fonts/**/NotoSansCJK*`、`wqy-*`；macOS 苹方 |
-| `ACTIVITY_STATS_FONT_URL` | 系统字体都没有时从这里下载并缓存到 `data/fonts/`；默认 Noto Sans SC 官方发布地址 |
+| 热改项 `activityStatsFontUrl` | 系统字体都没有时从这里下载并缓存到 `data/fonts/`；默认 Noto Sans SC 官方发布地址，值留空表示只用系统字体（`/config set activityStatsFontUrl <地址>`） |
 | 缓存目录 | `data/fonts/`（`data/` 已 gitignore，**字体缓存不随包提交**）；文件名固定 `activity-stats.otf` |
 | 发送 | 官方「群聊富媒体上传」（`{ file_type: 1, ... }` → `file_info`）+ `msg_type: 7` 富媒体消息；上传/发送失败同样降级为文字统计卡 |
 
 ```bash
 # 没有系统中文字体（常见于容器）时，指向可达的字体地址；留空表示「只用系统字体」
-ACTIVITY_STATS_FONT_URL=https://example.com/NotoSansSC-Regular.otf
+/config set activityStatsFontUrl https://example.com/NotoSansSC-Regular.otf
+# 回到内置默认（Noto Sans SC 官方发布地址）
+/config clear activityStatsFontUrl
 
 # 容器里想真正出图，需要先装可选依赖（原生包）
 pnpm add @napi-rs/canvas
@@ -682,13 +702,15 @@ pnpm add @napi-rs/canvas
 机器人按 cron 给自己群定时发言。**默认关闭**，而且是两层的：平台总开关 + 每条任务自己的开关。
 
 ```bash
-# 总开关（默认 0 = 关；开了之后每个群还要把任务 /announce on 打开才会真的发）
-SCHEDULED_ANNOUNCE_ENABLED=0
+# 总开关（默认关；开了之后每个群还要把任务 /announce on 打开才会真的发）
+/config set scheduledAnnounceEnabled on
 # 每群每小时最多发几条（默认 6；防手滑把 cron 写成 `* * * * *`；0 = 不限）
-SCHEDULED_ANNOUNCE_HOURLY_LIMIT=6
+/config set scheduledAnnounceHourlyLimit 6
 ```
 
-两项都是**热改项**（`/config` 或管理后台「配置」页改完立即生效，不用重启）。
+两项都是**热改项**（`/config` 或管理后台「配置」页改完立即生效，不用重启）；
+`.env` 里的 `SCHEDULED_ANNOUNCE_ENABLED` / `SCHEDULED_ANNOUNCE_HOURLY_LIMIT` 只在升级后的
+第一次启动被导入一次，之后以库为准。
 
 | 操作 | 权限 |
 ---|---
@@ -776,7 +798,7 @@ pnpm db:up     # docker compose --profile postgres up -d db
 
 - 读走内存，写操作同步更新内存并进入顺序写穿透队列（`WriteQueue`），由运行时在**回复用户前**和**进程退出前** `flush()` 到数据库；
 - 单个写入失败只记录错误日志并计数，不会中断后续写入；
-- 启动时会把审计记录、入群申请全量载入内存，请结合 `AUDIT_LOG_RETENTION_DAYS` 等保留策略控制历史数据规模。
+- 启动时会把审计记录、入群申请全量载入内存，请结合 `auditLogRetentionDays`（`/config`）等保留策略控制历史数据规模。
 
 ### 两种数据库的取舍
 
@@ -805,80 +827,94 @@ pnpm db:up     # docker compose --profile postgres up -d db
 - `never`：始终纯文本
 - 文件日志始终为 JSON Lines，不包含 ANSI 颜色
 
-## 数据保留
+## 系统配置（热改项，`/config`）
 
-| 变量 | 必填 | 说明 |
-|---|---|---|
-| `RAW_MESSAGE_RETENTION_DAYS` | 否 | **平台默认的**消息原文保留天数：`-1` = 永久保留、`0` = 不保存、正整数 = 天数。可 `/config` 热改；单个群可用 `/rules set rawMessageRetentionDays <天数>` 覆盖（群没设过才用这里的默认值，见下方说明） |
-| `AUDIT_LOG_RETENTION_DAYS` | 否 | 审计记录保留天数，默认 `180`；`-1` = 永久保留、`0` = 不清理（同义，推荐用 -1） |
-| `JOIN_REQUEST_TTL_DAYS` | 否 | 待审批入群申请有效期（天），默认 `7`；超过即标记 `expired`（不删数据，`/whois` 可追溯）；`0` / `-1` = 不自动过期 |
-| `ACTIVITY_NOTIFY_DAILY_LIMIT` | 否 | **活动通知**每人每日上限，默认 `3`；非负整数，`0` = 不限制 |
-| `ACTIVITY_NOTIFY_RATE_PER_SECOND` | 否 | **活动通知**令牌桶速率（条/秒），默认 `5`；正整数，`0` = 不限制。桶容量按速率向上取整，桶空时**排队等待**下一个令牌（不丢通知） |
-| `ACTIVITY_STATS_FONT_URL` | 否 | 统计图片的中文字体下载地址（系统字体都没有时才用）；默认 Noto Sans SC 官方发布地址，留空表示只用系统字体 |
-| `APPEAL_HOLD_MINUTES` | 否 | **申诉值班**单人持有时间（分钟），默认 `15`；`0` = 不自动转派。申诉默认通知**所有管理员**（群管理员 / 本群超管 / 全局超管），**审核员之间轮单**（一次只通知一位），超时未处理转给下一位 |
-| `SCAN_INTERVAL_MS` | 否 | **统一扫描周期**（毫秒），默认 `60000`。全项目只跑一个定时器：保留清理 / 活动提醒 / 申诉轮转 / 待审批 TTL / 部署监测都由它驱动；保留清理仍按 24 小时节拍。`0` = **关闭所有周期任务**（统一总开关） |
-| `AUTO_RESTART_ON_DEPLOY` | 否 | **到点要不要自动重启**，默认开（`0` = 关）。⚠️ 从 ADR-0065 起它**不是生效判据**：关掉之后**仍然会提醒**「发现新版本」（卡片文案写成「**自动重启已关闭**，请手动重启加载新版本」），只是**到点不动手**；「监测是否生效」只看 `DEPLOY_CHECK_INTERVAL_MS`（`<= 0` 才关闭）。判定链条：CD 先传 `incoming/deploy-<版本>.tgz`、**最后**传 `incoming/deploy-<版本>.json` 投递标记（ADR-0065），机器人自解、自证并整目录替换 `dist/`；部署监测再看「服务器上的版本号变了」+ `dist/` 内容指纹也变了（避免在「代码已落地、版本标记还没落地」的窗口里启动过的进程白跳一次）。命中就私信全部全局超管「计划 N 分钟后自动重启」+「取消自动重启 / 立即重启」按钮；开关关着时也给这张卡（只是没有计划重启时间）。开关关着期间待重启状态仍记着，之后再打开，下一轮扫描按原计划继续 |
-| `DEPLOY_RESTART_DELAY_MINUTES` | 否 | 部署监测的宽限期（分钟），默认 `10`；`0` = 检测到就重启（仍会先发通知卡）。可 `/config` 热改 |
-| `DEPLOY_CHECK_INTERVAL_MS` | 否 | 部署监测的扫描间隔（毫秒），默认 `60000`；`0` = 关闭监测。包安装器（`DeployInstaller`，扫 `incoming/`）也挂在这条节拍上。**要求机器人的工作目录 = FTP 上传目标目录**，否则读不到新版本 |
-
-### 平台配置热改（`/config`）
-
-上表里大部分项**不用改 `.env` 重启**：全局超管在私信发 `/config` 就能改，改完**立即生效**
-（覆盖值存库，优先级高于 `.env`；`/config clear <项>` 回落到 `.env` 默认）。
+这些项**不读 `.env`**（除了唯一的核心项 `displayTimezone`）：默认值在代码里，当前生效值存在库里的
+`platform_settings` 表。改法有两个，都**立即生效、不用重启**：
 
 ```text
-/config                    面板：每项「当前值 + 来源（.env 默认 / 已覆盖）」，每项一个「填入指令」按钮
+（私信机器人，全局超管）
+/config                    面板：每项「当前值 + 来源（内置默认 / .env 默认 / 已覆盖）」
 /config set <项> <值>       改一项（非法值会被拒绝，不改库也不改内存）
-/config clear <项>          回落 .env 默认
+/config clear <项>          回落到启动默认值（`displayTimezone` 回落的是 `.env` 里的值）
+
+（管理后台 →「配置」页，同样的存储与校验）
 ```
 
-- **可热改**：`auditLogRetentionDays` / `rawMessageRetentionDays` / `joinRequestTtlDays` /
-  `menuFirstPush` / `activityNotifyDailyLimit` / `activityNotifyRatePerSecond` / `appealHoldMinutes` /
-  `scanIntervalMs` / `autoRestartOnDeploy` / `deployRestartDelayMinutes` / `deployCheckIntervalMs` /
-  `activityStatsFontUrl` / `displayTimezone`（`TZ`）；
-- **只能改 `.env` 并重启（核心项）**：QQ 凭据 / `EVENT_MODE` / `WEBHOOK_*` / `DATABASE_URL` /
-  `DATABASE_TARGET` / `LOG_*` / `CLASS_INDEX_FILE` / `ADMIN_USER_IDS`；
-- 权限：**仅全局超管、只在私信**；每次改动写审计（平台级动作，不挂在任何群上）；
-- 覆盖面：库里的覆盖值读不出来（手改坏 / 老版本写坏）时**只退回 `.env` 默认**，并在面板上列出来 ——
-  配置读不出来不该拦住启动。
+| 项（`/config set` 的名字） | 默认值 | 说明 |
+|---|---|---|
+| `rawMessageRetentionDays` | `0` | **平台默认的**消息原文保留天数：`-1` = 永久保留、`0` = 不保存、正整数 = 天数。单个群可用 `/rules set rawMessageRetentionDays <天数>` 覆盖（群没设过才用这里的默认值，见下方说明） |
+| `auditLogRetentionDays` | `180` | 审计记录保留天数；`-1` = 永久保留、`0` = 不清理（同义，推荐用 -1） |
+| `joinRequestTtlDays` | `7` | 待审批入群申请有效期（天）；超过即标记 `expired`（不删数据，`/whois` 可追溯）；`0` / `-1` = 不自动过期 |
+| `menuFirstPush` | `persistent` | 私信首次交互主菜单的记录方式：`persistent`（入库去重）/ `memory`（只记内存；`pnpm dev` 的启动默认值） |
+| `activityNotifyDailyLimit` | `3` | **活动通知**每人每日上限；非负整数，`0` = 不限制 |
+| `activityNotifyRatePerSecond` | `5` | **活动通知**令牌桶速率（条/秒）；`0` = 不限制。桶容量按速率向上取整，桶空时**排队等待**下一个令牌（不丢通知） |
+| `activityStatsFontUrl` | Noto Sans SC 官方地址 | 统计图片的中文字体下载地址（系统字体都没有时才用）；留空 = 只用系统字体 |
+| `appealHoldMinutes` | `15` | **申诉值班**单人持有时间（分钟）；`0` = 不自动转派。申诉默认通知**所有管理员**（群管理员 / 本群超管 / 全局超管），**审核员之间轮单**（一次只通知一位），超时未处理转给下一位 |
+| `scanIntervalMs` | `60000` | **统一扫描周期**（毫秒）。全项目只跑一个定时器：保留清理 / 活动提醒 / 申诉轮转 / 待审批 TTL / 部署监测都由它驱动；保留清理仍按 24 小时节拍。`0` = **关闭所有周期任务**（统一总开关） |
+| `autoRestartOnDeploy` | 开 | **到点要不要自动重启**（`off` = 关）。⚠️ 从 ADR-0065 起它**不是生效判据**：关掉之后**仍然会提醒**「发现新版本」（卡片文案写成「**自动重启已关闭**，请手动重启加载新版本」），只是**到点不动手**；「监测是否生效」只看 `deployCheckIntervalMs`（`<= 0` 才关闭）。判定链条：CD 先传 `incoming/deploy-<版本>.tgz`、**最后**传 `incoming/deploy-<版本>.json` 投递标记（ADR-0065），机器人自解、自证并整目录替换 `dist/`；部署监测再看「服务器上的版本号变了」+ `dist/` 内容指纹也变了（避免在「代码已落地、版本标记还没落地」的窗口里启动过的进程白跳一次）。命中就私信全部全局超管「计划 N 分钟后自动重启」+「取消自动重启 / 立即重启」按钮；开关关着时也给这张卡（只是没有计划重启时间）。开关关着期间待重启状态仍记着，之后再打开，下一轮扫描按原计划继续 |
+| `deployRestartDelayMinutes` | `10` | 部署监测的宽限期（分钟）；`0` = 检测到就重启（仍会先发通知卡） |
+| `deployCheckIntervalMs` | `60000` | 部署监测的扫描间隔（毫秒）；`0` = 关闭监测。包安装器（`DeployInstaller`，扫 `incoming/`）也挂在这条节拍上。**要求机器人的工作目录 = FTP 上传目标目录**，否则读不到新版本 |
+| `joinSyncIntervalMs` | `600000` | 入群申请**对账**周期（毫秒，默认 10 分钟）；`0` = 关闭（只在 `/sync` 时对账） |
+| `scheduledAnnounceEnabled` | 关 | 定时发言**总开关**（见 `/announce` 一节） |
+| `scheduledAnnounceHourlyLimit` | `6` | 定时发言**每群每小时上限**；`0` = 不限制 |
+| `adminApiSessionTtlMinutes` | `720` | 管理后台会话滑动过期（分钟） |
+| `adminApiTokenTtlMinutes` | `10` | 管理后台一次性登录令牌有效期（分钟） |
+| `adminApiRateLimitPerMinute` | `60` | 管理后台每会话每分钟请求上限；`0` = 不限 |
+| `displayTimezone` | `Asia/Shanghai` | 展示时区。**唯一还从 `.env` 读启动默认值的项**（`TZ`：日志时间在连库之前就要用）；`/config clear` 回落的是 `.env` 里的值 |
+
+### `/config` 的口径
+
+- **权限**：仅**全局超管**、只在**私信**里（群里发会被拒，避免当众改全局配置）；
+  每次改动写审计（平台级动作，`groupId` 为空，action `platform_config_set` / `platform_config_clear`）；
+- **来源**有三种（页面「来源」列直接写出来）：**内置默认**（代码里的默认值）/
+  **`.env` 默认**（只有 `displayTimezone` 这一项）/ **后台 / `/config` 覆盖**（已经存在库里）；
+- **覆盖面**：库里的覆盖值读不出来（手改坏 / 老版本写坏）时**只退回内置默认**，并在面板上列出来 ——
+  配置读不出来不该拦住启动；
+- **`.env` 的旧值**：升级到 0.29.0 后的第一次启动会导入一次并私信超管（哪几项被导入 / 哪几项与
+  默认值相同 / 哪几项被跳过），导入后这些键在 `.env` 里就**没有作用了**。搬迁与备份见
+  [OPERATIONS.md](./OPERATIONS.md)「配置搬家」；
+- **只能改 `.env` 并重启（核心项）**：QQ 凭据 / `EVENT_MODE` / `WEBHOOK_*` /
+  `DATABASE_URL` / `SQLITE_PATH` / `LOG_*` / `CLASS_INDEX_FILE` / `QQ_BOT_CACHE_FILE` /
+  `ADMIN_USER_IDS` / `ADMIN_API_*`（开关 · 监听口 · 密钥 · 公开地址 · 白名单 · 机器令牌）。
 
 > **申诉派发口径**：管理员全部通知是为了"必须有人知道"；审核员轮单是为了不打扰所有人。
 > 处理完成后，`ModerationNotifier.notifyAppealHandled` 会把结果同步给其余订阅者（脚本同步卡），
 > 并且申诉人本人会收到通过 / 驳回的结果私信。值班记录是内存态：进程重启后会从第一位审核员重新开始，
 > 投递去重键带 `attempt`，所以不会把同一张卡重复推给同一个人。
 
-`ACTIVITY_NOTIFY_DAILY_LIMIT` 的用途：活动发布 / 变更 / 取消 / 递补的通知走**主动私信**，
+`activityNotifyDailyLimit` 的用途：活动发布 / 变更 / 取消 / 递补的通知走**主动私信**，
 而官方对主动消息有限额（单用户每天 1000 条、单关系 20 qpm、未认证机器人 5 qps & 30 qpm），
 用户还可以在 QQ 客户端关闭「允许主动发送」。因此活动通知在 `activity_notifications` 里
 按 `(活动, 用户, 类型)` **去重**，并用这个变量做**每人每天封顶**；超过上限只记 warn 日志、不再发送
 （活动本身的状态不受影响）。
 
-`ACTIVITY_NOTIFY_RATE_PER_SECOND` 是**平滑发送速率**的令牌桶：一次活动变更可能有几十个接收人，
+`activityNotifyRatePerSecond` 是**平滑发送速率**的令牌桶：一次活动变更可能有几十个接收人，
 逐条串行发送时用它限速，避免瞬间打满官方 qps；桶空时该条通知会等待（`waitedMs` 记 debug 日志），
 而不是被丢掉。它只作用于活动通知，入群申请推送不受影响。
 
 清理行为（`RetentionService`）：
 
 - 启动时执行一次，之后每 24 小时执行一次；
-- 删除早于 `AUDIT_LOG_RETENTION_DAYS` 的审计记录；
-- **先把过期的待审批申请标记为 `expired`**（有效期 = `JOIN_REQUEST_TTL_DAYS`，默认 7 天）：
+- 删除早于 `auditLogRetentionDays` 的审计记录；
+- **先把过期的待审批申请标记为 `expired`**（有效期 = `joinRequestTtlDays`，默认 7 天）：
   标记后不再出现在 `/pending`、推送与统计里，但 `/audit` 记 `expire_join_request`、`/whois` 仍可追溯；
 - 删除早于同一保留期、且**已审批**的入群申请；未过期的待审批申请不清理；
 - `/sync` 会与官方列表对账：官方已不再返回、且已存在超过 1 小时的本地待审批也标记为过期；
 - 查询 `/pending` 时还会做一次懒清理，保证卡片里不出现过期项。
 - 清理同时作用于内存缓存与数据库，避免启动全量载入导致内存无限增长。
 
-`RAW_MESSAGE_RETENTION_DAYS` 是**平台默认的**原文保留期（`/config` 里可热改）：`-1` = 永久保留、
+`rawMessageRetentionDays` 是**平台默认的**原文保留期（`/config` 里可热改）：`-1` = 永久保留、
 默认 `0` 表示不落库（隐私优先，只保存审核结果与规则命中信息）；设为 `3–7` 后，关键词 / 正则命中的消息会以
 **单行 + 截断 ≤200 字**存进 `punishment_records.message_excerpt`，只用于审核员与当事人本人的**私信卡片**
 （群里那张「处罚通知」不带原文、也不写命中的具体规则）。
 
 保留期是**按群生效**的：某群 `/rules set rawMessageRetentionDays 7`（或全局默认规则
 `/rules set all rawMessageRetentionDays 7`）之后，该群按自己的天数清；**没设过的群才用这个平台默认值**。
-到期由 `RetentionService` **按群分别只清原文**，处罚记录本身仍按 `AUDIT_LOG_RETENTION_DAYS` 保留
+到期由 `RetentionService` **按群分别只清原文**，处罚记录本身仍按 `auditLogRetentionDays` 保留
 （`0` / `-1` 的群不清）。
 
-`ACTIVITY_STATS_FONT_URL` 只影响活动统计图片：系统已有中文字体（Windows 雅黑 / Linux Noto CJK 等）时
+`activityStatsFontUrl` 只影响活动统计图片：系统已有中文字体（Windows 雅黑 / Linux Noto CJK 等）时
 根本不会请求它；下载成功的字体会缓存到 `data/fonts/activity-stats.otf`（`data/` 已 gitignore，
 **不随包提交**），重启后直接复用。字体与 `@napi-rs/canvas` 都拿不到时统计图降级为文字统计卡，
 **不会影响启动或活动本身**（清理行为同样不碰字体缓存）。
@@ -888,7 +924,7 @@ pnpm db:up     # docker compose --profile postgres up -d db
 ## 管理 API（E1，默认关闭）
 
 默认关闭；开启后是**机器人进程内的第二个回环监听口**（默认 `127.0.0.1:8787`，不占 webhook 端口，
-也不需要第二个进程单元）。认证是「机器人私信一次性令牌 + 会话 cookie」，只用 `.env` 配置、
+也不需要第二个进程单元）。认证是「机器人私信一次性令牌 + 会话 cookie」，监听口与密钥只用 `.env` 配置、
 **不进 `/config` 热改**（核心安全项）。`pnpm admin:api` 是只读巡检入口（写端点回 503）。
 设计见 [ADMIN-API.md](./ADMIN-API.md)，部署与排障见 [OPERATIONS.md](./OPERATIONS.md)。
 
@@ -898,14 +934,16 @@ pnpm db:up     # docker compose --profile postgres up -d db
 | `ADMIN_API_HOST` | 否 | 监听地址，默认 `127.0.0.1`（**只给本机反代**）；要对外必须显式改并挂 TLS |
 | `ADMIN_API_PORT` | 否 | 监听端口，默认 `8787` |
 | `ADMIN_API_SESSION_SECRET` | 开启时必填 | 会话 cookie 的 HMAC 密钥，**≥32 字符**；缺了直接拒绝启动（fail-closed） |
-| `ADMIN_API_SESSION_TTL_MINUTES` | 否 | 会话滑动过期，默认 `720`（12 小时） |
 | `ADMIN_API_COOKIE_SECURE` | 否 | 反代终止 TLS 时设 `true`（cookie 加 `Secure`） |
 | `ADMIN_API_PUBLIC_BASE_URL` | 否 | 浏览器能访问到的地址，用于拼登录链接；留空则 `/admin login` 只给令牌、需手工粘贴 |
-| `ADMIN_API_TOKEN_TTL_MINUTES` | 否 | 一次性登录令牌有效期，默认 `10` 分钟 |
 | `ADMIN_API_ALLOWED_OPENIDS` | 否 | 额外白名单（逗号分隔）；留空 = 所有平台超管（240）都能签发令牌 |
-| `ADMIN_API_RATE_LIMIT_PER_MINUTE` | 否 | 每个会话每分钟请求上限，默认 `60`；`0` = 不限 |
 | `ADMIN_API_TOKENS` | 否 | **机器调用令牌**（与一次性登录令牌分开）：`token:scope1\|scope2[:到期ISO时间]`，多个用逗号分隔，`scope` = `read` / `write` / `*`；请求带 `Authorization: Bearer <token>`，按方法校验 scope，**不需要 CSRF 头**（不涉及 cookie） |
 | `ADMIN_API_WEB_DIR` | 否 | 管理前台静态资源目录，默认 `web/dist`：**由管理 API 自己托管**（`/`、`/login` 等页面 + SPA 回退），于是「整个域名反代到 8787」就够了；目录不存在时自动跳过（接口不受影响）。想改由 nginx 托管就设成空值 |
+
+**会话有效期 / 令牌有效期 / 每会话限流**这三项**不在上表**：它们是热改项
+（`adminApiSessionTtlMinutes` / `adminApiTokenTtlMinutes` / `adminApiRateLimitPerMinute`，
+见「系统配置（热改项）」一节）—— 改完**立即生效**（会话按新的 TTL 判定、限流按新上限算），
+`.env` 里的旧键（`ADMIN_API_SESSION_TTL_MINUTES` 等）只在升级后的第一次启动被导入一次。
 
 生成会话密钥：
 
@@ -929,3 +967,6 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 - 不要提交 `.env`。
 - 不要把 AppID、Client Secret、Token、数据库密码发到 Issue 或日志中。
 - 生产环境建议使用 Docker secrets 或部署平台的密钥管理。
+- 热改项存在数据库里，**不包含任何凭据**：能改配置（`/config`、后台「配置」页、`write:settings`
+  机器令牌）不等于能拿到密钥 —— 密钥类永远只在 `.env` 里、也永不通过接口回传（见
+  [ADMIN-API.md](./ADMIN-API.md)）。

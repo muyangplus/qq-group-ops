@@ -42,7 +42,9 @@ high 一周内处置或记例外。
 - 所有密钥只从**环境变量 / Docker secrets** 注入；`.env` 与 `data/` 已在 `.gitignore`；
   仓库里不出现任何 token / openid / 群号明文（有自动测试守着这条，见 `test/privacyGuard.test.ts`）；
 - 平台凭据（`APP_ID` / `APP_SECRET` / `TOKEN`）与数据库口令都**只在启动时读**，轮换后重启生效；
-  能热改的只有 `/config` 里那 13 项非核心配置（不含任何凭据）；
+  能热改的只有系统配置里那些**非核心项**（保留期 / 周期 / 定时发言开关 / 管理后台会话与令牌 TTL /
+  限流等，共 19 项，见 [CONFIGURATION.md](./CONFIGURATION.md)「系统配置（热改项）」）——
+  **不含任何凭据**，改它们不需要也不能暴露密钥（ADR-0066）；
 - 本地凭据放进系统凭据管理器（Windows Credential Manager / `git credential`），不要落进脚本或提交；
 - **疑似泄露**：① 平台后台重置 → ② 改宿主机环境变量并重启 → ③ 翻 `audit_log` 与启动日志
   确认没有异常调用 / 异常绑定 → ④ 需要时按第 2 节记一条复盘。
