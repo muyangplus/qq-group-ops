@@ -5,6 +5,20 @@
 `0.1.0` 之后按「改动性质」定版本：**含用户可见新功能的版本按 MINOR 递增**（`0.2.0` → `0.9.0`），**只有修复与安全、行为修正的版本按 PATCH 递增**（`0.6.1`）；版本按时间倒序，日期格式 `YYYY-MM-DD`。
 变更分类为 `新增` / `变更` / `修复` / `备注`；`备注` 用于记录能力边界与已知限制，不作为独立变更分类。
 
+## [Unreleased]
+
+### 修复
+
+- **版本号来源改成「优先读产物自证」**：包化部署（ADR-0065）的产物包里**没有根 `package.json`**
+  （只有 `dist/` `web/dist/` `scripts/` `pnpm-lock.yaml` `.env.example`），而安装器是**整目录替换
+  `dist/`** —— 于是包模式部署之后根 `package.json` 会一直停在上一个**逐文件**部署的版本：
+  `/status proc` 显示老版本、重启回执写成 `vX → vX`；全新用包模式装的机器上甚至根本没有这个文件，
+  版本号会显示 `unknown`（`DeployWatcher` 的逐文件兜底路径也会因此静默失效）。
+  现在 `onDiskVersion()` **优先读 `dist/build-info.json`**（它跟着 `dist/` 一起换），读不到才回落
+  根 `package.json`（源码运行 / 老产物包）—— 现场看到的版本终于是「磁盘上真正跑的那份」。
+  落点：`src/core/buildInfo.ts` + `test/buildInfo.test.ts`（三条用例：以 build-info 为准 /
+  回落 package.json / 都没有则 unknown）。
+
 ## [0.29.0] - 2026-10-04
 
 > 本版把三块内容**合并发布**（**0.28.0 跳过** —— 少一次 CD、服务器只跳一次）：
