@@ -275,12 +275,18 @@ describe("CI/CD 工作流审计", () => {
     const doc = parse(text) as {
       updates?: Array<{
         "package-ecosystem"?: string;
+        schedule?: { interval?: string };
         ignore?: Array<{ "dependency-name"?: string; "update-types"?: string[] }>;
       }>;
     };
     const ecosystems = (doc.updates ?? []).map((item) => item["package-ecosystem"]);
     expect(ecosystems).toContain("github-actions");
     expect(ecosystems).toContain("npm");
+
+    // 触发次数收敛（ADR-0067，TODO P1 第 5 条）：依赖更新按**周**跑，不是每天
+    for (const update of doc.updates ?? []) {
+      expect(update.schedule?.interval, update["package-ecosystem"]).toBe("weekly");
+    }
 
     // @types/node 的类型大版本必须跟着运行时 Node 走（当前 24），major 更新一律忽略
     const npmEntry = (doc.updates ?? []).find(
@@ -290,5 +296,108 @@ describe("CI/CD 工作流审计", () => {
       (rule) => rule["dependency-name"] === "@types/node",
     );
     expect(ignored?.["update-types"]).toContain("version-update:semver-major");
+  });
+
+  /**
+   * 触发次数收敛（ADR-0067 / TODO P1）。近 200 次 run 里 CI 171 次、push 触发 167 次，
+   * 纯文档 push 也跑全量门禁 —— 这里把「怎么触发的」钉住：
+   *   · CI 带 `concurrency`（连续 push 只跑最后一次）且**文档路径被排除**（交给守卫工作流）；
+   *   · 文档守卫工作流存在、只跑守卫、也带 `concurrency`；
+   *   · 安全审计与 Dependabot 都是**每周**（不天天跑）；
+   *   · CD 复用 CI（同一 commit 的 CI 已绿就不重复跑 typecheck / 全量 vitest / 前端测试），
+   *     但**必须**能回落（查不到绿 CI / `full_gate=true`）；
+   *   · 边界：代码路径**不许**被 exclude 掉（否则「代码 push 必须跑全量门禁」就破了）。
+   */
+  it("收敛触发次数：CI 并发 + 路径拆分 + 文档守卫 + 每周审计/Dependabot", () => {
+    const ciWorkflow = workflows.find((workflow) => workflow.name === "ci.yml")!;
+    const ci = ciWorkflow.doc;
+    expect(ci.concurrency).toMatchObject({
+      group: "ci-${{ github.ref }}",
+      "cancel-in-progress": true,
+    });
+    const ciTriggers = triggersOf(ci);
+    const ignore = (
+      (ciTriggers.push ?? {}) as { "paths-ignore"?: string[] }
+    )["paths-ignore"];
+    expect(ignore).toContain("docs/**");
+    expect(ignore).toContain("**.md");
+    // 只排除文档：src / test / web / workflows / 模板都还在全量门禁里
+    for (const key of ["src/**", "test/**", "web/**", "package.json"]) {
+      expect(ignore, key).not.toContain(key);
+    }
+
+    const guardWorkflow = workflows.find(
+      (workflow) => workflow.name === "docs-guard.yml",
+    );
+    expect(guardWorkflow, "缺少 docs-guard.yml（纯文档 push 也要跑守卫）").toBeDefined();
+    expect(guardWorkflow!.doc.concurrency).toMatchObject({
+      "cancel-in-progress": true,
+    });
+    const guardTriggers = triggersOf(guardWorkflow!.doc);
+    for (const trigger of ["push", "pull_request"]) {
+      const paths = ((guardTriggers[trigger] ?? {}) as { paths?: string[] }).paths;
+      expect(paths, trigger).toContain("docs/**");
+      expect(paths, trigger).toContain("**.md");
+      expect(paths, trigger).toContain(".env.example");
+    }
+    const guardCommands = runCommands(guardWorkflow!);
+    expect(guardCommands).toContain("test/privacyGuard.test.ts");
+    expect(guardCommands).toContain("test/workflows.test.ts");
+    // 守卫里不跑重活（那些跟文档无关）
+    expect(guardCommands).not.toContain("pnpm typecheck");
+    expect(guardCommands).not.toContain("pnpm build");
+
+    const audit = workflows.find(
+      (workflow) => workflow.name === "security-audit.yml",
+    )!;
+    const schedule = (triggersOf(audit.doc).schedule ?? []) as Array<{ cron?: string }>;
+    expect(schedule.map((item) => item.cron)).toEqual(["17 3 * * 1"]);
+    expect(triggersOf(audit.doc).workflow_dispatch).toBeDefined();
+  });
+
+  it("CD 复用 CI：同一 commit 已绿时跳过重复门禁，且回落到全套门禁", () => {
+    const text = cdWorkflow!.text;
+    const dispatch = triggersOf(cdWorkflow!.doc).workflow_dispatch as {
+      inputs?: Record<string, { default?: unknown; type?: string }>;
+    };
+    // 应急开关：默认 false（复用），可手动强制全套
+    expect(dispatch.inputs?.full_gate?.default).toBe(false);
+    expect(dispatch.inputs?.full_gate?.type).toBe("boolean");
+
+    // 用**实际检出的 commit**去查（手动触发的 ref 可能与 GITHUB_SHA 不同）
+    expect(text).toContain("sha=$(git rev-parse HEAD)");
+    expect(text).toContain("actions/workflows/ci.yml/runs?head_sha=${SHA}");
+    expect(text).toContain("status=success");
+    // 查不到就回落（fail-safe）：不能因为查不到 CI 就把门禁整段跳掉
+    expect(text).toContain("回落到全套门禁");
+    // 三步重活都挂在「CI 没绿」这个条件上
+    const build = jobsOf(cdWorkflow!.doc).build;
+    const steps = stepsOf(build);
+    for (const name of ["Typecheck", "Test", "Test web"]) {
+      const step = steps.find((item) => item.name === name);
+      expect(step, name).toBeDefined();
+      expect(step!.if, name).toBe("steps.ci.outputs.green != 'true'");
+    }
+    // 构建与自证**永远**跑（复用 CI 只是省下重复的检查，不是省构建）
+    for (const name of ["Build", "Build web（类型检查 + vite build）"]) {
+      const step = steps.find((item) => item.name === name);
+      expect(step?.if, name).toBeUndefined();
+    }
+    // 查 CI 结论需要 actions: read（最小权限：仍然没有写权限）
+    const permissions = cdWorkflow!.doc.permissions as Record<string, unknown>;
+    expect(permissions.contents).toBe("read");
+    expect(permissions.actions).toBe("read");
+  });
+
+  it("FTP 上传日志量收到 standard（打包成 2 个文件后不再需要 verbose）", () => {
+    const deploy = Object.values(jobsOf(cdWorkflow!.doc)).find((job) =>
+      stepsOf(job).some((step) => String(step.uses ?? "").includes("FTP-Deploy-Action")),
+    )!;
+    for (const step of stepsOf(deploy).filter((item) =>
+      String(item.uses ?? "").includes("FTP-Deploy-Action"),
+    )) {
+      expect((step.with as Record<string, unknown>)["log-level"]).toBe("standard");
+    }
+    expect(cdWorkflow!.text).not.toContain("log-level: verbose");
   });
 });

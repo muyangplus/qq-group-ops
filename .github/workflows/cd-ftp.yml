@@ -4,6 +4,11 @@ name: CD · FTP 发布
 # 上传内容是**运行产物**：`dist/` + `web/dist/` + `scripts/` + `pnpm-lock.yaml` + `.env.example`
 # （不含 src / docs / tsconfig / Dockerfile / test / data / logs / *.map）。
 #
+# **部署门禁默认复用 CI**（ADR-0067）：同一个 commit 的 `ci.yml` 已经绿了就不再重复跑
+# typecheck / 全量 vitest / 前端组件测试（内容是同一份，再跑一遍只是等 2–3 分钟），
+# 只装依赖 + 构建（含前端）+ 自证；查不到绿的 CI run 时**回落到全套门禁**（fail-safe），
+# `workflow_dispatch` 传 `full_gate=true` 可强制全套。
+#
 # **两个文件、两段上传**（ADR-0065；结构沿用 ADR-0057 的「标记最后落地」）：
 #   ① `incoming/deploy-<版本>.tgz` —— 一个包，里面就是上面那份运行产物 + `dist/build-info.json`；
 #   ② `incoming/deploy-<版本>.json` —— 版本 / commit / **sha256** / **dist 指纹** / 构建时间。
@@ -42,10 +47,17 @@ on:
         options:
           - package
           - files
+      full_gate:
+        description: 强制重跑全套部署门禁（默认 false = 同一 commit 的 CI 已绿时复用 CI 结论）
+        type: boolean
+        required: false
+        default: false
 
-# 最小权限：部署只用 FTP 凭据（secrets），不需要 GITHUB_TOKEN 的写权限。
+# 最小权限：部署只用 FTP 凭据（secrets）；`actions: read` 只为查「同一 commit 的 CI 结论」
+# （复用 CI，见 ADR-0067），不需要任何写权限。
 permissions:
   contents: read
+  actions: read
 
 # 同一 ref 同时只允许一次部署，避免并发写坏服务器目录（排队而非取消）。
 concurrency:
@@ -60,7 +72,9 @@ env:
   DEPLOY_MODE: ${{ inputs.mode || 'package' }}
 
 jobs:
-  # 部署前门禁：类型检查 + 全量测试 + 构建；任何一步失败都不会碰服务器。
+  # 部署前门禁：默认「复用 CI」（同一 commit 的 ci.yml 已绿 → 只装依赖 + 构建），
+  # 查不到绿的 CI run（或 `full_gate=true`）时跑全套：typecheck + 全量测试 + 前端测试 + 构建。
+  # 任何一步失败都不会碰服务器。
   build:
     name: 构建与测试（部署门禁）
     runs-on: ubuntu-latest
@@ -82,13 +96,52 @@ jobs:
           node-version: "24.x"
           cache: pnpm
 
+      # 查 CI 结论要用**实际检出的 commit**：`workflow_dispatch` 可以指定 `ref`（补发 / 回滚旧
+      # tag），那与 `GITHUB_SHA`（工作流所在 ref 的 commit）不是同一个 commit。
+      - name: 记下实际部署的 commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: 查同一 commit 的 CI 是否已绿（决定是否复用 CI 结论）
+        id: ci
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.commit.outputs.sha }}
+          FORCE_FULL_GATE: ${{ inputs.full_gate }}
+        run: |
+          set -eu
+          green="false"
+          if [ "$FORCE_FULL_GATE" = "true" ]; then
+            echo "full_gate=true：手动强制全套门禁"
+          elif answer="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&status=success&per_page=1" --jq '.total_count' 2>&1)"; then
+            if [ "$answer" = "1" ]; then
+              green="true"
+            fi
+          else
+            # 查不到（权限 / 网络 / API 变动）就当没有：宁可多跑一遍门禁，不可少跑
+            echo "::warning::查询 CI 结论失败，回落到全套门禁：$answer"
+          fi
+          echo "green=${green}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### 部署门禁"
+            echo ""
+            if [ "$green" = "true" ]; then
+              echo "- 复用 \`ci.yml\` 的结论（commit \`${SHA}\` 已绿）：只装依赖 + 构建 + 自证"
+            else
+              echo "- **跑全套门禁**（同一 commit 没有绿的 CI run，或手动强制）"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # 以下三步在「复用 CI」时跳过 —— 同一 commit 上 ci.yml 已经跑过同样的内容（ADR-0067）
       - name: Typecheck
+        if: steps.ci.outputs.green != 'true'
         run: pnpm typecheck
 
       - name: Test
+        if: steps.ci.outputs.green != 'true'
         run: pnpm test
 
       - name: Build
@@ -101,6 +154,7 @@ jobs:
 
       # 组件测试也在门禁里：前端逻辑错误不该靠「发完再看」发现（根 `pnpm test` 只跑契约守卫）
       - name: Test web
+        if: steps.ci.outputs.green != 'true'
         run: pnpm web:test
 
       - name: Build web（类型检查 + vite build）
@@ -282,7 +336,7 @@ jobs:
           dry-run: ${{ inputs.dry_run }}
           # 被动模式数据连接建立慢时多等一会儿（默认 30s 偏紧）
           timeout: 120000
-          log-level: verbose
+          log-level: standard
           # 显式写死：绝不删除状态文件之外的东西（默认即 false）
           dangerous-clean-slate: false
           # 第二层保险：即使组包时漏了，也不上传这些
@@ -318,7 +372,7 @@ jobs:
           state-name: ftp-sync-state-marker.json
           dry-run: ${{ inputs.dry_run }}
           timeout: 120000
-          log-level: verbose
+          log-level: standard
           dangerous-clean-slate: false
           exclude: |
             **/.git*
@@ -348,7 +402,7 @@ jobs:
           state-name: ftp-sync-state-code.json
           dry-run: ${{ inputs.dry_run }}
           timeout: 120000
-          log-level: verbose
+          log-level: standard
           dangerous-clean-slate: false
           exclude: |
             **/.git*
@@ -378,7 +432,7 @@ jobs:
           state-name: ftp-sync-state-marker.json
           dry-run: ${{ inputs.dry_run }}
           timeout: 120000
-          log-level: verbose
+          log-level: standard
           dangerous-clean-slate: false
           exclude: |
             **/.git*

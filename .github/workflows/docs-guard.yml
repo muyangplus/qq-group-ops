@@ -1,0 +1,60 @@
+name: 文档守卫
+
+# 只跑「扫 md / .env.example」的那批守卫（秒级），与 CI 的分工见 ADR-0067 与
+# docs/CD.md「CI/CD 触发策略」：
+#   · 纯文档 push（docs/**、**.md）不该跑全量门禁（白等 2–3 分钟）；
+#   · 但**绝不能没有守卫** —— 「CHANGELOG 里写了真实群号 / openid」这种必须有人拦；
+#   · 代码路径的 push 由 `ci.yml` 跑全量门禁（它内部也会跑到这些守卫）。
+#
+# ⚠️ 新增「扫 docs / md / .env.example」的守卫时，把它加进最后那个 vitest 命令；
+# `test/workflows.test.ts` 会守住「privacyGuard + workflows 这两个必须在里面」。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "**.md"
+      - ".env.example"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "**.md"
+      - ".env.example"
+
+# 连续 push 只跑最后一次（与 ci.yml 同一口径）
+concurrency:
+  group: docs-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: 文档守卫（隐私扫描 + 工作流审计）
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+
+      # 守卫本身也是 vitest 用例（要读仓库文件、要解析 YAML），所以依赖得装上；
+      # 不做 typecheck / build / 前端 —— 那些与文档无关。
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 文档与工作流守卫
+        run: >-
+          node node_modules/vitest/vitest.mjs run --configLoader runner
+          test/privacyGuard.test.ts
+          test/workflows.test.ts

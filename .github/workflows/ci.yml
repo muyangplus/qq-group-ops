@@ -1,9 +1,26 @@
 name: CI
 
+# 触发面（ADR-0067，逐条说明见 docs/CD.md「CI/CD 触发策略」）：
+#   · **代码 / 依赖 / 工作流 / 模板**（src、test、web、.github、package.json、.env.example 等）
+#     → 本工作流跑**全量门禁**（typecheck + 全量 vitest + build + 前端三项）；
+#   · **只有文档 / Markdown**（docs/**、**.md）→ 本工作流**不跑**，交给 `docs-guard.yml` 的秒级守卫
+#     （隐私扫描 + 工作流审计）；一个 commit 里两者都有时两个工作流都会跑，门禁不削弱；
+#   · **连续 push 只跑最后一次**：同 ref 的进行中运行会被取消（`concurrency`）——
+#     本地提交阶段不再逐个 push，发版时一次推；这条是给「改错了马上补一版」兜底的。
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
