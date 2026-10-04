@@ -91,13 +91,20 @@ async function main(): Promise<void> {
     if (!permissions) {
       return { platformLevel: 0, groups: [] };
     }
-    const [grants, configs] = await Promise.all([
+    const [grants, configs, bindings] = await Promise.all([
       persistence.permissions.findAll(),
       persistence.groupConfigs.findAll(),
+      persistence.identityBindings.findAll(),
     ]);
+    // 群集合 = 授权行的群 ∪ 有规则覆盖的群 ∪ **绑过群号的群**（与机器人进程同一口径）：
+    // 刚 `/bind group` 完、还没写过规则 / 授权行的群，以前不会出现在后台群列表里
+    // （真机报过：`/whois` 查得到、管理平台里却只有别的群）。
     const groupIds = [
       ...grants.map((grant) => grant.groupId).filter((groupId) => groupId.length > 0),
       ...configs.map((row) => row.groupId),
+      ...bindings
+        .filter((row) => row.kind === "group")
+        .map((row) => row.officialId),
     ];
     return describePermissions(permissions, userId, groupIds, entities);
   };

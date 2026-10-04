@@ -1243,11 +1243,19 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
     },
 
     permissionsOf: async (userId: string): Promise<AdminApiPermissionsView> => {
-      // 群集合 = 有授权行的群 ∪ 有规则覆盖的群；与只读巡检模式口径一致
-      // （后者额外从 `group_configs` 取，这里内存态 `configStore` 就是同一批群的权威来源）
+      // 群集合 = 有授权行的群 ∪ 有规则覆盖的群 ∪ **绑过群号的群**；
+      // 与只读巡检模式口径一致（后者同样从 `group_configs` / `identity_bindings` 取）。
+      // 第三个来源是必须的：刚 `/bind group` 完、还没写过任何规则或授权行的群，
+      // 以前**不会**出现在后台的群列表里（真机报过：`/whois` 查得到这个群，
+      // 管理平台里却只有别的群）—— 群列表是「这个机器人管得到的群」，
+      // 绑定表就是这份权威来源；`describePermissions` 只保留本人 ≥120 的群，不会越权展示。
+      const boundGroupIds = ((await deps.identityBindings?.findAll()) ?? [])
+        .filter((row) => row.kind === "group")
+        .map((row) => row.officialId);
       const groupIds = new Set<string>([
         ...deps.permissions.listModeratedGroups(userId),
         ...deps.configStore.listOverrideSummaries().map((row) => row.groupId),
+        ...boundGroupIds,
       ]);
       return describePermissions(deps.permissions, userId, [...groupIds], entities);
     },
