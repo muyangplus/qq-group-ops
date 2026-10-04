@@ -7,6 +7,20 @@
 
 ## [Unreleased]
 
+（暂无：以下内容已随 [0.27.3] 发布，见下一节。）
+
+## [0.27.3] - 2026-10-04
+
+
+### 修复
+
+- **自检进程不再参与单实例锁**（0.27.1 起「健康的新构建被自己拦下并回滚」）：真机收到
+  「重启已取消 / 自检退出码 1」，但 `data/startup-check.json` 明明写着 `{"ok":true,…}`，
+  而且**健康的 dist 被回滚成快照**（`data/dist-broken`），于是 0.27.1 / 0.27.2 都升不上去。
+  根因是 0.27.1 加的单实例闸把 `node dist/main.js --check`（只是「跑一遍加载」的自检进程）
+  也算进去了：旧进程还活着（旧版本没有锁文件）→ 自检一抢就被拒 → 退出码 1 →
+  重启被取消 + 回滚。现在抢锁前先短路 `isStartupCheck()`；真正的服务进程照旧抢锁。
+
 （暂无：以下内容已随 [0.27.2] 发布，见下一节。）
 
 ## [0.27.2] - 2026-10-04
@@ -1415,7 +1429,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.2...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.3...HEAD
+[0.27.3]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.2...v0.27.3
 [0.27.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.1...v0.27.2
 [0.27.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.26.0...v0.27.0
