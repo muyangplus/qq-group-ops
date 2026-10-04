@@ -61,6 +61,12 @@ const buttonsText = ref("");
 
 const deleteTarget = ref<AdminApiAnnouncementItem | null>(null);
 const sendTarget = ref<AdminApiAnnouncementItem | null>(null);
+/**
+ * 详情用**弹窗**而不是行内折叠（`<details>`）：折叠区在表格单元格里展开时，
+ * 会把那一列的宽度顶开、整行跟着重排，页面看起来就「错乱」了
+ * （真机反馈）。弹窗不参与表格布局，长 id 也不会撑破列宽。
+ */
+const detailTarget = ref<AdminApiAnnouncementItem | null>(null);
 
 async function load(): Promise<void> {
   if (groupFilter.value.length === 0) {
@@ -368,21 +374,9 @@ function shapeOf(item: AdminApiAnnouncementItem): string {
               >
                 删除
               </button>
-              <div>
-                <details>
-                  <summary class="hint">详情</summary>
-                  <dl class="facts">
-                    <dt>群 ID</dt>
-                    <dd>{{ item.groupId }}</dd>
-                    <dt>任务 ID</dt>
-                    <dd>{{ item.id }}</dd>
-                    <dt>操作者</dt>
-                    <dd>{{ item.createdBy.officialId }}</dd>
-                    <dt>最后修改</dt>
-                    <dd>{{ item.updatedAt }}</dd>
-                  </dl>
-                </details>
-              </div>
+              <button type="button" class="link" @click="detailTarget = item">
+                详情
+              </button>
             </td>
           </tr>
         </tbody>
@@ -463,6 +457,37 @@ function shapeOf(item: AdminApiAnnouncementItem): string {
           这条任务本身还是停用状态，试发不会把它打开。
         </template>
       </p>
+    </ModalDialog>
+
+    <!-- 详情：完整 id / 内部任务 id 只在这里出现（正文只出群号 → 短码） -->
+    <ModalDialog
+      :open="detailTarget !== null"
+      title="定时发言详情"
+      confirm-text="关闭"
+      @close="detailTarget = null"
+      @confirm="detailTarget = null"
+    >
+      <dl v-if="detailTarget" class="facts">
+        <dt>群</dt>
+        <dd>{{ groupLabel(detailTarget.groupId) }}</dd>
+        <dt>群 ID</dt>
+        <dd>{{ detailTarget.groupId }}</dd>
+        <dt>任务 ID</dt>
+        <dd>{{ detailTarget.id }}</dd>
+        <dt>时间表</dt>
+        <dd>
+          <code>{{ detailTarget.cron }}</code>
+          <span v-if="detailTarget.cronError" class="error">
+            {{ detailTarget.cronError }}
+          </span>
+        </dd>
+        <dt>配置者</dt>
+        <dd>{{ detailTarget.createdBy.officialId }}</dd>
+        <dt>最后修改</dt>
+        <dd>{{ detailTarget.updatedAt }}</dd>
+        <dt>上次触发</dt>
+        <dd>{{ detailTarget.lastFiredAt ?? "（还没触发过）" }}</dd>
+      </dl>
     </ModalDialog>
   </section>
 </template>
