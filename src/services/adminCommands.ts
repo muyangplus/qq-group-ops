@@ -97,6 +97,7 @@ import {
   handleBlacklist,
 } from "./commands/blacklistCommands.js";
 import { handlePunish, punishCallbackCard } from "./commands/punishCommands.js";
+import { handleAnnounce } from "./commands/announceCommands.js";
 import { appealCallbackCard, handleAppeal } from "./commands/appealCommands.js";
 import type {
   AdminCommandContext,
@@ -136,6 +137,7 @@ import type { JoinAuditService } from "./joinAudit.js";
 import type { JoinRequestSyncService } from "./joinAuditSync.js";
 import type { ClassAliasService } from "./classAliases.js";
 import type { NotificationService, NotifyChannel } from "./notifications.js";
+import type { ScheduledAnnouncementService } from "./scheduledAnnouncements.js";
 import type { PermissionService } from "./permissions.js";
 import type { UserProfileService } from "./userProfiles.js";
 
@@ -187,6 +189,9 @@ export interface AdminCommandServiceOptions {
 
   /** 入群申请推送（`/notify`）。 */
   notifications?: NotificationService | undefined;
+
+  /** 机器人定时发言（`/announce`，本群群管 130）；未装配时该指令拒绝执行。 */
+  scheduledAnnouncements?: ScheduledAnnouncementService | undefined;
 
   /** §A5 黑名单（本群 / 全局）。 */
   blacklist?: BlacklistService | undefined;
@@ -272,6 +277,9 @@ export class AdminCommandService {
 
   private readonly notifications: NotificationService | undefined;
 
+  /** 机器人定时发言（`/announce`）；未装配时该指令拒绝执行。 */
+  private readonly scheduledAnnouncements: ScheduledAnnouncementService | undefined;
+
   private readonly blacklist: BlacklistService | undefined;
 
   private readonly punishments: PunishmentService | undefined;
@@ -334,6 +342,7 @@ export class AdminCommandService {
     this.activityStatsService = options.activityStats;
     this.activityExportService = options.activityExport;
     this.notifications = options.notifications;
+    this.scheduledAnnouncements = options.scheduledAnnouncements;
     this.blacklist = options.blacklist;
     this.punishments = options.punishments;
     this.appeals = options.appeals;
@@ -620,6 +629,7 @@ export class AdminCommandService {
       activityCards: this.activityCards,
       activityNotifications: this.activityNotifications,
       notifications: this.notifications,
+      scheduledAnnouncements: this.scheduledAnnouncements,
       blacklist: this.blacklist,
       punishments: this.punishments,
       appeals: this.appeals,
@@ -699,6 +709,9 @@ export class AdminCommandService {
       case "推送":
       case "订阅":
         return handleNotify(this.context(), groupId, userId, parts);
+      case "announce":
+      case "定时发言":
+        return handleAnnounce(this.context(), groupId, userId, parts);
       case "blacklist":
       case "black":
       case "黑名单":

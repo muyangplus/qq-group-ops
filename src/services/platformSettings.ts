@@ -23,6 +23,8 @@ export const HOT_SETTING_KEYS = [
   "autoRestartOnDeploy",
   "deployRestartDelayMinutes",
   "deployCheckIntervalMs",
+  "scheduledAnnounceEnabled",
+  "scheduledAnnounceHourlyLimit",
   "activityStatsFontUrl",
   "displayTimezone",
 ] as const;
@@ -138,6 +140,10 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
   boolSetting("autoRestartOnDeploy", "AUTO_RESTART_ON_DEPLOY", "部署后自动重启", "自动重启"),
   intSetting("deployRestartDelayMinutes", "DEPLOY_RESTART_DELAY_MINUTES", "自动重启宽限", "重启宽限", "分钟", 0, 1440),
   intSetting("deployCheckIntervalMs", "DEPLOY_CHECK_INTERVAL_MS", "部署检查周期", "检查周期", "毫秒", 1000, 3_600_000),
+  boolSetting("scheduledAnnounceEnabled", "SCHEDULED_ANNOUNCE_ENABLED", "定时发言总开关", "定时发言"),
+  intSetting("scheduledAnnounceHourlyLimit", "SCHEDULED_ANNOUNCE_HOURLY_LIMIT", "定时发言每小时上限", "发言上限", "条", 0, 100, (value) =>
+    value === 0 ? "不限制" : `每群每小时 ${value} 条`,
+  ),
   {
     key: "activityStatsFontUrl",
     envKey: "ACTIVITY_STATS_FONT_URL",

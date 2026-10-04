@@ -28,6 +28,7 @@ describe("help topic registry", () => {
       "reject",
       "audit",
       "status",
+      "announce",
       "test",
       "whois",
     ]) {

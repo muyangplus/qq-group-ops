@@ -93,6 +93,15 @@ export interface Settings {
   /** 部署监测的扫描间隔（`DEPLOY_CHECK_INTERVAL_MS`，默认 60000；`0` = 关闭监测）。 */
   deployCheckIntervalMs: number;
   /**
+   * 机器人定时发言（`SCHEDULED_ANNOUNCE_ENABLED`，**默认关**）。
+   *
+   * 每群群管可以按 cron 给本群配机器人的定时发言；这个开关是**总开关**，
+   * 关着时所有任务都不触发（任务本身仍然保留，页面上会提示总开关关着）。
+   */
+  scheduledAnnounceEnabled: boolean;
+  /** 定时发言每群每小时上限（`SCHEDULED_ANNOUNCE_HOURLY_LIMIT`，默认 6；`0` = 不限制）。 */
+  scheduledAnnounceHourlyLimit: number;
+  /**
    * 活动统计图片的字体下载地址（`ACTIVITY_STATS_FONT_URL`）。
    *
    * 系统已有中文字体（Windows 雅黑 / Linux Noto CJK 等）时不会用到；
@@ -291,6 +300,11 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     deployCheckIntervalMs: asNonNegativeInt(
       env.DEPLOY_CHECK_INTERVAL_MS,
       60_000,
+    ),
+    scheduledAnnounceEnabled: asBool(env.SCHEDULED_ANNOUNCE_ENABLED, false),
+    scheduledAnnounceHourlyLimit: asNonNegativeInt(
+      env.SCHEDULED_ANNOUNCE_HOURLY_LIMIT,
+      6,
     ),
     activityStatsFontUrl: asText(
       env.ACTIVITY_STATS_FONT_URL,

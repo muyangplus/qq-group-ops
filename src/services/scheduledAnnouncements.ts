@@ -471,8 +471,11 @@ export function renderAnnouncementPreview(options: {
   groupLabel: string;
   globalEnabled: boolean;
   nextTimes: readonly Date[];
+  /** 卡片标题；缺省「定时发言预览」。 */
+  title?: string | undefined;
 }): RichMessage {
   const { announcement, nextTimes } = options;
+  const title = options.title ?? "定时发言预览";
   const lines: string[] = [
     `**范围**：${options.groupLabel}`,
     `**时间表**：\`${announcement.cron}\`（本地时区）`,
@@ -485,6 +488,13 @@ export function renderAnnouncementPreview(options: {
   ];
   if (announcement.content.quote !== undefined) {
     lines.push(`**引用块**：${announcement.content.quote.split("\n")[0] ?? ""}`);
+  }
+  if (announcement.content.buttons.length > 0) {
+    lines.push(
+      `**按钮**：${announcement.content.buttons
+        .map((button) => `${button.label}（\`${button.command}\`${button.reply === true ? " 带引用" : ""}）`)
+        .join("、")}`,
+    );
   }
   if (announcement.content.reference) {
     lines.push("**引用回复**：尽力而为（5 分钟内本群有机器人消息才带得上）");
@@ -506,8 +516,8 @@ export function renderAnnouncementPreview(options: {
     lines.push(...quoteCardLines(announcement.content.quote));
   }
   return {
-    markdown: `## 定时发言预览\n${lines.join("\n")}`,
-    text: `【定时发言预览】\n${lines.join("\n")}`,
+    markdown: `## ${title}\n${lines.join("\n")}`,
+    text: `【${title}】\n${lines.join("\n")}`,
   };
 }
 
@@ -978,7 +988,12 @@ export class ScheduledAnnouncementService {
 
   public preview(
     announcement: ScheduledAnnouncement,
-    options: { groupLabel: string; globalEnabled: boolean; count?: number },
+    options: {
+      groupLabel: string;
+      globalEnabled: boolean;
+      count?: number;
+      title?: string | undefined;
+    },
   ): RichMessage {
     return renderAnnouncementPreview({
       announcement,
@@ -988,6 +1003,7 @@ export class ScheduledAnnouncementService {
         announcement.cron,
         options.count ?? ANNOUNCEMENT_NEXT_TIMES,
       ),
+      ...(options.title !== undefined ? { title: options.title } : {}),
     });
   }
 

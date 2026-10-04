@@ -85,6 +85,10 @@ import { ModerationNotifier } from "./services/moderationNotifier.js";
 import { RuleEngine } from "./services/moderation.js";
 import { NotificationService } from "./services/notifications.js";
 import { NotifyTopicLevelStore } from "./services/notifyTopics.js";
+import {
+  ScheduledAnnouncementService,
+  ScheduledAnnouncementStore,
+} from "./services/scheduledAnnouncements.js";
 import { createRestartHook, type RestartHook, type RestartRequestHandler } from "./services/restart.js";
 import type { DeployControl } from "./services/deployWatcher.js";
 import { PermissionService } from "./services/permissions.js";
@@ -131,6 +135,8 @@ export interface Runtime {
   notifications: NotificationService;
   /** 通知话题门槛（全局一套，存 `group_settings.__default__`）。 */
   notifyTopics: NotifyTopicLevelStore;
+  /** 机器人定时发言（每群群管 130 各自配；默认关闭，走统一计时器触发）。 */
+  scheduledAnnouncements: ScheduledAnnouncementService;
   /** `/restart` 的重启钩子（未装配时该指令拒绝执行）。 */
   restart: RestartHook;
   /** 部署监测（新版本自动重启）的控制面；未装配时没有待重启状态。 */
@@ -336,6 +342,19 @@ export function createRuntime(
     repositories.groupSettings,
     writeQueue,
   );
+  // 定时发言（TODO §2 的 P0）：每群一套任务，存群配置 KV（老库免迁移）；
+  // 总开关与每小时上限都是热配置，读时取值 —— 关掉总开关只是不触发，任务本身不丢。
+  const announcementStore = new ScheduledAnnouncementStore(
+    repositories.groupSettings,
+    writeQueue,
+  );
+  const scheduledAnnouncements = new ScheduledAnnouncementService({
+    store: announcementStore,
+    sender: richMessages,
+    audit: auditLog,
+    hourlyLimit: () => platform.get("scheduledAnnounceHourlyLimit"),
+    groupLabel: (groupId) => display.group(groupId),
+  });
   const restart = createRestartHook(dependencies.onRestartRequested);
   const notifications = new NotificationService(api, permissions, {
     subscriptions: repositories.notificationSubscriptions,
@@ -571,6 +590,7 @@ export function createRuntime(
     { key: "shortcode", load: () => shortCodes.load() },
     { key: "profile", load: () => userProfiles.load() },
     { key: "alias", load: () => classAliases.load() },
+    { key: "announce", load: () => announcementStore.load() },
     { key: "menu", load: () => menuState.load() },
   ]);
   const adminCommands = new AdminCommandService({
@@ -1235,6 +1255,7 @@ export function createRuntime(
     exportService,
     notifications,
     notifyTopics,
+    scheduledAnnouncements,
     restart,
     deploy: dependencies.deploy,
     blacklist,

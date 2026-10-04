@@ -31,6 +31,7 @@ import type { PermissionService } from "../permissions.js";
 import type { PunishmentService } from "../punishments.js";
 import type { RestartHook } from "../restart.js";
 import type { RichMessageSender } from "../richMessages.js";
+import type { ScheduledAnnouncementService } from "../scheduledAnnouncements.js";
 import type { UserProfileService } from "../userProfiles.js";
 import type { CardResult, CommandResult } from "./support.js";
 
@@ -119,6 +120,8 @@ export interface AdminCommandContext {
   readonly activityCards: ActivityCardService | undefined;
   readonly activityNotifications: ActivityNotificationService | undefined;
   readonly notifications: NotificationService | undefined;
+  /** 机器人定时发言（`/announce`，本群群管 130）；未装配时该指令拒绝执行。 */
+  readonly scheduledAnnouncements: ScheduledAnnouncementService | undefined;
   /** §A5 黑名单（本群 / 全局）。 */
   readonly blacklist: BlacklistService | undefined;
   /** §B7 处罚记录与卡片动作。 */

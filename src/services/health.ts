@@ -24,6 +24,7 @@ export const MODULE_KEYS = [
   "shortcode",
   "profile",
   "alias",
+  "announce",
   "menu",
 ] as const;
 export type ModuleKey = (typeof MODULE_KEYS)[number];
@@ -43,6 +44,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   shortcode: "短码",
   profile: "个人资料",
   alias: "班级别名",
+  announce: "定时发言",
   menu: "菜单推送",
 };
 
