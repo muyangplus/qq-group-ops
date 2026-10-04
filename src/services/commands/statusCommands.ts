@@ -306,6 +306,12 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
     lines.push("", ...moduleStatusLines(ctx.health, undefined));
     return lines;
   }
+  const target = ctx.install?.rollbackTarget();
+  if (target) {
+    lines.push(
+      `**可回滚**：v${target.version}（当前生效 v${target.currentVersion}，包在 \`data/packages/\`）`,
+    );
+  }
   const settings = diagnostics.settings;
   const notify = ctx.notifications?.stats();
   const queue = diagnostics.writeQueue;
@@ -348,14 +354,40 @@ export function processCard(
     });
     return { ok: false, text: card.text, rich: card };
   }
-  return cardFromText("进程状态", processDetailLines(ctx).join("\n"), {
-    rows: [
-      [
-        viewButton("refresh", "刷新", "status", "proc"),
-        viewButton("help", "指令帮助", "help", "topic", "status"),
-      ],
+  // 回滚入口（ADR-0065 第 3 条）：只有当**归档里真的还有上一个包**时才出现；
+  // 动作不可逆（会把现役产物换成旧版本，必须重启才生效），所以按钮带官方二次确认弹窗。
+  const target = ctx.install?.rollbackTarget();
+  const rows: CardButton[][] = [
+    [
+      viewButton("refresh", "刷新", "status", "proc"),
+      viewButton("help", "指令帮助", "help", "topic", "status"),
     ],
-  });
+  ];
+  if (target) {
+    // 回滚单独一行：动作不可逆（官方会先弹二次确认），不该和导航按钮挤在一起
+    rows.push([rollbackButton(target.version, target.currentVersion)]);
+  }
+  return cardFromText("进程状态", processDetailLines(ctx).join("\n"), { rows });
+}
+
+/**
+ * 回滚按钮（ADR-0065 第 3 条）：官方二次确认弹窗 + 回调。
+ *
+ * 弹窗正文必须 ≤ 40 字（超限会让**整张卡片的按钮全部消失**，见 `cardTemplate.ts`），
+ * 所以这里只写「换回哪个版本」，理由留给执行后的回执卡。
+ */
+function rollbackButton(targetVersion: string, currentVersion: string): CardButton {
+  return {
+    id: "rollback",
+    label: "回滚上一版",
+    callbackData: encodeCallback("deploy", "rollback"),
+    style: 3,
+    modal: {
+      content: `确认回滚 v${currentVersion} → v${targetVersion}？`,
+      confirmText: "回滚",
+      cancelText: "取消",
+    },
+  };
 }
 
 export function statusCard(

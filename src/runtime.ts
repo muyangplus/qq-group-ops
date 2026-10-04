@@ -92,6 +92,11 @@ import {
 import { createRestartHook, type RestartHook, type RestartRequestHandler } from "./services/restart.js";
 import type { DeployControl } from "./services/deployWatcher.js";
 import type { InstallerControl } from "./services/deployInstaller.js";
+import {
+  runningBuildInfo,
+  runningCommit,
+  runningVersionOf,
+} from "./core/buildInfo.js";
 import { PermissionService } from "./services/permissions.js";
 import { PunishmentService } from "./services/punishments.js";
 import { RichMessageSender } from "./services/richMessages.js";
@@ -193,6 +198,17 @@ export interface AdminApiHostSource {
   databaseDriver: string;
   /** 读 + 写后端：直接调本进程的领域服务，写端点自带权限校验与审计。 */
   backend: ReturnType<typeof createAdminApiBackend>;
+  /** 构建自证（ADR-0065）：`/healthz` 暴露版本号、`dist` 指纹、commit 与回滚目标。 */
+  buildIdentity?: AdminApiBuildIdentity | undefined;
+}
+
+/** `/healthz` 的构建自证信息（版本 / 指纹 / commit / 当前生效与可回滚版本）。 */
+export interface AdminApiBuildIdentity {
+  version: string;
+  distFingerprint?: string | undefined;
+  buildInfoCommit?: string | undefined;
+  appliedVersion?: string | undefined;
+  rollbackVersion?: string | undefined;
 }
 
 export interface RuntimeRepositories {
@@ -684,6 +700,9 @@ export function createRuntime(
         }
         if (parsed.action === "now") {
           return adminCommands.deployRestartNowCard(userId, event.groupId).rich;
+        }
+        if (parsed.action === "rollback") {
+          return (await adminCommands.deployRollbackCard(userId)).rich;
         }
         return undefined;
       },
@@ -1293,6 +1312,7 @@ export function createRuntime(
             tokens: repositories.adminTokens,
             databaseDriver: dependencies.databaseDriver ?? "memory",
             backend: adminApiBackend,
+            buildIdentity: buildIdentityOf(dependencies.installer),
           }
         : undefined,
     router: new EventRouter(
@@ -1309,6 +1329,28 @@ export function createRuntime(
       await notifyTopics.flush();
       await activityNotifications.flush();
     },
+  };
+}
+
+/**
+ * 构建自证（ADR-0065）：给同进程管理 API 的 `/healthz` 用。
+ *
+ * 版本 / 指纹 / commit 都在启动时固化（`runningVersionOf` / `runningBuildInfo`）；
+ * `applied*` 与可回滚版本来自包安装器的状态文件 —— 没装配安装器（纯单测 / 未接线）时省略。
+ */
+function buildIdentityOf(installer: InstallerControl | undefined): AdminApiBuildIdentity {
+  const buildInfo = runningBuildInfo();
+  const commit = runningCommit();
+  const applied = installer?.appliedVersion();
+  const target = installer?.rollbackTarget();
+  return {
+    version: runningVersionOf(),
+    ...(buildInfo?.distFingerprint !== undefined
+      ? { distFingerprint: buildInfo.distFingerprint }
+      : {}),
+    ...(commit !== undefined ? { buildInfoCommit: commit } : {}),
+    ...(applied !== undefined && applied.length > 0 ? { appliedVersion: applied } : {}),
+    ...(target !== undefined ? { rollbackVersion: target.version } : {}),
   };
 }
 

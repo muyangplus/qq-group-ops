@@ -67,11 +67,13 @@ export interface AdminApiServerOptions {
   logger?: Logger | undefined;
   version?: string | undefined;
   /**
-   * 构建自证（ADR-0065）：`dist/` 指纹与构建来源 commit，暴露在 `/healthz` 与
-   * `/api/health` 的进程信息里。留空表示「没有自证文件」（源码直接跑）。
+   * 构建自证（ADR-0065）：`dist/` 指纹、构建来源 commit、当前生效版本与可回滚版本，
+   * 暴露在 `/healthz` 与 `/api/health` 的进程信息里。留空表示「没有自证文件」（源码直接跑）。
    */
   distFingerprint?: string | undefined;
   buildInfoCommit?: string | undefined;
+  appliedVersion?: string | undefined;
+  rollbackVersion?: string | undefined;
   uptimeMs?: (() => number) | undefined;
   /**
    * 只读状态来源（E1-c）：数据库类型与启动期迁移问题数由入口注入；
@@ -361,6 +363,30 @@ export interface AdminApiDeliveriesView {
     /** `data/dist-broken/` 是否存在（说明历史上换过一次坏构建）。 */
     brokenBuild: boolean;
   };
+  /**
+   * 部署状态（ADR-0065）：当前生效版本 + 可回滚版本。
+   *
+   * 后台「状态」页据此显示「回滚到上一版本」按钮；没有安装器 / 没有上一个包时不带这个字段。
+   */
+  deploy?: AdminApiDeployState | undefined;
+}
+
+/** 回滚入口的进度快照（`/api/health` 与后台「状态」页用）。 */
+export interface AdminApiDeployState {
+  /** 当前生效的版本（`data/deploy-state.json` 的 `appliedVersion`）。 */
+  appliedVersion: string;
+  /** 可回滚到的版本（没有就不带这个字段）。 */
+  rollbackVersion?: string | undefined;
+}
+
+/** 回滚回执：`vX → vY` + 人话结果（与指令层回执同一份口径）。 */
+export interface AdminApiDeployRollbackResult {
+  ok: boolean;
+  /** 回滚前的版本（回执里的 `vX`）。 */
+  fromVersion: string;
+  /** 回滚到的版本（回执里的 `vY`）。 */
+  toVersion: string;
+  message: string;
 }
 
 /** 「订阅关系」只读视图里的一行（`GET /api/notify/subscriptions`，平台超管 240）。 */
@@ -816,6 +842,14 @@ export interface AdminApiWriters {
    */
   retryModule(key: string, actorId: string): Promise<AdminApiModuleRetryResult>;
   /**
+   * 回滚到上一个版本（ADR-0065；平台超管 240）。
+   *
+   * 与机器人 `/status proc` 卡片上的「回滚上一版」**同一个安装器**：重新应用
+   * `data/packages/` 里的上一个包（同一套指纹自证 → 整目录替换 → 重启），
+   * 回执写明 `vX → vY`。只读巡检模式没有安装器 → 503。
+   */
+  rollbackDeploy(actorId: string): Promise<AdminApiDeployRollbackResult>;
+  /**
    * 立刻作废某个成员手上**全部未用**的登录令牌（平台超管 240）。
    *
    * 用途：`/admin login` 的链接发错了人 —— 不必等 TTL 到期。
@@ -1252,6 +1286,9 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     // 构建自证（ADR-0065）：现场不用翻日志就能确认「跑的是哪份产物、哪次构建」。
     distFingerprint: options.distFingerprint ?? "unavailable",
     buildInfoCommit: options.buildInfoCommit ?? "unknown",
+    // 包安装器的状态：当前生效版本 / 可回滚到的版本（`vX → vY` 的 `vY`）。
+    appliedVersion: options.appliedVersion ?? "unknown",
+    rollbackVersion: options.rollbackVersion ?? "",
   }));
 
   app.post("/auth/token", async (request, reply) => {
@@ -1824,6 +1861,24 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     const { key } = request.params as { key: string };
     const result = await writers.retryModule(key.trim(), actorOf(request));
     return { ok: result.recovered, result };
+  });
+
+  /**
+   * 回滚到上一个版本（ADR-0065 第 3 条；运维写，平台超管 240）。
+   *
+   * 与机器人 `/status proc` 的「回滚上一版」**同一个入口**：重新应用 `data/packages/`
+   * 里的上一个包（指纹自证 → 整目录替换 → 重启钩子），回执写明 `vX → vY`。
+   * 只读巡检模式没有安装器 → 503；「没得回滚」不是 HTTP 错误，用 `ok:false` 如实回。
+   */
+  app.post("/api/deploy/rollback", async (request, reply) => {
+    const writers = options.writers;
+    if (!writers) {
+      return reply
+        .code(503)
+        .send(errorBody("unavailable", "写端点未装配（只读巡检模式）。"));
+    }
+    const result = await writers.rollbackDeploy(actorOf(request));
+    return { ok: result.ok, result };
   });
 
   /**

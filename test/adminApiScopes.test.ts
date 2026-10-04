@@ -12,6 +12,7 @@ import {
 import {
   ADMIN_API_KNOWN_SCOPES,
   ADMIN_API_ROUTE_SCOPES,
+  ADMIN_API_SCOPE_DOMAINS,
   requiredScopeFor,
 } from "../src/adminApi/scopes.js";
 
@@ -89,6 +90,12 @@ describe("端点 → scope 登记", () => {
     // 只读域没有写 scope
     expect(ADMIN_API_KNOWN_SCOPES).not.toContain("write:reports");
     expect(ADMIN_API_KNOWN_SCOPES).not.toContain("write:audit");
+    // 部署（回滚）是平台级写域（ADR-0065）
+    expect(ADMIN_API_KNOWN_SCOPES).toContain("read:deploy");
+    expect(ADMIN_API_KNOWN_SCOPES).toContain("write:deploy");
+    expect(requiredScopeFor("POST", "/api/deploy/rollback")).toBe("write:deploy");
+    const deploy = ADMIN_API_SCOPE_DOMAINS.find((meta) => meta.domain === "deploy");
+    expect(deploy?.platformOnly).toBe(true);
   });
 });
 

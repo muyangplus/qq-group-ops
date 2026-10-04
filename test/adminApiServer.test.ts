@@ -107,6 +107,41 @@ describe("管理 API HTTP 层", () => {
     await app.close();
   });
 
+  it("/healthz 带构建自证与部署状态（ADR-0065）：版本 / 指纹 / commit / 可回滚版本", async () => {
+    const tokens = memoryTokens();
+    const app = buildAdminApiServer({
+      config: CONFIG,
+      tokens,
+      version: "0.28.0",
+      distFingerprint: "sha1-abcdef",
+      buildInfoCommit: "c0ffee",
+      appliedVersion: "0.28.0",
+      rollbackVersion: "0.27.3",
+    }).app;
+
+    const response = await app.inject({ method: "GET", url: "/healthz" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      version: "0.28.0",
+      distFingerprint: "sha1-abcdef",
+      buildInfoCommit: "c0ffee",
+      appliedVersion: "0.28.0",
+      rollbackVersion: "0.27.3",
+    });
+
+    // 没装配时如实回 unavailable / unknown，而不是编一个指纹
+    const bare = buildAdminApiServer({ config: CONFIG, tokens }).app;
+    expect((await bare.inject({ method: "GET", url: "/healthz" })).json()).toMatchObject({
+      distFingerprint: "unavailable",
+      buildInfoCommit: "unknown",
+      appliedVersion: "unknown",
+      rollbackVersion: "",
+    });
+    await app.close();
+    await bare.close();
+  });
+
   it("未登录访问受保护端点返回 401", async () => {
     const { app } = build();
 

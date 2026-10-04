@@ -1181,6 +1181,7 @@ async function startAdminApiIfEnabled(
     return undefined;
   }
   const log = getLogger("main");
+  const identity = source.buildIdentity;
   if (!source.tokens) {
     // 真机上这条曾经误导过一次：明明配了 SQLITE_PATH，却报「没有数据库」——
     // 真实原因是生产装配漏传了 adminTokens 仓储。所以这里必须把**实际原因**写清楚。
@@ -1200,8 +1201,10 @@ async function startAdminApiIfEnabled(
       backend: source.backend,
       version: appVersion(),
       // 构建自证（ADR-0065）：`/healthz` 与 `/status proc` 看得到「跑的是哪份产物、哪次构建」
-      distFingerprint: runningBuildInfo()?.distFingerprint,
-      buildInfoCommit: runningCommit(),
+      distFingerprint: identity?.distFingerprint,
+      buildInfoCommit: identity?.buildInfoCommit,
+      appliedVersion: identity?.appliedVersion,
+      rollbackVersion: identity?.rollbackVersion,
       uptimeMs: () => Math.round(process.uptime() * 1000),
       logger: getLogger("admin-api"),
     });

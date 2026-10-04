@@ -510,6 +510,28 @@ export interface AdminApiHealthView {
     rollback?: { reason: string; at: string };
     brokenBuild: boolean;
   };
+  /**
+   * 部署状态（ADR-0065）：当前生效版本 + 可回滚版本。
+   *
+   * 没装配安装器 / 没有上一个包时不带这个字段（页面据此隐藏「回滚到上一版本」按钮）。
+   */
+  deploy?: AdminApiDeployState;
+}
+
+/** 部署状态（`/api/health` 的 `deploy`）：`rollbackVersion` 就是「回滚到上一版本」的目标。 */
+export interface AdminApiDeployState {
+  /** 当前生效的版本（`data/deploy-state.json` 的 `appliedVersion`）。 */
+  appliedVersion: string;
+  /** 可回滚到的版本；没有就不带这个字段。 */
+  rollbackVersion?: string;
+}
+
+/** 回滚回执：`vX → vY` + 人话结果（与机器人 `/status proc` 回执同一份口径）。 */
+export interface AdminApiDeployRollbackResult {
+  ok: boolean;
+  fromVersion: string;
+  toVersion: string;
+  message: string;
 }
 
 /** 订阅关系只读的一行（`GET /api/notify/subscriptions`，平台超管 240）。 */
@@ -776,6 +798,18 @@ export const adminApi = {
   ): Promise<{ ok: boolean; result: AdminApiModuleRetryResult }> =>
     api.post<{ ok: boolean; result: AdminApiModuleRetryResult }>(
       `/api/health/modules/${encodeURIComponent(key)}/retry`,
+    ),
+
+  /**
+   * 回滚到上一个版本（ADR-0065；平台超管 240）。
+   *
+   * 与机器人 `/status proc` 卡片上的「回滚上一版」是**同一个安装器**：
+   * 重新应用 `data/packages/` 里的上一个包（指纹自证 → 整目录替换 → 重启）。
+   * 「没得回滚」不是 HTTP 错误，靠 `result.ok === false` + 原话表达。
+   */
+  rollbackDeploy: (): Promise<{ ok: boolean; result: AdminApiDeployRollbackResult }> =>
+    api.post<{ ok: boolean; result: AdminApiDeployRollbackResult }>(
+      "/api/deploy/rollback",
     ),
 
   /** 处罚记录（只读）：平台超管不传 group 看全量，其余人必须带 group。 */

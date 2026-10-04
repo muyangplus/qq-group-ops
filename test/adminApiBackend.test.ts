@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { FakeQQOfficialAPI } from "../src/adapters/fakeQqOfficial.js";
 import { AdminApiRequestError } from "../src/adminApi/errors.js";
@@ -18,6 +18,7 @@ import { JoinApprovalService } from "../src/services/joinApproval.js";
 import { JoinAuditService } from "../src/services/joinAudit.js";
 import { PermissionService } from "../src/services/permissions.js";
 import type { AdminApiBackend } from "../src/adminApi/backend.js";
+import type { InstallerControl } from "../src/services/deployInstaller.js";
 
 /**
  * 管理 API 的**写端点后端**（E1-d）。
@@ -612,5 +613,138 @@ describe("createAdminApiBackend：权限画像与状态", () => {
     await expect(backend.approveJoin("nope", "boss")).rejects.toBeInstanceOf(
       AdminApiRequestError,
     );
+  });
+});
+
+/** 部署回滚（ADR-0065）：同一套安装器、平台超管 240、回执写 `vX → vY`、审计留痕。 */
+describe("createAdminApiBackend：部署回滚", () => {
+  function installerHarness(options: {
+    version?: string;
+    current?: string;
+    fail?: string;
+  } = {}) {
+    const auditLog = new AuditLogStore();
+    const permissions = new PermissionService({ superAdminIds: new Set(["boss"]) });
+    const rolledBack: string[] = [];
+    const installer: InstallerControl = {
+      rollbackTarget: () =>
+        options.version === undefined
+          ? undefined
+          : {
+              version: options.version,
+              currentVersion: options.current ?? "0.28.1",
+              sha256: "abc",
+            },
+      appliedVersion: () => options.current ?? "0.28.1",
+      rollback: async () => {
+        rolledBack.push(options.version ?? "");
+        return options.fail !== undefined
+          ? {
+              ok: false,
+              version: options.version ?? "",
+              code: "no_package",
+              message: options.fail,
+            }
+          : {
+              ok: true,
+              version: options.version ?? "",
+              code: "ok",
+              message: `已回滚到 v${options.version ?? ""}（v${options.current ?? "0.28.1"} → v${options.version ?? ""}），重启后生效。`,
+              rolledBack: true,
+            };
+      },
+    };
+    const backend = createAdminApiBackend({
+      permissions,
+      auditLog,
+      joinAudit: new JoinAuditService(auditLog),
+      joinApproval: new JoinApprovalService(
+        new FakeQQOfficialAPI(),
+        new JoinAuditService(auditLog),
+        new GroupConfigStore({ groupId: DEFAULT_GROUP_ID }),
+      ),
+      configStore: new GroupConfigStore({ groupId: DEFAULT_GROUP_ID }),
+      activity: new ActivityService(),
+      activityExport: new ActivityExportService({ profiles: { get: () => undefined } }),
+      installer,
+    });
+    return { backend, auditLog, rolledBack };
+  }
+
+  it("平台超管回滚：调同一个安装器、回执写 vX → vY、审计记 Executed", async () => {
+    const h = installerHarness({ version: "0.28.0" });
+
+    const result = await h.backend.rollbackDeploy("boss");
+
+    expect(result).toMatchObject({
+      ok: true,
+      fromVersion: "0.28.1",
+      toVersion: "0.28.0",
+    });
+    expect(h.rolledBack).toEqual(["0.28.0"]);
+    const records = h.auditLog.all();
+    expect(records.at(-1)?.action).toBe("admin_api:deploy_rollback");
+    expect(records.at(-1)?.status).toBe(AuditStatus.Executed);
+    expect(records.at(-1)?.reason).toContain("v0.28.1 → v0.28.0");
+  });
+
+  it("非平台超管：403 + 拒绝审计，安装器一次都没被调", async () => {
+    const h = installerHarness({ version: "0.28.0" });
+
+    await expect(h.backend.rollbackDeploy("op1")).rejects.toMatchObject({
+      statusCode: 403,
+    });
+    expect(h.rolledBack).toEqual([]);
+    expect(h.auditLog.all().at(-1)?.action).toBe("admin_api:denied");
+  });
+
+  it("没得回滚 / 回滚失败：ok=false 如实回原因（不是 500）", async () => {
+    const none = installerHarness();
+    await expect(none.backend.rollbackDeploy("boss")).resolves.toMatchObject({
+      ok: false,
+      toVersion: "",
+    });
+    expect(none.auditLog.all().at(-1)?.status).toBe(AuditStatus.Rejected);
+
+    const failing = installerHarness({ version: "0.28.0", fail: "归档里找不到 v0.28.0 的包。" });
+    await expect(failing.backend.rollbackDeploy("boss")).resolves.toMatchObject({
+      ok: false,
+      message: "归档里找不到 v0.28.0 的包。",
+    });
+    expect(failing.auditLog.all().at(-1)?.status).toBe(AuditStatus.Rejected);
+  });
+
+  it("只读巡检模式（没装配安装器）：503，不假装成功", async () => {
+    const auditLog = new AuditLogStore();
+    const backend = createAdminApiBackend({
+      permissions: new PermissionService({ superAdminIds: new Set(["boss"]) }),
+      auditLog,
+      joinAudit: new JoinAuditService(auditLog),
+      joinApproval: new JoinApprovalService(
+        new FakeQQOfficialAPI(),
+        new JoinAuditService(auditLog),
+        new GroupConfigStore({ groupId: DEFAULT_GROUP_ID }),
+      ),
+      configStore: new GroupConfigStore({ groupId: DEFAULT_GROUP_ID }),
+      activity: new ActivityService(),
+      activityExport: new ActivityExportService({ profiles: { get: () => undefined } }),
+    });
+
+    await expect(backend.rollbackDeploy("boss")).rejects.toMatchObject({
+      statusCode: 503,
+    });
+  });
+
+  it("health 视图带上部署状态（当前生效 + 可回滚版本）", async () => {
+    const h = installerHarness({ version: "0.28.0", current: "0.28.1" });
+    const view = await h.backend.health();
+    expect(view.deploy).toEqual({
+      appliedVersion: "0.28.1",
+      rollbackVersion: "0.28.0",
+    });
+
+    // 没得回滚时只给当前版本（界面据此隐藏按钮）
+    const none = installerHarness({ current: "0.28.1" });
+    expect((await none.backend.health()).deploy).toEqual({ appliedVersion: "0.28.1" });
   });
 });

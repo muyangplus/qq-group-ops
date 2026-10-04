@@ -38,7 +38,16 @@ const pendingRevoke = ref<AdminApiTokensView["items"][number] | null>(null);
 const revoking = ref(false);
 const tokenNotice = ref<{ ok: boolean; text: string } | null>(null);
 
+// —— 部署回滚（ADR-0065，平台超管 240）：回滚 = 重新应用 data/packages/ 里的上一个包
+const rollbackOpen = ref(false);
+const rollingBack = ref(false);
+const rollbackNotice = ref<{ ok: boolean; text: string } | null>(null);
+
 const allowed = computed(() => session.isSuperAdmin);
+
+/** 可回滚目标（`/api/health` 的 `deploy`）：没有上一个包时为空串，界面据此隐藏按钮。 */
+const rollbackVersion = computed(() => health.value?.deploy?.rollbackVersion ?? "");
+const appliedVersion = computed(() => health.value?.deploy?.appliedVersion ?? "");
 
 /** 只读巡检模式（`pnpm admin:api`）没有调度器与内存态：那两个端点回 503，不该把整页打成错误。 */
 function nullOnUnavailable(err: unknown): null {
@@ -110,6 +119,35 @@ async function confirmRevoke(): Promise<void> {
   } finally {
     revoking.value = false;
     pendingRevoke.value = null;
+  }
+}
+
+/**
+ * 确认回滚到上一个版本（ADR-0065，平台超管 240）。
+ *
+ * 回滚不是「把文件换回去」：它走的是与安装新包**同一套**流程（重新应用
+ * `data/packages/` 里的上一个包 → 指纹自证 → 整目录替换 → 重启），
+ * 所以这里只负责二次确认与展示回执，校验与替换全在服务端安装器里。
+ */
+async function confirmRollback(): Promise<void> {
+  rollingBack.value = true;
+  rollbackNotice.value = null;
+  try {
+    const response = await adminApi.rollbackDeploy();
+    rollbackNotice.value = {
+      ok: response.result.ok,
+      text: response.result.message,
+    };
+    // 回滚成功会把现役产物换成旧版本（并重启）；刷新健康表看新的部署状态
+    health.value = await adminApi.health().catch(nullOnUnavailable);
+  } catch (err) {
+    rollbackNotice.value = {
+      ok: false,
+      text: err instanceof ApiError ? err.message : String(err),
+    };
+  } finally {
+    rollingBack.value = false;
+    rollbackOpen.value = false;
   }
 }
 
@@ -377,6 +415,40 @@ function formatBytes(bytes: number): string {
           （与机器人 `/status proc` 的重试加载是同一个入口，幂等）。
         </p>
 
+        <h3 class="row-title">部署</h3>
+        <dl class="facts">
+          <dt>当前生效版本</dt>
+          <dd>
+            <code>{{ appliedVersion || "—" }}</code>
+            <span v-if="!health.deploy" class="hint">
+              （没有部署状态：本进程没装配包安装器）
+            </span>
+          </dd>
+          <dt>回滚</dt>
+          <dd>
+            <template v-if="rollbackVersion">
+              <button type="button" class="link" :disabled="rollingBack" @click="rollbackOpen = true">
+                回滚到 v{{ rollbackVersion }}
+              </button>
+              <span class="hint">
+                重新应用 <code>data/packages/</code> 里的上一个包（同一套指纹自证），
+                改完要重启才生效。
+              </span>
+            </template>
+            <span v-else-if="health.deploy" class="hint">
+              没有可回滚的上一个包（`data/packages/` 为空或 `deploy-state.json` 里没有上一版）。
+            </span>
+            <span v-else>—</span>
+          </dd>
+        </dl>
+        <p
+          v-if="rollbackNotice"
+          id="deploy-rollback-notice"
+          :class="rollbackNotice.ok ? 'hint' : 'error'"
+        >
+          {{ rollbackNotice.text }}
+        </p>
+
         <h3 class="row-title">恢复现场</h3>
         <dl class="facts">
           <dt>最近重启失败</dt>
@@ -502,6 +574,27 @@ function formatBytes(bytes: number): string {
           :fallback="pendingRevoke.userId"
         />
         · {{ pendingRevoke.count }} 张
+      </p>
+    </ModalDialog>
+
+    <!-- 部署回滚（ADR-0065）：把现役产物换成上一个包，改完重启才生效，所以先确认 -->
+    <ModalDialog
+      :open="rollbackOpen"
+      title="确认回滚到上一版本？"
+      confirm-text="确认回滚"
+      :busy="rollingBack"
+      @confirm="confirmRollback"
+      @close="rollbackOpen = false"
+    >
+      <p>
+        会重新应用 <code>data/packages/</code> 里的上一个包（同一套 sha / 指纹自证 + 整目录替换），
+        然后<b>重启机器人</b>加载它 —— 当前版本会被换下去，期间机器人约几秒不可用。
+      </p>
+      <p v-if="rollbackVersion" class="hint">
+        v{{ appliedVersion }} → v{{ rollbackVersion }}
+      </p>
+      <p class="hint">
+        回滚会作废 FTP 同步状态，所以下一轮 CD 会自动全量上传（一次性，不是每次都全量）。
       </p>
     </ModalDialog>
   </section>

@@ -64,6 +64,7 @@ import {
 import {
   deployCancelCard,
   deployRestartNowCard,
+  deployRollbackCard,
 } from "./commands/deployCommands.js";
 import {
   migrateCard,
@@ -905,6 +906,11 @@ export class AdminCommandService {
   /** 回调：`cb:deploy:now` —— 立即重启加载新版本。 */
   public deployRestartNowCard(userId: string, replyGroupId?: string): CardResult {
     return deployRestartNowCard(this.context(), userId, replyGroupId);
+  }
+
+  /** 回调：`cb:deploy:rollback` —— 回滚到上一个版本（重新应用归档里的包）。 */
+  public deployRollbackCard(userId: string): Promise<CardResult> {
+    return deployRollbackCard(this.context(), userId);
   }
 
   /** `/migrate`：一次性数据迁移的只读预览（仅全局超管、只私信）。 */

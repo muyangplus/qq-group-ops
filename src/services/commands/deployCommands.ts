@@ -105,3 +105,76 @@ export function deployRestartNowCard(
     },
   );
 }
+
+/**
+ * 回调：`cb:deploy:rollback` —— **回滚到上一个版本**（ADR-0065 第 3 条）。
+ *
+ * 回滚不是「把文件换回去就完事」：它走的是与安装新包**同一套**流程
+ * （重新应用 `data/packages/` 里的上一个包 → sha 之外的指纹自证 → 整目录替换 → 重启），
+ * 所以这里只负责说清「换了什么」，真正的校验与替换交给 `DeployInstaller`。
+ *
+ * 按钮上已经有官方的二次确认弹窗（`/status proc` 卡片），所以回调进来就直接执行。
+ */
+export async function deployRollbackCard(
+  ctx: AdminCommandContext,
+  userId: string,
+): Promise<CardResult> {
+  if (!isSuperAdmin(ctx, userId)) {
+    return denied("回滚只有全局超管可以操作。");
+  }
+  const install = ctx.install;
+  const target = install?.rollbackTarget();
+  if (!install || !target) {
+    return cardFromText(
+      "没有可回滚的版本",
+      [
+        "现在没有可回滚的上一个版本（`data/deploy-state.json` 里没有 `previousVersion`，",
+        "或 `data/packages/` 里已经没有那个包了）。",
+        "",
+        "运维手工路径见 `docs/OPERATIONS.md` 的「手工救急」。",
+      ].join("\n"),
+      {
+        rows: [
+          [
+            viewButton("proc", "进程状态", "status", "proc"),
+            viewButton("help", "指令帮助", "help", "topic", "restart"),
+          ],
+        ],
+      },
+    );
+  }
+
+  const result = await install.rollback();
+  const rows = [
+    [
+      viewButton("proc", "回滚后看进程", "status", "proc"),
+      viewButton("help", "指令帮助", "help", "topic", "restart"),
+    ],
+  ];
+  if (!result.ok) {
+    return {
+      ...cardFromText(
+        "回滚没成功",
+        [
+          `**目标版本**：v${target.version}（当前 v${target.currentVersion}）`,
+          `**原因**：${result.message}`,
+          "",
+          "现役产物没有被改动（安装器在替换之前就拒绝了）；机器人继续按当前版本工作。",
+          "可以稍后再试，或按 `docs/OPERATIONS.md` 的「手工救急」处理。",
+        ].join("\n"),
+        { rows },
+      ),
+      ok: false,
+    };
+  }
+  return cardFromText(
+    "正在回滚",
+    [
+      `**v${target.currentVersion} → v${target.version}**：上一个包已经重新应用并通过指纹自证。`,
+      `几秒内机器人会重启到 v${target.version}；重启完成后会私信你一条回执。`,
+      "",
+      "回滚会作废 FTP 同步状态，所以下一轮 CD 会自动全量上传（一次性，不是每次都全量）。",
+    ].join("\n"),
+    { rows },
+  );
+}

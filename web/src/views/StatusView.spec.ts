@@ -67,7 +67,10 @@ const TOKENS = {
 };
 
 /** 模块健康：`config` 的状态可控（重试成功前后不一样）。 */
-function healthView(moduleState: "ready" | "degraded"): unknown {
+function healthView(
+  moduleState: "ready" | "degraded",
+  deploy?: { appliedVersion: string; rollbackVersion?: string },
+): unknown {
   return {
     process: {
       runningVersion: "0.25.0",
@@ -96,6 +99,7 @@ function healthView(moduleState: "ready" | "degraded"): unknown {
       { key: "activity", label: "活动", state: "ready" },
     ],
     restart: { brokenBuild: false },
+    ...(deploy !== undefined ? { deploy } : {}),
   };
 }
 
@@ -104,7 +108,12 @@ function healthView(moduleState: "ready" | "degraded"): unknown {
  * （模块重试 / 令牌吊销）—— 按 path 与 method 分发，避免互相串台。
  */
 function stubStatus(
-  options: { moduleState?: { value: "ready" | "degraded" }; tokens?: unknown } = {},
+  options: {
+    moduleState?: { value: "ready" | "degraded" };
+    tokens?: unknown;
+    /** 部署状态（ADR-0065）：给了就渲染「回滚到 vX」按钮。 */
+    deploy?: { appliedVersion: string; rollbackVersion?: string };
+  } = {},
 ): ReturnType<typeof stubFetch> {
   const moduleState = options.moduleState ?? { value: "degraded" as const };
   return stubFetch((call) => {
@@ -116,6 +125,19 @@ function stubStatus(
     }
     if (call.path === "/api/tokens") {
       return { body: options.tokens ?? TOKENS };
+    }
+    if (call.path === "/api/deploy/rollback") {
+      return {
+        body: {
+          ok: true,
+          result: {
+            ok: true,
+            fromVersion: "0.28.1",
+            toVersion: "0.28.0",
+            message: "已回滚到 v0.28.0（v0.28.1 → v0.28.0），重启后生效。",
+          },
+        },
+      };
     }
     if (call.path === "/api/tokens/revoke") {
       return {
@@ -143,7 +165,7 @@ function stubStatus(
         },
       };
     }
-    return { body: healthView(moduleState.value) };
+    return { body: healthView(moduleState.value, options.deploy) };
   });
 }
 
@@ -280,6 +302,72 @@ describe("StatusView", () => {
 
     expect(fetch.calls).toHaveLength(0);
     expect(wrapper.get(".hint").text()).toContain("240");
+    fetch.restore();
+  });
+
+  /**
+   * 部署回滚（ADR-0065）：与机器人 `/status proc` 卡片上的「回滚上一版」是**同一个安装器**。
+   * 页面只负责二次确认 + 展示回执，校验与替换全在服务端。
+   */
+  it("有可回滚版本：先二次确认再发 POST，展示服务端回执并刷新健康表", async () => {
+    signIn(240);
+    const fetch = stubStatus({
+      deploy: { appliedVersion: "0.28.1", rollbackVersion: "0.28.0" },
+    });
+
+    const wrapper = mount(StatusView);
+    await flushPromises();
+
+    const button = wrapper
+      .findAll("button")
+      .find((node) => node.text() === "回滚到 v0.28.0")!;
+    expect(button).toBeDefined();
+    await button.trigger("click");
+    await flushPromises();
+
+    // 不可逆动作：先弹确认，确认前不发请求
+    expect(wrapper.text()).toContain("确认回滚到上一版本？");
+    expect(fetch.calls.some((call) => call.path === "/api/deploy/rollback")).toBe(false);
+
+    await wrapper
+      .findAll("button")
+      .find((node) => node.text() === "确认回滚")!
+      .trigger("click");
+    await flushPromises();
+
+    const post = fetch.calls.find((call) => call.path === "/api/deploy/rollback");
+    expect(post).toMatchObject({ method: "POST", csrf: true });
+    expect(wrapper.get("#deploy-rollback-notice").text()).toContain("已回滚到 v0.28.0");
+    // 回滚后刷新健康表（部署状态会变）
+    expect(fetch.calls.filter((call) => call.path === "/api/health").length).toBeGreaterThan(1);
+    fetch.restore();
+  });
+
+  it("没有可回滚版本：不渲染回滚按钮，并说明原因", async () => {
+    signIn(240);
+    const fetch = stubStatus({ deploy: { appliedVersion: "0.28.1" } });
+
+    const wrapper = mount(StatusView);
+    await flushPromises();
+
+    expect(
+      wrapper.findAll("button").some((node) => node.text().includes("回滚到 v")),
+    ).toBe(false);
+    expect(wrapper.text()).toContain("没有可回滚的上一个包");
+    fetch.restore();
+  });
+
+  it("没装配安装器（health 不带 deploy）：只显示占位，不渲染回滚入口", async () => {
+    signIn(240);
+    const fetch = stubStatus();
+
+    const wrapper = mount(StatusView);
+    await flushPromises();
+
+    expect(
+      wrapper.findAll("button").some((node) => node.text().includes("回滚到 v")),
+    ).toBe(false);
+    expect(wrapper.text()).toContain("没装配包安装器");
     fetch.restore();
   });
 });

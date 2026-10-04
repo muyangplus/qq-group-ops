@@ -83,6 +83,58 @@ describe("AdminCommandService · /status 进程信息", () => {
     expect(card.rich.markdown).toContain("**构建自证**：");
   });
 
+  it("有上一个包时给「回滚上一版」按钮（带官方二次确认弹窗）；没有就不渲染", () => {
+    const base = contextWith({});
+    const withTarget = {
+      ...base,
+      install: {
+        rollbackTarget: () => ({
+          version: "0.20.0",
+          currentVersion: "0.21.0",
+          sha256: "abc",
+        }),
+        appliedVersion: () => "0.21.0",
+        rollback: async () => ({
+          ok: true,
+          version: "0.20.0",
+          code: "ok" as const,
+          message: "ok",
+        }),
+      },
+    } as unknown as AdminCommandContext;
+
+    const card = processCard(withTarget, "root");
+    expect(card.ok).toBe(true);
+    expect(card.rich.markdown).toContain("**可回滚**：v0.20.0");
+    const keyboard = JSON.stringify(card.rich.keyboard);
+    expect(keyboard).toContain("cb:deploy:rollback");
+    // 二次确认弹窗：不可逆动作必须先弹官方 modal
+    expect(keyboard).toContain("确认回滚 v0.21.0 → v0.20.0？");
+
+    // 没有可回滚版本：不渲染按钮、也不显示那一行
+    const withoutTarget = {
+      ...base,
+      install: {
+        rollbackTarget: () => undefined,
+        appliedVersion: () => "0.21.0",
+        rollback: async () => ({
+          ok: false,
+          version: "",
+          code: "no_target" as const,
+          message: "no",
+        }),
+      },
+    } as unknown as AdminCommandContext;
+    const bare = processCard(withoutTarget, "root");
+    expect(JSON.stringify(bare.rich.keyboard)).not.toContain("cb:deploy:rollback");
+    expect(bare.rich.markdown).not.toContain("**可回滚**");
+  });
+
+  it("没装配安装器时（纯单测 / 老装配）也不渲染回滚入口", () => {
+    const card = processCard(contextWith({}), "root");
+    expect(JSON.stringify(card.rich.keyboard)).not.toContain("cb:deploy:rollback");
+  });
+
   it("postgres 只显示 host/db，绝不把 URL 里的口令打出来", () => {
     const card = processCard(
       contextWith({

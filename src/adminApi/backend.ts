@@ -118,6 +118,7 @@ import type {
   AdminApiBlacklistEntry,
   AdminApiDeliveryItem,
   AdminApiDeniedInput,
+  AdminApiDeployState,
   AdminApiHealthView,
   AdminApiIdentitiesView,
   AdminApiIdentityItem,
@@ -1255,6 +1256,10 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
             : {}),
           brokenBuild: existsSync(DIST_BROKEN_DIR),
         },
+        // 部署状态（ADR-0065）：当前生效版本 + 可回滚版本 → 后台「状态」页的回滚按钮
+        ...(deps.installer !== undefined
+          ? { deploy: deployStateOf(deps.installer) }
+          : {}),
       };
     },
 
@@ -1695,6 +1700,61 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
           revoked > 0
             ? `已作废 ${revoked} 张未用的登录令牌（已建立的会话不受影响）。`
             : "该成员没有未用的登录令牌（可能已经兑换或已过期）。",
+      };
+    },
+
+    /**
+     * 回滚到上一个版本（ADR-0065 第 3 条；平台超管 240）。
+     *
+     * 与机器人 `/status proc` 卡片上的「回滚上一版」是**同一个安装器实例**：
+     * 重新应用 `data/packages/` 里的上一个包（同一套指纹自证 → 整目录替换 → 重启钩子），
+     * 不在这里重复实现「怎么换文件」。回执写 `vX → vY`，审计记 `admin_api:deploy_rollback`。
+     */
+    rollbackDeploy: async (actorId) => {
+      requireGlobalSuperAdmin(actorId, "回滚到上一版本");
+      const installer = deps.installer;
+      if (!installer) {
+        throw unavailable(
+          "包安装器未装配（只读巡检模式 / 内存模式）：回滚请在机器人进程内的管理监听口或 `/status proc` 操作。",
+        );
+      }
+      const target = installer.rollbackTarget();
+      if (!target) {
+        appendAudit({
+          groupId: "",
+          actorId,
+          action: "admin_api:deploy_rollback",
+          status: AuditStatus.Rejected,
+          reason: "没有可回滚的上一个版本（deploy-state 无 previousVersion 或归档里没有该包）",
+        });
+        return {
+          ok: false,
+          fromVersion: installer.appliedVersion(),
+          toVersion: "",
+          message: "没有可回滚的上一个版本。",
+        };
+      }
+      const result = await installer.rollback();
+      appendAudit({
+        groupId: "",
+        actorId,
+        action: "admin_api:deploy_rollback",
+        status: result.ok ? AuditStatus.Executed : AuditStatus.Rejected,
+        reason: result.ok
+          ? `回滚 v${target.currentVersion} → v${target.version}`
+          : `回滚 v${target.currentVersion} → v${target.version} 失败：${truncate(result.message, 120)}`,
+      });
+      log.warn("admin api deploy rollback", {
+        actorId,
+        from: target.currentVersion,
+        to: target.version,
+        ok: result.ok,
+      });
+      return {
+        ok: result.ok,
+        fromVersion: target.currentVersion,
+        toVersion: result.ok ? target.version : "",
+        message: result.message,
       };
     },
 
@@ -2794,6 +2854,20 @@ function describeRuleValue(value: unknown): string {
 /** 活动在审计与回执里的标签（`#活动短码`）。 */
 function activityLabel(activity: { code: string }): string {
   return `#${activity.code}`;
+}
+
+/**
+ * 部署状态视图（ADR-0065）：当前生效版本 + 可回滚版本。
+ *
+ * 两者都来自包安装器（`data/deploy-state.json` + `data/packages/` 的实况）；
+ * 没有状态文件时 `appliedVersion` 是空串（界面据此隐藏回滚按钮）。
+ */
+function deployStateOf(installer: InstallerControl): AdminApiDeployState {
+  const target = installer.rollbackTarget();
+  return {
+    appliedVersion: installer.appliedVersion(),
+    ...(target !== undefined ? { rollbackVersion: target.version } : {}),
+  };
 }
 
 /** 别名类型的展示名（与机器人 `/alias` 卡片同一套文案）。 */

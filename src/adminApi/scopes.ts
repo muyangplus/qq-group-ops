@@ -28,7 +28,8 @@ export type AdminApiScopeDomain =
   | "perm"
   | "identity"
   | "token"
-  | "announce";
+  | "announce"
+  | "deploy";
 
 export interface AdminApiScopeDomainMeta {
   domain: AdminApiScopeDomain;
@@ -57,6 +58,7 @@ export const ADMIN_API_SCOPE_DOMAINS: readonly AdminApiScopeDomainMeta[] = [
   { domain: "identity", label: "身份映射（只读）", writable: false, platformOnly: true },
   { domain: "token", label: "登录令牌（查看 / 吊销）", writable: true, platformOnly: true },
   { domain: "announce", label: "定时发言（查看 / 增删改 / 试发）", writable: true, platformOnly: false },
+  { domain: "deploy", label: "部署（回滚到上一个包）", writable: true, platformOnly: true },
 ];
 
 /** 全部合法 scope（配置校验用）。 */
@@ -155,6 +157,8 @@ export const ADMIN_API_ROUTE_SCOPES: readonly AdminApiRouteScope[] = [
   { method: "PUT", url: "/api/scheduled-announcements/:id", scope: "write:announce" },
   { method: "DELETE", url: "/api/scheduled-announcements/:id", scope: "write:announce" },
   { method: "POST", url: "/api/scheduled-announcements/:id/send", scope: "write:announce" },
+  // 部署回滚（ADR-0065）：与卡片上的「回滚上一版」同一套安装器
+  { method: "POST", url: "/api/deploy/rollback", scope: "write:deploy" },
 ];
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);

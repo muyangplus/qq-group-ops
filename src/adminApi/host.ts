@@ -12,11 +12,13 @@ export interface AdminApiHostOptions {
   backend: AdminApiBackend;
   version?: string | undefined;
   /**
-   * 构建自证（ADR-0065）：`dist/` 指纹与构建来源 commit，附在 `/healthz` 与 `/api/health`
-   * 的进程信息里 —— 现场一眼看出「跑的是哪份产物、哪次构建」。
+   * 构建自证（ADR-0065）：`dist/` 指纹、构建来源 commit、当前生效版本与可回滚版本。
+   * 附在 `/healthz` 与 `/api/health` 的进程信息里 —— 现场一眼看出「跑的是哪份产物」。
    */
   distFingerprint?: string | undefined;
   buildInfoCommit?: string | undefined;
+  appliedVersion?: string | undefined;
+  rollbackVersion?: string | undefined;
   uptimeMs?: (() => number) | undefined;
   logger?: Logger | undefined;
 }
@@ -47,6 +49,8 @@ export async function startAdminApiHost(
     version: options.version,
     distFingerprint: options.distFingerprint,
     buildInfoCommit: options.buildInfoCommit,
+    appliedVersion: options.appliedVersion,
+    rollbackVersion: options.rollbackVersion,
     uptimeMs: options.uptimeMs,
     logger: log,
     // 管理前台静态资源（默认 web/dist；目录不存在会自动跳过）

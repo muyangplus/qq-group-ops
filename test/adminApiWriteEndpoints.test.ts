@@ -129,6 +129,14 @@ function stubWriters(
         recovered: true,
         message: "「群规则」已重新加载成功，功能立即恢复，不用重启进程。",
       }),
+    rollbackDeploy:
+      overrides.rollbackDeploy ??
+      record("rollbackDeploy", {
+        ok: true,
+        fromVersion: "0.28.1",
+        toVersion: "0.28.0",
+        message: "已回滚到 v0.28.0（v0.28.1 → v0.28.0），重启后生效。",
+      }),
   };
 }
 
@@ -196,7 +204,69 @@ describe("管理 API 写端点（HTTP 层）", () => {
     });
     expect(retry.statusCode).toBe(503);
     expect(retry.json()).toMatchObject({ error: "unavailable" });
+
+    // 部署回滚（ADR-0065）同样：巡检进程没有安装器 → 503
+    const rollback = await app.inject({
+      method: "POST",
+      url: "/api/deploy/rollback",
+      headers: { cookie, "x-admin-request": "1" },
+    });
+    expect(rollback.statusCode).toBe(503);
+    expect(rollback.json()).toMatchObject({ error: "unavailable" });
     await app.close();
+  });
+
+  it("部署回滚（ADR-0065）：actor 进 writer，回执写 vX → vY；没得回滚回 ok=false", async () => {
+    const writers = stubWriters();
+    const { app, cookie } = await loggedIn(writers);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/deploy/rollback",
+      headers: { cookie, "x-admin-request": "1" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      result: { ok: true, fromVersion: "0.28.1", toVersion: "0.28.0" },
+    });
+    expect(writers.calls[0]).toEqual({
+      method: "rollbackDeploy",
+      args: ["op1"],
+    });
+
+    // 没有可回滚版本：HTTP 仍是 200，「没回滚」靠 ok=false + 原话表达
+    const none = stubWriters({
+      rollbackDeploy: async () => ({
+        ok: false,
+        fromVersion: "0.28.1",
+        toVersion: "",
+        message: "没有可回滚的上一个版本。",
+      }),
+    });
+    const second = await loggedIn(none);
+    const denied = await second.app.inject({
+      method: "POST",
+      url: "/api/deploy/rollback",
+      headers: { cookie: second.cookie, "x-admin-request": "1" },
+    });
+    expect(denied.statusCode).toBe(200);
+    expect(denied.json()).toMatchObject({
+      ok: false,
+      result: { ok: false, toVersion: "" },
+    });
+    expect(denied.json().result.message).toContain("没有可回滚");
+
+    // 缺 CSRF：写方法一律 403
+    const noCsrf = await app.inject({
+      method: "POST",
+      url: "/api/deploy/rollback",
+      headers: { cookie },
+    });
+    expect(noCsrf.statusCode).toBe(403);
+
+    await app.close();
+    await second.app.close();
   });
 
   it("降级模块重试（运维写）：key 与登录账号原样进 writer，仍失败回 ok=false", async () => {
