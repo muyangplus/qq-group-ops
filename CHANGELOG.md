@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+（暂无：以下内容已随 [0.27.1] 发布，见下一节。）
+
+## [0.27.1] - 2026-10-04
+
+
 ### 修复
 
 - **同一个应用目录只允许一份机器人进程了**（单实例闸，ADR-0064）：0.26.0 → 0.27.0 部署后
@@ -1387,7 +1392,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.1...HEAD
+[0.27.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.24.1...v0.25.0
