@@ -538,6 +538,43 @@ pnpm class:index     # 读取 data/class.json，输出 data/class-index.json + d
 **已删除的老入口（不兼容）**：`/notify on|off`、`/notify all on|off`、`/notify <群> on|off`、
 `/notify punish …`、`/activity subscribe|unsubscribe` —— 订阅只通过 `/notify` 面板的开关、活动卡上的「订阅」按钮、或通知卡底部的退订按钮完成。
 
+## 定时发言（`/announce`，群管理员 130）
+
+机器人按 **标准 cron 5 段**给自己群定时发言。**默认关闭**（两层：平台总开关
+`SCHEDULED_ANNOUNCE_ENABLED` + 每条任务自己的开关），所以「建好 → 确认后启用」是标准流程。
+口径与能力边界见 [DECISIONS.md](./DECISIONS.md) 的 **ADR-0062**。
+
+```text
+/announce                                   # 列出本群任务（每条的 cron / 形态 / 下次两次）
+/announce add <分 时 日 月 周> <正文>          # 新建（纯文本、默认停用）
+/announce set <编号> cron=0 9 * * *          # 改时间表（cron 值里可以有空格，只按第一个 = 切）
+/announce set <编号> mode=card               # 形态：card（卡片）/ text（纯文本）
+/announce set <编号> title=作业提醒            # 卡片标题
+/announce set <编号> text=新正文               # 改正文
+/announce set <编号> quote=要引用的原文         # 加正文引用块（Markdown 引用段落）
+/announce set <编号> btn=查看 /activity       # 加按钮（最多 5 个；btn=clear 清空）
+/announce set <编号> ref=on                  # 发送时引用回复上一条机器人消息（尽力而为）
+/announce on|off <编号>                      # 启用 / 停用
+/announce show <编号>                        # 预览（含**后五次执行时间**与即将发出的内容）
+/announce send <编号>                        # 立即发一条试试（真实发送，计入每小时上限）
+/announce del <编号>                         # 删除
+```
+
+- **cron 语义**：`分 时 日 月 周`（本地时区）；`*`、`1-5`、`0-59/10`、`8,20` 都支持；
+  星期 `0` 或 `7` 都是周日；`日` 与 `周` **同时限定**时按标准语义「满足任一」；
+  **不接受**带秒的 6 段与 `@daily` 这类宏（写错直接给原因，不落库）。每次配置与 `show`
+  都会回**后五次执行时间** —— 用它确认自己写的是不是想要的意思；
+- **形态**：`text` 走纯文本通道（官方的 `<@!openid>` 提及只在这条通道生效）；
+  `card` 是 Markdown 卡片，**引用块与按钮只能用在卡片形态上**（设置时若形态不对会说明）；
+  按钮点击后等于发送对应指令（与手输同一条权限路径）；按钮被平台拒时自动降级成无按钮卡片；
+- **「引用」有三种**：正文引用块（`quote=`）、按钮点击后带引用回复（后台可配）、
+  发送时引用回复上一条机器人消息（`ref=on`，要 5 分钟内有机器人消息才带得上，带不上就普通发送）；
+- **幂等**：同一任务**同一分钟只发一次**；进程重启**不重发**、停过的时间点**不补发**；
+- **上限与失败**：每群每小时最多 6 条（热改，防手滑写成 `* * * * *`）；超限与发送失败都
+  **只私信配置者**，群里不留痕迹；审计记 `announce_*`，actor 是**当初配置这条任务的人**；
+- 管理后台的「定时发言」页能完成同一套操作（含二次确认的删除与试发），
+  与指令层是**同一个领域服务**（`docs/ADMIN-API.md` 的 E1-t）。
+
 ## 迎新（仅群内，`/rules set welcome`）
 
 新成员加入群时（`GROUP_MEMBER_ADD`），机器人在**群内**发一条 @ 他的纯文本消息、再补一张欢迎卡。

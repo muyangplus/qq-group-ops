@@ -105,6 +105,8 @@
 > **E2-d 权限呈现 ✅**（前端按 `/auth/me` 隐藏或禁用入口，服务端仍强校验）；
 > **E2-e 交付 ✅**（nginx 同源托管 `web/dist` + 反代三个前缀，片段见
 > [OPERATIONS.md](./OPERATIONS.md)「管理前台」）。E2 收口；逐项勾选见 [../TODO.md](../TODO.md) §2。
+> **收尾批次**（0.26.0）E1-o…E1-s ✅（运维写 / 订阅只读 / 审计增强 / 令牌吊销 / 规则面）；
+> **E1-t 定时发言 ✅**（P0，2026-10-03：本群群管 130 自治的 cron 定时发言，口径见 ADR-0062）。
 
 ### E1-a 骨架与安全底座（P0）
 
@@ -202,6 +204,7 @@
 | `status` | `read:status` | `write:status` | 状态 / 周期任务 / 运维健康 / 降级模块重试（平台 240） |
 | `perm` | `read:perm` | `write:perm` | 权限授予 / 撤销（P3） |
 | `token` | `read:token` | `write:token` | 登录令牌查看 / 吊销（平台 240） |
+| `announce` | `read:announce` | `write:announce` | 定时发言查看 / 增删改 / 试发（本群 130） |
 
 
 ### E1-f 可观测性与运维（P1）
@@ -482,6 +485,40 @@
     清单里的「旧值」按**你填的字段名**在当前配置里查；填别名（`warning` → `warningMessage`）时
     以提交后回执里的 diff 为准（界面已写明这一点）。
 
+### E1-t 定时发言（P0，2026-10-03 提出）
+
+> 口径见 [DECISIONS.md](./DECISIONS.md) 的 **ADR-0062**（默认关闭 / 每群群管 130 自治 /
+> cron 5 段 / 重启不重发与错过不补发 / 引用块与按钮只在卡片形态）。
+> 功能本体在机器人侧（`src/services/scheduledAnnouncements.ts` + 指令层 `/announce`），
+> 管理 API 只是把同一份数据与同一份校验搬到网页上 —— **不新造通路**。
+
+74. `GET /api/scheduled-announcements?group=<群 ID>`（**本群群管 130**，必须带 `group`）：
+    `{ items, total, enabled, hourlyLimit }`。每项 = `{ id, group, cron, cronError?, enabled, mode,
+    title, text, quote?, buttons, reference, nextTimes, lastFiredAt?, createdBy, createdAt,
+    updatedBy?, updatedAt }`：
+    - **`nextTimes` 是「后五次执行时间」**（本地时区 `YYYY-MM-DD HH:mm`）——
+      与 `/announce show` 同一个函数（逐日推进）；cron 解析不了时给 `cronError` 而不是假装正常；
+    - `enabled` / `hourlyLimit` 是**热配置**（总开关与每群每小时上限），页面据此提示
+      「总开关关着，配了也不会触发」；
+    - 只读巡检模式也装配这个 reader（直接读同一张 `group_settings` 表、
+      共用 `announcementsViewOf` 换算），形状与机器人进程一致；
+75. `POST /api/scheduled-announcements { group, cron, mode?, title?, text, quote?, buttons?, reference? }`
+    （**本群群管 130**）：新建，**默认停用**（要显式启用）；校验（cron 5 段 / 正文长度 /
+    按钮上限 / 「纯文本不能带引用块与按钮」）全在领域服务里，与 `/announce` 同一份 →
+    不合法回 400 且**不落库**。回执 `{ ok, message, announcement, announcements }`
+    （带操作后的整列表，页面一次往返就刷新）；
+76. `PUT /api/scheduled-announcements/:id`：改一条（只传要改的 `cron` / `enabled` / 内容字段）。
+    **门槛按这条任务所属群判**，不接受客户端传 `group` —— 免得「用 A 群的权限改 B 群的任务」；
+77. `DELETE /api/scheduled-announcements/:id`（本群 130）：删除（不可逆，界面二次确认）；
+78. `POST /api/scheduled-announcements/:id/send`（本群 130）：**立即发一条试试**。
+    这是**真实发送**（群里能看到），同样计入每小时上限 —— 免得被用来刷频。
+    回执里会点明「这条任务本身是停用还是启用」，避免误以为试发等于打开；
+79. **审计口径（与其他写端点略不同，如实记录）**：这一块的审计由**领域服务**统一写
+    （`announce_create` / `announce_update` / `announce_remove` / `announce_fire`，
+    发送成功 `executed`、失败 `rejected`），actor 是**当初配置这条任务的人** ——
+    所以群里 `/announce` 与后台页留下的是**同一条记录**（这正是「同源」要的效果），
+    管理 API 不重复写 `admin_api:announce_*`；权限被拒仍然是 `admin_api:denied`。
+
 ### E1-g 只读端点的逐路由门槛（P1）
 
 30. `GET /api/tasks`（平台超管 240）：**周期任务监测列表** —— 统一扫描周期 + 每个任务的
@@ -536,6 +573,8 @@
 | `GET /api/notify/subscriptions` | 平台超管 240（订阅是个人偏好：不裁剪、非超管直接 403；只读，没有任何写端点）|
 | `GET /api/tokens` | 平台超管 240（登录令牌是平台级凭据面；只回成员聚合与张数，不回传哈希）|
 | `POST /api/tokens/revoke` | 平台超管 240（作废未兑换的登录链接；已建立的会话不受影响）|
+| `GET /api/scheduled-announcements` | 必须带 `?group=<群>`（缺参数 400）且本群群管理员 130（定时发言是按群的，没有跨群全量）|
+| `POST /api/scheduled-announcements`、`PUT`/`DELETE /api/scheduled-announcements/:id`、`POST /api/scheduled-announcements/:id/send` | 本群**群管理员 130**；改删试发的判定对象是**这条任务所属的群**（不接受客户端传 `group`）|
 
 - **不报错、只裁剪**：列表类端点（待审批 / 活动）对够不着的群直接少返回，而不是整条 403 ——
   多群管理员看到的自然是自己那几行；
