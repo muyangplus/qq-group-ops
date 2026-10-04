@@ -40,7 +40,7 @@ on:
         required: false
         default: false
       mode:
-        description: "package = 单文件产物包（默认）；files = 退回老的逐文件上传（应急）"
+        description: "package = 单文件产物包（默认）；files = 逐文件上传（应急；服务器还是没安装器的老版本时也走它做首跳）"
         type: choice
         required: false
         default: package
@@ -274,7 +274,7 @@ jobs:
           echo "distFingerprint=${fingerprint}"
 
       # 打包（`mode=files`，应急）：退回 ADR-0057 的逐文件两段上传 —— 代码与清单先传，
-      # `package.json`（部署监测认的版本标记）最后单独传。只在新包路径出问题时临时用。
+      # `package.json`（部署监测认的版本标记）最后单独传。两处用法：① 包化路径出问题时的应急；② **首跳** —— 服务器上还是 0.27.x（没有 `DeployInstaller`）时，包模式的产物它解不开，只能先用它把新代码送上去（见 OPERATIONS.md「首跳」）。
       - name: 准备部署目录（逐文件模式，应急）
         if: env.DEPLOY_MODE == 'files'
         run: |
