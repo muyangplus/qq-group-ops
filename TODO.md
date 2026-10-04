@@ -156,8 +156,17 @@
     3. **CD 复用 CI**：CD 的 `build` job 在「同名 commit 的 CI 已绿」时只做 `pnpm install --frozen-lockfile` +
        `pnpm build` + `web build`（跳过 typecheck / 全量 vitest / web test）；保留 `full_gate=true` 输入做应急
        （或改成 `workflow_run` 由 CI 成功后触发部署）；
-    4. **流程侧**：同一个 item 的「代码 + 文档」两个提交**一次 push**（提交仍然分开，符合仓库口径）——
-       这条我立刻改，不再「每提交一 push」；
+    4. **流程侧（用户 2026-10-04 定死）**：**本地提交后不推送** —— 代码与文档照样分开**提交**，
+       但都留在本地，**发版时把该版本的全部提交一次性 push**；于是一次发版只产生
+       **1 次 CI（main push）+ 1 次 CD（release published）**。
+       （已核对 `ci.yml` 触发面：`push: branches: [main]` + `pull_request` —— **推 tag 不触发 CI**，
+       所以发版流程本身没有多余 run；Dependabot 的 PR 各带 1 次 PR run、合并后再 1 次 main push run，
+       这两次是「必须」的，能省的只有背靠背那次 → 见下面的 `concurrency`。）
+       ⚠️ 代价与纪律（必须一起遵守）：
+       - 未推送的提交**没有远端备份**（发版前别只留在一台机器上）；
+       - CI 只会跑最后一次 → **发版前本地必须自己跑过** `tsc` + 全量 vitest（有前端改动再加
+         `web typecheck / test / build`），不能指望 CI 替我们提前发现中间提交的问题
+         （提交是线性叠加的，跑最后一次即可覆盖前面的）。
     5. 其它：`security-audit` / Dependabot 收敛到**每周** schedule + 手动 dispatch；CD 的
        `log-level: verbose` → `standard`（只影响日志量与排队时长）。
   - **边界（不许动的）**：代码 push **必须**跑全量门禁；**发布前门禁不削弱**；文档路径只跳过**全量**、
