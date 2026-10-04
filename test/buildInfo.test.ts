@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   BUILD_INFO_FILE,
   distFingerprint,
+  onDiskVersion,
   readBuildInfo,
   verifyBuildInfo,
   writeBuildInfo,
@@ -180,5 +181,67 @@ describe("build-info.json", () => {
 
     writeFileSync(join(dist, BUILD_INFO_FILE), JSON.stringify({ commit: "c" }), "utf8");
     expect(readBuildInfo(dist)).toBeUndefined();
+  });
+});
+
+/**
+ * 版本号来源（0.29.1 修正）：包化部署（ADR-0065）**不传根 `package.json`**，
+ * 只有 `dist/build-info.json` 会跟着 `dist/` 一起换 —— 所以磁盘版本必须优先读它，
+ * 否则「包模式整目录替换之后」版本号会一直是老的，甚至全新机器上显示 `unknown`
+ * （`/status proc` 与重启回执都会错）。
+ */
+describe("onDiskVersion", () => {
+  const dirs: string[] = [];
+
+  function temp(): string {
+    const root = mkdtempSync(join(tmpdir(), "qq-group-ops-on-disk-"));
+    dirs.push(root);
+    return root;
+  }
+
+  function writePackageJson(root: string, version: string): string {
+    const file = join(root, "package.json");
+    writeFileSync(file, JSON.stringify({ name: "x", version }, null, 2), "utf8");
+    return file;
+  }
+
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("有产物自证时以 build-info.json 为准（包化部署只换 dist）", () => {
+    const root = temp();
+    const dist = join(root, "dist");
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(join(dist, "main.js"), "x", "utf8");
+    writeBuildInfo({
+      version: "0.30.0",
+      commit: "c",
+      builtAt: "2026-10-04T00:00:00.000Z",
+      dir: dist,
+    });
+    // 根 package.json 还是老的（包模式不更新它）——必须被忽略
+    const pkg = writePackageJson(root, "0.27.3");
+
+    expect(onDiskVersion(dist, pkg)).toBe("0.30.0");
+  });
+
+  it("没有产物自证（源码运行 / 老产物包）→ 回落根 package.json", () => {
+    const root = temp();
+    const dist = join(root, "dist");
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(join(dist, "main.js"), "x", "utf8");
+    const pkg = writePackageJson(root, "0.27.3");
+
+    expect(onDiskVersion(dist, pkg)).toBe("0.27.3");
+  });
+
+  it("两边都没有 → unknown（诊断信息不能让指令失败）", () => {
+    const root = temp();
+    expect(onDiskVersion(join(root, "dist"), join(root, "missing.json"))).toBe(
+      "unknown",
+    );
   });
 });

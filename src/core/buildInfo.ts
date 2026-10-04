@@ -9,19 +9,31 @@ const log = getLogger("build-info");
 /**
  * 构建 / 进程信息（`/status` 的进程行与 `/status proc` 用）。
  *
- * 版本号直接读仓库根的 `package.json`：`dist/core/buildInfo.js` 往上两级就是包根，
- * 而 CD 产物也把 `package.json` 一起发布，所以源码运行与产物运行都能读到；
- * 读不到时回落 `unknown` —— 诊断信息永远不能让指令或启动失败。
+ * **版本号的来源（0.29.1 修正）**：优先读**产物自证** `dist/build-info.json`，读不到才回落根
+ * `package.json`。为什么不能只看 `package.json`：包化部署（ADR-0065）传的包里**没有**根
+ * `package.json`（只有 `dist/`、`web/dist/`、`scripts/`、`pnpm-lock.yaml`、`.env.example`），
+ * 所以「整目录替换 `dist/`」之后根 `package.json` 会一直是老的 —— 甚至**全新用包模式装的机器上
+ * 根本没有这个文件**，于是版本号显示成 `unknown`、重启回执写成 `vX → vX`。
+ * `dist/build-info.json` 是**跟着 `dist/` 一起换**的，它才反映「磁盘上跑的到底是哪一版」。
+ *
+ * 兜底原则不变：都读不到时回落 `unknown` —— 诊断信息永远不能让指令或启动失败。
+ *
+ * 副作用（可接受）：源码运行（`pnpm dev`）时如果本地留着上一次构建的 `dist/`，显示的是那份
+ * **产物**的版本（它确实代表「`dist/` 里是哪一版」）；想避免混淆就 `rm -rf dist` 或 `pnpm build` 对齐。
  */
 let cachedVersion: string | undefined;
 
-/** 每次重新读**磁盘**上的版本（部署监测用：磁盘会被 CD 覆盖成新版本）。 */
-export function onDiskVersion(): string {
+/** 每次重新读**磁盘**上的版本（部署监测用：磁盘会被 CD / 安装器覆盖成新版本）。 */
+export function onDiskVersion(
+  dir: string = DIST_DIR,
+  packageJson: string | URL = new URL("../../package.json", import.meta.url),
+): string {
+  const fromBuildInfo = readBuildInfo(dir)?.version;
+  if (fromBuildInfo !== undefined && fromBuildInfo.length > 0) {
+    return fromBuildInfo;
+  }
   try {
-    const raw = readFileSync(
-      new URL("../../package.json", import.meta.url),
-      "utf8",
-    );
+    const raw = readFileSync(packageJson, "utf8");
     const parsed = JSON.parse(raw) as { version?: unknown };
     return typeof parsed.version === "string" && parsed.version.length > 0
       ? parsed.version
