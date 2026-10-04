@@ -7,8 +7,23 @@
 
 ## [Unreleased]
 
+（暂无：以下内容已随 [0.27.2] 发布，见下一节。）
+
+## [0.27.2] - 2026-10-04
+
+
 ### 修复
 
+- **定时发言的「详情」改成弹窗**（真机反馈：表格里的「详情」一点就页面错乱）：原来在 `<td>`
+  里用 `<details>` 原地展开，展开内容参与表格布局 → 那一列被顶宽、整行重排、长 id 撑破列宽。
+  现在用 `ModalDialog` 浮层：群（展示名）+ 群 ID + 任务 ID + 时间表 + 配置者 + 最后修改 + 上次触发。
+- **本就能热改的项不再在「`.env` 只读」段重复列出**：同一批键出现在两段里（可改段是当前生效值、
+  只读段是 `.env` 原值），看着像「不能改」。`buildEnvItems` 现在跳过已经是热改项的键。
+- **补回丢失的「定时发言总开关」定义**：热改项注册分两处（`HOT_SETTING_KEYS` 键 + 
+  `SETTING_DEFINITIONS` 定义表），一次脚本化编辑把定义表里那一行吃掉了 —— 键还在、定义没了，
+  于是配置页**根本不显示**「定时发言总开关」、`/config` 也报「未知配置项」，
+  事实上只能改 `.env` 后重启（与热改项的设计不符）。同时补了一条漂移守卫：
+  `HOT_SETTING_KEYS` 里每一项都必须在 `SETTING_DEFINITIONS` 里有定义。
 - **管理平台的群列表不再漏掉「刚绑好、还没配过任何规则 / 授权」的群**：真机反馈 /whois
   查得到某个群（群号 + 短码都在），管理平台里却只有别的群。根因是群集合只取「有授权行的群 ∪
   有规则覆盖的群」两个来源 —— 而群列表的语义是**这个机器人管得到的群**，绑定表
@@ -1400,7 +1415,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.1...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.2...HEAD
+[0.27.2]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.1...v0.27.2
 [0.27.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.25.0...v0.26.0
