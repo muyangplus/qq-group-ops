@@ -120,4 +120,28 @@ describe("runtime 仓储装配完整性", () => {
     expect(source).toContain("const instanceLock = isStartupCheck()");
     expect(source).toContain("? { ok: true as const }");
   });
+
+  /**
+   * `.env` 热改项的一次性导入接线（ADR-0066）。
+   *
+   * 三件事必须同时成立：
+   * ① 导入在 `isStartupCheck()` 早退**之后** —— 自检是只读演练，绝不能写库；
+   * ② 导入失败（写不进去）**不能拦住启动**：库里旧值 + 内置默认照样能跑；
+   * ③ 真的导入了要留痕：`platform_config_import` 审计 + 私信回执（`.env` 里可以删行了）。
+   */
+  it("配置导入接线：在自检早退之后、失败不拦启动、写审计 + 私信回执", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../src/main.ts", import.meta.url)),
+      "utf8",
+    );
+    const checkAt = source.indexOf("if (isStartupCheck()) {");
+    const importAt = source.indexOf("await importEnvSettingsOnce(");
+    expect(checkAt).toBeGreaterThan(0);
+    expect(importAt).toBeGreaterThan(checkAt);
+    expect(source).toContain(
+      "env setting import failed (keeping database values)",
+    );
+    expect(source).toContain('action: "platform_config_import"');
+    expect(source).toContain("配置已从 .env 导入");
+  });
 });

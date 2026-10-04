@@ -11,6 +11,8 @@
  *
  * 因此这里**没有账号与口令**：身份天然是 openid，权限直接复用现有两轴模型（E1-b）。
  */
+import { DEFAULT_ADMIN_API_RATE_LIMIT_PER_MINUTE, DEFAULT_ADMIN_API_SESSION_TTL_MINUTES, DEFAULT_ADMIN_API_TOKEN_TTL_MINUTES } from "../config.js";
+import type { PlatformSettingsStore } from "../services/platformSettings.js";
 import { describeKnownScopes, isKnownScope } from "./scopes.js";
 export interface AdminApiConfig {
   enabled: boolean;
@@ -18,7 +20,13 @@ export interface AdminApiConfig {
   port: number;
   /** 会话 cookie 的 HMAC 密钥（≥32 字符）。 */
   sessionSecret: string;
-  /** 会话滑动过期时间。 */
+  /**
+   * 会话滑动过期时间（**内置默认值**）。
+   *
+   * ⚠️ 真正生效的值由 `PlatformSettingsStore`（热改项 `adminApiSessionTtlMinutes`）决定，
+   * 装配时用 `hotConfig` 传进来「用的时候取当前值」；这里只是没有热配置来源时的兜底
+   * （单测 / CLI）。见 ADR-0066。
+   */
   sessionTtlMs: number;
   /** cookie 是否带 `Secure`（前面挂了 TLS 反代时开）。 */
   cookieSecure: boolean;
@@ -33,7 +41,7 @@ export interface AdminApiConfig {
    * 目录不存在（没构建 / 没部署前端）时自动跳过，接口行为不受影响。
    */
   webDir: string;
-  /** 一次性令牌有效期（默认 10 分钟；签发后必须在这个时间内兑换）。 */
+  /** 一次性令牌有效期（**内置默认值**；生效值见热改项 `adminApiTokenTtlMinutes`）。 */
   tokenTtlMs: number;
   /** 额外白名单：留空 = 允许所有**平台超管**（240）签发令牌。 */
   allowedOpenIds: readonly string[];
@@ -42,7 +50,7 @@ export interface AdminApiConfig {
    * 与一次性登录令牌分开——它不种会话、按 `scope` 限定能干什么，给 CI / 脚本用。
    */
   machineTokens: readonly AdminApiMachineToken[];
-  /** 全站限流：每个会话每分钟的请求数上限（`0` = 不限）。 */
+  /** 全站限流：每个会话每分钟的请求数上限（**内置默认值**；`0` = 不限）。 */
   rateLimitPerMinute: number;
 }
 
@@ -58,10 +66,55 @@ export interface AdminApiMachineToken {
 }
 
 export const DEFAULT_ADMIN_API_PORT = 8787;
-export const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
-export const DEFAULT_TOKEN_TTL_MS = 10 * 60 * 1000;
-export const DEFAULT_RATE_LIMIT_PER_MINUTE = 60;
+export const DEFAULT_SESSION_TTL_MS =
+  DEFAULT_ADMIN_API_SESSION_TTL_MINUTES * 60 * 1000;
+export const DEFAULT_TOKEN_TTL_MS =
+  DEFAULT_ADMIN_API_TOKEN_TTL_MINUTES * 60 * 1000;
+export const DEFAULT_RATE_LIMIT_PER_MINUTE =
+  DEFAULT_ADMIN_API_RATE_LIMIT_PER_MINUTE;
 
+/**
+ * 管理 API 的**三项热配置**（会话 TTL / 令牌 TTL / 限流）。
+ *
+ * 生效值来自 `PlatformSettingsStore`（`/config` 与管理后台都能改，见 ADR-0066）；
+ * 装配方传 `() => readAdminApiHotConfig(platform)`，读点**每次用的时候**才取值 ——
+ * 于是「改完立即生效、不用重启」。
+ */
+export interface AdminApiHotConfig {
+  sessionTtlMs: number;
+  tokenTtlMs: number;
+  rateLimitPerMinute: number;
+}
+
+/** 从平台热配置读出这三项（毫秒 / 毫秒 / 次每分钟）。 */
+export function readAdminApiHotConfig(
+  platform: PlatformSettingsStore,
+): AdminApiHotConfig {
+  return {
+    sessionTtlMs: platform.get("adminApiSessionTtlMinutes") * 60 * 1000,
+    tokenTtlMs: platform.get("adminApiTokenTtlMinutes") * 60 * 1000,
+    rateLimitPerMinute: platform.get("adminApiRateLimitPerMinute"),
+  };
+}
+
+/** 没有热配置来源时的兜底（单测 / 直接构造 server 的场景）。 */
+export function staticAdminApiHotConfig(
+  config: AdminApiConfig,
+): AdminApiHotConfig {
+  return {
+    sessionTtlMs: config.sessionTtlMs,
+    tokenTtlMs: config.tokenTtlMs,
+    rateLimitPerMinute: config.rateLimitPerMinute,
+  };
+}
+
+/**
+ * 读管理 API 的**核心**配置。
+ *
+ * ⚠️ 会话 TTL / 令牌 TTL / 限流三项是**热改项**（`platform_settings` 表，`/config` 与管理后台
+ * 都能改）：这里只给内置默认值，真正生效的值由装配方通过 `hotConfig` 在**用的时候**取
+ * （见 `src/runtime.ts` 与 ADR-0066）。所以改完立即生效、不用重启。
+ */
 export function loadAdminApiConfig(env: NodeJS.ProcessEnv = process.env): AdminApiConfig {
   const enabled = parseBoolean(env.ADMIN_API_ENABLED) ?? false;
   const sessionSecret = (env.ADMIN_API_SESSION_SECRET ?? "").trim();
@@ -71,21 +124,18 @@ export function loadAdminApiConfig(env: NodeJS.ProcessEnv = process.env): AdminA
     host: (env.ADMIN_API_HOST ?? "").trim() || "127.0.0.1",
     port: positiveInt(env.ADMIN_API_PORT, DEFAULT_ADMIN_API_PORT),
     sessionSecret,
-    sessionTtlMs: positiveInt(env.ADMIN_API_SESSION_TTL_MINUTES, 720) * 60 * 1000,
+    sessionTtlMs: DEFAULT_SESSION_TTL_MS,
     cookieSecure: parseBoolean(env.ADMIN_API_COOKIE_SECURE) ?? false,
     publicBaseUrl: (env.ADMIN_API_PUBLIC_BASE_URL ?? "").trim(),
     // `undefined`（没配过）用默认 `web/dist`；显式写成空串表示「不由机器人托管」
     webDir: env.ADMIN_API_WEB_DIR === undefined ? "web/dist" : env.ADMIN_API_WEB_DIR.trim(),
-    tokenTtlMs: positiveInt(env.ADMIN_API_TOKEN_TTL_MINUTES, 10) * 60 * 1000,
+    tokenTtlMs: DEFAULT_TOKEN_TTL_MS,
     allowedOpenIds: (env.ADMIN_API_ALLOWED_OPENIDS ?? "")
       .split(",")
       .map((item) => item.trim())
       .filter((item) => item.length > 0),
     machineTokens: parseMachineTokens(env.ADMIN_API_TOKENS).tokens,
-    rateLimitPerMinute: nonNegativeInt(
-      env.ADMIN_API_RATE_LIMIT_PER_MINUTE,
-      DEFAULT_RATE_LIMIT_PER_MINUTE,
-    ),
+    rateLimitPerMinute: DEFAULT_RATE_LIMIT_PER_MINUTE,
   };
 
   if (!enabled) {
@@ -259,9 +309,4 @@ function parseBoolean(value: string | undefined): boolean | undefined {
 function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt((value ?? "").trim(), 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function nonNegativeInt(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt((value ?? "").trim(), 10);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }

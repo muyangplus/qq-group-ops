@@ -313,6 +313,15 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
     );
   }
   const settings = diagnostics.settings;
+  // 保留期 / 时区 / 首次菜单都是**热改项**（ADR-0066）：显示**生效值**而不是内置默认，
+  // 否则 `/config` 改过之后这里会自相矛盾（真机验收项：「/status proc 与真实部署一致」）。
+  const hot = <K extends
+    | "rawMessageRetentionDays"
+    | "auditLogRetentionDays"
+    | "displayTimezone"
+    | "menuFirstPush">(
+    key: K,
+  ) => ctx.platform?.get(key) ?? settings[key];
   const notify = ctx.notifications?.stats();
   const queue = diagnostics.writeQueue;
   lines.push(
@@ -326,13 +335,13 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
         ? `${notify.subscribers} 人 · 投递记录 ${notify.deliveries} 条`
         : "未启用"
     }`,
-    `**日志与保留**：日志 ${settings.logLevel} · 时区 ${
-      settings.displayTimezone
-    } · 原文 ${retentionLabel(settings.rawMessageRetentionDays, "不保存")} · 审计 ${retentionLabel(
-      settings.auditLogRetentionDays,
+    `**日志与保留**：日志 ${settings.logLevel} · 时区 ${hot(
+      "displayTimezone",
+    )} · 原文 ${retentionLabel(hot("rawMessageRetentionDays"), "不保存")} · 审计 ${retentionLabel(
+      hot("auditLogRetentionDays"),
       "不清理",
     )}`,
-    `**管理员**：${settings.adminUserIds.length} 人 · 首次菜单 ${settings.menuFirstPush}`,
+    `**管理员**：${settings.adminUserIds.length} 人 · 首次菜单 ${hot("menuFirstPush")}`,
   );
   // 层 1 / 层 3 的可见性：哪些模块降级了、哪些迁移步骤失败了（含「重试加载」按钮）
   lines.push("", ...moduleStatusLines(ctx.health, diagnostics.migration));

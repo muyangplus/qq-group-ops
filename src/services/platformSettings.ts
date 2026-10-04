@@ -6,10 +6,15 @@ import { getLogger } from "../core/logger.js";
 const log = getLogger("platform-settings");
 
 /**
- * 可热改的平台配置项（**非核心**项：核心项留在 `.env`，见 ADR 与 docs/CONFIGURATION.md）。
+ * 可热改的平台配置项（**非核心**项：核心项留在 `.env`，见 ADR-0066 与 docs/CONFIGURATION.md）。
  *
  * 每一项都对应 `Settings` 上的一个字段，因此取值仍然是类型安全的：
  * `store.get("scanIntervalMs")` 的类型就是 `number`。
+ *
+ * **默认值来自代码**（`Settings` 的 `loadSettings()` 只填内置默认值）：`.env` 里写了这些键
+ * 只在**启动时导入库一次**（`importEnvSettingsToStore`），此后一切以库为准 —— 见 ADR-0066。
+ * 唯一的例外是 `displayTimezone`（`TZ`）：日志时间在连库之前就要用，所以它仍然是
+ * 「`.env` 默认 + 库覆盖」（下面 `SettingDefinition.envBacked`）。
  */
 export const HOT_SETTING_KEYS = [
   "auditLogRetentionDays",
@@ -28,18 +33,33 @@ export const HOT_SETTING_KEYS = [
   "scheduledAnnounceHourlyLimit",
   "activityStatsFontUrl",
   "displayTimezone",
+  "adminApiSessionTtlMinutes",
+  "adminApiTokenTtlMinutes",
+  "adminApiRateLimitPerMinute",
 ] as const;
 
 export type HotSettingKey = (typeof HOT_SETTING_KEYS)[number];
 
 export interface SettingDefinition {
   key: HotSettingKey;
-  /** `.env` 里的名字（面板上显示「来源」用）。 */
+  /**
+   * `.env` 里的名字。
+   *
+   * - `envBacked` 为 true：启动默认值来自这个环境变量（面板上显示「来源」用）；
+   * - 否则：它只是**一次性导入**的来源键（`.env` 里写了就在启动时导入库一次，见 ADR-0066）。
+   */
   envKey: string;
   label: string;
   /** 按钮上的短名（卡片一行最多 12 个字，两列必须短）。 */
   short: string;
   unit: string;
+  /**
+   * 这一项的启动默认值是否仍然取自 `.env`（核心项）。
+   *
+   * 留空 = `false`：默认值来自代码（`loadSettings()`），`.env` 只在启动时导入一次。
+   * 只有「连库之前就要用」的项才置 true（目前只有展示时区 `TZ`）。
+   */
+  envBacked?: boolean | undefined;
   /** 解析 + 校验一段用户输入；失败给出能直接展示的中文原因。 */
   parse(raw: string): ParsedSetting;
   /** 面板上显示当前值。 */
@@ -124,8 +144,16 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     unit: "",
     parse: (raw) => {
       const value = raw.trim().toLowerCase();
-      if (value === "persistent" || value === "memory") {
-        return { ok: true, value };
+      // 兼容老 `.env` 里写过的别名（原 `resolveMenuFirstPushMode` 的口径），避免迁移时漂移
+      if (value === "memory" || value === "mem") {
+        return { ok: true, value: "memory" };
+      }
+      if (
+        value === "persistent" ||
+        value === "db" ||
+        value === "database"
+      ) {
+        return { ok: true, value: "persistent" };
       }
       return { ok: false, error: "要写 persistent（入库去重）或 memory（只记内存）" };
     },
@@ -172,6 +200,8 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     label: "展示时区",
     short: "时区",
     unit: "",
+    // 日志时间在连库之前就要用：这一项仍然以 `.env` 为启动默认值（见 ADR-0066）
+    envBacked: true,
     parse: (raw) => {
       const value = raw.trim();
       try {
@@ -183,7 +213,52 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     },
     describe: (value: unknown) => String(value),
   },
+  intSetting(
+    "adminApiSessionTtlMinutes",
+    "ADMIN_API_SESSION_TTL_MINUTES",
+    "管理后台会话有效期",
+    "会话有效期",
+    "分钟",
+    1,
+    10080,
+    (value) =>
+      value >= 1440 && value % 1440 === 0 ? `${value / 1440} 天` : `${value} 分钟`,
+  ),
+  intSetting(
+    "adminApiTokenTtlMinutes",
+    "ADMIN_API_TOKEN_TTL_MINUTES",
+    "登录令牌有效期",
+    "令牌有效期",
+    "分钟",
+    1,
+    1440,
+  ),
+  intSetting(
+    "adminApiRateLimitPerMinute",
+    "ADMIN_API_RATE_LIMIT_PER_MINUTE",
+    "管理后台每分钟限流",
+    "后台限流",
+    "次/分钟",
+    0,
+    100_000,
+    (value) => (value === 0 ? "不限" : `每分钟 ${value} 次`),
+  ),
 ];
+
+/**
+ * 仍然以 `.env` 为启动默认值的项（核心项：改了要重启 / 连库之前就要用）。
+ *
+ * 其余项一律「代码内置默认 + 库覆盖」；`.env` 里写了它们只在**启动时导入一次**。
+ */
+export function isEnvBacked(definition: SettingDefinition): boolean {
+  return definition.envBacked === true;
+}
+
+/** 需要在启动时从 `.env` 一次性导入库的键（= 除 `envBacked` 以外的全部热改项）。 */
+export const IMPORTED_FROM_ENV_KEYS: readonly HotSettingKey[] =
+  SETTING_DEFINITIONS.filter((definition) => !isEnvBacked(definition)).map(
+    (definition) => definition.key,
+  );
 
 function retentionLabel(value: number): string {
   if (value === -1) {
@@ -207,6 +282,38 @@ export function findDefinition(key: string): SettingDefinition | undefined {
   return SETTING_DEFINITIONS.find((item) => item.key === key);
 }
 
+/**
+ * 按 `.env` 里的名字找定义（`TZ` → `displayTimezone`）。
+ *
+ * 配置页据此判断「这个 `.env` 键是不是已经能在可改项里改」：是的话就别在只读段再列一遍
+ * （同一个键两处出现，运维会以为不能改 —— 真机反馈过）。
+ */
+export function findDefinitionByEnvKey(
+  envKey: string,
+): SettingDefinition | undefined {
+  return SETTING_DEFINITIONS.find((item) => item.envKey === envKey);
+}
+
+/**
+ * 「这一项已经从 `.env` 导入过」的留痕键前缀（存在同一张 `platform_settings` 表里）。
+ *
+ * 为什么不看「库里有没有覆盖行」来判断「迁移做过没有」：那样 `/config clear`（删掉覆盖行）
+ * 之后，下一次启动会把 `.env` 里的旧值**又导回来** —— 于是「`/config clear` 回内置默认」
+ * 只在本次进程内成立，和面板文案、`.env.example` 的说法直接矛盾。留痕是**只写一次**的
+ * 事实记录，`clear()` 不会动它，所以迁移真的只做一次。
+ *
+ * 只在「确实写库了」时留痕：坏值 / 与内置默认相同**不留痕** —— 用户把 `.env` 那一行改好之后
+ * 还要能重新导入（留了痕就永远不生效了）。
+ */
+export const ENV_IMPORT_MARKER_PREFIX = "__env_import__:";
+
+/**
+ * 生效值的来源。
+ *
+ * ⚠️ `env` 是历史命名：它表示「**没被覆盖**、用的是启动默认值」。除 `envBacked` 的项以外，
+ * 那个默认值来自**代码内置值**而不是当前 `.env`（`.env` 只在启动时导入一次，见 ADR-0066）——
+ * 所以展示文案必须按 `definition.envBacked` 区分，别一律写「`.env` 默认」。
+ */
 export type SettingSource = "env" | "override";
 
 export interface SettingView {
@@ -218,15 +325,21 @@ export interface SettingView {
 }
 
 /**
- * 平台配置的**单一来源**：`.env` 提供默认值，数据库覆盖优先 ——
+ * 平台配置的**单一来源**：默认值来自代码（`Settings` 里 `loadSettings()` 填的内置默认值，
+ * 除了 `displayTimezone` 这类核心项来自 `.env`），数据库覆盖优先 ——
  * 服务在**用的时候**读 `get()`，所以改完立即生效（不需要重启）。
  *
+ * `.env` 里写了热改项时，启动过程会把它们**导入库一次**（`settingsImport.ts`，ADR-0066）：
+ * 导入之后 `sourceOf()` 就是 `override`，`.env` 再改也不再有任何影响。
+ *
  * 加载时的坏值（手改过的库 / 老版本写坏）只跳过并记进 `issues`：配置读不出来
- * 就该退回 `.env` 默认，不能让启动失败。
+ * 就该退回内置默认，不能让启动失败。
  */
 export class PlatformSettingsStore {
   private readonly queue: WriteQueue | undefined;
   private readonly overrides = new Map<HotSettingKey, string>();
+  /** 「已经从 `.env` 导入过」的留痕（见 `ENV_IMPORT_MARKER_PREFIX`）：`clear()` 不动它。 */
+  private readonly importedFromEnv = new Map<HotSettingKey, string>();
   private readonly changes: Array<(key: HotSettingKey) => void> = [];
   private readonly problems: string[] = [];
   private current: Settings;
@@ -240,15 +353,32 @@ export class PlatformSettingsStore {
     this.current = { ...base };
   }
 
+  /** 有没有持久化后端（纯内存数据库 / 单测里没有）：没有时改配置只作用于本进程。 */
+  public get persistent(): boolean {
+    return this.repository !== undefined;
+  }
+
   /** 从数据库读覆盖值并算出生效值（幂等，可重复调用）。 */
   public async load(): Promise<void> {
     this.overrides.clear();
+    this.importedFromEnv.clear();
     this.problems.length = 0;
     this.current = { ...this.base };
     if (!this.repository) {
       return;
     }
     for (const row of await this.repository.findAll()) {
+      // 导入留痕不是配置项：不进 `list()`、不算坏值（见 ENV_IMPORT_MARKER_PREFIX）
+      if (row.key.startsWith(ENV_IMPORT_MARKER_PREFIX)) {
+        const marked = row.key.slice(ENV_IMPORT_MARKER_PREFIX.length);
+        const definition = findDefinition(marked);
+        if (definition) {
+          this.importedFromEnv.set(definition.key, row.value);
+        } else {
+          log.warn("unknown env-import marker ignored", { key: row.key });
+        }
+        continue;
+      }
       const definition = findDefinition(row.key);
       if (!definition) {
         this.problems.push(`未知配置项被忽略：${row.key}`);
@@ -266,6 +396,41 @@ export class PlatformSettingsStore {
       log.info("platform settings overridden", {
         keys: [...this.overrides.keys()],
       });
+    }
+  }
+
+  /**
+   * 这一项有没有「已经从 `.env` 导入过」的留痕。
+   *
+   * 导入器靠它保证**一次性**：留痕在，就说明这一项的生效值已经以库为准了 ——
+   * 之后哪怕 `/config clear` 把覆盖行删掉，也不该再从 `.env` 导回来。
+   */
+  public wasImportedFromEnv(key: HotSettingKey): boolean {
+    return this.importedFromEnv.has(key);
+  }
+
+  /**
+   * 记下「这一项已经从 `.env` 导入过」（导入器在**真的写库之后**调用）。
+   *
+   * 纯内存模式只记在本进程；有仓储时同时落库（走同一个写队列，调用方接着 `flush()`）。
+   */
+  public async markImportedFromEnv(
+    key: HotSettingKey,
+    raw: string,
+    at: Date = new Date(),
+  ): Promise<void> {
+    const definition = definitionOf(key);
+    const value = JSON.stringify({
+      envKey: definition.envKey,
+      raw,
+      importedAt: at.toISOString(),
+    });
+    this.importedFromEnv.set(key, value);
+    if (this.repository) {
+      const repository = this.repository;
+      this.queue?.enqueue("platform-setting.import-marker", () =>
+        repository.save({ key: `${ENV_IMPORT_MARKER_PREFIX}${key}`, value }),
+      );
     }
   }
 
@@ -327,7 +492,7 @@ export class PlatformSettingsStore {
     return { ok: true, view: this.viewOf(definition.key) };
   }
 
-  /** 恢复成 `.env` 默认值（只有当前确实是覆盖态才动库）。 */
+  /** 恢复成启动默认值（内置默认；`displayTimezone` 这类核心项则是 `.env` 值）。 */
   public async clear(key: string): Promise<{ ok: boolean; error?: string }> {
     const definition = findDefinition(key);
     if (!definition) {

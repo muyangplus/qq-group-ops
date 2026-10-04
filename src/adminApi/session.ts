@@ -22,7 +22,13 @@ export interface AdminSession {
 
 export interface SessionStoreOptions {
   secret: string;
-  ttlMs: number;
+  /**
+   * 会话滑动过期（毫秒）。
+   *
+   * 给函数 = **每次判定时取当前值**：会话 TTL 是热改项（`adminApiSessionTtlMinutes`），
+   * `/config` 改完必须立即生效，不能只在构造时固化（见 ADR-0066）。
+   */
+  ttlMs: number | (() => number);
   /** 同时在线的会话上限（超出时淘汰最久未使用的）。 */
   maxSessions?: number | undefined;
   now?: (() => number) | undefined;
@@ -31,15 +37,20 @@ export interface SessionStoreOptions {
 export class SessionStore {
   private readonly sessions = new Map<string, AdminSession>();
   private readonly secret: string;
-  private readonly ttlMs: number;
+  private readonly ttlSource: number | (() => number);
   private readonly maxSessions: number;
   private readonly now: () => number;
 
   public constructor(options: SessionStoreOptions) {
     this.secret = options.secret;
-    this.ttlMs = options.ttlMs;
+    this.ttlSource = options.ttlMs;
     this.maxSessions = options.maxSessions ?? 100;
     this.now = options.now ?? (() => Date.now());
+  }
+
+  /** 当前会话 TTL（毫秒）。 */
+  private get ttlMs(): number {
+    return typeof this.ttlSource === "function" ? this.ttlSource() : this.ttlSource;
   }
 
   public get size(): number {

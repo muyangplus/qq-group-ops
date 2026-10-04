@@ -413,7 +413,7 @@ async function sendTest(): Promise<void> {
       @close="confirmingReset = false"
     >
       <p>
-        会把<b>所有话题</b>的门槛改回 <code>.env</code> 里的默认值（也就是「默认门槛」那一列），
+        会把<b>所有话题</b>的门槛改回<b>内置默认值</b>（也就是「默认门槛」那一列），
         同样立即对全局生效。
       </p>
     </ModalDialog>

@@ -6,22 +6,33 @@
  * 重启即清零——对管理面足够（真正的防线是令牌一次性 + 短 TTL + 网络隔离）。
  */
 export interface WindowRateLimiterOptions {
-  /** 每个窗口允许的请求数；`0` = 不限。 */
-  limitPerWindow: number;
+  /**
+   * 每个窗口允许的请求数；`0` = 不限。
+   *
+   * 给函数 = **每次判定时取当前值**：会话限流是热改项（`adminApiRateLimitPerMinute`），
+   * `/config` 改完必须立即生效（见 ADR-0066）。
+   */
+  limitPerWindow: number | (() => number);
   windowMs?: number | undefined;
   now?: (() => number) | undefined;
 }
 
 export class WindowRateLimiter {
   private readonly hits = new Map<string, number[]>();
-  private readonly limit: number;
+  private readonly limitSource: number | (() => number);
   private readonly windowMs: number;
   private readonly now: () => number;
 
   public constructor(options: WindowRateLimiterOptions) {
-    this.limit = options.limitPerWindow;
+    this.limitSource = options.limitPerWindow;
     this.windowMs = options.windowMs ?? 60_000;
     this.now = options.now ?? (() => Date.now());
+  }
+
+  private get limit(): number {
+    return typeof this.limitSource === "function"
+      ? this.limitSource()
+      : this.limitSource;
   }
 
   /** 消耗一个配额；返回 false 表示超限。 */

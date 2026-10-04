@@ -303,8 +303,8 @@ function shapeOf(item: AdminApiAnnouncementItem): string {
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="notice" id="announcement-notice" class="hint">{{ notice }}</p>
     <p v-if="view && !view.enabled" id="announcement-switch-off" class="warning">
-      平台总开关（配置页「定时发言总开关」，或 <code>.env</code> 的
-      <code>SCHEDULED_ANNOUNCE_ENABLED</code>）现在是<b>关</b>的：下面这些任务都不会触发。
+      平台总开关（配置页「定时发言总开关」，或私信 <code>/config set
+      scheduledAnnounceEnabled on</code>）现在是<b>关</b>的：下面这些任务都不会触发。
     </p>
     <p v-if="view" class="hint">
       每群每小时最多 {{ view.hourlyLimit === 0 ? "不限" : `${view.hourlyLimit} 条` }}

@@ -48,8 +48,16 @@ function guard(
   return undefined;
 }
 
+/**
+ * 来源标签：`override` = 库里存了覆盖值；否则是**启动默认值** ——
+ * 除 `envBacked` 的核心项（目前只有 `TZ`）以外，那个默认值来自**代码内置值**而不是 `.env`
+ * （`.env` 只在启动时导入一次，见 ADR-0066），所以文案必须分开写。
+ */
 function sourceLabel(view: SettingView): string {
-  return view.source === "override" ? "**已覆盖**" : "`.env` 默认";
+  if (view.source === "override") {
+    return "**已覆盖**";
+  }
+  return view.definition.envBacked === true ? "`.env` 默认" : "内置默认";
 }
 
 /**
@@ -87,10 +95,11 @@ export function configPanelCard(
   lines.push(
     "",
     "改法：点「填入指令」后补数值发送，或直接发 `/config set <项> <值>`；",
-    "想回落到 `.env` 默认值就发 `/config clear <项>`。改完**立即生效**，不用重启。",
+    "想回落到启动默认值就发 `/config clear <项>`。改完**立即生效**，不用重启。",
+    "这些项都存在库里 —— `.env` 里的同名行只在启动时导入一次，之后改它不再有任何影响。",
   );
   if (platform.issues.length > 0) {
-    lines.push("", "⚠️ 库里有读不出来的覆盖值（已忽略，按 `.env` 默认跑）：");
+    lines.push("", "⚠️ 库里有读不出来的覆盖值（已忽略，按启动默认值跑）：");
     for (const issue of platform.issues) {
       lines.push(`  · ${issue}`);
     }
@@ -209,7 +218,9 @@ async function clearSetting(
     ctx,
     userId,
     1,
-    `已把「${definition?.definition.label ?? key}」回落到 \`.env\` 默认值。`,
+    `已把「${definition?.definition.label ?? key}」回落到启动默认值（${
+      definition?.definition.envBacked === true ? "`.env` 里的值" : "代码内置值"
+    }）。`,
   );
 }
 

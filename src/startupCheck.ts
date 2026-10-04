@@ -4,8 +4,13 @@ import { dirname } from "node:path";
 /**
  * 重启前自检（层 4A）。
  *
- * `node dist/main.js --check` 只跑到「模块加载完成」，不接网关、不起定时器、不发重启回执，
+ * `node dist/main.js --check` 只跑到「模块加载完成」，不接网关、不起定时器、不发重启回执、
+ * **不执行 `.env` 热改项的一次性导入**（ADR-0066：导入排在自检早退之后），
  * 然后用**退出码**告诉调用方（`scripts/respawn.mjs`）这个版本能不能起来。
+ *
+ * ⚠️ 「自检完全只读」**不成立**：它在早退前会跑 `runtime.load()`，而「给现有超管补默认通知订阅」
+ * 那一步（`seedSuperAdminDefaults`）是**带写库**的（走写队列，`finishStartupCheck` 会 flush）。
+ * 这是既有行为，已记进 TODO（§2 的 P2）；能保证的是**导入器不写库**。
  *
  * 结果同时写一份 JSON 文件：助手不看 stdout / stderr（捕获子进程输出需要管道，
  * 受限环境里开不了），只读这个文件；人工排查也直接看它。

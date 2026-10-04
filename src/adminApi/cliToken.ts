@@ -1,7 +1,8 @@
 import { loadSettings } from "../config.js";
 import { loadEnvFile } from "../env.js";
 import { connectPersistence } from "../persistence.js";
-import { loadAdminApiConfig } from "./config.js";
+import { PlatformSettingsStore } from "../services/platformSettings.js";
+import { loadAdminApiConfig, readAdminApiHotConfig } from "./config.js";
 import { AdminApiLinkService } from "./loginLink.js";
 
 /**
@@ -39,10 +40,11 @@ async function main(): Promise<void> {
     );
   }
   const ttlMinutes = Number.parseInt(argValue("ttl") ?? "", 10);
-  const ttlMs =
+  // 没显式给 `--ttl` 就用**热配置**里的当前值（`adminApiTokenTtlMinutes`），见 ADR-0066
+  const explicitTtlMs =
     Number.isInteger(ttlMinutes) && ttlMinutes > 0
       ? ttlMinutes * 60_000
-      : config.tokenTtlMs;
+      : undefined;
 
   const settings = loadSettings();
   const persistence = await connectPersistence(settings);
@@ -50,13 +52,23 @@ async function main(): Promise<void> {
     throw new Error("需要数据库：DATABASE_URL=memory 时无法签发登录令牌。");
   }
   try {
+    // 与机器人进程读同一份库：`.env` 里删掉 ADMIN_API_TOKEN_TTL_MINUTES 也照样拿到生效值
+    const platform = new PlatformSettingsStore(
+      settings,
+      persistence.platformSettings,
+    );
+    await platform.load();
     const service = new AdminApiLinkService({
       tokens: persistence.adminTokens,
       config,
+      tokenTtlMs: () => readAdminApiHotConfig(platform).tokenTtlMs,
     });
-    const issued = await service.issueFor(user, ttlMs);
+    const issued =
+      explicitTtlMs === undefined
+        ? await service.issueFor(user)
+        : await service.issueFor(user, explicitTtlMs);
     console.log(
-      `一次性登录令牌（${Math.round(ttlMs / 60_000)} 分钟内有效，只能用一次）：`,
+      `一次性登录令牌（${Math.round(issued.ttlMs / 60_000)} 分钟内有效，只能用一次）：`,
     );
     console.log(issued.token);
     if (issued.link !== undefined) {

@@ -1,4 +1,6 @@
 import { NativeWebSocketFactory } from "./adapters/nativeWebSocketFactory.js";
+import { randomUUID } from "node:crypto";
+import { AuditStatus } from "./core/enums.js";
 import {
   restoreDistFromBackup,
   snapshotDist,
@@ -62,6 +64,12 @@ import type {
 import { appVersion, captureRunningBuildInfo, captureRunningVersion, distFingerprint, onDiskVersion, runningVersionOf } from "./core/buildInfo.js";
 import { encodeCallback } from "./services/callbackData.js";
 import { spawnRespawnHelper } from "./services/respawn.js";
+import {
+  ENV_IMPORT_ACTOR,
+  hasImportedSettings,
+  importEnvSettingsToStore,
+  type SettingsImportResult,
+} from "./services/settingsImport.js";
 import { sendWelcome } from "./services/welcome.js";
 
 /** 启动阶段命中限流时的固定冷却时间。 */
@@ -122,6 +130,193 @@ export async function finishStartupCheck(
   await persistence?.close();
   await closeLogging();
   process.exitCode = 0;
+}
+
+/**
+ * `.env` 里热改项的**一次性导入**（ADR-0066）：写库一次 + 记审计 + 私信超管。
+ *
+ * 四个必须遵守的口径：
+ * - **只在正常启动路径调用**（`--check` 自检进程在上面已经 return）—— 自检是只读演练；
+ * - **失败不能拦住启动**：导入写不进去，库里旧值 + 内置默认照样能跑，只留日志；
+ * - **没真的改到东西就不打扰**：`.env` 与内置默认一致（很常见）时只留 debug 日志；
+ * - **同一个问题只提醒一次**：值是坏的（`SCHEDULED_ANNOUNCE_ENABLED=maybe` 这种）时
+ *   每次都只写日志，但卡片与「导入被拒」审计只在**第一次**发 —— 靠审计里已有的同签名记录
+ *   去重，不新造状态文件（否则每重启一次就多一张卡）。
+ */
+async function importEnvSettingsOnce(
+  runtime: Runtime,
+  persistent: boolean,
+): Promise<void> {
+  const log = getLogger("main");
+  let result: SettingsImportResult;
+  try {
+    result = await importEnvSettingsToStore({ store: runtime.platform });
+  } catch (error) {
+    log.warn("env setting import failed (keeping database values)", {
+      error: formatError(error),
+    });
+    return;
+  }
+  for (const problem of result.problems) {
+    log.warn("env setting import skipped: invalid value", { problem });
+  }
+  const imported = result.imported;
+  if (!hasImportedSettings(result)) {
+    log.debug("env setting import: nothing to change", {
+      alreadyImported: result.alreadyImported,
+      overridden: result.overridden,
+      sameAsDefault: result.sameAsDefault,
+    });
+    return;
+  }
+  const changed = imported.map((item) => `${item.envKey}=${item.raw}`).join("、");
+  const problems = result.problems.join("；");
+  if (imported.length > 0) {
+    // 真落了库：日志 + 审计（只可能发生一次 —— 下一次启动它们已经是库里的覆盖行了）
+    log.warn("platform settings imported from env", {
+      count: imported.length,
+      imported: changed,
+      problems,
+      persistent,
+    });
+    runtime.auditLog.append({
+      recordId: randomUUID(),
+      groupId: "",
+      actorId: ENV_IMPORT_ACTOR,
+      action: "platform_config_import",
+      status: AuditStatus.Executed,
+      reason: `从 .env 导入 ${imported.length} 项：${changed}${
+        persistent ? "" : "（纯内存模式：未落库）"
+      }${problems.length > 0 ? `；跳过 ${problems}` : ""}`,
+      createdAt: new Date(),
+    });
+    // 审计是靠写队列落库的：启动阶段主动刷一次，别等下一次 tick
+    await runtime.flush();
+  } else {
+    // 没有一项导得进去（全是坏值）：写一条 Rejected 审计当「已经提醒过」的凭据
+    const reason = `从 .env 导入被跳过（值不合法）：${problems}`;
+    if (alreadyAnnounced(runtime, reason)) {
+      log.debug("env setting import problem already announced", { problems });
+      return;
+    }
+    runtime.auditLog.append({
+      recordId: randomUUID(),
+      groupId: "",
+      actorId: ENV_IMPORT_ACTOR,
+      action: "platform_config_import_problem",
+      status: AuditStatus.Rejected,
+      reason,
+      createdAt: new Date(),
+    });
+    await runtime.flush();
+  }
+  // 通知模块没起来就只剩日志（导入本身已经生效，不影响启动）
+  if (!runtime.health.isAllAvailable(["notify", "permissions"])) {
+    log.warn("env setting import notice not delivered: notify unavailable");
+    return;
+  }
+  const card = envImportCard(result, persistent);
+  for (const userId of runtime.permissions.listSuperAdmins()) {
+    const sent = await runtime.notifications.sendPrivateCard(userId, card);
+    if (!sent.ok) {
+      log.warn("env setting import notice not delivered", {
+        userId,
+        detail: sent.detail,
+      });
+    }
+  }
+}
+
+/** 审计里有没有同签名记录（同一个 `.env` 问题只提醒一次，见 `importEnvSettingsOnce`）。 */
+function alreadyAnnounced(runtime: Runtime, reason: string): boolean {
+  // ⚠️ 凭据是审计记录，而审计会被保留期清掉（默认 180 天）：所以这是「在还有那条记录的期间内
+  // 只提醒一次」。清掉之后会再提醒一次 —— 对「`.env` 里有个坏值」这种要人处理的状况是可接受的
+  // （真的改掉了就不会再进来）。
+  return runtime.auditLog
+    .all()
+    .some(
+      (record) =>
+        record.action.startsWith("platform_config_import") &&
+        record.reason === reason,
+    );
+}
+
+/**
+ * 「配置已从 .env 导入」卡（ADR-0066）。
+ *
+ * 说清四件事：哪几项真落了库、哪几项因为库里已有覆盖被忽略、哪几项与内置默认一致
+ * （不用写库）、哪几项的值不合法**没导入**（这类要显式警告：行为会退回内置默认）；
+ * 最后给出「以后去哪改」和「`.env` 里可以删行了」。
+ */
+function envImportCard(
+  result: SettingsImportResult,
+  persistent: boolean,
+): RichMessage {
+  const lines: string[] = [];
+  if (result.imported.length > 0) {
+    lines.push(
+      `**已从 \`.env\` 导入 ${result.imported.length} 项**（写进了系统配置，以后以库为准）：`,
+    );
+    for (const item of result.imported) {
+      lines.push(`· ${item.label}：\`${item.envKey}=${item.raw}\``);
+    }
+  }
+  if (result.problems.length > 0) {
+    lines.push(
+      "",
+      `⚠️ **${result.problems.length} 项没导入**（\`.env\` 里的值不合法，已按内置默认值跑）：`,
+    );
+    for (const problem of result.problems) {
+      lines.push(`· ${problem}`);
+    }
+  }
+  if (result.overridden.length > 0) {
+    lines.push(
+      "",
+      `**${result.overridden.length} 项被忽略**（库里已经有覆盖值，仍以库为准）：\`${result.overridden.join("、")}\``,
+    );
+  }
+  if (result.alreadyImported.length > 0) {
+    lines.push(
+      "",
+      `**${result.alreadyImported.length} 项之前已经导入过**（\`.env\` 里再改它们不会生效）：\`${result.alreadyImported.join("、")}\``,
+    );
+  }
+  if (result.sameAsDefault.length > 0) {
+    lines.push(
+      "",
+      `${result.sameAsDefault.length} 项与内置默认值相同，没有重复写库：\`${result.sameAsDefault.join("、")}\``,
+    );
+  }
+  lines.push(
+    "",
+    "以后改这些项：私信 `/config set <项> <值>`，或管理后台「配置」页 —— **改完立即生效、不用重启**。",
+  );
+  if (!persistent) {
+    lines.push(
+      "当前是纯内存数据库：上面导入的值**不会落库**，每次启动仍按 `.env` 生效。",
+    );
+  } else if (
+    result.imported.length > 0 ||
+    result.sameAsDefault.length > 0
+  ) {
+    lines.push(
+      "`data/.env` 里这些行现在可以删掉了（删之前先备份一份，见 OPERATIONS.md「配置搬家」）。",
+    );
+  }
+  return renderCard({
+    title: "配置已从 .env 导入",
+    lines,
+    rows: [
+      [
+        {
+          id: "config",
+          label: "看配置",
+          callbackData: encodeCallback("config", "view", 1),
+        },
+      ],
+    ],
+  });
 }
 
 async function main(): Promise<void> {
@@ -281,6 +476,12 @@ async function main(): Promise<void> {
     await finishStartupCheck(runtime, persistence);
     return;
   }
+  // `.env` 里热改项的**一次性导入**（ADR-0066）：把老部署写在 `.env` 里的那些项写库一次，
+  // 保证升级瞬间「行为不漂移」；此后一切以库为准（`.env` 删掉这些行也没有影响）。
+  // 放在自检返回**之后**：自检（`--check`）不执行导入、也不写导入留痕 —— 它是「这份构建能不能起来」
+  // 的演练，不该顺手改配置状态（注意：自检仍会跑 `runtime.load()` 里的「补默认通知订阅」，那是既有行为，
+  // 与导入无关，见 TODO §2 的 P2）。
+  await importEnvSettingsOnce(runtime, persistence !== undefined);
   // 层 1 / 层 3 的可见性：模块降级、迁移失败都私信超管（通知模块没起来就只留日志）
   await announceStartupReport(runtime, persistence?.migration);
   // 层 4B：本构建已经初始化成功 → 留一份「上一次能起来」的快照，供下次自检失败时回滚
@@ -305,6 +506,8 @@ async function main(): Promise<void> {
     {
       // 保留期是热配置：每次运行都取当前值
       auditLogRetentionDays: () => runtime.platform.get("auditLogRetentionDays"),
+      // 已审批入群申请跟审计记录同期保留（同一个保留期参数是有意的：`joinRequestTtlDays` 管的是
+      // **待审批**的过期，不是历史记录的清理期限）
       joinRequestRetentionDays: () =>
         runtime.platform.get("auditLogRetentionDays"),
       // 原文保留期按**群**算：群（或全局默认规则）显式设过就用群值，否则用平台默认值
@@ -1197,6 +1400,8 @@ async function startAdminApiIfEnabled(
   try {
     return await startAdminApiHost({
       config: source.config,
+      // 三项热配置（会话 TTL / 令牌 TTL / 限流）现取现用：改完立即生效（ADR-0066）
+      hotConfig: source.hotConfig,
       tokens: source.tokens,
       backend: source.backend,
       version: appVersion(),

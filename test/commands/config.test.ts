@@ -74,16 +74,25 @@ describe("AdminCommandService · /config", () => {
   it("面板列出各项的当前值与来源，并按键盘上限分页", async () => {
     const first = await service.handle(undefined, "root", "/config");
     expect(first.ok).toBe(true);
-    expect(first.rich.markdown).toContain("平台配置（1/2）");
+    expect(first.rich.markdown).toContain("平台配置（1/3）");
     expect(first.rich.markdown).toContain("扫描周期");
-    expect(first.rich.markdown).toContain("`.env` 默认");
+    // 这些项的默认值都在代码里（`.env` 只在启动时导入一次，ADR-0066）
+    expect(first.rich.markdown).toContain("内置默认");
     expect(JSON.stringify(first.rich.keyboard)).toContain("cb:config:view:2");
     // 每项一个「填入指令」按钮
     expect(JSON.stringify(first.rich.keyboard)).toContain("/config set scanIntervalMs ");
 
     const second = await service.configPanelCard("root", 2);
-    expect(second.rich.markdown).toContain("平台配置（2/2）");
+    expect(second.rich.markdown).toContain("平台配置（2/3）");
     expect(second.rich.markdown).toContain("展示时区");
+    // `TZ` 是唯一「默认值真的来自 `.env`」的项：它的来源文案要区分开
+    expect(second.rich.markdown).toContain("`.env` 默认");
+
+    // 第三页是 0.29.0 新增的管理后台三项（会话 / 令牌 / 限流）
+    const third = await service.configPanelCard("root", 3);
+    expect(third.rich.markdown).toContain("平台配置（3/3）");
+    expect(third.rich.markdown).toContain("adminApiSessionTtlMinutes");
+    expect(third.rich.markdown).toContain("管理后台会话有效期");
   });
 
   it("改一项：立即生效 + 写库 + 记审计 + 面板显示已覆盖", async () => {

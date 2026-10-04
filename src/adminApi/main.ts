@@ -17,7 +17,7 @@ import {
   announcementsViewOf,
   buildNotifyTopicViews,
 } from "./backend.js";
-import { adminLoginUrl, loadAdminApiConfig } from "./config.js";
+import { adminLoginUrl, loadAdminApiConfig, readAdminApiHotConfig } from "./config.js";
 import { createAdminApiEntities } from "./entityRef.js";
 import { describeListenFailure } from "./listenFailure.js";
 import {
@@ -111,6 +111,8 @@ async function main(): Promise<void> {
 
   const server = buildAdminApiServer({
     config,
+    // 三项热配置（会话 TTL / 令牌 TTL / 限流）与机器人进程同一份库：现取现用（ADR-0066）
+    hotConfig: () => readAdminApiHotConfig(platform),
     tokens: persistence.adminTokens,
     version: process.env.npm_package_version ?? "unknown",
     uptimeMs: () => Math.round(process.uptime() * 1000),

@@ -12,7 +12,8 @@ import { useSessionStore } from "@/stores/session";
 
 /**
  * 配置页（E2-f）：**可改的只有既有的热改项**（机器人 `/config` 用的同一套存储，
- * 改完立即生效并写审计），`.env` 的其余项只读展示。
+ * 改完立即生效并写审计）；`.env` 里留守的**核心项**只读展示（ADR-0066 之后热改项不再从
+ * `.env` 读，所以它只出现在「可改项」那段，不会两段同时出现）。
  *
  * 密钥类（`*_SECRET` / `*_TOKEN` / `*_PASSWORD` / `*_KEY`）服务端**不回传值**，
  * 这里只显示「已配置 / 未配置」—— 把线上密钥送进浏览器没有任何好处。
@@ -81,7 +82,7 @@ async function reset(item: AdminApiSettingItem): Promise<void> {
   try {
     const result = await adminApi.clearSetting(item.key);
     applyItem(result.setting);
-    notice.value = `${item.label} 已恢复 .env 默认值：${result.setting.display}`;
+    notice.value = resetNotice(item, result.setting.display);
     cancelEdit();
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : String(err);
@@ -104,7 +105,20 @@ function applyItem(updated: AdminApiSettingItem): void {
 }
 
 function sourceLabel(item: AdminApiSettingItem): string {
-  return item.source === "override" ? "后台 / /config 覆盖" : ".env 默认";
+  if (item.source === "override") {
+    return "后台 / /config 覆盖";
+  }
+  return item.envBacked ? ".env 默认" : "内置默认";
+}
+
+/** 「恢复默认」的提示：说清会回到哪里（`.env` 值还是代码内置值）。 */
+function defaultHint(item: AdminApiSettingItem): string {
+  return item.envBacked ? "改回 .env 里的值" : "改回代码内置默认值";
+}
+
+/** 恢复成功后的提示语（同上一行口径）。 */
+function resetNotice(item: AdminApiSettingItem, display: string): string {
+  return `${item.label} 已恢复${item.envBacked ? " .env 默认值" : "内置默认值"}：${display}`;
 }
 
 function boolValue(item: AdminApiSettingItem): boolean {
@@ -129,7 +143,9 @@ function envDisplay(item: AdminApiEnvItem): string {
     <template v-else>
       <p class="hint">
         这里能改的是<b>热改项</b>（与机器人 <code>/config</code> 同一套存储）：改完<b>立即生效</b>并写审计。
-        其余 <code>.env</code> 项只读展示（密钥类不回传值，改它们需要登服务器改文件后重启）。
+        它们都<b>存在库里</b>：<code>.env</code> 里的同名行只在启动时导入一次，之后改文件不再有任何影响
+        （「来源」列写「内置默认」的项，默认值就在代码里）。下面一段是真正还留在
+        <code>.env</code> 里的核心项，只读展示（密钥类不回传值，改它们要登服务器改文件后重启）。
       </p>
 
       <p v-if="loading" class="hint">加载中…</p>
@@ -180,7 +196,7 @@ function envDisplay(item: AdminApiEnvItem): string {
                     type="button"
                     class="link"
                     :disabled="saving || item.source === 'env'"
-                    :title="item.source === 'env' ? '当前就是 .env 默认值' : '改回 .env 里的值'"
+                    :title="item.source === 'env' ? (item.envBacked ? '当前就是 .env 默认值' : '当前就是内置默认值') : defaultHint(item)"
                     @click="reset(item)"
                   >
                     恢复默认

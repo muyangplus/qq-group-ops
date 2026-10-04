@@ -9,6 +9,12 @@ export interface AdminApiLinkServiceOptions {
   config: AdminApiConfig;
   /** 权限判定（机器人进程里有；CLI 没有——能登服务器本身就是最高信任）。 */
   permissions?: PermissionService | undefined;
+  /**
+   * 一次性令牌 TTL（毫秒）的**当前值**（热改项 `adminApiTokenTtlMinutes`）。
+   *
+   * 不传时退回 `config.tokenTtlMs`（内置默认）—— 单测 / 没有热配置来源的场景。
+   */
+  tokenTtlMs?: (() => number) | undefined;
 }
 
 export interface AdminApiLoginIssue {
@@ -29,11 +35,13 @@ export class AdminApiLinkService {
   private readonly tokens: AdminTokenRepository | undefined;
   private readonly config: AdminApiConfig;
   private readonly permissions: PermissionService | undefined;
+  private readonly tokenTtlMs: (() => number) | undefined;
 
   public constructor(options: AdminApiLinkServiceOptions) {
     this.tokens = options.tokens;
     this.config = options.config;
     this.permissions = options.permissions;
+    this.tokenTtlMs = options.tokenTtlMs;
   }
 
   /** 功能是否可用：要开启管理 API，且本进程有令牌仓储（内存模式没有）。 */
@@ -57,10 +65,14 @@ export class AdminApiLinkService {
     return this.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin);
   }
 
-  /** 签发一次性令牌并拼好登录链接。 */
+  /**
+   * 签发一次性令牌并拼好登录链接。
+   *
+   * `ttlMs` 不传时取**当前**热配置值（`adminApiTokenTtlMinutes`），拿不到才退回内置默认。
+   */
   public async issueFor(
     userId: string,
-    ttlMs: number = this.config.tokenTtlMs,
+    ttlMs: number = this.tokenTtlMs?.() ?? this.config.tokenTtlMs,
   ): Promise<AdminApiLoginIssue> {
     const tokens = this.tokens;
     if (!tokens) {

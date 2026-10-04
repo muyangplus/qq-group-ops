@@ -716,14 +716,17 @@ export interface AdminApiTasksView {
 /** 一项可热改配置（`/api/settings`）。 */
 export interface AdminApiSettingItem {
   key: string;
+  /** `.env` 里对应的键（历史来源；除 `envBacked` 外默认值已搬进代码，见 ADR-0066）。 */
   envKey: string;
   label: string;
   unit: string;
   value: number | boolean | string;
   /** 给人看的一行（复用 `/config` 的 describe）。 */
   display: string;
-  /** `env` = 用 `.env` 默认值；`override` = 已被后台 / `/config` 改过。 */
+  /** `env` = 用启动默认值（除 `envBacked` 外是**代码内置值**）；`override` = 已被后台 / `/config` 改过。 */
   source: "env" | "override";
+  /** 启动默认值是否真的来自 `.env`（核心项，目前只有展示时区）。 */
+  envBacked: boolean;
 }
 
 /** `.env` 只读项（密钥类不回传值）。 */

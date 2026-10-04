@@ -19,7 +19,9 @@ import {
   adminLoginUrl,
   machineTokenAllows,
   machineTokenUsable,
+  staticAdminApiHotConfig,
   type AdminApiConfig,
+  type AdminApiHotConfig,
   type AdminApiMachineToken,
 } from "./config.js";
 import type { AdminApiEntityRef } from "./entityRef.js";
@@ -94,6 +96,13 @@ export interface AdminApiServerOptions {
   settingsProvider?: (() => AdminApiSettingsView | undefined) | undefined;
   /** 审计记录读取器（E1-c `/api/audit`）；未装配时该端点回 503。 */
   auditReader?: AdminApiAuditReader | undefined;
+  /**
+   * 管理 API 的三项热配置（会话 TTL / 令牌 TTL / 限流）的**当前值**。
+   *
+   * 不传时退回 `config` 里的内置默认值；机器人进程传
+   * `() => readAdminApiHotConfig(platform)`，于是 `/config` 改完立即生效（ADR-0066）。
+   */
+  hotConfig?: (() => AdminApiHotConfig) | undefined;
   /** 只读数据源（E1-c）：待审批与规则覆盖。未装配时对应端点回 503。 */
   readers?: AdminApiReaders | undefined;
   /**
@@ -819,7 +828,9 @@ export interface AdminApiWriters {
     actorId: string,
   ): Promise<AdminApiSettingItem>;
   /**
-   * 把一项热改配置恢复成 `.env` 默认值（只有确实覆盖过才动库）。
+   * 把一项热改配置恢复成**启动默认值**（代码内置值；只有 `displayTimezone` 是 `.env` 里的值）。
+   *
+   * 只有确实覆盖过才动库，见 `PlatformSettingsStore.clear`。
    */
   clearSetting(key: string, actorId: string): Promise<AdminApiSettingItem>;
   /**
@@ -1249,12 +1260,19 @@ export interface AdminApiServer {
 export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiServer {
   const log = options.logger ?? getLogger("admin-api");
   const config = options.config;
+  // 会话 TTL / 令牌 TTL / 限流是**热改项**（ADR-0066）：读点每次都用这个取值函数，
+  // 不传时退回 `config` 里的内置默认（单测 / 直接构造 server）。
+  const hotConfig: () => AdminApiHotConfig =
+    options.hotConfig ?? (() => staticAdminApiHotConfig(config));
   const sessions =
     options.sessions ??
-    new SessionStore({ secret: config.sessionSecret, ttlMs: config.sessionTtlMs });
+    new SessionStore({
+      secret: config.sessionSecret,
+      ttlMs: () => hotConfig().sessionTtlMs,
+    });
   const limiter =
     options.limiter ??
-    new WindowRateLimiter({ limitPerWindow: config.rateLimitPerMinute });
+    new WindowRateLimiter({ limitPerWindow: () => hotConfig().rateLimitPerMinute });
   const exchangeLimiter =
     options.exchangeLimiter ??
     new WindowRateLimiter({ limitPerWindow: TOKEN_EXCHANGE_PER_MINUTE });
@@ -1315,11 +1333,14 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
       );
     }
     const { cookieValue, session } = sessions.create(userId);
-    reply.header("set-cookie", sessionCookie(cookieValue, config));
+    reply.header(
+      "set-cookie",
+      sessionCookie(cookieValue, config, Math.floor(hotConfig().sessionTtlMs / 1000)),
+    );
     log.info("admin api login", { userId, ip: request.ip });
     return {
       userId: session.userId,
-      expiresAt: new Date(session.createdAt + config.sessionTtlMs).toISOString(),
+      expiresAt: new Date(session.createdAt + hotConfig().sessionTtlMs).toISOString(),
     };
   });
 
@@ -1402,7 +1423,8 @@ export function buildAdminApiServer(options: AdminApiServerOptions): AdminApiSer
     return {
       userId,
       expiresAt: new Date(
-        (request.adminSession?.lastSeenAt ?? now().getTime()) + config.sessionTtlMs,
+        (request.adminSession?.lastSeenAt ?? now().getTime()) +
+          hotConfig().sessionTtlMs,
       ).toISOString(),
       ...(permissions !== undefined ? { permissions } : {}),
       ...(user !== undefined ? { user } : {}),
@@ -3450,7 +3472,12 @@ function tokensEqual(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** `maxAgeSeconds = 0` 表示清 cookie（登出）。 */
+/**
+ * 会话 cookie 的 `Set-Cookie`（`maxAgeSeconds = 0` 表示清 cookie / 登出）。
+ *
+ * `maxAgeSeconds` 缺省时取 `config.sessionTtlMs`（内置默认）；调用方要传**热配置**的当前值
+ * （`hotConfig().sessionTtlMs`），否则 cookie 的 Max-Age 会跟会话判定的 TTL 不一致。
+ */
 export function sessionCookie(
   value: string,
   config: AdminApiConfig,

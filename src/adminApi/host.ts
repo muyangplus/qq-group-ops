@@ -1,7 +1,11 @@
 import { getLogger, type Logger } from "../core/logger.js";
 import type { AdminTokenRepository } from "../db/adminTokenRepository.js";
 import type { AdminApiBackend } from "./backend.js";
-import { adminLoginUrl, type AdminApiConfig } from "./config.js";
+import {
+  adminLoginUrl,
+  type AdminApiConfig,
+  type AdminApiHotConfig,
+} from "./config.js";
 import { buildAdminApiServer } from "./server.js";
 
 export interface AdminApiHostOptions {
@@ -10,6 +14,11 @@ export interface AdminApiHostOptions {
   tokens: AdminTokenRepository;
   /** 真实服务图上的读 + 写后端（见 `backend.ts`）。 */
   backend: AdminApiBackend;
+  /**
+   * 三项热配置（会话 TTL / 令牌 TTL / 限流）的当前值来源（见 ADR-0066）。
+   * 不传时退回 `config` 里的内置默认值。
+   */
+  hotConfig?: (() => AdminApiHotConfig) | undefined;
   version?: string | undefined;
   /**
    * 构建自证（ADR-0065）：`dist/` 指纹、构建来源 commit、当前生效版本与可回滚版本。
@@ -46,6 +55,8 @@ export async function startAdminApiHost(
   const server = buildAdminApiServer({
     config,
     tokens: options.tokens,
+    // 三项热配置：装配方（机器人进程 / 只读巡检）传取值函数，改完立即生效
+    hotConfig: options.hotConfig,
     version: options.version,
     distFingerprint: options.distFingerprint,
     buildInfoCommit: options.buildInfoCommit,

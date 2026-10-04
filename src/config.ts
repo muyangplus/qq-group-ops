@@ -12,6 +12,33 @@ export const DEFAULT_CLASS_INDEX_FILE = "data/class-index.json";
 export const DEFAULT_ACTIVITY_STATS_FONT_URL =
   "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf";
 
+/**
+ * **热改项的「内置默认值」**（ADR-0066）。
+ *
+ * 这些项以前是「`.env` 提供默认值」，现在默认值固定在代码里，`.env` 里写了它们
+ * 只在**启动时导入库一次**（`src/services/settingsImport.ts`）—— 改运行行为请用
+ * `/config`（私信）或管理后台「配置」页，改完立即生效、不用重启。
+ *
+ * 值必须与 `.env.example` 里历史上的默认值一致（否则升级时行为会漂移）。
+ */
+export const DEFAULT_RAW_MESSAGE_RETENTION_DAYS = 0;
+export const DEFAULT_AUDIT_LOG_RETENTION_DAYS = 180;
+export const DEFAULT_JOIN_REQUEST_TTL_DAYS = 7;
+export const DEFAULT_ACTIVITY_NOTIFY_DAILY_LIMIT = 3;
+export const DEFAULT_ACTIVITY_NOTIFY_RATE_PER_SECOND = 5;
+export const DEFAULT_APPEAL_HOLD_MINUTES = 15;
+export const DEFAULT_SCAN_INTERVAL_MS = 60_000;
+export const DEFAULT_AUTO_RESTART_ON_DEPLOY = true;
+export const DEFAULT_DEPLOY_RESTART_DELAY_MINUTES = 10;
+export const DEFAULT_DEPLOY_CHECK_INTERVAL_MS = 60_000;
+export const DEFAULT_JOIN_SYNC_INTERVAL_MS = 600_000;
+export const DEFAULT_SCHEDULED_ANNOUNCE_ENABLED = false;
+export const DEFAULT_SCHEDULED_ANNOUNCE_HOURLY_LIMIT = 6;
+/** 管理后台三项（也在热改项里，见 `src/adminApi/config.ts`）。 */
+export const DEFAULT_ADMIN_API_SESSION_TTL_MINUTES = 720;
+export const DEFAULT_ADMIN_API_TOKEN_TTL_MINUTES = 10;
+export const DEFAULT_ADMIN_API_RATE_LIMIT_PER_MINUTE = 60;
+
 export type DatabaseTarget =
   | { driver: "sqlite"; path: string }
   | { driver: "postgres"; url: string }
@@ -47,53 +74,58 @@ export interface Settings {
   logColor: string;
   rawMessageRetentionDays: number;
   auditLogRetentionDays: number;
-  /** 展示时区（卡片时间 + 日志时间）；`TZ` / `TIMEZONE`，默认 `Asia/Shanghai`（UTC+8）。 */
+  /**
+   * 展示时区（卡片时间 + 日志时间）：`TZ`，默认 `Asia/Shanghai`（UTC+8）。
+   *
+   * ⚠️ 这一项**仍然**从 `.env` 读启动默认值（日志时间在连库之前就要用），
+   * 同时也可以被 `/config set displayTimezone` 覆盖（见 ADR-0066）。
+   */
   displayTimezone: string;
-  /** 私信首次交互主菜单的记录方式（dev 默认内存，正式默认入库）。 */
+  /** 私信首次交互主菜单的记录方式（默认入库；`pnpm dev` 首次在本地库上启动时会导入 `memory`）。 */
   menuFirstPush: MenuFirstPushMode;
   /** 待审批入群申请的有效期（天）；0 表示不自动过期（默认 7）。 */
   joinRequestTtlDays: number;
   /**
-   * 活动通知每人每日上限（`ACTIVITY_NOTIFY_DAILY_LIMIT`，默认 3）。
+   * 活动通知每人每日上限（默认 3）。
    *
    * `0` = 不限制；非负整数。官方主动私信有「单用户每天 1000 条、单关系 20 qpm」
    * 的额度，封顶是为了避免活动集中变更时把额度打满、后续通知全部失败。
    */
   activityNotifyDailyLimit: number;
   /**
-   * 活动通知的令牌桶速率（`ACTIVITY_NOTIFY_RATE_PER_SECOND`，默认 5）。
+   * 活动通知的令牌桶速率（默认 5 条/秒）。
    *
    * `0` = 不限制；桶容量取 `ceil(速率)`，桶空时**等待**下一个令牌（不丢通知）。
    * 官方主动私信同样有 qps 限制，这里是推送侧自己的平滑。
    */
   activityNotifyRatePerSecond: number;
   /**
-   * 申诉「值班」单人持有时间（分钟，`APPEAL_HOLD_MINUTES`，默认 15）。
+   * 申诉「值班」单人持有时间（分钟，默认 15）。
    *
    * 申诉默认通知**所有管理员**，审核员之间**轮单**（一次只通知一位）；
    * 超过这个时间仍未处理，自动转给下一位审核员；`0` = 不自动转派（只通知第一位）。
    */
   appealHoldMinutes: number;
   /**
-   * **统一扫描周期**（`SCAN_INTERVAL_MS`，默认 60000）。
+   * **统一扫描周期**（默认 60000）。
    *
    * 全项目只跑一个定时器：保留清理 / 活动提醒 / 申诉轮转 / 待审批 TTL / 部署监测都由它驱动。
    * `0` = 关闭**所有**周期任务（统一总开关）。
    */
   scanIntervalMs: number;
   /**
-   * 部署监测：检测到磁盘上的版本变化后，是否自动重启（`AUTO_RESTART_ON_DEPLOY`，默认开）。
+   * 部署监测：检测到磁盘上的版本变化后，是否自动重启（默认开）。
    *
    * 流程：检测到磁盘版本变化 → 私信全部全局超管「计划 N 分钟后自动重启」+
    * 「取消自动重启 / 立即重启」按钮；到期没人取消就走自我重启。
    */
   autoRestartOnDeploy: boolean;
-  /** 部署监测的宽限期（`DEPLOY_RESTART_DELAY_MINUTES`，默认 10 分钟；`0` = 立即重启）。 */
+  /** 部署监测的宽限期（默认 10 分钟；`0` = 立即重启）。 */
   deployRestartDelayMinutes: number;
-  /** 部署监测的扫描间隔（`DEPLOY_CHECK_INTERVAL_MS`，默认 60000；`0` = 关闭监测）。 */
+  /** 部署监测的扫描间隔（默认 60000；`0` = 关闭监测）。 */
   deployCheckIntervalMs: number;
   /**
-   * 入群申请**对账**周期（`JOIN_SYNC_INTERVAL_MS`，默认 600000 = 10 分钟；`0` = 关闭）。
+   * 入群申请**对账**周期（默认 600000 = 10 分钟；`0` = 关闭）。
    *
    * 周期任务会按绑定群拉一次官方待审批列表，把「官方已经不再返回」的本地待审批标记过期 ——
    * 别人在群管理后台 / 其它机器人处理掉的申请不会一直挂在 `/pending` 里
@@ -101,13 +133,13 @@ export interface Settings {
    */
   joinSyncIntervalMs: number;
   /**
-   * 机器人定时发言（`SCHEDULED_ANNOUNCE_ENABLED`，**默认关**）。
+   * 机器人定时发言（**默认关**）。
    *
    * 每群群管可以按 cron 给本群配机器人的定时发言；这个开关是**总开关**，
    * 关着时所有任务都不触发（任务本身仍然保留，页面上会提示总开关关着）。
    */
   scheduledAnnounceEnabled: boolean;
-  /** 定时发言每群每小时上限（`SCHEDULED_ANNOUNCE_HOURLY_LIMIT`，默认 6；`0` = 不限制）。 */
+  /** 定时发言每群每小时上限（默认 6；`0` = 不限制）。 */
   scheduledAnnounceHourlyLimit: number;
   /**
    * 活动统计图片的字体下载地址（`ACTIVITY_STATS_FONT_URL`）。
@@ -117,31 +149,18 @@ export interface Settings {
    * 设为空字符串表示「只允许系统字体」，下载失败则统计图降级为文字统计卡。
    */
   activityStatsFontUrl: string;
+  /** 管理后台会话的滑动过期（分钟，默认 720；热改项）。 */
+  adminApiSessionTtlMinutes: number;
+  /** 管理后台一次性登录令牌的有效期（分钟，默认 10；热改项）。 */
+  adminApiTokenTtlMinutes: number;
+  /** 管理后台每个会话每分钟的请求上限（默认 60；`0` = 不限；热改项）。 */
+  adminApiRateLimitPerMinute: number;
 }
 
 export type MenuFirstPushMode = "memory" | "persistent";
 
-/**
- * 解析「私信首次交互推一次主菜单」的记录方式。
- *
- * - `memory`：只记内存，重启后可以再次验证推送（`pnpm dev` 默认）；
- * - 其它/未设置：入库持久化，重启不重复（正式启动默认）。
- */
-export function resolveMenuFirstPushMode(
-  value: string | undefined,
-): MenuFirstPushMode {
-  const raw = value?.trim().toLowerCase() ?? "";
-  if (raw.length === 0) {
-    return "persistent";
-  }
-  if (raw === "memory" || raw === "mem") {
-    return "memory";
-  }
-  if (raw === "persistent" || raw === "db" || raw === "database") {
-    return "persistent";
-  }
-  throw new Error(`MENU_FIRST_PUSH 只支持 memory / persistent，收到：${value}`);
-}
+/** 私信首次交互主菜单的记录方式的内置默认值（正式入口入库持久化）。 */
+export const DEFAULT_MENU_FIRST_PUSH: MenuFirstPushMode = "persistent";
 
 /** 事件通道：WebSocket 长连接（默认）或 Webhook 回调（§D5）。 */
 export type EventMode = "websocket" | "webhook";
@@ -262,6 +281,14 @@ function sqliteTarget(path: string): DatabaseTarget {
     : { driver: "sqlite", path };
 }
 
+/**
+ * 从进程环境（含 `.env` 载入结果）读**核心**配置。
+ *
+ * ⚠️ 热改项（保留期 / 周期 / 部署监测 / 定时发言 / 管理后台 TTL 等）**不在这里读 `.env`**：
+ * 它们的内置默认值见上面的 `DEFAULT_*`，`.env` 里写了只会在启动时导入库一次
+ * （`importEnvSettingsToStore`，ADR-0066）。唯一的例外是 `displayTimezone`（`TZ`）——
+ * 日志时间在连库之前就要用。
+ */
 export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
   const databaseUrl = env.DATABASE_URL?.trim() ?? "";
   return {
@@ -284,41 +311,28 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     logFile: env.LOG_FILE ?? "logs/qq-group-ops.log",
     logConsole: asBool(env.LOG_CONSOLE, true),
     logColor: env.LOG_COLOR ?? "auto",
-    rawMessageRetentionDays: asInt(env.RAW_MESSAGE_RETENTION_DAYS, 0),
-    // 展示时区：默认 UTC+8，`TZ` 可覆盖（非法值由 setDisplayTimeZone 回落）
-    displayTimezone: asText(env.TZ, DEFAULT_DISPLAY_TIME_ZONE),
-    auditLogRetentionDays: asInt(env.AUDIT_LOG_RETENTION_DAYS, 180),
-    menuFirstPush: resolveMenuFirstPushMode(env.MENU_FIRST_PUSH),
-    joinRequestTtlDays: asInt(env.JOIN_REQUEST_TTL_DAYS, 7),
-    activityNotifyDailyLimit: asNonNegativeInt(
-      env.ACTIVITY_NOTIFY_DAILY_LIMIT,
-      3,
-    ),
-    activityNotifyRatePerSecond: asNonNegativeInt(
-      env.ACTIVITY_NOTIFY_RATE_PER_SECOND,
-      5,
-    ),
-    appealHoldMinutes: asNonNegativeInt(env.APPEAL_HOLD_MINUTES, 15),
-    scanIntervalMs: asNonNegativeInt(env.SCAN_INTERVAL_MS, 60_000),
-    autoRestartOnDeploy: asBool(env.AUTO_RESTART_ON_DEPLOY, true),
-    deployRestartDelayMinutes: asNonNegativeInt(
-      env.DEPLOY_RESTART_DELAY_MINUTES,
-      10,
-    ),
-    deployCheckIntervalMs: asNonNegativeInt(
-      env.DEPLOY_CHECK_INTERVAL_MS,
-      60_000,
-    ),
-    joinSyncIntervalMs: asNonNegativeInt(env.JOIN_SYNC_INTERVAL_MS, 600_000),
-    scheduledAnnounceEnabled: asBool(env.SCHEDULED_ANNOUNCE_ENABLED, false),
-    scheduledAnnounceHourlyLimit: asNonNegativeInt(
-      env.SCHEDULED_ANNOUNCE_HOURLY_LIMIT,
-      6,
-    ),
-    activityStatsFontUrl: asText(
-      env.ACTIVITY_STATS_FONT_URL,
-      DEFAULT_ACTIVITY_STATS_FONT_URL,
-    ),
+    // ── 以下都是热改项：默认值固定在代码里，`.env` 只当一次性导入来源（ADR-0066）──
+    rawMessageRetentionDays: DEFAULT_RAW_MESSAGE_RETENTION_DAYS,
+    // 展示时区是例外：默认仍是 `TZ`（日志时间在连库之前就要用）。
+    // 留空（`TZ=`）视为没填，直接用内置默认 —— 否则会白 warn 一条「非法时区」。
+    displayTimezone: firstNonBlank(env.TZ) || DEFAULT_DISPLAY_TIME_ZONE,
+    auditLogRetentionDays: DEFAULT_AUDIT_LOG_RETENTION_DAYS,
+    menuFirstPush: DEFAULT_MENU_FIRST_PUSH,
+    joinRequestTtlDays: DEFAULT_JOIN_REQUEST_TTL_DAYS,
+    activityNotifyDailyLimit: DEFAULT_ACTIVITY_NOTIFY_DAILY_LIMIT,
+    activityNotifyRatePerSecond: DEFAULT_ACTIVITY_NOTIFY_RATE_PER_SECOND,
+    appealHoldMinutes: DEFAULT_APPEAL_HOLD_MINUTES,
+    scanIntervalMs: DEFAULT_SCAN_INTERVAL_MS,
+    autoRestartOnDeploy: DEFAULT_AUTO_RESTART_ON_DEPLOY,
+    deployRestartDelayMinutes: DEFAULT_DEPLOY_RESTART_DELAY_MINUTES,
+    deployCheckIntervalMs: DEFAULT_DEPLOY_CHECK_INTERVAL_MS,
+    joinSyncIntervalMs: DEFAULT_JOIN_SYNC_INTERVAL_MS,
+    scheduledAnnounceEnabled: DEFAULT_SCHEDULED_ANNOUNCE_ENABLED,
+    scheduledAnnounceHourlyLimit: DEFAULT_SCHEDULED_ANNOUNCE_HOURLY_LIMIT,
+    activityStatsFontUrl: DEFAULT_ACTIVITY_STATS_FONT_URL,
+    adminApiSessionTtlMinutes: DEFAULT_ADMIN_API_SESSION_TTL_MINUTES,
+    adminApiTokenTtlMinutes: DEFAULT_ADMIN_API_TOKEN_TTL_MINUTES,
+    adminApiRateLimitPerMinute: DEFAULT_ADMIN_API_RATE_LIMIT_PER_MINUTE,
   };
 }
 

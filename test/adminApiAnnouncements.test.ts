@@ -45,9 +45,11 @@ function harness(options: { withService?: boolean } = {}) {
   const repository = new FakeGroupSettingsRepository();
   const queue = new WriteQueue();
   const sender = new FakeAnnouncementSender();
-  const platform = new PlatformSettingsStore(
-    loadSettings({ SCHEDULED_ANNOUNCE_ENABLED: "1" }),
-  );
+  // 总开关是热改项（ADR-0066）：生效值来自库。这里把**启动默认值**直接置成「开」，
+  // 等价于 `.env` 里写 `SCHEDULED_ANNOUNCE_ENABLED=1` 时被启动导入的结果。
+  const settings = loadSettings({});
+  settings.scheduledAnnounceEnabled = true;
+  const platform = new PlatformSettingsStore(settings);
   const service = new ScheduledAnnouncementService({
     store: new ScheduledAnnouncementStore(repository, queue),
     sender,

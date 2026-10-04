@@ -6,7 +6,6 @@ import {
   loadSettings,
   resolveDatabaseTarget,
   resolveEventMode,
-  resolveMenuFirstPushMode,
 } from "../src/config.js";
 
 describe("loadSettings", () => {
@@ -87,7 +86,6 @@ describe("loadSettings", () => {
       QQ_BOT_CLIENT_SECRET: "secret",
       QQ_BOT_SANDBOX: "true",
       ADMIN_USER_IDS: "1, 2",
-      RAW_MESSAGE_RETENTION_DAYS: "7",
       LOG_FILE: "custom.log",
       LOG_CONSOLE: "false",
       LOG_COLOR: "never",
@@ -95,7 +93,6 @@ describe("loadSettings", () => {
     expect(hasQqCredentials(settings)).toBe(true);
     expect(settings.qqBotSandbox).toBe(true);
     expect(settings.adminUserIds).toEqual(["1", "2"]);
-    expect(settings.rawMessageRetentionDays).toBe(7);
     expect(settings.logFile).toBe("custom.log");
     expect(settings.logConsole).toBe(false);
     expect(settings.logColor).toBe("never");
@@ -105,10 +102,65 @@ describe("loadSettings", () => {
     const settings = loadSettings({ ADMIN_QQ_IDS: "legacy" } as NodeJS.ProcessEnv);
     expect(settings.adminUserIds).toEqual([]);
   });
+
+  /**
+   * ADR-0066：热改项的默认值搬进了代码，`.env` 只在启动时被导入一次（见
+   * `settingsImport.test.ts`）—— 所以 `loadSettings` 读到这些环境变量时必须**原样忽略**，
+   * 否则「删掉 `.env` 里的行」与「留着」就会出现两套行为。
+   */
+  it("热改项不再从环境变量读（只当启动时的导入来源）", () => {
+    const base = loadSettings({});
+    const polluted = loadSettings({
+      RAW_MESSAGE_RETENTION_DAYS: "7",
+      AUDIT_LOG_RETENTION_DAYS: "1",
+      JOIN_REQUEST_TTL_DAYS: "3",
+      MENU_FIRST_PUSH: "memory",
+      ACTIVITY_NOTIFY_DAILY_LIMIT: "99",
+      ACTIVITY_NOTIFY_RATE_PER_SECOND: "20",
+      APPEAL_HOLD_MINUTES: "1",
+      SCAN_INTERVAL_MS: "5000",
+      AUTO_RESTART_ON_DEPLOY: "0",
+      DEPLOY_RESTART_DELAY_MINUTES: "1",
+      DEPLOY_CHECK_INTERVAL_MS: "2000",
+      JOIN_SYNC_INTERVAL_MS: "1000",
+      SCHEDULED_ANNOUNCE_ENABLED: "1",
+      SCHEDULED_ANNOUNCE_HOURLY_LIMIT: "99",
+      ACTIVITY_STATS_FONT_URL: "https://example.com/font.otf",
+      ADMIN_API_SESSION_TTL_MINUTES: "5",
+      ADMIN_API_TOKEN_TTL_MINUTES: "3",
+      ADMIN_API_RATE_LIMIT_PER_MINUTE: "0",
+    });
+
+    for (const key of [
+      "rawMessageRetentionDays",
+      "auditLogRetentionDays",
+      "joinRequestTtlDays",
+      "menuFirstPush",
+      "activityNotifyDailyLimit",
+      "activityNotifyRatePerSecond",
+      "appealHoldMinutes",
+      "scanIntervalMs",
+      "autoRestartOnDeploy",
+      "deployRestartDelayMinutes",
+      "deployCheckIntervalMs",
+      "joinSyncIntervalMs",
+      "scheduledAnnounceEnabled",
+      "scheduledAnnounceHourlyLimit",
+      "activityStatsFontUrl",
+      "adminApiSessionTtlMinutes",
+      "adminApiTokenTtlMinutes",
+      "adminApiRateLimitPerMinute",
+    ] as const) {
+      expect(polluted[key], key).toEqual(base[key]);
+    }
+
+    // 唯一例外：`TZ` 是「连库之前就要用」的核心项，仍然从 `.env` 读（同时可被覆盖）
+    expect(loadSettings({ TZ: "UTC" }).displayTimezone).toBe("UTC");
+    expect(loadSettings({ TZ: "  " }).displayTimezone).toBe(base.displayTimezone);
+  });
 });
 
-describe("resolveDatabaseTarget", () => {
-  it("defaults to a SQLite file", () => {
+describe("resolveDatabaseTarget", () => {  it("defaults to a SQLite file", () => {
     expect(resolveDatabaseTarget(undefined)).toEqual({
       driver: "sqlite",
       path: DEFAULT_SQLITE_PATH,
@@ -159,22 +211,5 @@ describe("resolveDatabaseTarget", () => {
     expect(resolveDatabaseTarget("", ":memory:")).toEqual({
       driver: "memory",
     });
-  });
-});
-
-describe("resolveMenuFirstPushMode", () => {
-  it("defaults to persistent and accepts explicit modes", () => {
-    expect(resolveMenuFirstPushMode(undefined)).toBe("persistent");
-    expect(resolveMenuFirstPushMode("")).toBe("persistent");
-    expect(resolveMenuFirstPushMode("persistent")).toBe("persistent");
-    expect(resolveMenuFirstPushMode("db")).toBe("persistent");
-    expect(resolveMenuFirstPushMode("memory")).toBe("memory");
-    expect(resolveMenuFirstPushMode("MEM")).toBe("memory");
-  });
-
-  it("rejects unknown modes instead of silently falling back", () => {
-    expect(() => resolveMenuFirstPushMode("memroy")).toThrow(
-      /MENU_FIRST_PUSH/u,
-    );
   });
 });

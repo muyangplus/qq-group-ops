@@ -1,4 +1,10 @@
-import { HOT_SETTING_KEYS, definitionOf } from "../src/services/platformSettings.js";
+import {
+  HOT_SETTING_KEYS,
+  IMPORTED_FROM_ENV_KEYS,
+  SETTING_DEFINITIONS,
+  definitionOf,
+  isEnvBacked,
+} from "../src/services/platformSettings.js";
 import { describe, expect, it } from "vitest";
 
 import { loadSettings } from "../src/config.js";
@@ -114,5 +120,26 @@ describe("热改项注册完整性", () => {
       }
     });
     expect(missing, `这些热改键没有定义：${missing.join(", ")}`).toEqual([]);
+  });
+
+  /**
+   * ADR-0066：热改项分两类 —— 默认值来自代码（启动时从 `.env` 导入一次）与
+   * 「连库之前就要用」的 `.env` 默认项。这条守卫钉住划分，防止以后新增项时
+   * 忘了把它挂进导入列表（表现就是「`.env` 里配了却没生效」）。
+   */
+  it("导入列表 = 除 envBacked 以外的全部热改项（目前只有时区还读 .env）", () => {
+    const codeBacked = SETTING_DEFINITIONS.filter(
+      (definition) => !isEnvBacked(definition),
+    ).map((definition) => definition.key);
+    expect([...IMPORTED_FROM_ENV_KEYS].sort()).toEqual(codeBacked.sort());
+    expect(
+      SETTING_DEFINITIONS.filter(isEnvBacked).map((definition) => definition.envKey),
+    ).toEqual(["TZ"]);
+    // 每个定义都必须有 `.env` 来源键：导入器与配置页的「来源」列都靠它
+    for (const definition of SETTING_DEFINITIONS) {
+      expect(definition.envKey, definition.key).toMatch(/^[A-Z][A-Z0-9_]*$/u);
+    }
+    const envKeys = SETTING_DEFINITIONS.map((definition) => definition.envKey);
+    expect(new Set(envKeys).size).toBe(envKeys.length);
   });
 });

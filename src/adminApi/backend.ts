@@ -1519,7 +1519,10 @@ export function createAdminApiBackend(deps: AdminApiBackendDeps): AdminApiBacken
         actorId,
         action: "admin_api:setting_clear",
         status: AuditStatus.Executed,
-        reason: `配置 ${item.key} 恢复 .env 默认值（现为 ${item.display}）`,
+        // 文案按 `envBacked` 区分：只有时区（`TZ`）的默认值真的来自 `.env`，其余是代码内置值
+        reason: `配置 ${item.key} 恢复${
+          item.envBacked ? " .env 默认值" : "内置默认值"
+        }（现为 ${item.display}）`,
       });
       log.info("admin api cleared platform setting", {
         key: item.key,

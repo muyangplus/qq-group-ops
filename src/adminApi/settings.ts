@@ -1,5 +1,7 @@
 import {
   findDefinition,
+  findDefinitionByEnvKey,
+  isEnvBacked,
   type PlatformSettingsStore,
   type SettingView,
 } from "../services/platformSettings.js";
@@ -20,7 +22,12 @@ import {
 /** 密钥类键名：形如 `*_SECRET` / `*_TOKEN` / `*_KEY` 的值一律不回传。 */
 const SECRET_KEY_PATTERN = /(SECRET|TOKEN|PASSWORD|PASSWD|_KEY$|DSN|CREDENTIAL)/u;
 
-/** `.env` 只读项的标签（键名与 `config.ts` / `adminApi/config.ts` 保持一致）。 */
+/**
+ * `.env` 只读项的标签（键名与 `config.ts` / `adminApi/config.ts` 保持一致）。
+ *
+ * ⚠️ 这里**只放真正留在 `.env` 里的核心项**（ADR-0066）：热改项一律不列 —— 它们在
+ * 「可改项」那一段显示（带各自的 `envKey`），列进只读段只会让人以为「它不能改」（真机反馈）。
+ */
 export const ENV_LABELS: Readonly<Record<string, string>> = {
   // 机器人本体
   QQ_BOT_APP_ID: "机器人 AppID",
@@ -40,12 +47,13 @@ export const ENV_LABELS: Readonly<Record<string, string>> = {
   CLASS_INDEX_FILE: "班级库文件",
   // 启动期默认超管
   ADMIN_USER_IDS: "初始超管 openid 列表",
-  // 日志与时区
+  // 日志
   LOG_LEVEL: "日志级别",
   LOG_FILE: "日志文件",
   LOG_CONSOLE: "控制台日志",
   LOG_COLOR: "日志颜色",
-  TZ: "时区",
+  // `TZ` 不在这里：它既是 `.env` 的启动默认值、又是热改项（展示时区），
+  // 统一在「可改项」那段显示（`envBacked` = true，来源会写「.env 默认」）。
   // 管理 API
   ADMIN_API_ENABLED: "管理 API 开关",
   ADMIN_API_HOST: "管理 API 监听地址",
@@ -53,29 +61,9 @@ export const ENV_LABELS: Readonly<Record<string, string>> = {
   ADMIN_API_PUBLIC_BASE_URL: "管理 API 公开地址",
   ADMIN_API_COOKIE_SECURE: "管理 API 安全 Cookie",
   ADMIN_API_SESSION_SECRET: "管理 API 会话密钥",
-  ADMIN_API_SESSION_TTL_MINUTES: "管理 API 会话有效期（分钟）",
-  ADMIN_API_TOKEN_TTL_MINUTES: "管理 API 令牌有效期（分钟）",
   ADMIN_API_TOKENS: "管理 API 机器令牌",
   ADMIN_API_ALLOWED_OPENIDS: "管理 API 白名单 openid",
-  ADMIN_API_RATE_LIMIT_PER_MINUTE: "管理 API 每分钟限流",
   ADMIN_API_WEB_DIR: "管理前台静态目录",
-  // 周期任务 / 保留期等热改项的 `.env` 默认值（当前生效值可能已被后台或 /config 覆盖）
-  AUDIT_LOG_RETENTION_DAYS: "审计日志保留（天）",
-  RAW_MESSAGE_RETENTION_DAYS: "处罚原文保留（天）",
-  JOIN_REQUEST_TTL_DAYS: "待审批申请有效期（天）",
-  MENU_FIRST_PUSH: "首次菜单推送",
-  ACTIVITY_NOTIFY_DAILY_LIMIT: "活动通知每日上限",
-  ACTIVITY_NOTIFY_RATE_PER_SECOND: "活动通知每秒速率",
-  ACTIVITY_STATS_FONT_URL: "活动统计字体地址",
-  APPEAL_HOLD_MINUTES: "申诉超时转派（分钟）",
-  SCAN_INTERVAL_MS: "统一扫描周期（毫秒）",
-  AUTO_RESTART_ON_DEPLOY: "部署后自动重启",
-  DEPLOY_RESTART_DELAY_MINUTES: "自动重启宽限（分钟）",
-  DEPLOY_CHECK_INTERVAL_MS: "部署监测扫描间隔（毫秒）",
-  JOIN_SYNC_INTERVAL_MS: "入群申请对账周期（毫秒）",
-  SCHEDULED_ANNOUNCE_ENABLED: "定时发言总开关",
-  SCHEDULED_ANNOUNCE_HOURLY_LIMIT: "定时发言每小时上限",
-  DISPLAY_TIMEZONE: "展示时区覆盖",
 };
 
 /** `.env` 只读项（值可能被隐去）。 */
@@ -89,10 +77,15 @@ export interface AdminApiEnvItem {
   value?: string | undefined;
 }
 
-/** 一个可热改项（对应 `SETTING_DEFINITIONS` 里的一项）。 */
+/**
+ * 一个可热改项（对应 `SETTING_DEFINITIONS` 里的一项）。
+ *
+ * ⚠️ ADR-0066 之后 `envKey` **不再代表默认值来源**：除 `envBacked` 的项外，`.env` 只在
+ * 启动时导入一次，之后默认值来自代码。前端文案必须看 `envBacked`，别一律写「.env 默认」。
+ */
 export interface AdminApiSettingItem {
   key: string;
-  /** `.env` 里的名字（面板上显示「默认值来自哪」）。 */
+  /** `.env` 里的名字（历史来源键；用于说明「以前在哪配」）。 */
   envKey: string;
   label: string;
   unit: string;
@@ -100,8 +93,10 @@ export interface AdminApiSettingItem {
   value: number | boolean | string;
   /** 给人看的一行（复用 `/config` 的 `describe`）。 */
   display: string;
-  /** `env` = 用 `.env` 默认值；`override` = 已经被后台 / `/config` 改过（存在库里）。 */
+  /** `env` = 用启动默认值（**除 `envBacked` 外都是代码内置值**）；`override` = 库里存了覆盖值。 */
   source: "env" | "override";
+  /** 启动默认值是否真的来自 `.env`（核心项，目前只有 `TZ`）。 */
+  envBacked: boolean;
 }
 
 export interface AdminApiSettingsView {
@@ -135,6 +130,7 @@ export function toSettingItem(view: SettingView): AdminApiSettingItem {
     value: view.value,
     display: view.definition.describe(view.value),
     source: view.source,
+    envBacked: isEnvBacked(view.definition),
   };
 }
 
@@ -143,14 +139,18 @@ export function toSettingItem(view: SettingView): AdminApiSettingItem {
  *
  * **热改项不在这里重复出现**：同一个键（例如 `SCHEDULED_ANNOUNCE_ENABLED`）如果在
  * 「可改项」里已经能改，再列进只读段只会让人以为「它不能改」（真机反馈）。
- * `ENV_LABELS` 仍然保留这些键 —— 配置页的覆盖守卫要求「`config.ts` 读到的每个 env 键
- * 都能在配置页看到」，而它们确实看得到（就在可改项那一段，且带 `.env` 名字与来源）。
+ * 两层过滤都要做：`findDefinition`（键同名）与 `findDefinitionByEnvKey`
+ * （`TZ` 这种「`.env` 名 ≠ 配置项键」的）。
  */
 export function buildEnvItems(
   env: NodeJS.ProcessEnv = process.env,
 ): AdminApiEnvItem[] {
   return Object.entries(ENV_LABELS)
-    .filter(([key]) => findDefinition(key) === undefined)
+    .filter(
+      ([key]) =>
+        findDefinition(key) === undefined &&
+        findDefinitionByEnvKey(key) === undefined,
+    )
     .map(([key, label]) => {
     const raw = env[key];
     const configured = raw !== undefined && raw.trim().length > 0;

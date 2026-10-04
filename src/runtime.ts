@@ -103,7 +103,12 @@ import { RichMessageSender } from "./services/richMessages.js";
 import { DataMigrationService } from "./services/dataMigration.js";
 import { PrivacyService } from "./services/privacy.js";
 import { AdminApiLinkService } from "./adminApi/loginLink.js";
-import { loadAdminApiConfig, type AdminApiConfig } from "./adminApi/config.js";
+import {
+  loadAdminApiConfig,
+  readAdminApiHotConfig,
+  type AdminApiConfig,
+  type AdminApiHotConfig,
+} from "./adminApi/config.js";
 import { createAdminApiBackend } from "./adminApi/backend.js";
 import { createAdminApiEntities } from "./adminApi/entityRef.js";
 import { backupDatabase } from "./services/dbBackup.js";
@@ -192,6 +197,11 @@ export interface Runtime {
 /** 起同进程管理 API 监听口所需的全部依赖。 */
 export interface AdminApiHostSource {
   config: AdminApiConfig;
+  /**
+   * 三项热配置（会话 TTL / 令牌 TTL / 限流）的当前值来源 —— 读点在每次请求里现取，
+   * 所以 `/config set adminApiSessionTtlMinutes …` 改完立即生效（ADR-0066）。
+   */
+  hotConfig: () => AdminApiHotConfig;
   /** 一次性登录令牌仓储；纯内存模式（无数据库）时为 `undefined`，没有它无法兑换令牌。 */
   tokens: AdminTokenRepository | undefined;
   /** 数据库类型（诊断用）：`memory` 时「没有令牌表」就出在这里。 */
@@ -509,10 +519,14 @@ export function createRuntime(
   });
   // 管理后台登录令牌（E1-b）：配置没开或没有令牌仓储时 `enabled` 为 false，指令会明确说明
   const adminApiConfig = loadAdminApiConfig();
+  // 会话 TTL / 令牌 TTL / 限流都是**热改项**：一律「用的时候取当前值」（ADR-0066）
+  const adminApiHotConfig = (): AdminApiHotConfig =>
+    readAdminApiHotConfig(platform);
   const adminApiLink = new AdminApiLinkService({
     tokens: repositories.adminTokens,
     config: adminApiConfig,
     permissions,
+    tokenTtlMs: () => adminApiHotConfig().tokenTtlMs,
   });
   /**
    * 管理 API 的读 + 写后端（E1-d）：接的是**本进程**的服务图，不是另一套仓储连接。
@@ -1309,6 +1323,7 @@ export function createRuntime(
       adminApiConfig.enabled && adminApiBackend
         ? {
             config: adminApiConfig,
+            hotConfig: adminApiHotConfig,
             tokens: repositories.adminTokens,
             databaseDriver: dependencies.databaseDriver ?? "memory",
             backend: adminApiBackend,
