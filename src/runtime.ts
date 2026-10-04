@@ -91,6 +91,7 @@ import {
 } from "./services/scheduledAnnouncements.js";
 import { createRestartHook, type RestartHook, type RestartRequestHandler } from "./services/restart.js";
 import type { DeployControl } from "./services/deployWatcher.js";
+import type { InstallerControl } from "./services/deployInstaller.js";
 import { PermissionService } from "./services/permissions.js";
 import { PunishmentService } from "./services/punishments.js";
 import { RichMessageSender } from "./services/richMessages.js";
@@ -143,6 +144,11 @@ export interface Runtime {
   restart: RestartHook;
   /** 部署监测（新版本自动重启）的控制面；未装配时没有待重启状态。 */
   deploy: DeployControl | undefined;
+  /**
+   * 包安装器的控制面（ADR-0065）：`/status proc` 卡片与后台「状态」页的
+   * 「回滚到上一版本」入口用它读回滚目标、发起回滚；未装配时没有回滚入口。
+   */
+  installer: InstallerControl | undefined;
   /** §A5 黑名单（本群 / 全局）。 */
   blacklist: BlacklistService;
   /** §B7 处罚记录与卡片动作。 */
@@ -235,6 +241,8 @@ export interface RuntimeDependencies {
   onRestartRequested?: RestartRequestHandler | undefined;
   /** 部署监测（新版本自动重启）的控制面；由 `main.ts` 构造后注入。 */
   deploy?: DeployControl | undefined;
+  /** 包安装器的控制面（回滚入口）；由 `main.ts` 构造后注入；未装配时没有回滚按钮。 */
+  installer?: InstallerControl | undefined;
   /**
    * 周期任务状态的取值函数（管理 API 的 `/api/tasks`）。
    *
@@ -523,6 +531,7 @@ export function createRuntime(
         }),
         tickTasks: dependencies.tickTasks,
         deploy: dependencies.deploy,
+        installer: dependencies.installer,
         // 配置页（E2-f）：读写都走机器人 `/config` 用的那一套热改存储，不另造通路
         platform,
         // P1 只读补齐：处罚 / 黑名单 / 申诉 / 投递 / 运维状态（全部走各自领域服务）
@@ -624,6 +633,7 @@ export function createRuntime(
     diagnostics: { settings, writeQueue, migration: dependencies.migration },
     restart,
     deploy: dependencies.deploy,
+    install: dependencies.installer,
     migrate: dataMigration,
     privacy,
     adminApi: adminApiLink,
@@ -1263,6 +1273,7 @@ export function createRuntime(
     scheduledAnnouncements,
     restart,
     deploy: dependencies.deploy,
+    installer: dependencies.installer,
     blacklist,
     punishments,
     appeals,

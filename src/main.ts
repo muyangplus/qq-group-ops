@@ -30,6 +30,7 @@ import { describeListenFailure } from "./adminApi/listenFailure.js";
 import { connectPersistence, type Persistence } from "./persistence.js";
 import { createRuntime, toRuntimeRepositories, type Runtime } from "./runtime.js";
 import { escapeCardText, renderCard } from "./services/cardTemplate.js";
+import type { RichMessage } from "./services/richMessages.js";
 import { startupReportText } from "./services/commands/healthCommands.js";
 import type { MigrationResult } from "./db/migrate.js";
 import { ActivityReminderService } from "./services/activityReminder.js";
@@ -38,6 +39,10 @@ import { RetentionService } from "./services/retention.js";
 import { DEFAULT_RETENTION_INTERVAL_MS } from "./services/retention.js";
 import { TickScheduler } from "./services/tickScheduler.js";
 import { DeployWatcher } from "./services/deployWatcher.js";
+import {
+  DeployInstaller,
+  type InstallNotice,
+} from "./services/deployInstaller.js";
 import { NOTIFY_SCOPE_ALL, topicOfOfficialEvent } from "./services/notifyTopics.js";
 import {
   preflightFailedCard,
@@ -207,11 +212,52 @@ async function main(): Promise<void> {
     },
     requestRestart: (info) => runtime.restart.request(info),
   });
+  /**
+   * 包安装器（ADR-0065）：扫 `incoming/` 的 `deploy-*.tgz` + `deploy-*.json`，
+   * sha256 校验 → 解包 → 指纹自证 → 整目录替换 → 交给既有重启用例。
+   *
+   * 与部署监测同一条节拍（`TickScheduler`，见下面的 `deploy-installer` 注册）；
+   * 通知走「渲染成卡片」这一步放在 `main.ts`（服务层不依赖卡片模板）。
+   */
+  const deployInstaller = new DeployInstaller({
+    restart: (info) => runtime.restart.request(info),
+    notify: async (userId, notice) => {
+      await runtime.notifications.sendPrivateCard(userId, deployNoticeCard(notice));
+    },
+    recipients: () => runtime.permissions.listSuperAdmins(),
+  });
+  /**
+   * 把安装器的通知内容渲染成卡片（服务层不依赖卡片模板，`main.ts` 做这一步）。
+   *
+   * 「半传 / 自证不过」这类是**坏消息**，正文里把「被拒绝、运行中的机器人不受影响」
+   * 写清楚，免得超管以为已经上线了。
+   */
+  function deployNoticeCard(notice: InstallNotice): RichMessage {
+    return renderCard({
+      title: notice.title,
+      lines: notice.lines,
+      rows: [
+        [
+          {
+            id: "proc",
+            label: "看看进程状态",
+            callbackData: encodeCallback("status", "proc"),
+          },
+        ],
+      ],
+    });
+  }
+
   const runtime = createRuntime(
     settings,
     {
       onRestartRequested: (info) => restartHandler?.(info),
       deploy: deployWatcher,
+      installer: {
+        rollback: () => deployInstaller.rollback(),
+        rollbackTarget: () => deployInstaller.rollbackTarget(),
+        appliedVersion: () => deployInstaller.appliedVersion(),
+      },
       // 周期任务监测（管理 API `/api/tasks`）：调度器在下面才创建，所以这里传「取值函数」，
       // 请求进来时现取（见 `RuntimeDependencies.tickTasks`）。
       tickTasks: () => schedulerRef?.snapshot(),
@@ -361,6 +407,15 @@ async function main(): Promise<void> {
     minIntervalMs: () => runtime.platform.get("deployCheckIntervalMs"),
     run: async () => {
       await deployWatcher.runOnce();
+    },
+  });
+  // 包安装器（ADR-0065）：扫 `incoming/` 的 `deploy-*.json` 标记 + `.tgz`。
+  // 与部署监测同一条节拍（同一个 `TickScheduler`）；没开管理 API 也能用（不依赖后台）。
+  scheduler.register({
+    name: "deploy-installer",
+    minIntervalMs: () => runtime.platform.get("deployCheckIntervalMs"),
+    run: async () => {
+      await deployInstaller.runOnce();
     },
   });
   // 入群申请**对账**：按绑定群拉一次官方待审批列表，把「官方已不再返回」的本地待审批

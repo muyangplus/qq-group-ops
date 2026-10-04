@@ -187,6 +187,56 @@ export function writeRollbackNotice(
   }
 }
 
+/** CD 的 FTP 同步状态文件名（`SamKirkland/FTP-Deploy-Action` 的 `state-name`，两段各一份）。 */
+export const SYNC_STATE_PATTERN = /^ftp-sync-state-.*\.json$/u;
+
+/**
+ * 删掉自家 FTP 同步状态（`ftp-sync-state-*.json`），返回被删的文件名。
+ *
+ * 为什么必须主动作废（ADR-0065 第 5 条）：**我们自己绕过了同步器改了 `dist/`**
+ * （回滚 / 机器人自解包），而同步状态记的是「上次我传过什么」——
+ * 于是下一轮 CD 会因为「本地文件没变」而**跳过上传**，出现「版本号升了、代码还是旧的」。
+ * 作废之后下一轮 CD 全量上传（**一次性**，不是每次都全量）。
+ *
+ * 只删这一种名字的文件：其它任何文件都不碰。
+ */
+export function removeSyncStateFiles(root: string = "."): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(root).filter((name) => SYNC_STATE_PATTERN.test(name));
+  } catch (error) {
+    log.debug("sync state scan failed", { root, error: describeError(error) });
+    return [];
+  }
+  const removed: string[] = [];
+  for (const name of names) {
+    try {
+      rmSync(join(root, name), { force: true });
+      removed.push(name);
+    } catch (error) {
+      log.warn("sync state removal failed", {
+        file: join(root, name),
+        error: describeError(error),
+      });
+    }
+  }
+  if (removed.length > 0) {
+    log.warn("ftp sync state invalidated (next CD uploads in full)", { root, removed });
+  }
+  return removed;
+}
+
+/** `removeSyncStateFiles()` 的人话描述（回执与日志用）。 */
+export function describeSyncStateFiles(root: string = "."): string {
+  let names: string[] = [];
+  try {
+    names = readdirSync(root).filter((name) => SYNC_STATE_PATTERN.test(name));
+  } catch {
+    return "";
+  }
+  return names.join(" / ");
+}
+
 function countFiles(path: string): number {
   return readdirSync(path, { recursive: true, withFileTypes: true }).filter(
     (entry) => entry.isFile(),

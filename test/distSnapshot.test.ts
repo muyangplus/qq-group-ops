@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   ROLLBACK_NOTICE_FILE,
+  removeSyncStateFiles,
   snapshotDist,
   takeRollbackNotice,
   writeRollbackNotice,
@@ -90,5 +91,25 @@ describe("distSnapshot", () => {
     writeFileSync(file, "{不是 JSON", "utf8");
     expect(takeRollbackNotice(file)).toBeUndefined();
     expect(ROLLBACK_NOTICE_FILE).toBe("data/rollback-notice.json");
+  });
+
+  it("removeSyncStateFiles：只删 ftp-sync-state-*.json（下一轮 CD 全量），别的文件一律不碰", () => {
+    writeFileSync(join(dir, "ftp-sync-state-code.json"), "{}", "utf8");
+    writeFileSync(join(dir, "ftp-sync-state-marker.json"), "{}", "utf8");
+    writeFileSync(join(dir, "package.json"), "{}", "utf8");
+    writeFileSync(join(dir, "deploy-0.28.0.json"), "{}", "utf8");
+
+    const removed = removeSyncStateFiles(dir).sort();
+
+    expect(removed).toEqual([
+      "ftp-sync-state-code.json",
+      "ftp-sync-state-marker.json",
+    ]);
+    expect(existsSync(join(dir, "ftp-sync-state-code.json"))).toBe(false);
+    // 同步状态之外的文件一个都不动（尤其是 `deploy-*.json` 这种投递标记）
+    expect(existsSync(join(dir, "package.json"))).toBe(true);
+    expect(existsSync(join(dir, "deploy-0.28.0.json"))).toBe(true);
+    // 重复调用安全
+    expect(removeSyncStateFiles(dir)).toEqual([]);
   });
 });

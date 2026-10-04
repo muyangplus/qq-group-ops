@@ -95,6 +95,7 @@ import { readRestartFailure } from "../services/restartNotice.js";
 import type { ShortCodeService } from "../services/shortCodes.js";
 import type { TickSchedulerState } from "../services/tickScheduler.js";
 import type { DeployControl } from "../services/deployWatcher.js";
+import type { InstallerControl } from "../services/deployInstaller.js";
 import type { PlatformSettingsStore } from "../services/platformSettings.js";
 import type { UserProfileService } from "../services/userProfiles.js";
 import { badRequest, conflict, forbidden, notFound, unavailable } from "./errors.js";
@@ -202,6 +203,12 @@ export interface AdminApiBackendDeps {
   tickTasks?: (() => TickSchedulerState | undefined) | undefined;
   /** 部署监测控制面：把「发现新版本、宽限期内」的状态一并展示在监测列表里。 */
   deploy?: DeployControl | undefined;
+  /**
+   * 包安装器控制面（ADR-0065）：后台「状态」页的回滚入口（读目标 + 发起回滚）。
+   *
+   * 只读巡检进程没有安装器 → `POST /api/deploy/rollback` 回 503。
+   */
+  installer?: InstallerControl | undefined;
   /**
    * 热改配置存储（`/api/settings` 的读写都走它）。
    *

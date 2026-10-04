@@ -106,6 +106,7 @@ import type {
 } from "./commands/context.js";
 import type { RestartHook } from "./restart.js";
 import type { DeployControl } from "./deployWatcher.js";
+import type { InstallerControl } from "./deployInstaller.js";
 import type { CardButton } from "./cardTemplate.js";
 import { getLogger } from "../core/logger.js";
 import type { AuditLog } from "./audit.js";
@@ -222,6 +223,8 @@ export interface AdminCommandServiceOptions {
 
   /** 部署监测的控制面（新版本卡上的「取消 / 立即重启」按钮）。 */
   deploy?: DeployControl | undefined;
+  /** 包安装器的控制面（`/status proc` 的「回滚到上一版本」）。 */
+  install?: InstallerControl | undefined;
 
   /** 一次性数据迁移（`/migrate`）；缺省时该指令拒绝执行。 */
   migrate?: DataMigrationService | undefined;
@@ -298,6 +301,9 @@ export class AdminCommandService {
 
   private readonly deploy: DeployControl | undefined;
 
+  /** 包安装器的控制面（回滚入口）；未装配时 `/status proc` 不渲染回滚按钮。 */
+  private readonly install: InstallerControl | undefined;
+
   private readonly migrate: DataMigrationService | undefined;
 
   /** 个人数据匿名化 / 导出（`/data`）；未装配时该指令拒绝执行。 */
@@ -352,6 +358,7 @@ export class AdminCommandService {
     this.diagnostics = options.diagnostics;
     this.restart = options.restart;
     this.deploy = options.deploy;
+    this.install = options.install;
     this.migrate = options.migrate;
     this.privacy = options.privacy;
     this.adminApi = options.adminApi;
@@ -607,6 +614,7 @@ export class AdminCommandService {
       diagnostics: this.diagnostics,
       restart: this.restart,
       deploy: this.deploy,
+      install: this.install,
       migrate: this.migrate,
       privacy: this.privacy,
       adminApi: this.adminApi,
