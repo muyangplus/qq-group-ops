@@ -438,3 +438,30 @@ ACTIVITY_STATS_FONT_URL=https://example.com/NotoSansSC-Regular.otf
 > （`POST /v2/groups/{group_id}/files`）只接受 `url` 直传或分片上传合并。本地渲染的 PNG 没有公网 URL，
 > 因此走分片（`upload_prepare` → 逐片 `PUT` → `upload_part_finish` → 带 `upload_id` 合并），
 > 拿到 `file_info` 后用 `msg_type: 7` 发送。端点可在 `QQOfficialEndpoints` 覆盖。
+
+## 只跑一份进程（单实例闸，ADR-0064）
+
+同一个应用目录**只能有一份** `node dist/main.js`。两份同时在跑的后果不是「多发一条通知」这么轻：
+各自连网关、各跑一套周期任务（定时发言会重复发言）、同时写同一个 SQLite，
+而且每次部署会各发一张「发现新版本」、各重启一次（自我维持成两份）。
+
+```bash
+# 只应该有**一行**输出
+ps -ef | grep "dist/main.js" | grep -v grep
+```
+
+- 从 0.27.1 起，启动时会抢 `data/bot-instance.lock`：锁里的 pid 还活着且不是自己 →
+  **拒绝启动**（日志记 `duplicate bot instance detected: refusing to start`，
+  并留证 `data/duplicate-instance.json`，退出码 1）。持有者已经退出则自动接管。
+- **只留一个「拉起者」**：用 pm2 / systemd / docker `restart:always` 时不要再依赖自我重启
+  （`/restart` 仍能重载新版本，但守护进程也会拉起一份 —— 那一份会被单实例闸拒绝）。
+- 发现有两份时的处理：确认部署已完成（FTP 传完），然后
+
+```bash
+cd /www/wwwroot/qqbot
+pkill -f "dist/main.js"          # 两份都停
+sleep 2
+ps -ef | grep "dist/main.js" | grep -v grep     # 应无输出
+# 用你平时的启动方式拉起**一份**（例如 nohup node dist/main.js >> logs/stdout.log 2>&1 &）
+ps -ef | grep "dist/main.js" | grep -v grep     # 应只有一行
+```
