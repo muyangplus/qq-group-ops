@@ -93,7 +93,7 @@ import { createRestartHook, type RestartHook, type RestartRequestHandler } from 
 import type { DeployControl } from "./services/deployWatcher.js";
 import type { InstallerControl } from "./services/deployInstaller.js";
 import {
-  runningBuildInfo,
+  captureRunningBuildInfo,
   runningCommit,
   runningVersionOf,
 } from "./core/buildInfo.js";
@@ -1335,11 +1335,11 @@ export function createRuntime(
 /**
  * 构建自证（ADR-0065）：给同进程管理 API 的 `/healthz` 用。
  *
- * 版本 / 指纹 / commit 都在启动时固化（`runningVersionOf` / `runningBuildInfo`）；
+ * 版本 / 指纹 / commit 都在启动时固化（`runningVersionOf` / `captureRunningBuildInfo`）；
  * `applied*` 与可回滚版本来自包安装器的状态文件 —— 没装配安装器（纯单测 / 未接线）时省略。
  */
 function buildIdentityOf(installer: InstallerControl | undefined): AdminApiBuildIdentity {
-  const buildInfo = runningBuildInfo();
+  const buildInfo = captureRunningBuildInfo();
   const commit = runningCommit();
   const applied = installer?.appliedVersion();
   const target = installer?.rollbackTarget();

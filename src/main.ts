@@ -59,7 +59,7 @@ import type {
   RestartRequestHandler,
   RestartRequestInfo,
 } from "./services/restart.js";
-import { appVersion, captureRunningBuildInfo, captureRunningVersion, distFingerprint, onDiskVersion, runningBuildInfo, runningCommit, runningVersionOf } from "./core/buildInfo.js";
+import { appVersion, captureRunningBuildInfo, captureRunningVersion, distFingerprint, onDiskVersion, runningVersionOf } from "./core/buildInfo.js";
 import { encodeCallback } from "./services/callbackData.js";
 import { spawnRespawnHelper } from "./services/respawn.js";
 import { sendWelcome } from "./services/welcome.js";
