@@ -71,7 +71,7 @@
 
 ### 新增
 
-- **发布流程包化：单文件产物包 + 机器人自解**（ADR-0065；TODO §2 的 P0 第 1 条）。CD 从
+- **发布流程包化：单文件产物包 + 机器人自解**（ADR-0065；TODO §5「已发版」）。CD 从
   「FTP 逐文件同步」改成**两个文件、两段上传**：先传 `incoming/deploy-<版本>.tgz`
   （`dist/` + `web/dist/` + `scripts/` + `pnpm-lock.yaml` + `.env.example`，内含构建期生成的
   `dist/build-info.json`），**最后**传 `incoming/deploy-<版本>.json`（版本 / commit / **sha256** /
@@ -108,7 +108,7 @@
   ④ 流程侧（用户口径）：**本地提交不推送**，发版时一次性 push —— 一次发版 = 1 次 CI + 1 次 CD。
   另外安全审计与 Dependabot 保持**每周**（加守卫钉住），CD 的 FTP 日志从 `verbose` 收到 `standard`。
   口径与代价见 [ADR-0067](./docs/DECISIONS.md) 与 [docs/CD.md](./docs/CD.md) §8。
-- **精简 `.env`：能搬的全搬进系统配置**（ADR-0066；TODO §2 的 P0 第 2 条；**0.29.0**）。
+- **精简 `.env`：能搬的全搬进系统配置**（ADR-0066；TODO §5「已发版」；**0.29.0**）。
   `.env` 只留**核心项** —— 密钥（`QQ_BOT_*` / `WEBHOOK_SECRET` / `ADMIN_API_SESSION_SECRET` /
   `ADMIN_API_TOKENS`）、引导（`DATABASE_URL` / `SQLITE_PATH` / `ADMIN_USER_IDS`）、
   进程与网络形态（`EVENT_MODE` / `WEBHOOK_HOST|PORT|PATH` /

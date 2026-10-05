@@ -1,148 +1,43 @@
 # TODO
 
-> **唯一的待办入口**：只列**未完成**项，每项给出验收 / 落点 / 阻塞；已完成的历史变更见
-> [CHANGELOG.md](./CHANGELOG.md)，阶段目标与范围见 [docs/ROADMAP.md](./docs/ROADMAP.md)。
+> **唯一的待办入口：只列未完成项** —— 已完成的一律压成 §5 的索引表（一句一条 + 出处），
+> 逐条正文在 [CHANGELOG.md](./CHANGELOG.md)、设计与口径在 [docs/DECISIONS.md](./docs/DECISIONS.md)、
+> 手册在 `docs/`。阶段目标与退出条件见 [docs/ROADMAP.md](./docs/ROADMAP.md)（那份不随实现回改）。
 >
 > 标签口径：`P0` 现在就能做 → `P3` 可延后；`⚠️` 需先澄清 / 取证；`（记录）` 是已知约束、不一定动。
-> **AI 相关的条目按决定跳过排期**（E3 / E4 / E6 与 E5 的「AI 策略闭环」那半，见 §2 的 P3 一节）：
-> 不进当前队列；要动之前先出一份**评估**（不写代码）。
-> **所有需要真实 QQ 群环境的条目统一收在最后一节 §4**：等有环境时照
-> [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md) 一次跑完并回填。
+> **AI 相关的条目按决定跳过排期**（§2 的 P3）：不进当前队列；要动之前先出一份**评估**（不写代码）。
+> **所有需要真实 QQ 群环境的条目统一收在 §4**：照 [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md)
+> 一次跑完并回填（逐条清单 [docs/REAL-MACHINE-CHECKLIST.md](./docs/REAL-MACHINE-CHECKLIST.md)、
+> 完整用例 [docs/ACCEPTANCE.md](./docs/ACCEPTANCE.md)）。
 >
-> 当前状态（2026-10-04，**0.29.1 已发版并在真机跑起来**：版本 `0.29.1` + 三连 `grep -c` `2/1/5` 已验收；包化首跳（A：`mode=files`）已执行）：测试 **161 文件 / 1442 用例**全绿（后端）+ **13 文件 / 51 用例**全绿
-> （管理前台组件测试，`pnpm web:test`）；**0.27.3 已发版并部署**（纯修复：自检进程不参与单实例锁），**0.27.2 已发版并部署**（纯修复：后台群列表补「绑过群号」来源 / 配置页补回「定时发言总开关」+ 注册完整性守卫 / 定时发言「详情」改弹窗 / 热改项不再在 .env 只读段重复列出），**0.27.1 已发版并部署**（单实例闸 / 发送 at-most-once / 入群申请自动移出待审批 + 周期对账），**0.27.0 已发版并部署**
-> （0.27.0 =「机器人定时发言」：`/announce` + 管理后台「定时发言」页 —— 默认关闭、每群群管 130 自治、
-> 标准 cron 5 段、文本 · 引用 · 卡片 · 按钮，口径见 ADR-0062、后台面见 ADMIN-API.md 的 E1-t）；
-> 0.26.0 =「管理后台收尾五件 + 部署重复重启修复 + 展示口径扩到全站」：降级模块「重试加载」、
-> 通知订阅关系只读、审计面增强（时间 / 对象 / 只看被拒 + 总数）、登录令牌查看 + 立即吊销、
-> 规则覆盖率总览 + 一次改多项带 diff；修复一次部署重复通知 / 重复重启，ADR-0061；
-> 展示口径覆盖登录账号，`/auth/me` 带 `user`；
-> 0.25.0 是「管理后台把写面补齐 + 有了报表与测试」：P2 的处罚 / 黑名单 / 申诉 / 规则关键词 /
-> 通知门槛 / 别名表 / 活动创建与字段编辑，E5 四块统计报表 + CSV，机器令牌细粒度 scope，
-> P3 的权限授予 / 撤销与身份映射只读，前端组件测试底座进 CI/CD 门禁；
-> 另有 CD 两段上传的 `state-name` 修正与部署「构建指纹」判据）；
-> 0.24.1 修 CD 两段上传的同步状态事故（两段各用 state-name）；0.24.0 是「管理后台看得清 + 部署不再跳两次」：列表与选择器优先出群号 / QQ号（完整长码收进详情）、
-> 新增周期任务监测（`/api/tasks` + 状态页）与管理后台配置页（`/api/settings`：热改项可写、
-> `.env` 只读、密钥不回传值）；部署监测加「构建指纹」判据，CD 改成两段上传
-> （`package.json` 版本标记最后落地 → 「版本号变了 = 传完了」，ADR-0057）；
-> 0.23.2 是修复 + 交付形态调整：管理 API 直接托管管理前台 `web/dist`（反向代理整域名到 8787 即可）、
-> 非接口路径不再误回 401、`web/dist` 随 CD 一起发布且 CI 也构建前端；
-> 0.23.1 是纯修复：真机上 `/data` 与管理 API 漏接仓储、假模式监听口僵尸、两个独立入口不读 `.env`、
-> 两个入口抢端口的提示、500 日志补调用栈）。
-> 已完成：A1–A5、B1–B3、B6–B11、C1–C3、C5–C6、C9、D1、D3、D5、D6、D7、D10、**D8-a**（本机备份 / 恢复演练）、
-> **E1 全部（a–h）**、**E2 全部（a–f）**、F1–F2、H1–H8、D9（0.19.0 起）。
->
-> **0.29.0 / 0.29.1 已发版**（2026-10-04）—— 0.29.0 把三块内容合并发布（**0.28.0 跳过**：少一次 CD、服务器只跳一次）：
-> ① 「**发布流程包化**」（ADR-0065：单文件产物包 + 机器人自解 + 备份/回滚 + 提醒与自动重启解耦 +
-> 回滚改成整目录替换 + 三连 `grep -c` 的手工 SOP）；
-> ② 「**精简 `.env`**」（ADR-0066：`.env` 只留核心项 / 热改项默认值搬进代码 / 老值一次性导入 /
-> 读点全部现取现用 / 新增管理后台会话·令牌·限流三项）；
-> ③ 「**CI/CD 触发次数收敛**」（ADR-0067：concurrency + 路径拆分与文档守卫 + CD 复用 CI +
-> 本地提交不推送、发版一次性 push）。
-> 发版实测（0.29.0）：一次性 push → **1 次 CI**（61s 全绿）+ **1 次文档守卫**（纯守卫，秒级）+
-> **1 次 CD**（门禁复用 CI 结论 32s；两个文件 14s + 16s —— 老口径逐文件 8m33s）。
-> **0.29.1 补丁**（版本号优先读产物自证）也已在同日发布：CI 64s + CD 28s/36s（包模式照旧 14s + 16s）。
-> **首跳 A 已执行**：`workflow_dispatch mode=files ref=v0.29.0` —— 逐文件传了 dist 381 文件 +
-> web/dist 3 + scripts 7 + 标记（该步 **518s**，加标记 11s ≈ 8m38s，正好印证包化要解决的痛点）；
-> 服务器起来后 `DeployInstaller` 会把 `incoming/` 里的包（0.29.0 → 0.29.1，按落地时间升序、一轮一个）
-> 自动应用，最终停在 0.29.1。
-> ⚠️ **首跳当天还踩了一个跨模式的 `state-name` 事故**：0.29.1 的 Release 触发包模式 CD 时，那段
-> 投递标记步骤与逐文件模式的 `package.json` 标记步共用同步状态，把服务器上的 `package.json`
-> **删掉了**（版本号一度变 `unknown`、回执写 `v0.29.0 → vunknown`）。工作流已修 + 守卫收紧成
-> 「四个 FTP 步骤两两不同」，并用**修好后的** `mode=files ref=main` 把 `package.json` 补回
-> （`Deleting: 0 B` + `Uploading: 1.28 kB`）；详见 §2 与 [docs/CD.md](./docs/CD.md)。
-> ✅ **真机已验收（2026-10-04）**：根 `package.json` 与 `dist/build-info.json` 都是 `0.29.1`，
-> 三连 `grep -c` = **2 / 1 / 5**（§4.7 第 2 条通过）—— 首跳交付与包模式接管都跑通了。
-> 🆕 **攒着未发版的实现（用户口径：不单独多发一次 CD）**：① 跨模式 `state-name` 修复
-> （工作流已推 `main` 并跑过修正）；② **「包模式先提醒 → 宽限期 → 应用并重启」**（口径 B，
-> 2026-10-04 拍定，见 §2 的条目与 ADR-0065 的「后续修正」）—— 下次有代码改动时一起发。
-> **0.29.0 已发版**（本版：包化 + 精简 `.env` + CI/CD 收敛，见上）；0.27.0 定时发言、0.27.1 三处真机修复、0.27.2 四处修复、0.27.3 自检不参与单实例锁都已发布（并已部署）。
-> 0.26.0 之后攒的那条「**机器人定时发言**」（默认关闭 /
-> 每群群管 130 自治 / 标准 cron 5 段 / 文本 · 引用 · 卡片 · 按钮）已在 **0.27.0** 发出并部署
-> （口径见 [ADR-0062](./docs/DECISIONS.md)，逐条见 CHANGELOG）；
-> 更早的三段（部署重复重启修复、展示口径扩到全站、管理后台收尾五件 A–E）
-> 已在 0.26.0 一起发出并部署。
->
-> **P0 两条 + P1 的 CI/CD 收敛都已实现**：「发布流程包化」（ADR-0065，真机验收 §4.7）、
-> 「精简 `.env`」（ADR-0066，真机验收 §4.8）与「CI/CD 触发次数收敛」（ADR-0067，触发策略见 docs/CD.md 的 §8）—— 见 §2；
-> 逐条变更见 CHANGELOG 的 `[Unreleased]`，
-> 包化回滚端点见 ADMIN-API.md 的 E1-u、手工救急 SOP 见 OPERATIONS.md 的「手工救急：包化部署」、
-> 配置迁移 SOP 见 OPERATIONS.md 的「配置搬家」、触发策略见 docs/CD.md 的 §8。
-> 以下是已完成的：「机器人定时发言」已随 0.27.0 发布（见 CHANGELOG 的 `[0.27.0]`、
-> [ADR-0062](./docs/DECISIONS.md)、ADMIN-API.md 的 E1-t 与管理前台的「定时发言」页）。
-> **管理后台收尾五件（A–E）已完成并随 0.26.0 发布**
-> （见 §5；实现见 CHANGELOG 的 `[0.26.0]` 与 ADMIN-API.md 的 E1-o / E1-p / E1-q / E1-r / E1-s），
-> `docs/ADMIN-BACKEND.md` 的覆盖表也按代码校正过了。除此之外剩下的是 P1 的两个环境项（D8-b / D2）、
-> 要官方取证的 B4 / B5 / A2，以及 §4 真机验证 —— 都要环境或外部结论。
+> 工作纪律（ADR-0067）：**代码与文档分开提交**；**本地提交不推送**，发版时一次性 push；
+> 每次提交前本地必须全绿（`tsc` + 全量 vitest，有前端改动再加 `web typecheck / test / build`）。
 
-## 1. 排期（从上往下做）
+## 0. 当前状态（滚动，保持短）
+
+- **已发版并部署**：**0.29.1**（服务器 `/status proc` 报 `0.29.1`；构建自证 commit `47fa3f7`）
+- **测试基线**：根 `tsc` 0 错 + vitest **162 文件 / 1457 用例**全绿；前端 **13 文件 / 51 用例** + typecheck + build
+- **未推送的本地提交**（按纪律攒着，发版时一次性 push）：全集看 `git log --oneline origin/main..HEAD`；
+  要紧的是 §5「未发版」两条 —— `04ccc7e`（代码，口径 B）+ `3ee20e0`（它的文档），其余是记录 / 注释类
+- **未发版、攒着**（用户 2026-10-04 口径：**不为它们单独多发一次 CD**，等下次有代码改动时一起发）：
+  ① 跨模式 `state-name` 修复；② **包模式「先提醒 → 宽限期 → 应用并重启」**（口径 B）
+- 真机现状：`0.29.1` 已跑起来（首跳 A 已执行、包模式已接管）；§4.7 剩 4 条、§4.8 六条待跑
+- 发版流程 / 门禁 / 触发策略见 [docs/CD.md](./docs/CD.md)；配置口径见 [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)
+
+## 1. 排期（只列未完成）
 
 | 优先级 | 条目 | 为什么排在这里 |
 |---|---|---|
-| **P0** | **发布流程包化**（单文件产物包 + 机器人自解 + 备份/回滚 + 关自动重启也提醒）（✅ 已发版 **0.29.0**；口径 ADR-0065） | 用户 2026-10-04 拍定方案 A：FTP 逐文件 8m33s 太慢、回滚造成混装 dist（版本号 0.27.3 / 代码 0.27.0）—— 包化同时解决「慢」与「不可靠」；实现见 CHANGELOG 的 `[0.29.0]`，回滚端点见 ADMIN-API.md 的 E1-u，手工 SOP 见 OPERATIONS.md |
-| **P0** | **精简 .env**（能搬的全搬进系统配置：全搬 / 一次性导入 / 去掉默认值链）（✅ 已发版 **0.29.0**；口径 ADR-0066） | 用户 2026-10-04 拍定：`.env` 只留密钥 / 引导 / 进程与网络 / 日志 / 路径；实现见 CHANGELOG 的 `[0.29.0]`「变更」一节，迁移 SOP 见 OPERATIONS.md 的「配置搬家」，真机验收项在 §4.8 |
-| **P0** | **机器人定时发言**（✅ 已完成，随 0.27.0 发布；默认关闭 / 每群群管 130 自治 / cron 5 段 / 文本 · 引用 · 卡片 · 按钮） | 用户 2026-10-03 提出：不依赖环境与外部取证，落点全是已有能力 —— `TickScheduler` 加一个任务、群配置 KV 存任务、`RichMessageSender` 发送；口径见 ADR-0062，实现见 CHANGELOG 的 `[0.27.0]` |
-| **P1** | **管理后台：只读面补齐**（✅ 已完成） | 不需要环境、不需要新领域能力：全是已有服务的读路径，做完「看得清」就闭环（§5 的 P1） |
-| P1 | **CI / CD 触发次数收敛**（路径过滤 + concurrency + CD 复用 CI + 一次 push）（✅ 已发版 **0.29.0**；口径 ADR-0067） | 用户 2026-10-04：近 200 次 run 里 CI 171 次、push 触发 167 次，纯文档 push 也跑全量 —— 明显过量；实现见 §2 的 P1、触发策略见 docs/CD.md §8 |
-| P1 | **D8-b 生产库备份 / 恢复演练** + **D2 Docker Compose 启停补测** | 只差环境（部署机 / Docker 引擎）：一有环境就先做这两项，紧接着跑 §4（备份恢复的流程已在本机演练过：D8-a） |
-| P2 | **管理后台：写操作**（✅ 已完成，§3 的 P2 全部落地） | 会改用户状态，每条都先定了口径（二次确认 / 通知话术 / 审计）再动手（§5 的 P2） |
-| P2 | **前端组件测试底座**（✅ 已完成） | 前端只有扫源码的契约守卫，页面逻辑改错没测试拦 —— 现在有 jsdom 组件测试（CI/CD 都跑） |
-| P2 | **E5 统计报表**（不含 AI 策略闭环）（✅ 已完成） | 非 AI 部分已落地：四块聚合 + CSV，口径见 ADR-0059（只用已有记录，不新增埋点） |
-| P2 | **管理 API 机器令牌的细粒度 scope**（✅ 已完成） | 三档通配 + 按域细分（`read:join` / `write:activity`），未登记端点 fail-closed |
-| P3 | **管理后台：权限授予 / 撤销**（`/perm`）（✅ 已完成） | 「权限的权限」：只有平台超管 240、二次确认 + diff、不许撤销自己的全局超管（ADR-0060） |
-| P2 | **管理后台收尾五件（A–E）**（✅ 已完成，随 0.26.0 发布，见 §5） | 用户 2026-10-03 选定：运维写（降级模块重试）/ 通知订阅只读 / 审计面增强 / 登录令牌列表 + 吊销 / 规则覆盖率与多字段改 |
-| — | **B4 / B5 / A2** | ⚠️ 卡在官方能力取证（§4.4 的 R3 / R18），拿到结论再排实现 |
-| 末 | **§4 真机验证** | 需要真实环境；不阻塞上面任何代码工作，有环境时一次跑完 |
-| P3 | **暂缓**：E3 / E4 / E6（AI）+ E5 的 AI 策略闭环 | 按决定跳过排期；要动之前先做评估（见 §2 的 P3 一节） |
+| P1 | **D8-b 生产库备份 / 恢复演练** + **D2 Docker Compose 启停补测**（§2） | 只差环境（部署机 / Docker 引擎）：一有环境就先做这两项，紧接着跑 §4 |
+| P2 | **自检进程仍会写库**（§2） | 小、零风险；改完 §4.8 第 6 条（「自检不写库」）才算真通过 |
+| — | **B4 / B5 / A2**（§2「阻塞中」） | ⚠️ 卡在官方能力 / 权限集取证（§4.4 的 R3 / R18）：拿到结论再排实现 |
+| 末 | **§4 真机验证** | 需要真实环境；不阻塞代码工作。现在就能跑：§4.6 定时发言、§4.7 包化（剩 4 条）、§4.8 配置搬家 |
+| P3 | **E3 / E4 / E6（AI）+ E5 的 AI 策略闭环**（§2） | 按决定跳过排期；要动之前先做评估（不写代码） |
 
-> **P0 两条 + P1 的 CI/CD 收敛都已实现并随 0.29.0 发版**（2026-10-04 拍定并当天做完；
-> 三块合并成一个版本发 **0.29.0**，跳过 0.28.0 —— 少一次 CD、服务器只跳一次）：
-> **「发布流程包化」**（口径见 [ADR-0065](./docs/DECISIONS.md)，逐条变更见 CHANGELOG 的 `[0.29.0]`，
-> 回滚端点见 ADMIN-API.md 的 E1-u，手工救急 SOP 见 OPERATIONS.md，真机验收项在 §4.7）、
-> **「精简 `.env`」**（口径见 [ADR-0066](./docs/DECISIONS.md)，迁移 SOP 见 OPERATIONS.md 的「配置搬家」，
-> 真机验收项在 §4.8）与 **「CI/CD 触发次数收敛」**（口径见 [ADR-0067](./docs/DECISIONS.md)，
-> 触发策略见 [docs/CD.md](./docs/CD.md) §8）。
-> 已完成的那条：「**机器人定时发言**」已实现并**随 0.27.0 发布**
-> （默认关闭 / 每群群管 130 自治 / cron 5 段 / 文本 · 引用 · 卡片 · 按钮；口径见
-> [ADR-0062](./docs/DECISIONS.md)，变更见 CHANGELOG 的 `[0.27.0]`）。v0.25.0 上线后那条
-> **重复通知 / 重复重启**的 BUG 已修（实现见
-> [ADR-0061](./docs/DECISIONS.md)，变更见 CHANGELOG `[0.26.0]`；现象 ② 的「两条回执相隔 3 分钟」
-> 若来自 `respawn.mjs` / 自检路径本身，仍需真机日志定论 —— 已记进 §4.3）。除此之外 0.25.0 与 D8-a 都已完成，
-> D8-b / D2 / §4 要环境，B4 / B5 / A2 要取证，AI 已跳排期。
-> **管理后台的 P1 只读面、全部 P2、P3 的权限授予 / 撤销与身份映射只读都已落地**
-> —— **代码侧的必做项已经全部做完**：§2 里只剩下两个要环境的 P1（D8-b / D2）、
-> 一个 P2 小项（自检仍会补默认通知订阅）与要官方取证的 B4 / B5 / A2；
-> §4 要真机环境，其余要外部结论。
->
-> 排期只定「先做什么」，不代表放弃后面的：每条的验收 / 落点见 §2、§4 与 §5 明细。
+> 排期只定「先做什么」，不代表放弃后面的：每条的验收 / 落点见 §2 与 §4。
+> **代码侧已无「必做」项**：§2 里只剩一个 P2 小项、两个要环境的 P1、三个要取证的阻塞项；其余都在 §4（要真机）。
 
 ## 2. 待办明细
-
-> 已完成的条目按本文件约定从本节移出（逐条历史见 [CHANGELOG.md](./CHANGELOG.md)、
-> 设计与口径见 [docs/ADMIN-API.md](./docs/ADMIN-API.md)）；本节按 P0 → P3 排列。
-
-### P0（现在就能做）
-
-- [x] **精简 `.env`：能搬的全搬进系统配置（全搬 / 老值一次性导入 / 去掉 `.env` 默认值链）**（2026-10-04 拍定并实现，**已发版 0.29.0**）
-  - 口径见 [ADR-0066](./docs/DECISIONS.md)，逐条变更见 CHANGELOG 的 `[Unreleased]`「变更」一节；
-  - **只留 `.env`**（改了必须重启、或 DB 之前就要用）：密钥类（`QQ_BOT_*` / `WEBHOOK_SECRET` /
-    `ADMIN_API_SESSION_SECRET` / `ADMIN_API_TOKENS`）、引导（`DATABASE_URL` / `SQLITE_PATH` / `ADMIN_USER_IDS`）、
-    进程与网络形态（`EVENT_MODE` / `WEBHOOK_HOST|PORT|PATH` / `ADMIN_API_ENABLED|HOST|PORT|PUBLIC_BASE_URL|COOKIE_SECURE|WEB_DIR` /
-    `QQ_BOT_SANDBOX`）、日志（`LOG_LEVEL|FILE|CONSOLE|COLOR` / `TZ`）、路径（`CLASS_INDEX_FILE` / `QQ_BOT_CACHE_FILE`）、
-    `ADMIN_API_ALLOWED_OPENIDS` —— 落点 `.env.example`（每组一行「为什么必须在这里」）；
-  - **搬进系统配置**（热改项）：新增 `adminApiSessionTtlMinutes` / `adminApiTokenTtlMinutes` /
-    `adminApiRateLimitPerMinute`，读点全部改成「用的时候取当前值」（`AdminApiConfig` 只留内置默认 +
-    `hotConfig` 注入；`SessionStore` / `WindowRateLimiter` 接受取值函数；CLI 也读同一份库）；
-  - **一次性迁移**：`src/services/settingsImport.ts` —— 库里已有覆盖行则**以库为准**；与内置默认相同
-    **不写库**；坏值**不拦启动**（只记日志 + 一次私信 + Rejected 审计）；其余写库一次，并写
-    `platform_config_import` 审计 + 私信超管回执（含「`.env` 里这些行可以删掉了」）；幂等、自检不写库；
-  - **去掉默认值链**：`Settings` 里这些字段不再从 `.env` 读（默认值搬成 `src/config.ts` 的 `DEFAULT_*`），
-    一切以库为准；唯一例外 `displayTimezone`（`TZ`，`envBacked: true`）；
-  - **文档**：`.env.example` / `docs/CONFIGURATION.md`（「数据保留」→「系统配置（热改项）」）/
-    `README.md` / `ADMIN-API.md`（E1-a 与配置页那段）/ `OPERATIONS.md`（新增「配置搬家」）/
-    `DEVELOPMENT.md` / `ARCHITECTURE.md` / `SECURITY.md` / CHANGELOG；发 **0.29.0**；
-  - **验收**：`tsc` 0 错、根 vitest **161 文件 / 1442 用例**全绿、前端 `typecheck` / `test`（13 文件 51 用例）/ `build`
-    全绿；真机 6 条在 **§4.8**。
 
 ### P1（只差环境；一有环境就先做）
 
@@ -154,117 +49,8 @@
     `.dockerignore` 实测少传约 106 MB。
   - 待补：镜像 build + postgres 启停（用独立项目名 `-p qqops-smoke`，收尾 `down -v`，避免污染真实数据卷）。
 
-- [x] **CI / CD 触发次数收敛**（2026-10-04 提出，指定列入 P1；**已实现并随 0.29.0 发版**；口径 ADR-0067）
-  - **现状（实测近 200 次 run）**：CI **171** 次 / CD 24 次 / Dependabot 5 次；触发来源 **push 167** /
-    release 18 / workflow_dispatch 6 / PR 4；09-26～10-04 九天共 200 次，峰值 **47 次/天**（10-02）；
-    累计 run 时长约 **194 分钟**（不含排队）。
-  - **已做的四件事（都不削弱门禁）**：
-    1. `ci.yml` 加 `concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }` —— 连续 push 只跑最后一次；
-    2. **路径拆分**：`ci.yml` 用 `paths-ignore: [docs/**, **.md]`（纯文档 push 不跑全量门禁），
-       新增 `.github/workflows/docs-guard.yml`（`paths: [docs/**, **.md, .env.example]`）只跑秒级守卫
-       —— `test/privacyGuard.test.ts`（扫 README / CHANGELOG / `.env.example` + 全仓库形状规则）
-       + `test/workflows.test.ts`；**代码路径一个都不 exclude**，一个 commit 里两者都有时两个工作流都跑；
-    3. **CD 复用 CI**：CD 门禁先记下**实际检出的 commit**（`git rev-parse HEAD`；手动 dispatch 的 `ref`
-       与 `GITHUB_SHA` 可能不同），再查 `ci.yml` 在该 commit 上有没有绿的 run —— 有就只做
-       `pnpm install --frozen-lockfile` + `pnpm build` + `pnpm web:build` + 自证（跳过 typecheck /
-       全量 vitest / web test），**查不到（或查询失败）就回落到全套门禁**，`workflow_dispatch` 传
-       `full_gate=true` 可强制全套；为此 `permissions` 加 `actions: read`（仍然没有任何写权限）；
-    4. **流程侧（用户 2026-10-04 定死）**：**本地提交后不推送** —— 代码与文档照样分开**提交**，
-       但都留在本地，**发版时把该版本的全部提交一次性 push**；于是一次发版只产生
-       **1 次 CI（main push）+ 1 次 CD（release published）**。
-       ⚠️ 代价与纪律（必须一起遵守）：
-       - 未推送的提交**没有远端备份**（发版前别只留在一台机器上）；
-       - CI 只会跑最后一次 → **发版前本地必须自己跑过** `tsc` + 全量 vitest（有前端改动再加
-         `web typecheck / test / build`），不能指望 CI 替我们提前发现中间提交的问题。
-    5. 其它：`security-audit` 与 Dependabot 本来就是**每周** + 手动 dispatch（已加守卫钉住）；
-       CD 四段 FTP 的 `log-level: verbose` → `standard`。
-  - **边界（不许动的，已写成守卫）**：代码 push **必须**跑全量门禁；**发布前门禁不削弱**
-    （CD 复用的是**同一个 commit** 上 CI 的结论，不是跳过）；文档路径只跳过**全量**、**不跳过守卫**。
-  - **验收**：① 「往 `CHANGELOG.md` 塞真实群号 → 文档守卫必须红」已在本机按守卫命令实测
-    （红 → 还原 → 绿）；② 「破坏一个测试 → CI 红」由 `paths-ignore` 不含 `src/`、`test/` 与
-    `ci.yml` 仍跑全量 `pnpm test` 保证（守卫断言）；③ 「纯文档 push 不再产生全量 run」
-    「日峰值 47 → ≤15」要连看两周实际 run 数（代码侧只能保证触发面）。
-  - **文档**：`docs/CD.md` 新增 **§8「CI/CD 触发策略」**（一张表 + 本地纪律 + 紧急开关 + 本地复现守卫命令）；
-    `test/workflows.test.ts` 新增 3 条守卫（触发面与守卫分工 / CD 复用 CI 与回落 / FTP 日志量）；
-    `docs/DECISIONS.md` 的 **ADR-0067** 记口径与代价。
-
 ### P2（可延后）
 
-- [x] **E5 统计报表**（批次5 · **非 AI 部分**）
-  - 口径（已定，见 [docs/DECISIONS.md](./docs/DECISIONS.md) 的 **ADR-0059**）：四块 = 群活跃 /
-    审核量 / 活动报名 / 通知投递；**只用已有记录聚合，不新增埋点**（群活跃 = 管理事件量，
-    不是发言量）；按本地日分桶、窗口 1–90 天（默认 7）、空天补 0；
-  - 门槛：平台超管 240 看全量，其余人本群 ≥130；CSV 与页面同一份装配，默认脱敏、
-    `full=1`（含内部群 ID）与全量要 240；
-  - 落点：`src/adminApi/reports.ts`（聚合 + CSV）、`GET /api/reports` 与
-    `GET /api/reports/export.csv`（见 ADMIN-API.md 的 **E1-l**）、管理后台「报表」页
-    （`web/src/views/ReportsView.vue` + 导航）；
-  - 边界：不做发言量 / 消息量（要新增写入路径）、不做订阅与定时推送、不做自定义维度。
-- [x] **管理 API 机器令牌的细粒度 scope**（`read:join` / `write:activity` 之类）
-  - 口径：保留 `*` / `read` / `write` 三档通配（**老 token 行为不变**），新增
-    `read:<域>` / `write:<域>`；域与端点映射集中在 `src/adminApi/scopes.ts`（见 ADMIN-API.md 的 E1-e）；
-  - **fail-closed 回落**：没登记进映射表的端点要求粗粒度 `read` / `write`，细粒度 token 被拒 ——
-    新端点要么登记、要么给粗粒度 scope，不会意外放行；未知 scope / 令牌太短 / 缺 scope 让配置直接启动失败；
-  - 到期时间改用 `@`（scope 里有冒号，旧写法 `token:read:2027-…` 仍兼容）；令牌查找只比令牌与有效期
-    （细粒度 token 不会被当成「不存在」而回 401）。
-- [x] **前端组件测试底座**（vitest + `@vue/test-utils` + jsdom）
-  - 落地：`web/vitest.config.ts`（jsdom + `src/**/*.spec.ts`）、`pnpm web:test`（根脚本同一入口）；
-    CI 与 CD 门禁都跑它（`test/workflows.test.ts` 钉住），根 `pnpm test` 那批扫源码的契约守卫照旧；
-  - 网络边界只在 `fetch` 造假（`web/src/test/fetch.ts`），所以「服务端形状变了、前端没拆包」
-    这类 bug 能测出来 —— 上线前 `notifyTopics` 就是因为没拆 `{ topics }`，通知页表格永远是空的；
-  - 首批 14 条：`api/admin.spec.ts`（响应形状映射 + CSRF + ApiError）、`components/EntityLabel.spec.ts`
-    （展示口径）、`views/NotifyView.spec.ts`（话题表渲染 / 非超管只读 / 错误提示）、
-    `views/ActivitiesView.spec.ts`（字段目录、改字段、新建草稿、门槛 120 只读）。
-- [x] **管理后台把指令层功能搬上来**（2026-10-02 决定：**先只补只读面** → 已按此细化为 §5；P1/P2/P3 与收尾五件 A–E 均已落地，见 §5）
-  - 完整功能盘点（40 项，含门槛与现有覆盖）、三档优先级与口径见
-    [docs/ADMIN-BACKEND.md](./docs/ADMIN-BACKEND.md)；条目在 §5，这里只留一句结论：
-    **先 P1 只读（不需要环境与领域新能力）→ 再 P2 写操作（每条先定口径）→ P3 权限授予最后做**。
-  - 明确不搬：`/data`（个人数据删除 / 匿名化，用户自助）、`/profile` 修改、`/migrate`、
-    `/restart`、`/bind user|groupid` 代绑（边界见 ADMIN-BACKEND.md §4）。
-- [x] **审计页的「操作人」过滤只认完整 id**（小）→ 已在 0.26.0 的 E1-q 落地（操作人与操作对象都按 QQ号 / `#短码` / openid / 展示名多形态匹配）
-  - 后端 `/api/audit?actor=` 是内部 id 精确匹配，页面只能提示「填完整 id」；要根治得让后端
-    同时接受 QQ号 / 短码（复用 `DisplayNameService.resolveUser`），属于读端点的小增强。
-- [x] **版本号来源：包模式部署后 `package.json` 不更新（0.29.1，已发版）**
-  - 发现过程：准备 0.29.0 首跳交付时核对 `onDiskVersion()` —— 包化部署的产物包里**没有根
-    `package.json`**（白名单是 `dist/` `web/dist/` `scripts/` `pnpm-lock.yaml` `.env.example`），
-    而安装器整目录替换 `dist/`，于是包模式之后根 `package.json` 停在上一次逐文件部署的版本；
-  - 影响：`/status proc` 与 `/healthz` 显示老版本、重启 / 回滚回执写成 `vX → vX`（§4.7 第 4 条会误判成
-    bug）；全新用包模式装的机器上根本没有 `package.json` → 版本号 `unknown`、`DeployWatcher`
-    的逐文件兜底路径静默失效（包模式本身不受影响：安装器不读它）；
-  - 修法：`onDiskVersion()` 优先读 `dist/build-info.json`（跟着 `dist/` 一起换），读不到才回落
-    根 `package.json`；落点 `src/core/buildInfo.ts` + 三条新用例；详见 CHANGELOG 的 `[Unreleased]`。
-- [x] **两种上传模式共用 `state-name` → 包模式 CD 删掉服务器上的 `package.json`**（真机事故，工作流已修并推 `main`、服务器已补回）
-  - 现场：0.29.1 的 Release 触发包模式 CD 的**投递标记**那一步，日志里出现
-    `📄 Delete: package.json` / `removing "package.json"`（1.28 kB）—— 它和「逐文件模式的
-    `package.json` 版本标记步」共用 `ftp-sync-state-marker.json`，而后者的上一次状态里记着
-    `package.json`，这次本地目录（`deploy-pkg/`）里没有它 → FTP 同步把它**从服务器删掉**；
-  - 后果：25 秒后新进程启动时 `appVersion()` 读不到根 `package.json` → 重启回执写成
-    `v0.29.0 → vunknown`（`DeployWatcher` 的逐文件兜底判据同时失效）；0.29.1 的
-    「优先读 `dist/build-info.json`」修好之后，只要装上 0.29.1 版本号就自己恢复；
-  - 修法：逐文件模式的版本标记步改用 `ftp-sync-state-files-marker.json`；守卫从「包模式两段不同」
-    收紧成「四个 FTP 步骤两两不同」；事故与口径写进 `docs/CD.md` 与 CHANGELOG 的 `[Unreleased]`；
-  - ✅ **善后已完成**：跑了一次**修好后的** `mode=files ref=main`（70s）—— 代码步
-    `Uploading: 0 B -- Deleting: 0 B -- Replacing: 17.8 kB`（**零删除**）+ 标记步
-    `Uploading: 1.28 kB -- Deleting: 0 B`（`package.json` 回到服务器）；
-  - ✅ **真机复核（同日）**：`package.json`（1284 B）与 `dist/build-info.json`（188 B）都在；
-    `require('./package.json').version` = `0.29.1`，`build-info.json` = `0.29.1 / 47fa3f7`
-    （善后那次 `mode=files` 按 `main` 构建的产物 —— dist 内容与 `v0.29.1` 相同，所以指纹与
-    运行中的进程一致，没有再触发一次重启）；三连 `grep -c` = **2 / 1 / 5**（§4.7 第 2 条通过）。
-- [x] **包模式应用成功时没有任何前置提醒（用户反馈 2026-10-04，已按口径 B 实现、未发版）**：
-  `DeployInstaller` 原来**只在失败时**发卡（`reportFailure`），成功时唯一的信号是几秒后的重启回执
-  「新版本已上线」—— 用户的实际感受是「部署完了、没有重启提醒、机器人自己重启了」。
-  - **口径 B（2026-10-04 拍定：对齐逐文件模式）**：安装器拆成「校验」+「应用」两段，
-    校验通过（sha256 → 解包 → 指纹自证，**不动现役产物**）后先私信全部超管
-    「发现新版本 vX（已校验通过 · sha256 前 12 位）· 当前运行 vY · 计划 N 分钟后自动应用并重启」
-    +「取消自动应用 / 立即应用并重启」两个按钮；宽限期 = `deployRestartDelayMinutes`（默认 10 分钟）；
-  - **「取消」= 放弃这份投递**：产物一个字节都不动，`incoming/` 里两个文件改名 `*.cancelled-<ts>`
-    留证（所以不会自己生效、也不会在下次重启进程后又冒出来）；`AUTO_RESTART_ON_DEPLOY=off` 时
-    照样提醒、到点不动手（包留在 `incoming/` 等着，打开开关后下一轮按原计划应用）；
-    **回滚会丢掉待应用的投递**（否则刚回滚下去又被顶上来）；
-  - 两条「新版本」来源（包模式 / 逐文件模式）合成一个控制面 `combineDeployControls`（包模式优先），
-    `DeployPending.mode`（`files` / `package`）让卡片文案区分「立即重启」与「立即应用并重启」；
-  - 口径与代价见 [docs/DECISIONS.md](./docs/DECISIONS.md) 的 ADR-0065「后续修正」；
-    实现见 CHANGELOG 的 `[Unreleased]`；真机验收见 §4.7 第 5 条（两条路径各验一次）。
 - [ ] **自检进程仍会写库（小，既有行为）**：`node dist/main.js --check` 在早退前会跑 `runtime.load()`，
   其中「给现有超管补默认通知订阅」（`seedSuperAdminDefaults` → `NotificationService.subscribe`）
   是带写库的，`finishStartupCheck` 的 `runtime.flush()` 会把它落库（ADR-0066 审查时实测：
@@ -332,11 +118,16 @@
   真机演练（D8-b）时留意：迁移前先停服务最稳。
 - **通知话题门槛**：全局一套（`group_settings.__default__.notifyTopicLevels`），改一次全群生效；
   改入口只有全局超管（`/notify level` 或面板底部「门槛」），卡片键盘打不了数字，所以按钮只做「填入指令」。
+- **明确不搬进管理后台的**（2026-10-02 决定；盘点与三档判据见 [docs/ADMIN-BACKEND.md](./docs/ADMIN-BACKEND.md) §4）：
+  - `/data`（个人数据导出 / 删除 / 匿名化）：**用户自助权**，且 API 侧一直有不暴露消息原文、
+    不在浏览器里做平台级个人数据处理的口径 → 后台只在审计里看「谁什么时候做过」；
+  - `/profile` 修改、`/help`、`/menu`、`/test*`、`/admin login`：面向聊天窗口或本身就是后台入口；
+  - `/restart`、`/migrate`、`/bind user|groupid` 的**写**：后台只读展示（`/restart` 走机器人卡片）。
 
 ## 4. 真机验证（最后一档：有真实环境时一次跑完）
 
 > 运行方式与回填模板：[docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md)、
-> 逐条清单 [docs/REAL-MACHINE-CHECKLIST.md](./docs/REAL-MACHINE-CHECKLIST.md)（R1–R18）；
+> 逐条清单 [docs/REAL-MACHINE-CHECKLIST.md](./docs/REAL-MACHINE-CHECKLIST.md)（R1–R21）；
 > 完整验收用例 [docs/ACCEPTANCE.md](./docs/ACCEPTANCE.md)。
 > 结论回填后：不通过的项转成 §2 的新条目（带复现步骤），通过的项从本节删掉。
 
@@ -420,31 +211,16 @@
 
 ### 4.7 包化部署（2026-10-04 新增，ADR-0065 起）
 
-> 代码侧已经全绿（161 文件 / 1442 用例 + 前端三项），下面这 6 条**必须在真机跑一遍**才算验收。
+> 代码侧已经全绿（162 文件 / 1457 用例 + 前端三项），下面这 6 条**必须在真机跑一遍**才算验收。
 > 单测覆盖了逻辑（sha 不符 / 自证不过 / 整目录替换 / 失败回滚 / 保留 3 个包），
 > 但「耗时」「真机目录权限」「CD 与 FTP 的实际交互」只能真机看。
-> **当前状态（2026-10-04）**：0.29.0 的 Release 跑过包模式 CD（耗时那条已验收：14s + 16s），
-> 0.29.1 的 Release 又跑过一次（同样 14s + 16s）；**首跳 A 已执行**（`mode=files`，逐文件全量上传，
-> 该步 518s ≈ 老口径）—— 服务器起来后 `DeployInstaller` 会把 `incoming/` 里 0.29.0 → 0.29.1
-> 依次应用（一轮一个、按落地时间升序，最终 0.29.1）。
-> **三连 `grep -c` 已通过**（`2 / 1 / 5`，见下）；期间还发现并修掉一个跨模式的 `state-name` 事故
-> （包模式 CD 删掉了服务器上的 `package.json`，已用 `mode=files` 补回）。
-> ⚠️ **口径已改（未发版）**：包模式现在是「先提醒 → 宽限期（默认 10 分钟）→ 应用并重启」
-> （ADR-0065 后续修正，见 §2），所以下面第 3–6 条要**按新口径**验：包落地后先收到「发现新版本」卡，
+> **已通过 2 条**（上传耗时 14s + 16s、三连 `grep -c` `2 / 1 / 5`，另含首跳 A 与部署链路）
+> —— 结果记在 §5「§4 真机验收：已通过项」，这里只留未完成的 4 条。
+> **剩下 4 条**：坏包拒绝 / 回滚 / 关自动重启也提醒（两条路径）/ 保留 3 个包。
+> ⚠️ **口径已改（未发版，见 §5「未发版」第 2 条）**：包模式现在是「先提醒 → 宽限期（默认 10 分钟）
+> → 应用并重启」，所以下面几条要**按新口径**验：包落地后先收到「发现新版本」卡，
 > 而不是立刻换掉产物；想省时间就点卡上的「立即应用并重启」。
-> 剩下 4 条待真机验：坏包拒绝 / 回滚 / 关自动重启也提醒（两条路径）/ 保留 3 个包。
 
-- [x] **上传耗时**：跑一次完整 CD → 目标是 **< 1 分钟**（老口径逐文件传 `dist/**` 实测 8m33s）。
-  同时看 job 摘要里两个文件的落地顺序（`.tgz` → `.json`）。
-  ✅ **已验收（2026-10-04，v0.29.0 的 Release 触发）**：第一段（`.tgz`）**14s**、第二段（`.json`）**16s**，
-  合起来 30s（目标 < 1 分钟）✓；落地顺序与 step 顺序一致（`.tgz` → `.json`）✓；
-  门禁 job 复用 CI 结论后只要 32s（Typecheck / Test / Test web 都 skipped，Build 与 web build 照跑）。
-- [x] **三连 `grep -c` 确认真的是新代码**（三条都必须 ≥ 1）：
-  `grep -c boundGroupIds dist/adminApi/backend.js`、
-  `grep -c 定时发言总开关 dist/services/platformSettings.js`、
-  `grep -c isStartupCheck dist/main.js`。
-  ✅ **已验收（2026-10-04 真机回填）**：**2 / 1 / 5**（三条都 ≥ 1）；同一批确认根 `package.json`
-  与 `dist/build-info.json` 的版本都是 `0.29.1`，`build-info.json` 的 commit 是 `47fa3f7`。
 - [ ] **坏包拒绝**：把 `incoming/deploy-<版本>.tgz` 改 1 字节（`deploy-*.json` 不动）→
   机器人**拒绝这次部署** + 私信超管（说清是半传），**运行中的机器人不受影响**，
   坏包被改名 `*.failed-<ts>` 留证且**不反复重试**；同理再试一次「dist 内容与
@@ -464,7 +240,7 @@
 
 ### 4.8 精简 `.env`（2026-10-04 新增，ADR-0066 起，0.29.0）
 
-> 代码侧已全绿（161 文件 / 1442 用例 + 前端三项），单测盖住了导入的四种分支、幂等、坏值、
+> 代码侧已全绿（162 文件 / 1457 用例 + 前端三项），单测盖住了导入的四种分支、幂等、坏值、
 > 纯内存模式与三个新热改项的现取现用；下面这 6 条只能真机看（真实 `.env`、真实库、真实私信）。
 > 步骤与备份见 [docs/OPERATIONS.md](./docs/OPERATIONS.md) 的「配置搬家」一节。
 >
@@ -492,137 +268,44 @@
   另外 `pnpm admin:token --user=<超管 openid>` 在 `.env` 删掉
   `ADMIN_API_TOKEN_TTL_MINUTES` 之后，签出来的令牌有效期仍然是库里那个值（回执里会写分钟数）。
 
-## 5. 管理后台功能覆盖（按优先级）
+## 5. 已完成（索引：正文不在这里）
 
-> 功能盘点（40 项指令面 / 门槛 / 现有覆盖）与三档判据见 [docs/ADMIN-BACKEND.md](./docs/ADMIN-BACKEND.md)。
-> 三条口径：**先看得清再能动手**（只读是写的前置）、**不可逆动作必须二次确认 + 写审计 + 说清后果**、
-> **「权限的权限」最后做**。后台写操作一律调与指令层相同的领域服务（不新造通路）。
+> 本文件只列未完成项；下面每条只留一句话 + 出处。逐条变更见 [CHANGELOG.md](./CHANGELOG.md)，
+> 设计与口径见 [docs/DECISIONS.md](./docs/DECISIONS.md)，后台面见 [docs/ADMIN-API.md](./docs/ADMIN-API.md)
+> 与 [docs/ADMIN-BACKEND.md](./docs/ADMIN-BACKEND.md)，部署/运维见 [docs/CD.md](./docs/CD.md) 与
+> [docs/OPERATIONS.md](./docs/OPERATIONS.md)。
 
-### P1 — 只读补齐 + 零风险写（✅ 已完成并随 0.24.x 起发布，见 CHANGELOG）
+### 未发版（攒着，按口径与下次代码改动一起发）
 
-> 落地情况：处罚 / 黑名单 / 申诉 / 投递四个页面与端点、`/api/health` 运维区块、审批资料摘要、
-> 一键同步官方队列、审计 CSV 导出都已做完（`docs/ADMIN-API.md` 的 E1-i）。
-> **能力边界**：这些端点只有机器人进程内那口装配（只读巡检模式回 503）；写操作仍只在机器人里做。
+| 条目 | 一句话 | 出处 |
+|---|---|---|
+| 跨模式 `state-name` 修复 | 包模式 CD 曾把服务器根 `package.json` 删掉（0.29.1 发布时）→ 四个 FTP 步骤状态名两两不同；服务器已补回（`0.29.1`、`47fa3f7`、三连 `grep -c` `2 / 1 / 5`） | CHANGELOG `[Unreleased]`、[docs/CD.md](./docs/CD.md)、ADR-0057「后续」 |
+| 包模式「先提醒 → 宽限期 → 应用并重启」 | 安装器校验通过后**先发卡**（含当前版本 / 计划时刻 / 两个按钮），默认 `deployRestartDelayMinutes`=10 分钟才替换产物；取消 = 放弃这份投递（改名 `*.cancelled-<ts>`） | CHANGELOG `[Unreleased]`、ADR-0065「后续修正」 |
 
-- [x] **处罚记录只读**：`GET /api/punishments?group=&status=` + 后台「处罚」页
-  - 验收：列出动作 / 时长 / 原因 / 操作人 / 关联短码 / 时间；默认本群、可翻页；120 起。
-- [x] **黑名单只读**：`GET /api/blacklist?group=` + 「黑名单」页
-  - 验收：本群与全局分两组；显示生效范围、加入者、原因、时间；120 起。
-- [x] **申诉只读**：`GET /api/appeals?group=&status=` + 「申诉」页
-  - 验收：显示剩余时限（`APPEAL_HOLD_MINUTES`）、当前值班审核员、是否已超时转派；120 起。
-- [x] **审批页附申请人资料摘要**：`/api/pending` 每项带 `profile`
-  - 验收：姓名 / 学号（默认脱敏）/ 班级 / 学院 / 年级，与 `/profile` 同一份数据；没有资料时明确显示「未填写」。
-- [x] **申请队列同步**（写但幂等）：`POST /api/join/sync { group }`
-  - 验收：与 `/sync` 同一个服务；重复点不会产生重复申请；写审计。
-- [x] **审计导出**：`GET /api/audit/export.csv` + 页面上一个按钮
-  - 验收：与 `/export audit` 同口径；默认脱敏，`?full=1` 要 240 且写审计；带 UTF-8 BOM。
-- [x] **运维只读补全**：把 `/status proc` 的内容接进管理后台
-  - 验收：模块健康 / 降级原因 / 写队列计数 / 迁移问题详情都能在页面看到（现在只有版本、数据库、周期任务）；
-    外加启动期降级报告与回滚回执（现在只私信超管）。
-- [x] **通知投递只读**：`GET /api/notify/deliveries?topic=&status=` + 「通知」页一块
-  - 验收：查得到谁收到了 / 失败原因 / 重试次数，用来排查「我说了怎么没通知」。
+### 已发版（按时间倒序）
 
-### P2 — 写操作（✅ 全部完成）
+| 版本 | 条目 | 一句话 | 出处 |
+|---|---|---|---|
+| 0.29.1 | 版本号优先读产物自证 | 包模式部署后 `/status proc` 不再停在旧版本（`onDiskVersion()` 先读 `dist/build-info.json`） | CHANGELOG `[0.29.1]`、`src/core/buildInfo.ts` |
+| 0.29.0 | **发布流程包化**（P0） | 两个文件两段上传 + 机器人自解 + 备份/回滚 + 整目录替换（首跳已执行；耗时 14s+16s 取代 8m33s） | CHANGELOG `[0.29.0]`、ADR-0065、OPERATIONS「手工救急」 |
+| 0.29.0 | **精简 `.env`**（P0） | 只留核心项；热改项默认值搬进代码、一次性导入库、读点现取现用（真机 6 条见 §4.8） | CHANGELOG `[0.29.0]`、ADR-0066、OPERATIONS「配置搬家」 |
+| 0.29.0 | **CI/CD 触发次数收敛**（P1） | concurrency + 路径拆分与文档守卫 + CD 复用 CI 结论 + 本地不推送 | ADR-0067、[docs/CD.md](./docs/CD.md) §8 |
+| 0.27.3 | 自检进程不参与单实例锁 | 修「自检退出码 1 / 重启被取消」 | CHANGELOG `[0.27.3]` |
+| 0.27.2 | 四处修复 | 后台群列表补「绑过群号」来源 / 配置页补回「定时发言总开关」+ 注册完整性守卫 / 定时发言「详情」改弹窗 / 热改项不再在 `.env` 只读段重复列出 | CHANGELOG `[0.27.2]` |
+| 0.27.1 | 三处修复 | 单实例闸 / 发送 at-most-once / 入群申请自动移出待审批 + 周期对账 | CHANGELOG `[0.27.1]` |
+| 0.27.0 | **机器人定时发言** | `/announce`（本群群管 130、cron 5 段、文本/引用/卡片/按钮）+ 后台「定时发言」页（真机 6 条见 §4.6） | CHANGELOG `[0.27.0]`、ADR-0062、ADMIN-API E1-t |
+| 0.26.0 | 管理后台**收尾五件 A–E** + 部署重复重启修复 + 展示口径扩到全站 | 降级模块重试 / 通知订阅只读 / 审计面增强 / 登录令牌 + 吊销 / 规则覆盖率与多字段改 | CHANGELOG `[0.26.0]`、ADR-0058·0060·0061、ADMIN-API E1-o–E1-s |
+| 0.25.0 | 管理后台写面补齐 + 报表与测试底座 | 处罚 / 黑名单 / 申诉 / 规则关键词 / 通知门槛 / 别名表 / 活动创建与字段编辑；E5 四块报表 + CSV；机器令牌细粒度 scope；权限授予 / 撤销 + 身份映射只读；前端组件测试进 CI/CD 门禁 | CHANGELOG `[0.25.0]`、ADR-0058·0059·0060 |
+| 0.24.1 | CD 同步状态事故修复 | 两段上传各用 `state-name`（ADR-0057 的事故与修正） | CHANGELOG `[0.24.1]`、ADR-0057 |
+| 0.24.0 | 管理后台「看得清」+ 部署不再跳两次 | 只读面（处罚 / 黑名单 / 申诉 / 投递 / 审批资料 / 审计导出 / 运维区块）、配置页与周期任务监测、构建指纹判据、CD 改两段上传 | CHANGELOG `[0.24.0]`、ADR-0056·0057 |
+| 0.23.x | 交付形态调整 + 三批真机修复 | 管理 API 托管 `web/dist`（反代整域名即可）、非接口路径不再误回 401、`/data` 与管理 API 接仓储、假模式监听口僵尸、两个入口读 `.env`、抢端口提示、500 补调用栈 | CHANGELOG `[0.23.1]`–`[0.23.3]` |
+| ≤ 0.22 | 早期批次（0.19.0 起） | A1–A5、B1–B3、B6–B11、C1–C3、C5–C6、C9、D1、D3、D5–D7、**D8-a**（本机备份 / 恢复演练）、D10、**E1 全部（a–h）**、**E2 全部（a–f）**、F1–F2、H1–H8、D9 | CHANGELOG |
 
-> 口径与实现见 [docs/ADMIN-API.md](./docs/ADMIN-API.md) 的 **E1-j** / **E1-k** 与
-> [ADR-0058](./docs/DECISIONS.md)：与指令层**同源**（同一个领域服务、同一门槛）、
-> 不可逆动作二次确认、每条写 `admin_api:*` 审计。活动字段的操作口径收在
-> `src/services/activitySettings.ts`（字段表 + 解析 + 连带副作用），指令层与管理后台共用。
+### §4 真机验收：已通过项（记录）
 
-- [x] **处罚动作**（警告 / 撤回 / 禁言 / 踢出 / 解除 / 改时长）：本群 120（与指令层一致：审核员即可）
-  - 动手前定：不可逆动作（踢出）两步确认；是否同时在那条处罚所在群发卡（指令层会发）；
-    与指令层同一个 `PunishService` 入口。
-- [x] **黑名单增删**（本群 120 / 全局 240）：动手前定「全局会影响所有绑定群」的提示话术。
-- [x] **申诉复核**（通过 / 驳回）：本群 120；动手前定「驳回必须写理由」「通过是否连带撤销处罚」。
-- [x] **活动创建 / 绑定群 / 解绑**：本群 130；沿用指令层的状态机（创建 = 草稿并自动绑定创建群，`open` 才广播）。
-- [x] **活动字段编辑**（标题 / 名额 / 截止 / 简介 / 链接 / 报名限制 / 递补 / 提醒）：本群 130
-  - 落地方式：把 `activityCommands` 的 `applyActivitySetting` 拆成共享模块
-    `activitySettings.ts`（字段表 / `resolveActivitySetting` / `applyActivitySettingValue`），
-    指令层与管理后台调同一份，因此「名额调小到满员要广播」「改完私信已报名 / 候补者」
-    两个副作用、以及 `clear` / 中文别名都不会漂移（递补方式与指令层一样不私信）；
-  - 口径：字段清单由 `GET /api/activities/fields` 下发（含输入类型与提示），
-    `PUT /api/activities/:code { field, value }` 写 `admin_api:activity_update` 审计（旧值 → 新值）；
-    值不合法 / 字段不认识回 400 且不落库、不写审计。
-- [x] **规则关键词逐条增删 + 恢复继承**：130 / 240；恢复继承是不可逆的覆盖删除，要二次确认。
-- [x] **通知：门槛调整（240）+ 测试推送（自助）**：门槛改完全群立即生效；订阅是个人偏好，后台只读计数（不替别人改）。
-- [x] **别名表增删**（240）：改错会影响匹配，提交前给预览。
-
-### P3 — 高风险 / 低频
-
-- [x] **权限授予 / 撤销**（`/perm` super / gsuper / admin / mod，240）
-  - 口径（已定，见 [docs/DECISIONS.md](./docs/DECISIONS.md) 的 **ADR-0060**）：门槛只有一档
-    （平台超管 240）；与 `/perm` 同一个 `PermissionService`（领域层护栏照旧）；
-    **不能撤销自己的全局超管**（点一下就把自己锁死）；二次确认写明「谁 / 会多或少 / 哪个角色 /
-    在哪个范围」；撤销本来就没有的授权如实回 `changed: false`（审计记 rejected）；
-  - 落点：`GET /api/permissions` 与 `POST /api/permissions`（见 ADMIN-API.md 的 **E1-m**）、
-    管理后台「权限」页（`web/src/views/PermissionsView.vue` + 导航）；角色入参集中在
-    `src/services/permissionRoles.ts`（指令层别名也落到这里）；目标接受 openid / QQ号 / 群号。
-- [x] **身份映射只读展示**：群号 ↔ 群 ID、QQ号 ↔ openid（`/bind user|groupid` 的**写**不搬）
-  - 落点：`GET /api/identities`（见 ADMIN-API.md 的 **E1-n**，平台超管 240）+ 管理后台「身份」页
-    （`web/src/views/IdentitiesView.vue` + 导航）；
-  - 数据：有库时直接读 `identity_bindings`（连带 `created_at` / `updated_at` 一起选出来，
-    「什么时候绑的」终于有出处）；纯内存 / 老库没有时间戳时如实缺省（页面显示「—」）；
-  - 边界：**没有任何写操作** —— 绑定 / 改绑 / 解绑仍然只在机器人里用 `/bind`（代绑要 240）。
-
-### 收尾五件（2026-10-03 选定，✅ 已完成并随 0.26.0 发布）
-
-> 用户 2026-10-03 选定；每件独立提交（代码 + 文档），逐条见 CHANGELOG 的 `[0.26.0]` 与
-> ADMIN-API.md 的 E1-o / E1-p / E1-q / E1-r / E1-s。
-> 顺序按「风险从低到高」：A 运维写（幂等）→ C 通知订阅只读 → B 审计面增强（只读）→
-> D 登录令牌列表 + 吊销（安全面）→ E 规则覆盖率与多字段改（写面）。
-
-- [x] **A. 降级模块「重试加载」进后台**（`POST /api/health/modules/:key/retry`，平台超管 240）
-  - 验收：状态页「模块健康」表里每个降级模块一个按钮，与机器人 `/status proc` 的「重试加载」
-    同一入口（`HealthRegistry.retry`，幂等、不重启进程）；仍失败如实回原话
-    （HTTP 200 + `ok: false` + `module.error`）；恢复 `executed` / 仍失败 `rejected` 都写审计；
-    只读巡检模式 503；`status` 域因此扩出 `write:status` 机器令牌 scope。
-- [x] **C. 通知订阅关系只读**：谁订了哪些话题、每个话题多少人（补「我说了怎么没通知」的另一半）。
-  - 落点：`GET /api/notify/subscriptions`（平台超管 240，只读；E1-p）+ 「通知」页的订阅关系表；
-    资格判据与推送同一份（`checkTopicReach`）——「收不到」如实给原因（角色不够 / 活动通知没绑 QQ 号）；
-    可按话题 / 范围 / 成员筛选、「只看收不到的」；计数与话题表同一口径。
-- [x] **B. 审计面增强**：时间范围 / 操作对象 / 只看失败 + 总数（只读，纯筛选）。
-  - 落点：`GET /api/audit` 新增 `from` / `to`（本地日，`to` 含当天；坏值 400）/ `target` /
-    `status`（「只看被拒」），操作人与操作对象改按「QQ号 / #短码 / openid / 展示名」多形态匹配；
-    响应带筛选后 `total`；审计页加筛选条（E1-q）。
-  - 边界：CSV 导出仍按「群 / 全量」（`group` / `full`），**不跟随列表筛选**，链接文案已写明。
-- [x] **D. 登录令牌列表 + 立即吊销**（240）：发错登录链接不用等 TTL。
-  - 落点：`GET /api/tokens`（按成员聚合的张数 + 最早签发 / 最晚到期，**不回传哈希**）+
-    `POST /api/tokens/revoke { user }`（openid / QQ号 / #短码）+ 状态页「登录令牌」区块
-    （二次确认吊销）；仓储扩 `listActive` / `revokeActiveForUser`（E1-r）。
-  - 边界：只管**未兑换**的登录令牌；已建立的会话是签名 cookie，不受影响；
-    `.env` 机器令牌只报 scope（要吊销得改 `.env`）。
-- [x] **E. 规则覆盖率总览 + 一次改多项带 diff**。
-  - 落点：`GET /api/rules/overrides`（只读 240，与机器人 `/rules overrides` 同一数据源）+
-    `PUT /api/rules { group, updates }`（最多 20 项，**先全校验再落库**，回执带逐字段 diff）+
-    规则页顶部「覆盖率总览」与「一次改多项」清单（E1-s）；
-  - 顺手：修掉规则页模板里会被原样渲染的 `**` 强调（换成 `<b>`）。
-- [x] **收尾：`docs/ADMIN-BACKEND.md` 覆盖表按代码校正** —— 功能全表第 3–43 行已按代码整体对齐
-  （同步 / 资料摘要 / 规则关键词与恢复继承 / 覆盖率总览 / 别名表 / 处罚与黑名单 / 申诉复核 /
-  通知门槛与测试推送 / 权限总览与授权 / 审计导出 + 新筛选 / 运维区块 / 投递记录 / 令牌 /
-  规则一次改多项），明确不搬的四行（代绑 `/bind user|groupid`、`/profile` 写、`/migrate`、`/data`）
-  标注清楚；「当前进度」段与 §4 的 `/admin login` 条目同步（现在可看 / 可吊销未兑换令牌）。
-
-### 定时发言（2026-10-03 新功能，✅ 已完成，随 0.27.0 发布）
-
-> 用户 2026-10-03 提出「加一个 P0 TODO：机器人定时发言。默认关闭，支持自定义 / 引用 / 卡片 / 按钮等。」；
-> 口径经 MCQ 拍定（默认关 · 本群群管 130 各自配 · 标准 cron 5 段 · 不做静默时段但配置与查询回后五次执行时间），
-> 见 [ADR-0062](./docs/DECISIONS.md)。这是**新领域能力**，不在上面 40 项的指令面盘点里；
-> 实现与验收见 CHANGELOG 的 `[0.27.0]`、ADMIN-API.md 的 **E1-t**。
-
-- [x] **指令层 `/announce`**（本群群管 130）：`add <cron 5 段> <正文>` / `set <编号> 字段=值`
-  （cron · mode · title · text · quote · btn · ref）/ `on` · `off` / `show` / `send` / `del`；
-  每次配置与 `show` 都回**后五次执行时间**；别名「定时发言」；帮助主题 `announce`。
-- [x] **管理后台「定时发言」页** + `GET|POST|PUT|DELETE /api/scheduled-announcements`
-  与 `POST …/:id/send`（新域 `announce`，5 条路由都登记进 scope 表与逐路由门槛表）；
-  改 / 删 / 试发的门槛按**任务所属群**判，不接受客户端传 `group`。
-- [x] **边界**（能力边界写进了 ADR-0062 与页面文案）：不做静默时段；不做私信 / 站外定时；
-  不做跳转链接按钮；「引用回复」是尽力而为（5 分钟窗口内有机器人消息才带得上 `msg_id`），
-  真机取证项在 §4.6。
-
-### 明确不搬（能力边界）
-
-- `/data`（个人数据导出 / 删除 / 匿名化）：**用户自助权**，且 API 侧一直有不暴露消息原文、
-  不在浏览器里做平台级个人数据处理的口径 → 后台只在审计里看「谁什么时候做过」；
-- `/profile` 修改、`/help`、`/menu`、`/test*`、`/admin login`：面向聊天窗口或本身就是后台入口；
-- `/restart`、`/migrate`、`/bind user|groupid` 的**写**：见上（后台只读展示）。
-
+| 条目 | 结果 |
+|---|---|
+| §4.7 第 1 条 · 上传耗时 | v0.29.0 的 Release：第一段 `.tgz` **14s**、第二段 `.json` **16s**（合 30s，目标 < 1 分钟）；落地顺序正确；门禁 job 复用 CI 结论后 32s |
+| §4.7 第 2 条 · 三连 `grep -c` | **2 / 1 / 5**（三条都 ≥ 1）；同批确认根 `package.json` 与 `dist/build-info.json` 都是 `0.29.1`（commit `47fa3f7`） |
+| 首跳 A（`mode=files`） | `workflow_dispatch mode=files ref=v0.29.0` 逐文件全量上传成功（dist 381 + web/dist 3 + scripts 7 + 标记；该步 **518s** ≈ 老口径，正好印证包化要解决的痛点） |
+| 真机部署链路 | 0.29.0 / 0.29.1 的包模式 CD 各 14s + 16s；服务器现在跑 `0.29.1`，`DeployInstaller` 已接管（`incoming/` 里的包按落地升序逐个应用） |
