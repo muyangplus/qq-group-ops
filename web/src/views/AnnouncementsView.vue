@@ -13,7 +13,7 @@ import ModalDialog from "@/components/ModalDialog.vue";
 import { GROUP_ADMIN_LEVEL, useSessionStore } from "@/stores/session";
 
 /**
- * 定时发言（TODO §2 的 P0；口径见 docs/DECISIONS.md 的 ADR-0062）。
+ * 定时发言（TODO §5「已发版」；口径见 docs/DECISIONS.md 的 ADR-0062）。
  *
  * 三条要点：
  * - **默认关闭**：新建出来的任务是停用状态，要显式「启用」才会发；平台上还有一层总开关；

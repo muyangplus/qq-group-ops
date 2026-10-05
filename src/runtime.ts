@@ -378,7 +378,7 @@ export function createRuntime(
     repositories.groupSettings,
     writeQueue,
   );
-  // 定时发言（TODO §2 的 P0）：每群一套任务，存群配置 KV（老库免迁移）；
+  // 定时发言（TODO §5「已发版」；口径 ADR-0062）：每群一套任务，存群配置 KV（老库免迁移）；
   // 总开关与每小时上限都是热配置，读时取值 —— 关掉总开关只是不触发，任务本身不丢。
   const announcementStore = new ScheduledAnnouncementStore(
     repositories.groupSettings,

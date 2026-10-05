@@ -7,7 +7,7 @@ import { stubFetch } from "@/test/fetch";
 import AnnouncementsView from "@/views/AnnouncementsView.vue";
 
 /**
- * 定时发言页（TODO §2 的 P0）：本群群管 130 自治。
+ * 定时发言页（TODO §5「已发版」）：本群群管 130 自治。
  *
  * 关注点：列表把**后五次执行时间**摆出来 · 总开关关着要提示 · 新建默认停用 ·
  * 表单的形态 / 按钮校验 · 删除与试发都要二次确认。

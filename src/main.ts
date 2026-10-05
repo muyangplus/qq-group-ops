@@ -671,7 +671,7 @@ async function main(): Promise<void> {
       }
     },
   });
-  // 定时发言（TODO §2 的 P0）：总开关关着就整条跳过（任务保留，只是不触发）；
+  // 定时发言（TODO §5「已发版」；口径 ADR-0062）：总开关关着就整条跳过（任务保留，只是不触发）；
   // 精度 = 扫描周期（最小 1 分钟），够 cron 的分钟粒度用。
   scheduler.register({
     name: "scheduled-announce",
