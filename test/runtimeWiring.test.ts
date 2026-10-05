@@ -68,6 +68,31 @@ describe("runtime 仓储装配完整性", () => {
     );
   });
 
+  /**
+   * 包模式与逐文件模式合流（ADR-0065 后续修正）：安装器也走「先提醒 → 等宽限期 → 应用」，
+   * 两条来源合成一个控制面（`/deploy cancel`、`/deploy now`、卡片按钮、后台「状态」页都只认它）。
+   *
+   * 背景：包模式原来是「到了就应用」，真机反馈「部署完了、没有重启提醒、机器人自己重启了」。
+   */
+  it("包安装器带宽限期 + 两条来源合成一个控制面（先提醒再应用）", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../src/main.ts", import.meta.url)),
+      "utf8",
+    );
+
+    // 安装器的宽限期 / 开关 / 当前版本都要**现取现用**（`/config` 改完立即生效）
+    expect(source).toContain("combineDeployControls([deployInstaller, deployWatcher])");
+    expect(source).toContain(
+      'graceMs: () => runtime.platform.get("deployRestartDelayMinutes") * 60_000',
+    );
+    expect(source).toContain(
+      'autoApply: () => runtime.platform.get("autoRestartOnDeploy")',
+    );
+    // 「发现新版本」卡上的两个按钮必须与逐文件模式共用同一对回调
+    expect(source).toContain('encodeCallback("deploy", "cancel")');
+    expect(source).toContain('encodeCallback("deploy", "now")');
+  });
+
   it("重启流程的接线：排好助手后回写部署监测 + 单飞闸（重复重启回归）", () => {    // 背景：真机报「一次部署改版两次」「手动重启后又自己重启一次」（0.25.0 的 P0 BUG，
     // 见 CHANGELOG 与 ADR-0061）。手动 /restart 与部署自动重启都走 runRestartFlow：
     // ① 排好 respawn 助手后必须回写 `markScheduled`，否则旧进程退出窗口里部署监测会再排一轮；

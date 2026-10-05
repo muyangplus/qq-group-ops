@@ -31,7 +31,7 @@ import { startAdminApiHost, type AdminApiHost } from "./adminApi/host.js";
 import { describeListenFailure } from "./adminApi/listenFailure.js";
 import { connectPersistence, type Persistence } from "./persistence.js";
 import { createRuntime, toRuntimeRepositories, type Runtime } from "./runtime.js";
-import { escapeCardText, renderCard } from "./services/cardTemplate.js";
+import { escapeCardText, renderCard, type CardButton } from "./services/cardTemplate.js";
 import type { RichMessage } from "./services/richMessages.js";
 import { startupReportText } from "./services/commands/healthCommands.js";
 import type { MigrationResult } from "./db/migrate.js";
@@ -45,6 +45,7 @@ import {
   DeployInstaller,
   type InstallNotice,
 } from "./services/deployInstaller.js";
+import { combineDeployControls } from "./services/deployControl.js";
 import { NOTIFY_SCOPE_ALL, topicOfOfficialEvent } from "./services/notifyTopics.js";
 import {
   preflightFailedCard,
@@ -415,6 +416,12 @@ async function main(): Promise<void> {
    * 通知走「渲染成卡片」这一步放在 `main.ts`（服务层不依赖卡片模板）。
    */
   const deployInstaller = new DeployInstaller({
+    // 热配置：宽限期与「到点动不动手」都用的时候取当前值（`/config` 改完立即生效）。
+    // 宽限期是 ADR-0065 的后续修正：包模式**不再「到了就应用」**，而是与逐文件模式一样
+    // 「先提醒 → 等 `deployRestartDelayMinutes` → 再替换产物并重启」（可取消 / 可立即应用）。
+    graceMs: () => runtime.platform.get("deployRestartDelayMinutes") * 60_000,
+    autoApply: () => runtime.platform.get("autoRestartOnDeploy"),
+    runningVersion: runningVersionOf,
     restart: (info) => runtime.restart.request(info),
     notify: async (userId, notice) => {
       await runtime.notifications.sendPrivateCard(userId, deployNoticeCard(notice));
@@ -428,18 +435,36 @@ async function main(): Promise<void> {
    * 写清楚，免得超管以为已经上线了。
    */
   function deployNoticeCard(notice: InstallNotice): RichMessage {
+    // 「发现新版本」多一行按钮：与逐文件模式**共用同一对回调**（`cb:deploy:cancel` /
+    // `cb:deploy:now`），由 `combineDeployControls` 路由到真正有等待项的那个控制面。
+    const rows: CardButton[][] =
+      notice.kind === "new-version"
+        ? [
+            [
+              {
+                id: "cancel",
+                label: "取消自动应用",
+                callbackData: encodeCallback("deploy", "cancel"),
+              },
+              {
+                id: "now",
+                label: "立即应用并重启",
+                callbackData: encodeCallback("deploy", "now"),
+              },
+            ],
+          ]
+        : [];
+    rows.push([
+      {
+        id: "proc",
+        label: "看看进程状态",
+        callbackData: encodeCallback("status", "proc"),
+      },
+    ]);
     return renderCard({
       title: notice.title,
       lines: notice.lines,
-      rows: [
-        [
-          {
-            id: "proc",
-            label: "看看进程状态",
-            callbackData: encodeCallback("status", "proc"),
-          },
-        ],
-      ],
+      rows,
     });
   }
 
@@ -447,7 +472,9 @@ async function main(): Promise<void> {
     settings,
     {
       onRestartRequested: (info) => restartHandler?.(info),
-      deploy: deployWatcher,
+      // 两条「新版本」来源（包模式 / 逐文件模式）合成同一个控制面：`/deploy cancel`、
+      // `/deploy now`、卡片按钮与后台「状态」页都只认它（包模式优先 —— 它还要替换产物）。
+      deploy: combineDeployControls([deployInstaller, deployWatcher]),
       installer: {
         rollback: () => deployInstaller.rollback(),
         rollbackTarget: () => deployInstaller.rollbackTarget(),

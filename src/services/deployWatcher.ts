@@ -35,6 +35,13 @@ export interface DeployPending {
   detectedAt: string;
   /** 计划自动重启的时刻（ISO）。 */
   deadlineAt: string;
+  /**
+   * 这份「新版本」是什么形态：`files` = 产物已经在磁盘上（逐文件上传，重启即生效）；
+   * `package` = 产物包已校验就绪、正在等宽限期（包模式，重启前还要先替换产物）。
+   *
+   * 卡片文案据此区分「立即重启」与「立即应用并重启」；缺省按 `files` 处理。
+   */
+  mode?: "files" | "package" | undefined;
 }
 
 /** 命令层用得到的控制面（`/`按钮 取消 / 立即重启）。 */
@@ -302,6 +309,7 @@ export class DeployWatcher implements DeployControl {
       currentVersion: current,
       detectedAt,
       deadlineAt: new Date(now + valueOf(this.delayMs)).toISOString(),
+      mode: "files",
     };
     this.pendingState = pending;
     const autoRestart = valueOf(this.enabledProvider);

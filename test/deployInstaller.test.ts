@@ -146,6 +146,10 @@ interface Harness {
   notices: Array<{ userId: string; card: InstallNotice }>;
   restarts: Array<{ requestedBy: string; reason: string; targetVersion: string }>;
   setAccept: (value: boolean) => void;
+  /** 拨表：断「宽限期到点才应用」用。 */
+  setClock: (value: number) => void;
+  /** `AUTO_RESTART_ON_DEPLOY` 开关（到点动不动手）。 */
+  setAutoApply: (value: boolean) => void;
   deliver: (version: string, files: Record<string, string>, options?: DeliverOptions) => string;
   /** 按应用根读取文件（断言「产物真的换了 / `data/` 真的没动」）。 */
   at: (path: string) => string;
@@ -154,7 +158,16 @@ interface Harness {
 /** 固定时钟：回执与 `*.failed-<ts>` 的时间戳可断言，保留策略的 mtime 比较也可复现。 */
 const CLOCK = Date.parse("2026-10-04T12:00:00.000Z");
 
-function createHarness(): Harness {
+interface HarnessOptions {
+  /** 传了 = 启用宽限期（先提醒、到点才应用）；不传 = 老行为（校验通过就直接应用）。 */
+  graceMs?: number;
+  /** 到点动不动手（`AUTO_RESTART_ON_DEPLOY`）；缺省 `true`。 */
+  autoApply?: boolean;
+  /** 卡片与 `pending()` 里的「当前运行」；缺省空串。 */
+  runningVersion?: string;
+}
+
+function createHarness(options: HarnessOptions = {}): Harness {
   const root = mkdtempSync(join(tmpdir(), "qqops-installer-"));
   const incoming = join(root, "incoming");
   const archiveDir = join(root, PACKAGE_ARCHIVE_DIR);
@@ -175,6 +188,10 @@ function createHarness(): Harness {
   const notices: Array<{ userId: string; card: InstallNotice }> = [];
   const restarts: Array<{ requestedBy: string; reason: string; targetVersion: string }> = [];
   let accept = true;
+  let now = CLOCK;
+  let autoApply = options.autoApply ?? true;
+  const graceMs = options.graceMs;
+  const runningVersion = options.runningVersion ?? "";
 
   const installer = new DeployInstaller({
     incomingDir: incoming,
@@ -183,6 +200,10 @@ function createHarness(): Harness {
     stateFile,
     installerReceiptFile: join(root, "data/deploy-receipt.json"),
     root,
+    // 不传 `graceMs` = 老行为（校验通过直接应用）；传了才走「先提醒、等宽限期」。
+    ...(graceMs !== undefined ? { graceMs: () => graceMs } : {}),
+    autoApply: () => autoApply,
+    runningVersion: () => runningVersion,
     restart: (info) => {
       if (!accept) {
         return false;
@@ -194,7 +215,7 @@ function createHarness(): Harness {
       notices.push({ userId, card });
     },
     recipients: () => ["root"],
-    clock: () => CLOCK,
+    clock: () => now,
   });
 
   return {
@@ -208,6 +229,12 @@ function createHarness(): Harness {
     restarts,
     setAccept: (value) => {
       accept = value;
+    },
+    setClock: (value) => {
+      now = value;
+    },
+    setAutoApply: (value) => {
+      autoApply = value;
     },
     at: (path) => readFileSync(join(root, path), "utf8"),
     deliver: (version, files, options = {}) => {
@@ -497,5 +524,179 @@ describe("DeployInstaller", () => {
     expect(result.ok).toBe(false);
     expect(result.code).toBe("no_target");
     expect(result.message).toContain("没有可回滚");
+  });
+
+  /**
+   * 宽限期（ADR-0065 的后续修正）：与逐文件模式（`DeployWatcher`）对齐 ——
+   * 包**校验通过先提醒**，到 `deployRestartDelayMinutes` 才替换产物 + 重启；
+   * 期间可以取消（放弃这份投递）、也可以立即应用。
+   *
+   * 背景：包模式原来是「到了就应用」，用户的实际感受是「部署完了、没有重启提醒、
+   * 机器人自己重启了」—— 现在两条路径的语义一致。
+   */
+  describe("宽限期：先提醒、到点才应用", () => {
+    const GRACE = 10 * 60_000;
+    let g: Harness;
+
+    beforeEach(() => {
+      g = createHarness({ graceMs: GRACE, runningVersion: "0.27.3" });
+    });
+
+    afterEach(() => {
+      rmSync(g.root, { recursive: true, force: true });
+    });
+
+    it("宽限期内只提醒一次：产物一个字节都不动、不排重启、包还留着", async () => {
+      g.deliver("0.28.0", buildFiles("a"));
+      expect(await g.installer.runOnce()).toBeUndefined();
+
+      // 只是「已就绪」：产物没换、没排重启、包还在投递箱里
+      expect(g.at("dist/main.js")).toBe("old-main\n");
+      expect(g.restarts).toHaveLength(0);
+      expect(readdirSync(g.incoming).sort()).toEqual([
+        "deploy-0.28.0.json",
+        "deploy-0.28.0.tgz",
+      ]);
+      // 一张「发现新版本」卡（带上「当前运行」与计划时刻），并把等待项暴露给命令层 / 后台
+      expect(g.notices.map((item) => item.card.kind)).toEqual(["new-version"]);
+      const lines = g.notices[0]?.card.lines.join("\n") ?? "";
+      expect(lines).toContain("v0.28.0");
+      expect(lines).toContain("v0.27.3");
+      expect(lines).toContain("自动应用并重启");
+      expect(g.notices[0]?.card.pending?.autoApply).toBe(true);
+      expect(g.installer.pending()).toMatchObject({
+        targetVersion: "0.28.0",
+        currentVersion: "0.27.3",
+        deadlineAt: new Date(CLOCK + GRACE).toISOString(),
+        mode: "package",
+      });
+      // 同一轮再扫：不再提醒（等待项就在那儿）
+      expect(await g.installer.runOnce()).toBeUndefined();
+      expect(g.notices).toHaveLength(1);
+    });
+
+    it("宽限期到点自动应用：替换产物 + 交给重启 + 归档 + 清投递箱", async () => {
+      g.deliver("0.28.0", buildFiles("a"));
+      await g.installer.runOnce();
+      expect(g.at("dist/main.js")).toBe("old-main\n");
+
+      g.setClock(CLOCK + GRACE);
+      const result = await g.installer.runOnce();
+
+      expect(result?.ok).toBe(true);
+      expect(g.at("dist/main.js")).toBe("main-a\n");
+      expect(g.restarts).toEqual([
+        { requestedBy: "deploy-installer", reason: "deploy", targetVersion: "0.28.0" },
+      ]);
+      expect(existsSync(join(g.archiveDir, "deploy-0.28.0.tgz"))).toBe(true);
+      expect(readdirSync(g.incoming)).toEqual([]);
+      expect(g.installer.pending()).toBeUndefined();
+      expect(g.notices).toHaveLength(1);
+    });
+
+    it("取消 = 放弃这份投递：产物不动、两个文件改名留证、过点也不会自己冒出来", async () => {
+      g.deliver("0.28.0", buildFiles("a"));
+      await g.installer.runOnce();
+
+      expect(g.installer.cancel()).toBe(true);
+      expect(g.installer.pending()).toBeUndefined();
+      expect(g.at("dist/main.js")).toBe("old-main\n");
+      expect(g.restarts).toHaveLength(0);
+      const names = readdirSync(g.incoming);
+      expect(names).toHaveLength(2);
+      expect(names.every((name) => name.includes(".cancelled-"))).toBe(true);
+
+      // 过了 deadline 也不会应用：改名之后它不在投递队列里了
+      g.setClock(CLOCK + 10 * GRACE);
+      expect(await g.installer.runOnce()).toBeUndefined();
+      expect(g.at("dist/main.js")).toBe("old-main\n");
+      expect(g.restarts).toHaveLength(0);
+      expect(g.notices).toHaveLength(1);
+
+      // 重新发布同一个版本 = 新的一次投递 → 重新提醒（这是「怎么再上线」的答案）
+      g.deliver("0.28.0", buildFiles("a"));
+      await g.installer.runOnce();
+      expect(g.notices).toHaveLength(2);
+      expect(g.installer.pending()?.targetVersion).toBe("0.28.0");
+    });
+
+    it("AUTO_RESTART_ON_DEPLOY 关着：只提醒、到点也不应用；打开后下一轮按原计划应用", async () => {
+      g.setAutoApply(false);
+      g.deliver("0.28.0", buildFiles("a"));
+      await g.installer.runOnce();
+
+      expect(g.notices[0]?.card.lines.join("\n")).toContain("自动重启已关闭");
+      expect(g.notices[0]?.card.pending?.autoApply).toBe(false);
+
+      // 过点也不动手（包还在、不用重新发布）
+      g.setClock(CLOCK + 10 * GRACE);
+      expect(await g.installer.runOnce()).toBeUndefined();
+      expect(g.at("dist/main.js")).toBe("old-main\n");
+      expect(g.restarts).toHaveLength(0);
+      expect(readdirSync(g.incoming)).toHaveLength(2);
+      expect(g.notices).toHaveLength(1);
+
+      // 打开开关 → 下一轮就按原计划应用（deadline 早就过了）
+      g.setAutoApply(true);
+      const result = await g.installer.runOnce();
+      expect(result?.ok).toBe(true);
+      expect(g.at("dist/main.js")).toBe("main-a\n");
+      expect(g.restarts).toHaveLength(1);
+    });
+
+    it("立即应用（restartNow）：不等宽限期，产物与重启都已同步安排好", async () => {
+      g.deliver("0.28.0", buildFiles("a"));
+      await g.installer.runOnce();
+
+      expect(g.installer.restartNow()).toBe(true);
+      // 替换 + 受理重启都是同步的（只有写回执是 async），所以这里立刻能看到新产物
+      expect(g.at("dist/main.js")).toBe("main-a\n");
+      expect(g.restarts).toHaveLength(1);
+      expect(g.installer.pending()).toBeUndefined();
+      expect(g.installer.restartNow()).toBe(false);
+    });
+
+    it("零宽限期：先提醒、当轮就应用（与逐文件模式 DEPLOY_RESTART_DELAY_MINUTES=0 一致）", async () => {
+      const zero = createHarness({ graceMs: 0, runningVersion: "0.27.3" });
+      try {
+        zero.deliver("0.28.0", buildFiles("a"));
+        const result = await zero.installer.runOnce();
+
+        expect(result?.ok).toBe(true);
+        expect(zero.notices.map((item) => item.card.kind)).toEqual(["new-version"]);
+        expect(zero.at("dist/main.js")).toBe("main-a\n");
+        expect(zero.restarts).toHaveLength(1);
+      } finally {
+        rmSync(zero.root, { recursive: true, force: true });
+      }
+    });
+
+    it("回滚会丢掉待应用的投递（否则刚回滚下去的版本又被顶上来）", async () => {
+      // 先应用两版，让回滚有目标：applied=0.28.1 / previous=0.28.0
+      g.deliver("0.28.0", buildFiles("a"));
+      await g.installer.runOnce();
+      g.setClock(CLOCK + GRACE);
+      await g.installer.runOnce();
+      g.deliver("0.28.1", buildFiles("b"));
+      await g.installer.runOnce();
+      g.setClock(CLOCK + 2 * GRACE);
+      await g.installer.runOnce();
+      expect(g.at("dist/main.js")).toBe("main-b\n");
+
+      // 又来一版（还在宽限期）时回滚 → 这一版必须被放弃
+      g.deliver("0.28.2", buildFiles("c"));
+      await g.installer.runOnce();
+      expect(g.installer.pending()?.targetVersion).toBe("0.28.2");
+
+      const result = await g.installer.rollback();
+      expect(result.ok).toBe(true);
+      expect(g.at("dist/main.js")).toBe("main-a\n");
+      expect(g.installer.pending()).toBeUndefined();
+      expect(readdirSync(g.incoming).every((name) => name.includes(".cancelled-"))).toBe(true);
+
+      g.setClock(CLOCK + 3 * GRACE);
+      expect(await g.installer.runOnce()).toBeUndefined();
+      expect(g.at("dist/main.js")).toBe("main-a\n");
+    });
   });
 });

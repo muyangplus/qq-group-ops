@@ -21,6 +21,9 @@ import {
   type BuildInfo,
 } from "../core/buildInfo.js";
 import { getLogger } from "../core/logger.js";
+import { valueOf, type Provider } from "../core/provider.js";
+import { formatDisplayTime } from "../core/timeFormat.js";
+import type { DeployControl, DeployPending } from "./deployWatcher.js";
 import {
   removeSyncStateFiles,
 } from "./distSnapshot.js";
@@ -156,10 +159,42 @@ export interface DeployInstallerOptions {
   notify: (userId: string, card: InstallNotice) => Promise<void>;
   /** 收件人（全部全局超管）。 */
   recipients: () => readonly string[];
+  /**
+   * 宽限期（毫秒）：包**校验通过**后先提醒超管，等这么久再自动应用 + 重启。
+   *
+   * - **不传 = 没有宽限期**（校验通过就直接应用）：单测与嵌入式用法走这条，行为与
+   *   「到了就应用」的老实现一致；
+   * - 传 `0` = 「先提醒、当轮就应用」（与逐文件模式的 `DEPLOY_RESTART_DELAY_MINUTES=0` 一致）；
+   * - 生产装配（`main.ts`）传 `deployRestartDelayMinutes`，默认 10 分钟。
+   *
+   * 热配置：用的时候取当前值（`/config` 改完立即生效）。
+   */
+  graceMs?: Provider<number>;
+  /**
+   * 到点要不要自己动手应用 + 重启（`AUTO_RESTART_ON_DEPLOY`）；缺省 `true`。
+   *
+   * 关着时**照样提醒**，只是到点不动手：包一直留在 `incoming/` 里等着（已校验通过、不用重新上传），
+   * 用户打开开关后，下一轮扫描按原计划应用 —— 与逐文件模式同一套语义。
+   */
+  autoApply?: Provider<boolean>;
+  /** 当前运行版本（卡片与 `pending()` 里的「当前运行」）；缺省空串。 */
+  runningVersion?: () => string;
   /** 时钟（回执与 `*.failed-<ts>` 的时间戳）；缺省 `Date.now`。 */
   clock?: () => number;
   /** 回执里写的发起人；缺省 `deploy-installer`。 */
   actor?: string;
+}
+
+/** 「新版本已就绪，等宽限期」通知里给卡片用的附加信息（按钮由 `main.ts` 渲染）。 */
+export interface InstallNoticePending {
+  /** 计划自动应用 + 重启的时刻（ISO）。 */
+  deadlineAt: string;
+  /** 到点会不会自己动手（`AUTO_RESTART_ON_DEPLOY`）。 */
+  autoApply: boolean;
+  /** 当前运行版本。 */
+  currentVersion: string;
+  /** 产物包 sha256（卡片上只写前 12 位，运维对账用）。 */
+  sha256: string;
 }
 
 /**
@@ -170,8 +205,15 @@ export interface DeployInstallerOptions {
 export interface InstallNotice {
   title: string;
   lines: string[];
-  kind: "half-transferred" | "self-check-failed" | "replace-failed" | "rollback";
+  kind:
+    | "half-transferred"
+    | "self-check-failed"
+    | "replace-failed"
+    | "rollback"
+    | "new-version";
   version: string;
+  /** 只有 `new-version` 带：卡片据此渲染「取消自动应用 / 立即应用并重启」两个按钮。 */
+  pending?: InstallNoticePending | undefined;
 }
 
 /**
@@ -182,15 +224,39 @@ export interface InstallNotice {
  * 2. **sha256 校验 `.tgz`**（不符 = 半传：忽略 + 私信，**同一份失败的包不反复重试刷屏**）；
  * 3. 解到 `data/incoming/<版本>/`；
  * 4. 用 `distFingerprint()` 与包内 `build-info.json` **自证**（对不上 = 半传 / 混装 / 坏包）；
- * 5. **整目录替换** `dist` / `web/dist` / `scripts`（替换前旧目录改名 `.prev`；失败逐个还原）；
- * 6. 交给既有重启用例（`RestartHook.request(reason="deploy")`）；
- * 7. 成功：写回执 + `data/deploy-state.json`（含 `previous*`，供回滚）+ 归档到
+ * 5. **先提醒超管**（「发现新版本 + 计划何时自动应用」，见 `graceMs`）——这一步是 ADR-0065
+ *    后续修正：与逐文件模式（`DeployWatcher`）对齐，**不再「到了就应用」**；
+ * 6. 宽限期到点（且 `AUTO_RESTART_ON_DEPLOY` 开着）→ **整目录替换** `dist` / `web/dist` /
+ *    `scripts`（替换前旧目录改名 `.prev`；失败逐个还原）；
+ * 7. 交给既有重启用例（`RestartHook.request(reason="deploy")`）；
+ * 8. 成功：写回执 + `data/deploy-state.json`（含 `previous*`，供回滚）+ 归档到
  *    `data/packages/`（只留最近 3 个）+ 删掉 `incoming/` 里这份包 + 清干净 `.prev`。
+ *
+ * 宽限期里「取消」= **放弃这份投递**：产物一个字节都不动，两个文件改名 `*.cancelled-<ts>`
+ * 留证（所以既不会自己生效，也不会在下次重启进程后又冒出来）。
  *
  * **回滚** = 重新应用 `data/packages/` 里的上一个包（同一安装器、同一套指纹自证），
  * 不需要 tar/gzip 的写侧能力（只用只读解析）。
  */
-export class DeployInstaller {
+/** 校验通过、等宽限期的包（宽限期到点才替换产物）。 */
+interface PreparedPackage {
+  version: string;
+  archive: string;
+  meta: DeployPackage;
+  unpackDir: string;
+  rolledBack: boolean;
+  /** 成功后才删除的投递箱文件（回滚时为空）。 */
+  removeFiles: readonly string[];
+}
+
+/** 等宽限期中的投递（`detectedAt` / `deadlineAt` 只在这一层有意义）。 */
+interface WaitingPackage {
+  prepared: PreparedPackage;
+  detectedAt: string;
+  deadlineAt: string;
+}
+
+export class DeployInstaller implements DeployControl {
   private readonly incomingDir: string;
   private readonly archiveDir: string;
   private readonly workDir: string;
@@ -202,6 +268,11 @@ export class DeployInstaller {
   private readonly recipients: () => readonly string[];
   private readonly clock: () => number;
   private readonly actor: string;
+  private readonly graceMs: Provider<number> | undefined;
+  private readonly autoApply: Provider<boolean>;
+  private readonly runningVersion: () => string;
+  /** 已校验通过、正在等宽限期的投递；`undefined` = 没有等待中的应用。 */
+  private waiting: WaitingPackage | undefined;
   /** 已经私信过的失败包（`<版本>:<sha256 前 12 位>:<原因>`），避免反复刷屏。 */
   private readonly reported = new Set<string>();
 
@@ -217,6 +288,9 @@ export class DeployInstaller {
     this.recipients = options.recipients;
     this.clock = options.clock ?? Date.now;
     this.actor = options.actor ?? "deploy-installer";
+    this.graceMs = options.graceMs;
+    this.autoApply = options.autoApply ?? (() => true);
+    this.runningVersion = options.runningVersion ?? (() => "");
   }
 
   /** 当前状态（`applied*` / `previous*`）；没有状态文件时 `undefined`。 */
@@ -244,10 +318,26 @@ export class DeployInstaller {
   /**
    * 扫一轮投递箱（由统一扫描周期 `TickScheduler` 驱动，与部署监测同一条节拍）。
    *
-   * 一次只应用**一个**包就返回：替换 `dist/` 之后本进程即将被重启，继续处理下一个包
-   * 没有意义（新进程起来后会接着扫）。
+   * 两条路径：
+   * - 上一轮已经**校验通过并提醒过**的投递（等宽限期）→ 到点（且 `AUTO_RESTART_ON_DEPLOY`
+   *   开着）才应用；关着就一直等（用户打开开关后，下一轮按原计划继续）；
+   * - 否则扫 `incoming/`：校验通过的那份**先提醒**，校验不过的照旧拒绝 + 改名留证。
+   *
+   * 一次只处理**一个**包：宽限期一过替换 `dist/`，本进程即将被重启，继续处理下一个没有意义
+   * （新进程起来后会接着扫）。
    */
   public async runOnce(): Promise<InstallResult | undefined> {
+    const waiting = this.waiting;
+    if (waiting) {
+      // `AUTO_RESTART_ON_DEPLOY` 关着时**不应用、也不清状态**：用户之后把开关打开，
+      // 下一轮扫描就按原计划继续（与逐文件模式同一套语义）。
+      if (!valueOf(this.autoApply) || this.clock() < Date.parse(waiting.deadlineAt)) {
+        return undefined;
+      }
+      this.waiting = undefined;
+      return this.commitPrepared(waiting.prepared);
+    }
+
     const pending = listPending(this.incomingDir);
     for (const item of pending) {
       const meta = readPackageMeta(item.jsonPath);
@@ -270,16 +360,101 @@ export class DeployInstaller {
         });
         continue;
       }
-      const result = await this.installFromArchive({
+      const prepared = await this.prepare({
         version: meta.version,
         archive,
         meta,
         rolledBack: false,
         removeFiles: [archive, item.jsonPath],
       });
-      return result;
+      if (!prepared.ok) {
+        return prepared.result;
+      }
+      // 没配宽限期（单测 / 嵌入式用法）：校验通过就直接应用 —— 与老实现完全一致。
+      if (this.graceMs === undefined) {
+        return this.commitPrepared(prepared.value);
+      }
+      const grace = Math.max(0, valueOf(this.graceMs));
+      const now = this.clock();
+      const armed: WaitingPackage = {
+        prepared: prepared.value,
+        detectedAt: new Date(now).toISOString(),
+        deadlineAt: new Date(now + grace).toISOString(),
+      };
+      this.waiting = armed;
+      log.info("deploy package ready, waiting for the grace period", {
+        version: meta.version,
+        graceMinutes: Math.round(grace / 60_000),
+        deadlineAt: armed.deadlineAt,
+        autoApply: valueOf(this.autoApply),
+        // 与部署监测一样带上 pid：区分「同一进程重复提醒」与「两个进程各提醒一次」。
+        pid: process.pid,
+      });
+      await this.notifyNewVersion(armed);
+      // 宽限期 0 且开着自动应用 → 这一轮就动手（与逐文件模式 `deployRestartDelayMinutes=0` 一致）
+      if (grace <= 0 && valueOf(this.autoApply)) {
+        this.waiting = undefined;
+        return this.commitPrepared(armed.prepared);
+      }
+      return undefined;
     }
     return undefined;
+  }
+
+  /** 待应用的投递（供 `/deploy cancel`、`/deploy now`、管理 API 的「状态」页）。 */
+  public pending(): DeployPending | undefined {
+    const waiting = this.waiting;
+    if (!waiting) {
+      return undefined;
+    }
+    return {
+      targetVersion: waiting.prepared.version,
+      currentVersion: this.runningVersion(),
+      detectedAt: waiting.detectedAt,
+      deadlineAt: waiting.deadlineAt,
+      mode: "package",
+    };
+  }
+
+  /**
+   * 取消这次自动应用（`/deploy cancel` 与卡片按钮）。
+   *
+   * **语义 = 放弃这份投递**：产物一个字节都不动，`incoming/` 里那两个文件改名
+   * `*.cancelled-<ts>` 留证 —— 所以它不会「下次重启进程后又自己冒出来应用」，想上线就重新发布一次
+   * （或按 OPERATIONS.md 手工把改名后的包放回去再写一份标记）。
+   */
+  public cancel(): boolean {
+    const waiting = this.waiting;
+    if (!waiting) {
+      return false;
+    }
+    this.waiting = undefined;
+    this.renameCancelledPair(waiting.prepared);
+    log.info("deploy package auto-apply cancelled", {
+      version: waiting.prepared.version,
+    });
+    return true;
+  }
+
+  /**
+   * 立即应用并重启（不等宽限期）。
+   *
+   * 时序与部署监测一致：替换产物与受理重启用例都是**同步**的（只有写回执是 async），
+   * 所以调用方渲染「正在重启」卡片时，重启已经安排上了。
+   */
+  public restartNow(): boolean {
+    const waiting = this.waiting;
+    if (!waiting) {
+      return false;
+    }
+    this.waiting = undefined;
+    void this.commitPrepared(waiting.prepared).catch((error: unknown) => {
+      log.error("deploy package apply failed after manual trigger", {
+        version: waiting.prepared.version,
+        error: describeError(error),
+      });
+    });
+    return true;
   }
 
   /**
@@ -289,6 +464,15 @@ export class DeployInstaller {
    * （那是防「FTP 半传」的判据，归档是本地产物）；指纹自证照做 —— 那是防「包坏了 / 混装」。
    */
   public async rollback(): Promise<InstallResult> {
+    // 回滚是「明确不要这次投递」：把等宽限期的那个包一并放弃（改名留证）——
+    // 否则宽限期一到，它会把刚回滚下去的版本又顶上来。
+    if (this.waiting) {
+      log.warn("pending deploy package dropped by rollback", {
+        version: this.waiting.prepared.version,
+      });
+      this.renameCancelledPair(this.waiting.prepared);
+      this.waiting = undefined;
+    }
     const state = this.state();
     if (!state || state.previousVersion.length === 0) {
       return {
@@ -316,7 +500,7 @@ export class DeployInstaller {
         message: `归档包 v${state.previousVersion} 读不到 build-info.json 的 distFingerprint，拒绝回滚。`,
       };
     }
-    return this.installFromArchive({
+    const prepared = await this.prepare({
       version: state.previousVersion,
       archive,
       meta: {
@@ -329,24 +513,30 @@ export class DeployInstaller {
       rolledBack: true,
       removeFiles: [],
     });
+    if (!prepared.ok) {
+      return prepared.result;
+    }
+    return this.commitPrepared(prepared.value);
   }
 
   // ------------------------------------------------------------------ 安装
 
-  private async installFromArchive(input: {
-    version: string;
-    archive: string;
-    meta: DeployPackage;
-    rolledBack: boolean;
-    /** 成功后才删除的投递箱文件（回滚时为空）。 */
-    removeFiles: readonly string[];
-  }): Promise<InstallResult> {
-    const { version, archive, meta, rolledBack, removeFiles } = input;
-    const fail = async (
-      code: InstallErrorCode,
-      message: string,
-      options: { report?: boolean } = {},
-    ): Promise<InstallResult> => {
+  /**
+   * 失败收口：私信（去重）+ 坏包改名留证 + 写回执。
+   *
+   * `prepare` 与 `commitPrepared` 共用 —— 两个阶段的失败都要留下同样的证据。
+   */
+  private failFactory(
+    meta: DeployPackage,
+    archive: string,
+    version: string,
+    rolledBack: boolean,
+  ): (
+    code: InstallErrorCode,
+    message: string,
+    options?: { report?: boolean },
+  ) => Promise<InstallResult> {
+    return async (code, message, options = {}) => {
       const report = options.report ?? true;
       if (report) {
         await this.reportFailure(code, meta, message);
@@ -364,16 +554,42 @@ export class DeployInstaller {
       });
       return { ok: false, version, code, message, ...(rolledBack ? { rolledBack: true } : {}) };
     };
+  }
+
+  /**
+   * 校验：sha256 → 解到 `data/incoming/<版本>/` → 指纹自证 —— **这一步一个字节都不动现役产物**。
+   *
+   * 单独拆出来是因为 ADR-0065 的后续修正：校验通过之后要**先提醒、等宽限期**，到点才替换
+   * （对齐逐文件模式）。失败时直接返回「当成结果」的 `InstallResult`（已经私信 + 留证 + 写回执）。
+   */
+  private async prepare(input: {
+    version: string;
+    archive: string;
+    meta: DeployPackage;
+    rolledBack: boolean;
+    /** 成功后才删除的投递箱文件（回滚时为空）。 */
+    removeFiles: readonly string[];
+  }): Promise<
+    { ok: true; value: PreparedPackage } | { ok: false; result: InstallResult }
+  > {
+    const { version, archive, meta, rolledBack, removeFiles } = input;
+    const fail = this.failFactory(meta, archive, version, rolledBack);
 
     // ① sha256：防半传（只对投递箱里的包做；归档包是本地产物，见 rollback() 的说明）
     if (!rolledBack) {
       const actual = sha256OfFile(archive);
       if (actual === undefined) {
-        return fail("read_failed", `读不到 ${basename(archive)}`);
+        return { ok: false, result: await fail("read_failed", `读不到 ${basename(archive)}`) };
       }
       const expected = meta.sha256.trim().toLowerCase();
       if (expected.length > 0 && actual !== expected) {
-        return fail("sha_mismatch", `sha256 不符（半传可能）：标记 ${expected}，实际 ${actual}`);
+        return {
+          ok: false,
+          result: await fail(
+            "sha_mismatch",
+            `sha256 不符（半传可能）：标记 ${expected}，实际 ${actual}`,
+          ),
+        };
       }
     }
 
@@ -386,26 +602,57 @@ export class DeployInstaller {
     } catch (error) {
       const detail = describeError(error);
       rmSync(unpackDir, { recursive: true, force: true });
-      return fail("unpack_failed", `解包失败：${detail}`);
+      return { ok: false, result: await fail("unpack_failed", `解包失败：${detail}`) };
     }
 
     // ③ 自证：版本号 + dist 指纹（与包内 build-info.json 对）
     const buildInfo = readBuildInfo(join(unpackDir, "dist"));
     if (!buildInfo || buildInfo.version !== version) {
-      return fail(
-        "version_mismatch",
-        `包内 build-info.json 的版本是 ${buildInfo?.version ?? "（读不到）"}，标记是 ${version}`,
-      );
+      return {
+        ok: false,
+        result: await fail(
+          "version_mismatch",
+          `包内 build-info.json 的版本是 ${buildInfo?.version ?? "（读不到）"}，标记是 ${version}`,
+        ),
+      };
     }
     const check = verifyBuildInfo(join(unpackDir, "dist"));
     if (!check.ok) {
-      return fail("self_check_failed", `dist 自证不过：${check.detail}`);
+      return {
+        ok: false,
+        result: await fail("self_check_failed", `dist 自证不过：${check.detail}`),
+      };
     }
     if (meta.distFingerprint.length > 0 && buildInfo.distFingerprint !== meta.distFingerprint) {
-      return fail(
-        "self_check_failed",
-        `包内指纹（${buildInfo.distFingerprint ?? "无"}）与投递标记（${meta.distFingerprint}）不一致`,
-      );
+      return {
+        ok: false,
+        result: await fail(
+          "self_check_failed",
+          `包内指纹（${buildInfo.distFingerprint ?? "无"}）与投递标记（${meta.distFingerprint}）不一致`,
+        ),
+      };
+    }
+
+    return { ok: true, value: { version, archive, meta, unpackDir, rolledBack, removeFiles } };
+  }
+
+  /** 替换产物 + 交接重启 + 归档/状态/回执（**只对已经校验通过的包调用**）。 */
+  private async commitPrepared(prepared: PreparedPackage): Promise<InstallResult> {
+    const { version, archive, meta, unpackDir, rolledBack, removeFiles } = prepared;
+    const fail = this.failFactory(meta, archive, version, rolledBack);
+
+    // 宽限期里 CD 可能把同一个包**重传**了一遍（字节变了）：产物内容在 `prepare` 里已经校验过
+    // （替换用的是那份解出来的产物，不再读 `.tgz`），这里只提醒一句 —— 归档到
+    // `data/packages/` 的会是磁盘上现在那份字节。
+    if (!rolledBack && meta.sha256.length > 0) {
+      const current = sha256OfFile(archive);
+      if (current !== undefined && current !== meta.sha256.trim().toLowerCase()) {
+        log.warn("deploy package changed during the grace period, archiving on-disk bytes", {
+          version,
+          verified: meta.sha256.slice(0, 12),
+          onDisk: current.slice(0, 12),
+        });
+      }
     }
 
     // ④ 整目录替换。`swapTargets` 内部保证「要么全换、要么全不换」：任何一个 target 失败，
@@ -483,6 +730,83 @@ export class DeployInstaller {
       ...(archived !== undefined ? { bundle: archived } : {}),
       ...(rolledBack ? { rolledBack: true } : {}),
     };
+  }
+
+  /**
+   * 放弃一份投递：两个文件（`.tgz` 与标记 `.json`）都改名 `*.cancelled-<ts>` 留证。
+   *
+   * 为什么不直接删：与 `*.failed-<ts>` 一样，现场要留着查（也可能有人想手工放回去应用）。
+   * 改名之后 `listPending()`（只认 `deploy-*.json`）与 `trimIncoming()`（只认 `*.tgz`）
+   * 都不会再认它 —— 所以它既不会自己生效，也不会被清理策略顺手删掉。
+   */
+  private renameCancelledPair(prepared: PreparedPackage): void {
+    const at = this.clock();
+    const files =
+      prepared.removeFiles.length > 0 ? prepared.removeFiles : [prepared.archive];
+    for (const file of files) {
+      try {
+        renameSync(file, `${file}.cancelled-${at}`);
+      } catch (error) {
+        log.warn("cancelled delivery rename skipped", { file, error: describeError(error) });
+      }
+    }
+  }
+
+  /**
+   * 「发现新版本」卡：**先提醒再应用**（ADR-0065 的后续修正，与逐文件模式对齐）。
+   *
+   * 两种文案：开着自动重启 → 写清什么时候应用；关着 → 写清「到点不会动手」以及怎么手动上线。
+   * 按钮由 `main.ts` 渲染（`InstallNotice.pending`），回调走 `cb:deploy:cancel` / `cb:deploy:now`
+   * —— 与逐文件模式**共用同一对回调**，所以命令层不用分叉。
+   */
+  private async notifyNewVersion(armed: WaitingPackage): Promise<void> {
+    const { prepared, deadlineAt } = armed;
+    const version = prepared.version;
+    const current = this.runningVersion();
+    const currentText = current.length > 0 ? current : "unknown";
+    const sha = prepared.meta.sha256.slice(0, 12);
+    const autoApply = valueOf(this.autoApply);
+    const lines = autoApply
+      ? [
+          `**产物包**：v${version}（已校验通过：sha256 ${sha}）`,
+          `**当前运行**：v${currentText}`,
+          `**自动应用并重启**：${formatDisplayTime(new Date(deadlineAt))}`,
+          "",
+          "到点会自动应用并重启加载新版本（重启期间约几秒不可用），完成后会私信你一条回执。",
+          "想改期就点「取消自动应用」（这份投递会被放弃，不会自己再应用），想马上生效就点「立即应用并重启」。",
+        ]
+      : [
+          `**产物包**：v${version}（已校验通过：sha256 ${sha}）`,
+          `**当前运行**：v${currentText}`,
+          "**自动重启已关闭**：到点**不会**自动应用 —— 请手动点「立即应用并重启」加载新版本，",
+          "或把 `autoRestartOnDeploy` 打开（下一轮扫描会自动应用并重启）。",
+          "",
+          "产物包会一直留在 `incoming/` 里等着，**不需要重新发布**。",
+          "想先不动就点「取消自动应用」（这份投递会被放弃，重新发布才会再提醒）。",
+        ];
+    const notice: InstallNotice = {
+      title: "发现新版本",
+      lines,
+      kind: "new-version",
+      version,
+      pending: {
+        deadlineAt,
+        autoApply,
+        currentVersion: current,
+        sha256: prepared.meta.sha256,
+      },
+    };
+    for (const userId of this.recipients()) {
+      try {
+        await this.notify(userId, notice);
+      } catch (error) {
+        log.warn("deploy new-version notice not delivered", {
+          userId,
+          version,
+          error: describeError(error),
+        });
+      }
+    }
   }
 
   /**

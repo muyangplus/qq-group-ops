@@ -28,6 +28,13 @@ function noPending(): CardResult {
   });
 }
 
+function procRow(): CardButton[] {
+  return [
+    viewButton("proc", "进程状态", "status", "proc"),
+    viewButton("help", "指令帮助", "help", "topic", "restart"),
+  ];
+}
+
 function actionRow(): CardButton[] {
   return [
     { id: "now", label: "立即重启", callbackData: encodeCallback("deploy", "now") },
@@ -35,7 +42,7 @@ function actionRow(): CardButton[] {
   ];
 }
 
-/** 回调：`cb:deploy:cancel` —— 取消本次自动重启。 */
+/** 回调：`cb:deploy:cancel` —— 取消本次自动重启（或包模式的自动应用）。 */
 export function deployCancelCard(
   ctx: AdminCommandContext,
   userId: string,
@@ -48,15 +55,21 @@ export function deployCancelCard(
     return noPending();
   }
   ctx.deploy.cancel();
+  // 两条路径的「取消」语义不同：逐文件 = 产物已在磁盘上、只是不自动重启；包模式 = **放弃这份投递**。
+  const isPackage = pending.mode === "package";
   return cardFromText(
-    "已取消自动重启",
+    isPackage ? "已取消自动应用" : "已取消自动重启",
     [
       `**新版本**：v${pending.targetVersion}（服务器上已就绪）`,
-      `**当前运行**：v${pending.currentVersion} —— 机器人继续跑旧版本，**不会再自动重启**。`,
+      isPackage
+        ? `**当前运行**：v${pending.currentVersion} —— 产物**一个字节都没动**，也不会自动应用。`
+        : `**当前运行**：v${pending.currentVersion} —— 机器人继续跑旧版本，**不会再自动重启**。`,
       "",
-      "想上线时点「立即重启」；同一个版本不会再提醒你（部署了新版本才会重新提醒）。",
+      isPackage
+        ? "这份投递已经被放弃（`incoming/` 里两个文件改名 `*.cancelled-<ts>` 留证）：想上线就**重新发布一次**，或按 `docs/OPERATIONS.md` 手工把改名后的包放回去。"
+        : "想上线时点「立即重启」；同一个版本不会再提醒你（部署了新版本才会重新提醒）。",
     ].join("\n"),
-    { rows: [actionRow()] },
+    { rows: [isPackage ? procRow() : actionRow()] },
   );
 }
 
@@ -89,9 +102,11 @@ export function deployRestartNowCard(
     };
   }
   return cardFromText(
-    "正在重启",
+    pending.mode === "package" ? "正在应用并重启" : "正在重启",
     [
-      `${notice}马上重启到 **v${pending.targetVersion}**（当前 v${pending.currentVersion}）。`,
+      pending.mode === "package"
+        ? `${notice}正在**应用**产物包并重启到 **v${pending.targetVersion}**（当前 v${pending.currentVersion}）。`
+        : `${notice}马上重启到 **v${pending.targetVersion}**（当前 v${pending.currentVersion}）。`,
       "",
       "几秒内机器人会离线再回来；完成后会私信你一条回执。",
     ].join("\n"),

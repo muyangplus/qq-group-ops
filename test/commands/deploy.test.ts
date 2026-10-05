@@ -123,6 +123,35 @@ describe("部署监测的回调卡", () => {
     expect(card.rich.markdown).toContain("data/restart-failed.json");
   });
 
+  /** 包模式（ADR-0065 后续修正）：产物包还没应用，「取消」= 放弃投递、「立即」= 应用并重启。 */
+  describe("包模式的新版本（产物包等宽限期）", () => {
+    const PKG: DeployPending = { ...PENDING, mode: "package" };
+
+    it("取消：说清「产物一个字节都没动」+ 怎么重新上线", () => {
+      const h = context({ pending: PKG });
+      const card = deployCancelCard(h.ctx, "root");
+
+      expect(card.ok).toBe(true);
+      expect(h.cancelled()).toBe(1);
+      expect(card.rich.markdown).toContain("已取消自动应用");
+      expect(card.rich.markdown).toContain("一个字节都没动");
+      expect(card.rich.markdown).toContain("重新发布一次");
+      // 投递已经被放弃 → 不再给「立即重启」按钮（点它只会回「没有待上线的新版本」）
+      expect(JSON.stringify(card.rich.keyboard)).not.toContain("cb:deploy:now");
+    });
+
+    it("立即应用：文案改成「应用产物包并重启」", () => {
+      const h = context({ pending: PKG });
+      const card = deployRestartNowCard(h.ctx, "root");
+
+      expect(card.ok).toBe(true);
+      expect(h.restarted()).toBe(1);
+      expect(card.rich.markdown).toContain("正在应用并重启");
+      expect(card.rich.markdown).toContain("应用**产物包并重启");
+      expect(card.rich.markdown).toContain("v0.21.0");
+    });
+  });
+
   /** 回滚（ADR-0065）：入口在 `/status proc` 卡片上，回调 `cb:deploy:rollback` 执行。 */
   describe("回滚到上一版本", () => {
     it("有可回滚版本时：回执写清 vX → vY，并说明同步状态会被作废", async () => {
