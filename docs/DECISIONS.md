@@ -1633,6 +1633,7 @@
 ## ADR-0065：部署形态改成「单文件产物包 + 机器人自解」，提醒与自动重启解耦
 
 - 状态：已实现（已发版 **0.29.0**，2026-10-04）—— 见 CHANGELOG 的 `[0.29.0]`；真机验收项在 TODO §4.7
+  **后续修正（口径 B：先提醒再应用）已实现、未发版** —— 见本节末尾的「后续修正」。
 - 背景（两次真机事故）：
   1. **慢**：CD 是 FTP **逐文件**同步，一次部署传 `dist/**` 要 **8m33s**（实测 ≈1s/文件）；
      慢的原因是**文件数**，不是体积；
@@ -1677,6 +1678,36 @@
   `docs/ADMIN-API.md` / `docs/OPERATIONS.md`（手工应用 / 回滚 / 清状态 SOP）、`CHANGELOG`。
   **能力边界**：不碰 `data/` `.env` `logs/`；`incoming/` 与 `data/packages/` 自动只留最近 3 个；
   `workflow_dispatch` 保留 `mode=files` 应急开关（退回老的逐文件上传）。
+
+- **后续修正（2026-10-04，口径 B：先提醒、再应用）**：0.29.0 的实现是「扫到标记就应用」——
+  成功时唯一的信号是几秒后的重启回执，用户的实际感受是「部署完了、**没有重启提醒**、机器人自己
+  重启了」。用户拍定按**逐文件模式的口径**对齐：`DeployInstaller` 拆成「校验（`prepare`）」与
+  「应用（`commitPrepared`）」两段，校验通过（sha256 → 解包 → 指纹自证，**一个字节都不动现役
+  产物**）之后先私信全部超管一张卡：「发现新版本 vX（已校验通过 · sha256 前 12 位）· 当前运行
+  vY · 计划 N 分钟后自动应用并重启」+「取消自动应用 / 立即应用并重启」两个按钮；到点
+  （`deployRestartDelayMinutes`，默认 10 分钟）才**整目录替换 + 重启**。
+  - **「取消」= 放弃这份投递**（与逐文件模式的「产物已在磁盘上、只是不自动重启」不同，所以文案
+    也分开）：产物一个字节都不动，`incoming/` 里两个文件改名 `*.cancelled-<ts>` 留证 ——
+    为什么不做成「只记内存的黑名单」：那样下次重启进程时这份包又会冒出来自动应用（用户已经说了
+    「不要这一版」）；改名之后它既不在投递队列里，也不会被 `trimIncoming()` 顺手删掉；
+    想上线就重新发布一次（新的一次投递 = 重新提醒）。
+  - `AUTO_RESTART_ON_DEPLOY=off`：**照样提醒、到点不动手**，包一直留在 `incoming/` 里等着
+    （**不需要重新发布**）；用户打开开关后下一轮扫描按原计划应用 —— 与逐文件模式完全同一套语义。
+  - **立即应用**（卡片上的「立即应用并重启」）不等宽限期；**回滚会丢掉待应用的投递** ——
+    否则宽限期一到，刚回滚下去的版本又被顶上来。
+  - 两条「新版本」来源（包模式 / 逐文件模式）合成**一个控制面**（`combineDeployControls`，
+    包模式优先）：卡片按钮、`cb:deploy:cancel` / `cb:deploy:now` 回调、后台「状态」页
+    （`GET /api/tasks` 的 `deploy`）都只认它；`DeployPending` 多一个 `mode`（`files` / `package`），
+    卡片文案据此区分「立即重启」与「立即应用并重启」。
+  - 代价（记下来）：一次包部署从「1 分钟内」变成「1 分钟 + 宽限期」；`incoming/` 里多个包排队时
+    **逐个**提醒 + 逐个宽限期（首跳那种「0.29.0 与 0.29.1 两个包都在 `incoming/`」会有两次提醒、
+    两次重启）。换来的是「不会在没有任何预告的情况下换掉正在跑的版本」。
+  - 落点：`src/services/deployInstaller.ts`（`graceMs` / `autoApply` / `runningVersion` /
+    `pending` · `cancel` · `restartNow`）、新 `src/services/deployControl.ts`、
+    `src/services/commands/deployCommands.ts`（两套文案）、`src/main.ts`（装配 + 新版本卡按钮）、
+    `src/services/deployWatcher.ts`（`DeployPending.mode`）；
+    测试：`test/deployInstaller.test.ts`（宽限期 7 条）、`test/deployControl.test.ts`、
+    `test/commands/deploy.test.ts`、`test/runtimeWiring.test.ts`。
 
 ## ADR-0066：`.env` 只留核心项 —— 能搬的全搬进系统配置，老值一次性导入
 

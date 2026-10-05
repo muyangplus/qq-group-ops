@@ -518,11 +518,16 @@ ps -ef | grep "dist/main.js" | grep -v grep     # 应只有一行
 
 机器人每个扫描周期扫一次 `incoming/`，看到标记才动手：
 **sha256 校验**（防半传）→ 解到 `data/incoming/<版本>/` → 用 `distFingerprint()` 与包内
-`build-info.json` **自证** → **整目录替换** `dist/` `web/dist/` `scripts/`
-（`data/`、`.env`、`logs/` **绝不碰**）→ 走既有「自检 → respawn」重启。
+`build-info.json` **自证** → **先私信超管一张「发现新版本」卡**（含计划时刻 +「取消自动应用 /
+立即应用并重启」两个按钮）→ 等宽限期（`deployRestartDelayMinutes`，默认 **10 分钟**）→
+**整目录替换** `dist/` `web/dist/` `scripts/`（`data/`、`.env`、`logs/` **绝不碰**）→
+走既有「自检 → respawn」重启。
 成功写 `data/deploy-state.json` 与 `data/deploy-receipt.json`，把包归档到 `data/packages/`
 （**只留最近 3 个**），并作废 FTP 同步状态。失败则坏包改名 `*.failed-<ts>` 留证 + 私信超管，
 **运行中的机器人不受影响**。
+「取消」= **放弃这份投递**：产物一个字节都不动，`incoming/` 里那两个文件改名
+`*.cancelled-<ts>` 留证（所以它不会自己生效，也不会在下次重启进程后又冒出来）—— 想上线就重新发布一次；
+也可以点「立即应用并重启」跳过宽限期。
 
 ### 首跳：服务器上还是「没有安装器」的老版本怎么办
 
@@ -537,8 +542,10 @@ ps -ef | grep "dist/main.js" | grep -v grep     # 应只有一行
    - `mode` 选 **`files`**（逐文件上传 + `package.json` 版本标记最后落地，ADR-0057 的老路径）；
 3. 老进程按「版本 + 指纹」判据发现新版本 → 自检 → respawn → 新代码起来（这一步就是 0.27.x 能做的）；
 4. **注意**：如果这次发布同时建过 Release，那次包模式 CD 已经把 `incoming/deploy-<版本>.{tgz,json}`
-   留在服务器上了 —— 新进程起来后 `DeployInstaller` 会**再应用一次同一个包**（多一次重启，
+   留在服务器上了 —— 新进程起来后 `DeployInstaller` 会**先把这份包用上**（多一次重启，
    同时把包归档进 `data/packages/`、让「回滚上一版」按钮可用）。
+   现在是「先提醒 + 宽限期」：会先私信一张「发现新版本」卡，默认 **10 分钟**后才应用 ——
+   不想等就点卡上的「立即应用并重启」。
    不想多这一次重启就先删掉再放行：`rm -f incoming/deploy-<版本>.tgz incoming/deploy-<版本>.json`。
 5. **它还有第二个用途**：`mode=files` 按仓库现状同步「产物白名单 + 根 `package.json`」——
    服务器上的根文件**被误删 / 落后**时也用它补（2026-10-04 的 `state-name` 事故就是
@@ -574,7 +581,9 @@ ls -l incoming/deploy-<版本>.tgz incoming/deploy-<版本>.json   # 都应该�
 sha256sum incoming/deploy-<版本>.tgz
 grep -o '"sha256":[^,]*' incoming/deploy-<版本>.json
 
-# ③ 剩下的交给机器人：它下个扫描周期（SCAN_INTERVAL_MS，默认 1 分钟）就会应用。
+# ③ 剩下的交给机器人：下个扫描周期（SCAN_INTERVAL_MS，默认 1 分钟）它会校验并私信超管
+#    「发现新版本 · 计划 N 分钟后自动应用并重启」；想马上上线就点卡上的「立即应用并重启」，
+#    想先不上就点「取消自动应用」（这份投递会被放弃，两个文件改名 *.cancelled-<ts> 留证）。
 #    想立刻看结果：
 tail -f logs/qq-group-ops.log | grep -i deploy
 cat data/deploy-receipt.json          # 最近一次部署结果（成功/失败与原话原因）
