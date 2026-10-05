@@ -20,6 +20,9 @@
   修法：逐文件模式的版本标记步改用独立状态名 `ftp-sync-state-files-marker.json`；
   守卫从「包模式两段互不相同」收紧成「**四个 FTP 步骤的 state-name 两两不同**」。
   落点：`.github/workflows/cd-ftp.yml` + `test/workflows.test.ts`。
+  善后（同日完成）：用**修好后的** `mode=files` 再跑一次 CD，把服务器上被删的 `package.json` 补回 ——
+  日志 `Deleting: 0 B`（零删除）+ `Uploading: 1.28 kB`；真机复核根 `package.json` 与
+  `dist/build-info.json` 都是 `0.29.1`，三连 `grep -c` = **2 / 1 / 5**（三条都 ≥ 1，`dist` 确认是新代码）。
 - （同批）**版本号优先读产物自证**：见 `[0.29.1]` 那一条 —— 正因为它，`package.json` 被删之后
   只要装上 0.29.1 版本号就会自己恢复（`dist/build-info.json` 跟着 `dist/` 一起换）。
 

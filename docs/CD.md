@@ -104,6 +104,12 @@ deploy-<版本>.json    # 投递标记：版本 / commit / sha256 / dist 指纹 
 > `unknown`（重启回执 `v0.29.0 → vunknown`），逐文件的兜底判据也一起失效。
 > 现在逐文件模式用 `ftp-sync-state-files-marker.json`（自己的那份），**四种组合两两不同**。
 >
+> **善后与验收（2026-10-04 同日）**：工作流修好后再跑一次 `mode=files ref=main` ——
+> 代码步 `Deleting: 0 B`（没删任何东西）、标记步 `Uploading: 1.28 kB`（`package.json` 补回服务器）；
+> 真机复核 `0.29.1` + 三连 `grep -c` `2/1/5` 全部通过。
+> 顺带记住 `mode=files` 的第二个用途：它按仓库现状同步「产物白名单 + 根 `package.json`」，
+> 所以**服务器上的根文件被误删或落后时，用它补最干净**（看日志里的 `Deleting: 0 B` 就是「没删东西」）。
+>
 > **应急开关**：`workflow_dispatch` 的 `mode=files` 会退回老的逐文件上传
 > （`dist-deploy/` + `dist-marker/package.json` 两段，同样两个 state-name）。
 > 它与包模式**共用同一个构建产物**（也带 `build-info.json`），只是不走 `incoming/` 那套

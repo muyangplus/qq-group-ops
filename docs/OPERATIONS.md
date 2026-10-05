@@ -540,6 +540,10 @@ ps -ef | grep "dist/main.js" | grep -v grep     # 应只有一行
    留在服务器上了 —— 新进程起来后 `DeployInstaller` 会**再应用一次同一个包**（多一次重启，
    同时把包归档进 `data/packages/`、让「回滚上一版」按钮可用）。
    不想多这一次重启就先删掉再放行：`rm -f incoming/deploy-<版本>.tgz incoming/deploy-<版本>.json`。
+5. **它还有第二个用途**：`mode=files` 按仓库现状同步「产物白名单 + 根 `package.json`」——
+   服务器上的根文件**被误删 / 落后**时也用它补（2026-10-04 的 `state-name` 事故就是
+   包模式 CD 把 `package.json` 删了，靠再跑一次修好的 `mode=files` 补回）。
+   日志里 `Deleting: 0 B` = 这次没删服务器上的任何东西，可以放心跑。
 
 **B. 手工解包（CD 完全不可用时）**
 
@@ -600,15 +604,24 @@ tar -xzf data/packages/deploy-<上一个版本>.tgz -C /tmp/peek dist/build-info
 
 ### 怎么清理 FTP 同步状态（上传被跳过时）
 
-`ftp-sync-state-code.json` / `ftp-sync-state-marker.json` 是 FTP Action 记「上次传过什么」的
-状态文件 —— **正常包化流程已经不需要它**（每轮只传 2 个文件 = 每次全量）。
+`ftp-sync-state-*.json` 是 FTP Action 记「上次传过什么」的状态文件 —— **正常包化流程已经不需要它**
+（每轮只传 2 个文件 = 每次全量）。**四个文件各归一个上传步骤**，共用就会互相删对方的文件
+（2026-10-02 与 2026-10-04 两次真机事故都是这么来的）：
+
+| 状态文件 | 归哪个上传步骤 |
+|---|---|
+| `ftp-sync-state-package.json` | 包模式第一段（`incoming/deploy-<版本>.tgz`） |
+| `ftp-sync-state-marker.json` | 包模式第二段（`incoming/deploy-<版本>.json` 投递标记） |
+| `ftp-sync-state-code.json` | `mode=files` 第一段（产物：`dist/` `web/dist/` `scripts/` …） |
+| `ftp-sync-state-files-marker.json` | `mode=files` 第二段（根 `package.json` 版本标记） |
+
 机器人自己动过 `dist/`（自解包 / 回滚）之后会**主动删掉**它们，让下一轮 CD 全量。
 手工清（例如怀疑上传被跳过、版本号升了代码没升）：
 
 ```bash
 cd /www/wwwroot/qqbot
 ls -l ftp-sync-state-*.json 2>/dev/null      # 有就说明还在
-rm -f ftp-sync-state-code.json ftp-sync-state-marker.json
+rm -f ftp-sync-state-*.json                  # 四个一起清
 # 下一轮 CD 会因此全量上传（一次性，不是每次都全量）
 ```
 
@@ -626,6 +639,7 @@ grep -c isStartupCheck dist/main.js                     # 自检进程不参与�
 
 - 任何一条是 `0` → 这次上传/替换**没真的生效**；先看 `data/deploy-receipt.json` 与日志，
   再按上面的「清理 FTP 同步状态」处理，然后重新发布。
+- 2026-10-04 的真机基线是 `2 / 1 / 5`（三条都 ≥ 1 即通过；数字随代码变，别当成固定值）。
 - 另外看一眼 `dist/build-info.json` 与 `/healthz` 的 `distFingerprint` 是否一致 ——
   不一致说明「进程跑的产物」与「磁盘上的产物」不是同一份（等重启或重新部署）。
 

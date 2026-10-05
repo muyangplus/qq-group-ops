@@ -9,7 +9,7 @@
 > **所有需要真实 QQ 群环境的条目统一收在最后一节 §4**：等有环境时照
 > [docs/REAL-MACHINE-RUN.md](./docs/REAL-MACHINE-RUN.md) 一次跑完并回填。
 >
-> 当前状态（2026-10-04，**0.29.1 已发版**；包化首跳（A：`mode=files`）已执行、等真机确认）：测试 **161 文件 / 1442 用例**全绿（后端）+ **13 文件 / 51 用例**全绿
+> 当前状态（2026-10-04，**0.29.1 已发版并在真机跑起来**：版本 `0.29.1` + 三连 `grep -c` `2/1/5` 已验收；包化首跳（A：`mode=files`）已执行）：测试 **161 文件 / 1442 用例**全绿（后端）+ **13 文件 / 51 用例**全绿
 > （管理前台组件测试，`pnpm web:test`）；**0.27.3 已发版并部署**（纯修复：自检进程不参与单实例锁），**0.27.2 已发版并部署**（纯修复：后台群列表补「绑过群号」来源 / 配置页补回「定时发言总开关」+ 注册完整性守卫 / 定时发言「详情」改弹窗 / 热改项不再在 .env 只读段重复列出），**0.27.1 已发版并部署**（单实例闸 / 发送 at-most-once / 入群申请自动移出待审批 + 周期对账），**0.27.0 已发版并部署**
 > （0.27.0 =「机器人定时发言」：`/announce` + 管理后台「定时发言」页 —— 默认关闭、每群群管 130 自治、
 > 标准 cron 5 段、文本 · 引用 · 卡片 · 按钮，口径见 ADR-0062、后台面见 ADMIN-API.md 的 E1-t）；
@@ -46,8 +46,13 @@
 > web/dist 3 + scripts 7 + 标记（该步 **518s**，加标记 11s ≈ 8m38s，正好印证包化要解决的痛点）；
 > 服务器起来后 `DeployInstaller` 会把 `incoming/` 里的包（0.29.0 → 0.29.1，按落地时间升序、一轮一个）
 > 自动应用，最终停在 0.29.1。
-> ✅ **首跳已执行**（A：`mode=files`，全量上传成功）；服务器起来后包模式自动接管 ——
-> 待真机确认：三连 `grep -c`（§4.7 第 2 条）与 `/status proc` 的版本号。
+> ⚠️ **首跳当天还踩了一个跨模式的 `state-name` 事故**：0.29.1 的 Release 触发包模式 CD 时，那段
+> 投递标记步骤与逐文件模式的 `package.json` 标记步共用同步状态，把服务器上的 `package.json`
+> **删掉了**（版本号一度变 `unknown`、回执写 `v0.29.0 → vunknown`）。工作流已修 + 守卫收紧成
+> 「四个 FTP 步骤两两不同」，并用**修好后的** `mode=files ref=main` 把 `package.json` 补回
+> （`Deleting: 0 B` + `Uploading: 1.28 kB`）；详见 §2 与 [docs/CD.md](./docs/CD.md)。
+> ✅ **真机已验收（2026-10-04）**：根 `package.json` 与 `dist/build-info.json` 都是 `0.29.1`，
+> 三连 `grep -c` = **2 / 1 / 5**（§4.7 第 2 条通过）—— 首跳交付与包模式接管都跑通了。
 > **0.29.0 已发版**（本版：包化 + 精简 `.env` + CI/CD 收敛，见上）；0.27.0 定时发言、0.27.1 三处真机修复、0.27.2 四处修复、0.27.3 自检不参与单实例锁都已发布（并已部署）。
 > 0.26.0 之后攒的那条「**机器人定时发言**」（默认关闭 /
 > 每群群管 130 自治 / 标准 cron 5 段 / 文本 · 引用 · 卡片 · 按钮）已在 **0.27.0** 发出并部署
@@ -216,7 +221,7 @@
 - [x] **审计页的「操作人」过滤只认完整 id**（小）→ 已在 0.26.0 的 E1-q 落地（操作人与操作对象都按 QQ号 / `#短码` / openid / 展示名多形态匹配）
   - 后端 `/api/audit?actor=` 是内部 id 精确匹配，页面只能提示「填完整 id」；要根治得让后端
     同时接受 QQ号 / 短码（复用 `DisplayNameService.resolveUser`），属于读端点的小增强。
-- [x] **版本号来源：包模式部署后 `package.json` 不更新（0.29.1，已实现未发版）**
+- [x] **版本号来源：包模式部署后 `package.json` 不更新（0.29.1，已发版）**
   - 发现过程：准备 0.29.0 首跳交付时核对 `onDiskVersion()` —— 包化部署的产物包里**没有根
     `package.json`**（白名单是 `dist/` `web/dist/` `scripts/` `pnpm-lock.yaml` `.env.example`），
     而安装器整目录替换 `dist/`，于是包模式之后根 `package.json` 停在上一次逐文件部署的版本；
@@ -225,7 +230,7 @@
     的逐文件兜底路径静默失效（包模式本身不受影响：安装器不读它）；
   - 修法：`onDiskVersion()` 优先读 `dist/build-info.json`（跟着 `dist/` 一起换），读不到才回落
     根 `package.json`；落点 `src/core/buildInfo.ts` + 三条新用例；详见 CHANGELOG 的 `[Unreleased]`。
-- [x] **两种上传模式共用 `state-name` → 包模式 CD 删掉服务器上的 `package.json`**（真机事故，已修未发版）
+- [x] **两种上传模式共用 `state-name` → 包模式 CD 删掉服务器上的 `package.json`**（真机事故，工作流已修并推 `main`、服务器已补回）
   - 现场：0.29.1 的 Release 触发包模式 CD 的**投递标记**那一步，日志里出现
     `📄 Delete: package.json` / `removing "package.json"`（1.28 kB）—— 它和「逐文件模式的
     `package.json` 版本标记步」共用 `ftp-sync-state-marker.json`，而后者的上一次状态里记着
@@ -235,8 +240,13 @@
     「优先读 `dist/build-info.json`」修好之后，只要装上 0.29.1 版本号就自己恢复；
   - 修法：逐文件模式的版本标记步改用 `ftp-sync-state-files-marker.json`；守卫从「包模式两段不同」
     收紧成「四个 FTP 步骤两两不同」；事故与口径写进 `docs/CD.md` 与 CHANGELOG 的 `[Unreleased]`；
-  - 待办：把服务器上被删的 `package.json` 补回去（跑一次修好后的逐文件模式 CD 即可，
-    新状态名首次使用 = 不会删任何东西）。
+  - ✅ **善后已完成**：跑了一次**修好后的** `mode=files ref=main`（70s）—— 代码步
+    `Uploading: 0 B -- Deleting: 0 B -- Replacing: 17.8 kB`（**零删除**）+ 标记步
+    `Uploading: 1.28 kB -- Deleting: 0 B`（`package.json` 回到服务器）；
+  - ✅ **真机复核（同日）**：`package.json`（1284 B）与 `dist/build-info.json`（188 B）都在；
+    `require('./package.json').version` = `0.29.1`，`build-info.json` = `0.29.1 / 47fa3f7`
+    （善后那次 `mode=files` 按 `main` 构建的产物 —— dist 内容与 `v0.29.1` 相同，所以指纹与
+    运行中的进程一致，没有再触发一次重启）；三连 `grep -c` = **2 / 1 / 5**（§4.7 第 2 条通过）。
 - [ ] **包模式应用成功时没有任何前置提醒（用户反馈 2026-10-04）**：`DeployInstaller` **只在失败时**发卡
   （`reportFailure`），成功时唯一的信号是几秒后的重启回执「新版本已上线」。用户的实际感受是
   「部署完了、没有重启提醒、机器人自己重启了」。
@@ -407,17 +417,22 @@
 > **当前状态（2026-10-04）**：0.29.0 的 Release 跑过包模式 CD（耗时那条已验收：14s + 16s），
 > 0.29.1 的 Release 又跑过一次（同样 14s + 16s）；**首跳 A 已执行**（`mode=files`，逐文件全量上传，
 > 该步 518s ≈ 老口径）—— 服务器起来后 `DeployInstaller` 会把 `incoming/` 里 0.29.0 → 0.29.1
-> 依次应用（一轮一个、按落地时间升序，最终 0.29.1），剩下 5 条随之逐条验。
+> 依次应用（一轮一个、按落地时间升序，最终 0.29.1）。
+> **三连 `grep -c` 已通过**（`2 / 1 / 5`，见下）；期间还发现并修掉一个跨模式的 `state-name` 事故
+> （包模式 CD 删掉了服务器上的 `package.json`，已用 `mode=files` 补回）。
+> 剩下 4 条待真机验：坏包拒绝 / 回滚 / 关自动重启也提醒 / 保留 3 个包。
 
 - [x] **上传耗时**：跑一次完整 CD → 目标是 **< 1 分钟**（老口径逐文件传 `dist/**` 实测 8m33s）。
   同时看 job 摘要里两个文件的落地顺序（`.tgz` → `.json`）。
   ✅ **已验收（2026-10-04，v0.29.0 的 Release 触发）**：第一段（`.tgz`）**14s**、第二段（`.json`）**16s**，
   合起来 30s（目标 < 1 分钟）✓；落地顺序与 step 顺序一致（`.tgz` → `.json`）✓；
   门禁 job 复用 CI 结论后只要 32s（Typecheck / Test / Test web 都 skipped，Build 与 web build 照跑）。
-- [ ] **三连 `grep -c` 确认真的是新代码**（三条都必须 ≥ 1）：
+- [x] **三连 `grep -c` 确认真的是新代码**（三条都必须 ≥ 1）：
   `grep -c boundGroupIds dist/adminApi/backend.js`、
   `grep -c 定时发言总开关 dist/services/platformSettings.js`、
   `grep -c isStartupCheck dist/main.js`。
+  ✅ **已验收（2026-10-04 真机回填）**：**2 / 1 / 5**（三条都 ≥ 1）；同一批确认根 `package.json`
+  与 `dist/build-info.json` 的版本都是 `0.29.1`，`build-info.json` 的 commit 是 `47fa3f7`。
 - [ ] **坏包拒绝**：把 `incoming/deploy-<版本>.tgz` 改 1 字节（`deploy-*.json` 不动）→
   机器人**拒绝这次部署** + 私信超管（说清是半传），**运行中的机器人不受影响**，
   坏包被改名 `*.failed-<ts>` 留证且**不反复重试**；同理再试一次「dist 内容与
@@ -437,6 +452,9 @@
 > 代码侧已全绿（161 文件 / 1442 用例 + 前端三项），单测盖住了导入的四种分支、幂等、坏值、
 > 纯内存模式与三个新热改项的现取现用；下面这 6 条只能真机看（真实 `.env`、真实库、真实私信）。
 > 步骤与备份见 [docs/OPERATIONS.md](./docs/OPERATIONS.md) 的「配置搬家」一节。
+>
+> ⚠️ 服务器侧 `data/.env` 里那 15 行热改项**还留着**：先确认第 1 条的导入回执（卡 + 审计），
+> 再按第 2 条把那些行删掉（值已经在库里了）。
 
 - [ ] **升级后的第一次启动真的导入**：升级前先在 `data/.env` 里写几个**与默认不同**的项
   （例：`RAW_MESSAGE_RETENTION_DAYS=7`、`SCHEDULED_ANNOUNCE_ENABLED=1`、`ADMIN_API_TOKEN_TTL_MINUTES=3`）
