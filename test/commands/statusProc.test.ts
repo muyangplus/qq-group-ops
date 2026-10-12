@@ -49,7 +49,8 @@ describe("AdminCommandService · /status 进程信息", () => {
     expect(card.ok).toBe(true);
     const text = card.rich.markdown;
     for (const field of [
-      "**版本**：v",
+      "**运行版本**：v",
+      "**磁盘产物**：v",
       "**启动时间**：",
       "**运行环境**：Node",
       "**内存占用**：",
@@ -69,7 +70,7 @@ describe("AdminCommandService · /status 进程信息", () => {
   it("别名可用，私信里也能查（sys / 诊断）", async () => {
     const byAlias = await service.handle(undefined, "root", "/status 诊断");
     expect(byAlias.ok).toBe(true);
-    expect(byAlias.rich.markdown).toContain("**版本**：v");
+    expect(byAlias.rich.markdown).toContain("**运行版本**：v");
 
     const bySys = await service.handle(undefined, "root", "/status sys");
     expect(bySys.ok).toBe(true);
@@ -105,7 +106,11 @@ describe("AdminCommandService · /status 进程信息", () => {
 
     const card = processCard(withTarget, "root");
     expect(card.ok).toBe(true);
-    expect(card.rich.markdown).toContain("**可回滚**：v0.20.0");
+    // 记账与运行版本**分开写**（真机反馈「版本上下不一致」）：记账来自安装器，运行版本来自进程固化
+    expect(card.rich.markdown).toContain("**部署记账**：上次应用的包 v0.21.0");
+    expect(card.rich.markdown).toContain("可回滚到 v0.20.0");
+    // 两者不一致时必须显式警示，而不是让人自己对数字
+    expect(card.rich.markdown).toContain("记账与运行版本不一致");
     const keyboard = JSON.stringify(card.rich.keyboard);
     expect(keyboard).toContain("cb:deploy:rollback");
     // 二次确认弹窗：不可逆动作必须先弹官方 modal
@@ -127,7 +132,9 @@ describe("AdminCommandService · /status 进程信息", () => {
     } as unknown as AdminCommandContext;
     const bare = processCard(withoutTarget, "root");
     expect(JSON.stringify(bare.rich.keyboard)).not.toContain("cb:deploy:rollback");
-    expect(bare.rich.markdown).not.toContain("**可回滚**");
+    // 没有可回滚目标 → 不写「可回滚到 …」，但记账本身照旧显示
+    expect(bare.rich.markdown).not.toContain("可回滚到");
+    expect(bare.rich.markdown).toContain("**部署记账**：上次应用的包 v0.21.0");
   });
 
   it("没装配安装器时（纯单测 / 老装配）也不渲染回滚入口", () => {

@@ -15,7 +15,7 @@ import {
   PermissionLevel,
   PlatformLevel,
 } from "../../core/enums.js";
-import { appVersion, distFingerprint, formatBytes, formatUptime, processStartedAt, runningBuildInfo } from "../../core/buildInfo.js";
+import { distFingerprint, formatBytes, formatUptime, onDiskVersion, processStartedAt, runningBuildInfo, runningVersionOf } from "../../core/buildInfo.js";
 import { moduleStatusLines } from "./healthCommands.js";
 import { formatDisplayTime } from "../../core/timeFormat.js";
 import type { KeyboardModal } from "../../adapters/qqOfficial.js";
@@ -80,6 +80,8 @@ import {
   type ClassAliasService,
 } from "../classAliases.js";
 import { NOTIFY_SCOPE_ALL, type NotificationService } from "../notifications.js";
+import { readRollbackNotice } from "../distSnapshot.js";
+import { readRestartFailure } from "../restartNotice.js";
 import { describeStopUntil } from "../stop.js";
 import type { PermissionService } from "../permissions.js";
 import { formatParseNotes, parseProfileInput } from "../profileParser.js";
@@ -261,18 +263,52 @@ function retentionLabel(days: number, zeroLabel: string): string {
 /** 群状态卡底部那行精简进程信息（细节进 `/status proc`）。 */
 export function processSummaryLine(ctx: AdminCommandContext): string {
   const parts = [
-    `v${appVersion()}`,
+    // 用**启动时固化**的运行版本，不用现读磁盘的版本：部署替换 `dist/` 之后两者会不一样
+    // （真机反馈「版本上下不一致」），而那行说的是「这个进程跑的是哪一版」。
+    `v${runningVersionOf()}`,
     `已运行 ${formatUptime(process.uptime() * 1000)}`,
     `内存 ${formatBytes(process.memoryUsage().rss)}`,
   ];
   return `**进程**：${parts.join(" · ")}`;
 }
 
+/** 回滚回执里的自检结果（`RollbackNotice.check`）抽成半句话；没有就留空。 */
+function describeRollbackCheck(check: unknown): string {
+  if (typeof check !== "object" || check === null) {
+    return "";
+  }
+  const record = check as Record<string, unknown>;
+  if (typeof record.error === "string" && record.error.length > 0) {
+    return `；自检错误：${record.error}`;
+  }
+  const issues = Array.isArray(record.migrationIssues)
+    ? record.migrationIssues.length
+    : 0;
+  const degraded = Array.isArray(record.degraded) ? record.degraded.length : 0;
+  const parts: string[] = [];
+  if (issues > 0) {
+    parts.push(`迁移问题 ${issues} 条`);
+  }
+  if (degraded > 0) {
+    parts.push(`降级模块 ${degraded} 个`);
+  }
+  return parts.length > 0
+    ? `；自检结果：${parts.join(" · ")}（详见 \`data/rollback-notice.json\`）`
+    : "";
+}
+
 /** 进程全套详情（`/status proc`，仅全局超管）。 */
 function processDetailLines(ctx: AdminCommandContext): string[] {
   const mem = process.memoryUsage();
+  // **三个版本来源分开写清楚**（真机反馈「版本上下不一致」）：它们的含义完全不同，
+  // 混在一个 `**版本**` 里就会自相矛盾 ——
+  //   ① 运行版本 = 本进程启动时固化的那份（「现在跑的是哪份代码」）；
+  //   ② 磁盘版本 = 现读 `dist/build-info.json`（「磁盘上是哪份」，替换后重启才生效）；
+  //   ③ 部署记账 = 安装器 `deploy-state`（「上次应用过哪个包」，与运行版本可能不一致：
+  //      应用了还没重启 / 新版本没起来被助手回滚了）。
+  const runningVersion = runningVersionOf();
   const lines = [
-    `**版本**：v${appVersion()} · 已运行 ${formatUptime(process.uptime() * 1000)}`,
+    `**运行版本**：v${runningVersion}（本进程启动时固化）· 已运行 ${formatUptime(process.uptime() * 1000)}`,
     `**启动时间**：${formatDisplayTime(processStartedAt())}`,
     `**运行环境**：Node ${process.version} · ${process.platform}/${process.arch} · 进程号 ${process.pid}`,
     `**内存占用**：${formatBytes(mem.rss)}（堆 ${formatBytes(
@@ -289,6 +325,7 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
   }
   // 构建自证（ADR-0065）：跑的是哪份产物（指纹）、哪次构建（commit），以及和磁盘上那份是否一致。
   const buildInfo = runningBuildInfo();
+  const diskVersion = onDiskVersion();
   if (buildInfo) {
     const diskFingerprint = distFingerprint();
     const same =
@@ -297,7 +334,7 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
       `**构建自证**：指纹 ${buildInfo.distFingerprint ?? "unknown"}${
         buildInfo.commit.length > 0 ? ` · commit ${buildInfo.commit}` : ""
       }${buildInfo.builtAt.length > 0 ? ` · 构建于 ${formatDisplayTime(new Date(buildInfo.builtAt))}` : ""}`,
-      `**磁盘产物**：${
+      `**磁盘产物**：v${diskVersion} · ${
         diskFingerprint === undefined
           ? "读不到 dist/ 指纹（源码运行？）"
           : same
@@ -306,7 +343,10 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
       }`,
     );
   } else {
-    lines.push("**构建自证**：（没有 `dist/build-info.json`：源码运行或老产物包）");
+    lines.push(
+      `**构建自证**：（没有 \`dist/build-info.json\`：源码运行或老产物包）`,
+      `**磁盘产物**：v${diskVersion}`,
+    );
   }
   const diagnostics = ctx.diagnostics;
   if (!diagnostics) {
@@ -314,11 +354,35 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
     lines.push("", ...moduleStatusLines(ctx.health, undefined));
     return lines;
   }
+  // 部署记账（ADR-0065）：安装器记的「上次应用过哪个包」——它与会话里的**运行版本**可能不一致，
+  // 而不一致本身就是最重要的运维信息（应用了没重启 / 新版本没起来被回滚），所以显式写出来。
+  const applied = ctx.install?.appliedVersion() ?? "";
   const target = ctx.install?.rollbackTarget();
-  if (target) {
+  if (applied.length > 0 || target) {
     lines.push(
-      `**可回滚**：v${target.version}（当前生效 v${target.currentVersion}，包在 \`data/packages/\`）`,
+      `**部署记账**：${applied.length > 0 ? `上次应用的包 v${applied}` : "没有记账"}${
+        target ? ` · 可回滚到 v${target.version}（包在 \`data/packages/\`）` : ""
+      }`,
     );
+  }
+  if (applied.length > 0 && applied !== runningVersion) {
+    lines.push(
+      `⚠️ **记账与运行版本不一致**：正在跑的是 v${runningVersion}，记账是 v${applied} —— 常见两类：` +
+        `① 包应用了但**还没重启**；② 新版本**没起来、已被助手回滚**（看下一行与 \`data/restart-failed.json\`）。`,
+    );
+  }
+  // 助手回滚过 / 重启失败过的话（层 4B）：把「什么时候、为什么」直接摊在卡上 ——
+  // 这就是上面那种不一致的答案（`data/rollback-notice.json` 是读后即删的回执，留证看 restart-failed）。
+  const rollback = readRollbackNotice();
+  if (rollback) {
+    lines.push(
+      `**最近一次回滚**：${formatDisplayTime(new Date(rollback.at))} —— ${rollback.reason}${describeRollbackCheck(rollback.check)}`,
+    );
+  } else {
+    const failure = readRestartFailure();
+    if (failure?.reason !== undefined && failure.reason.length > 0) {
+      lines.push(`**最近一次重启失败**：${failure.reason}`);
+    }
   }
   const settings = diagnostics.settings;
   // 保留期 / 时区 / 首次菜单都是**热改项**（ADR-0066）：显示**生效值**而不是内置默认，
