@@ -503,11 +503,15 @@ async function main(): Promise<void> {
     await finishStartupCheck(runtime, persistence);
     return;
   }
+  // 超管专属话题「默认开」：给现有全局超管补订阅行（**写库**，ADR-0069）。
+  // 放在自检早退**之后**：`--check` 是「这份构建能不能起来」的只读演练，不该顺手改持久化状态
+  // （真机踩过：一次自检给 `notification_subscriptions` 插了 6 行）。所以它也不能留在
+  // `runtime.load()` 里 —— 只读巡检进程同样会跑 `load()`。补完立刻 flush 落库。
+  runtime.seedSuperAdminNotifications();
+  await runtime.flush();
   // `.env` 里热改项的**一次性导入**（ADR-0066）：把老部署写在 `.env` 里的那些项写库一次，
   // 保证升级瞬间「行为不漂移」；此后一切以库为准（`.env` 删掉这些行也没有影响）。
-  // 放在自检返回**之后**：自检（`--check`）不执行导入、也不写导入留痕 —— 它是「这份构建能不能起来」
-  // 的演练，不该顺手改配置状态（注意：自检仍会跑 `runtime.load()` 里的「补默认通知订阅」，那是既有行为，
-  // 与导入无关，见 TODO §2 的 P2）。
+  // 同样放在自检返回**之后**：自检（`--check`）既不导入、也不写导入留痕。
   await importEnvSettingsOnce(runtime, persistence !== undefined);
   // 层 1 / 层 3 的可见性：模块降级、迁移失败都私信超管（通知模块没起来就只留日志）
   await announceStartupReport(runtime, persistence?.migration);

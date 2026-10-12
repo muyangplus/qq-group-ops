@@ -190,6 +190,14 @@ export interface Runtime {
   adminApiHost: AdminApiHostSource | undefined;
   /** 从数据库载入全部持久化状态；未配置数据库时为空操作。 */
   load(): Promise<void>;
+  /**
+   * 给现有全局超管补「超管专属话题默认开」的订阅行（**写库**，ADR-0069）。
+   *
+   * 只在**正常启动路径**上调用（`main.ts`，排在自检早退之后）：它**不在 `load()` 里**，
+   * 因为自检（`--check`）与只读巡检都会跑 `load()`，不该改持久化状态。
+   * 调用后记得 `await flush()` 落库；返回这次补了几行（幂等）。
+   */
+  seedSuperAdminNotifications(): number;
   /** 等待所有排队写入落库。 */
   flush(): Promise<void>;
 }
@@ -1269,10 +1277,10 @@ export function createRuntime(
     // 平台配置刚从库里读出来：把「需要主动生效」的两项按覆盖值推一遍
     applyHotSetting("joinRequestTtlDays");
     applyHotSetting("displayTimezone");
-    // 超管专属话题「默认开」：给现有全局超管补订阅行（权限/通知模块没起来时跳过，不拦启动）
-    if (health.isAllAvailable(["permissions", "notify"])) {
-      notifications.seedSuperAdminDefaults(permissions.listSuperAdmins());
-    }
+    // ⚠️ 这里**不补超管默认订阅行**（ADR-0069）：补订阅是**写库**，而 `load()` 也会被
+    // `node dist/main.js --check`（自检）与只读巡检跑到 —— 自检的语义是「这份构建能不能起来」
+    // 的只读演练，不该顺手改持久化状态（真机踩过：一次自检给 `notification_subscriptions` 插 6 行）。
+    // 补订阅由 `seedSuperAdminNotifications()` 负责，`main.ts` 在自检早退之后显式调用。
     // 班级库缺失时不抛错：班级类规则会自动退化为人工审核
     const roster = await MemberRoster.load(settings.classIndexFile);
     joinRules.setRoster(roster);
@@ -1282,6 +1290,30 @@ export function createRuntime(
     // 活动卡片的「学院限制 / 年级限制」按钮需要班级库（缺省时对应按钮不生成）
     adminCommands.setActivityRoster(roster);
     await writeQueue.flush();
+  };
+  /**
+   * 给现有全局超管补「超管专属话题默认开」的订阅行（**写库**，走写队列）。
+   *
+   * ADR-0069：它**不在 `load()` 里** —— `node dist/main.js --check`（自检）与只读巡检都要跑
+   * `load()`，而自检是「这份构建能不能起来」的只读演练（真机踩过：一次自检给
+   * `notification_subscriptions` 插了 6 行）。由 `main.ts` 在**自检早退之后**调用，
+   * 并紧接着 `await runtime.flush()` 落库。
+   *
+   * 权限 / 通知模块没起来时跳过（不拦启动）；返回这次补了几行（幂等：已订或有退订墓碑的不种）。
+   */
+  const seedSuperAdminNotifications = (): number => {
+    if (!health.isAllAvailable(["permissions", "notify"])) {
+      return 0;
+    }
+    const seeded = notifications.seedSuperAdminDefaults(
+      permissions.listSuperAdmins(),
+    );
+    if (seeded > 0) {
+      log.info("seeded default notification subscriptions for super admins", {
+        count: seeded,
+      });
+    }
+    return seeded;
   };
   return {
     mode,
@@ -1319,6 +1351,7 @@ export function createRuntime(
     privacy,
     menuState,
     testMenu,
+    seedSuperAdminNotifications,
     adminApiHost:
       adminApiConfig.enabled && adminApiBackend
         ? {

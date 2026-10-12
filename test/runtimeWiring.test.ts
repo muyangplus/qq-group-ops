@@ -169,4 +169,38 @@ describe("runtime 仓储装配完整性", () => {
     expect(source).toContain('action: "platform_config_import"');
     expect(source).toContain("配置已从 .env 导入");
   });
+
+  /**
+   * 自检只读（ADR-0069）：`node dist/main.js --check` 会跑 `runtime.load()`，所以
+   * **`load()` 里不能有任何写库动作** ——「给现有超管补默认通知订阅」这笔写库原本就在里面
+   * （真机踩过：一次自检给 `notification_subscriptions` 插了 6 行）。它必须：
+   * ① 从 `load()` 里挪走；② 由 `main.ts` 在**自检早退之后**显式调用。
+   */
+  it("自检只读：补默认通知订阅不在 load() 里、且在自检早退之后", () => {
+    const mainSource = readFileSync(
+      fileURLToPath(new URL("../src/main.ts", import.meta.url)),
+      "utf8",
+    );
+    const runtimeSource = readFileSync(
+      fileURLToPath(new URL("../src/runtime.ts", import.meta.url)),
+      "utf8",
+    );
+
+    // ① load() 的函数体里不许再出现补订阅
+    const loadStart = runtimeSource.indexOf("const load = async");
+    const loadEnd = runtimeSource.indexOf("await writeQueue.flush();", loadStart);
+    expect(loadStart).toBeGreaterThan(0);
+    expect(loadEnd).toBeGreaterThan(loadStart);
+    expect(runtimeSource.slice(loadStart, loadEnd)).not.toContain(
+      "seedSuperAdminDefaults",
+    );
+
+    // ② 正常启动路径上显式调用，且在自检早退之后
+    const checkAt = mainSource.indexOf("if (isStartupCheck()) {");
+    const seedAt = mainSource.indexOf("runtime.seedSuperAdminNotifications()");
+    expect(checkAt).toBeGreaterThan(0);
+    expect(seedAt).toBeGreaterThan(checkAt);
+    // 补完要立刻落库（写队列不 flush 就丢）
+    expect(mainSource.slice(seedAt, seedAt + 120)).toContain("await runtime.flush()");
+  });
 });

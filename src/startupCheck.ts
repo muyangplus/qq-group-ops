@@ -8,9 +8,10 @@ import { dirname } from "node:path";
  * **不执行 `.env` 热改项的一次性导入**（ADR-0066：导入排在自检早退之后），
  * 然后用**退出码**告诉调用方（`scripts/respawn.mjs`）这个版本能不能起来。
  *
- * ⚠️ 「自检完全只读」**不成立**：它在早退前会跑 `runtime.load()`，而「给现有超管补默认通知订阅」
- * 那一步（`seedSuperAdminDefaults`）是**带写库**的（走写队列，`finishStartupCheck` 会 flush）。
- * 这是既有行为，已记进 TODO（§2 的 P2）；能保证的是**导入器不写库**。
+ * **自检只读**（ADR-0069）：它在早退前会跑 `runtime.load()`，但 `load()` 只读 ——
+ * 「给现有超管补默认通知订阅」那一笔写库已经挪到 `main.ts` 的正常启动路径上（自检早退**之后**），
+ * `.env` 热改项的一次性导入同样排在自检之后（ADR-0066）。所以 `--check` 不会改任何持久化状态
+ * （真机踩过一次：自检给 `notification_subscriptions` 插了 6 行）。
  *
  * 结果同时写一份 JSON 文件：助手不看 stdout / stderr（捕获子进程输出需要管道，
  * 受限环境里开不了），只读这个文件；人工排查也直接看它。
