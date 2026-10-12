@@ -1,6 +1,8 @@
 import { FakeQQOfficialAPI } from "../../src/adapters/fakeQqOfficial.js";
 import { loadSettings } from "../../src/config.js";
 import { WriteQueue } from "../../src/db/writeQueue.js";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AdminCommandService } from "../../src/services/adminCommands.js";
 import { AppealService } from "../../src/services/appeals.js";
 import { AuditLogStore } from "../../src/services/audit.js";
@@ -20,6 +22,7 @@ import { NotifyTopicLevelStore } from "../../src/services/notifyTopics.js";
 import { PermissionService } from "../../src/services/permissions.js";
 import { RichMessageSender } from "../../src/services/richMessages.js";
 import { ShortCodeService } from "../../src/services/shortCodes.js";
+import { StopService } from "../../src/services/stop.js";
 import { UserProfileService } from "../../src/services/userProfiles.js";
 import { beforeEach } from "vitest";
 
@@ -43,6 +46,10 @@ export let service: AdminCommandService;
 export let shortCodes: ShortCodeService;
 /** `/restart` 钩子的调用记录（每次 beforeEach 清空）。 */
 export const restartRequests: Array<{ requestedBy: string }> = [];
+/** `/stop`（立即停机）钩子的调用记录（每次 beforeEach 清空）—— 测试里绝不真的退出进程。 */
+export const stopRequests: Array<{ requestedBy: string; reason?: string | undefined }> = [];
+/** 停机 / 静默状态（每个用例一个临时状态文件，别碰仓库里的 `data/`）。 */
+export let stopService: StopService;
 /** §A5 黑名单（本群 / 全局）。 */
 export let blacklist: BlacklistService;
 /** §B7 处罚记录与卡片动作。 */
@@ -145,6 +152,10 @@ export function scopedShortCodeLabel(
 
   beforeEach(() => {
     restartRequests.length = 0;
+    stopRequests.length = 0;
+    stopService = new StopService(
+      join(tmpdir(), `qqops-stop-${Date.now()}-${Math.random().toString(16).slice(2)}.json`),
+    );
     auditLog = new AuditLogStore();
     permissions = new PermissionService({
       superAdminIds: new Set(["root"]),
@@ -214,6 +225,15 @@ export function scopedShortCodeLabel(
         available: true,
         request: (info) => {
           restartRequests.push(info);
+          return true;
+        },
+      },
+      // `/stop` 的替身（ADR-0070）：同样只记录，不退出进程
+      stop: stopService,
+      stopProcess: {
+        available: true,
+        request: (info) => {
+          stopRequests.push({ requestedBy: info.requestedBy, ...(info.reason !== undefined ? { reason: info.reason } : {}) });
           return true;
         },
       },

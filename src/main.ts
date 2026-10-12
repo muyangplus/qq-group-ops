@@ -78,6 +78,8 @@ const RATE_LIMIT_STARTUP_COOLDOWN_MS = 60_000;
 
 /** `/restart` 退出前的固定延迟：留时间把「正在重启」的回执卡片发出去。 */
 const RESTART_EXIT_DELAY_MS = 2_000;
+/** `/stop` 退出前的延迟：让「正在停机」回执先发出去（与重启同理）。 */
+const STOP_EXIT_DELAY_MS = 1_500;
 
 function isRecordLike(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -381,6 +383,10 @@ async function main(): Promise<void> {
    * 命令层只调用 `runtime.restart.request(...)`，真正退出由这里的优雅关闭负责。
    */
   let restartHandler: RestartRequestHandler | undefined;
+  /** `/stop`（立即停机）的落点（ADR-0070）：写留痕 + 优雅关闭 + 退出，**不自启**。 */
+  let stopHandler:
+    | ((info: { requestedBy: string; reason?: string | undefined }) => boolean)
+    | undefined;
   /**
    * 统一计时调度器（`SCAN_INTERVAL_MS` 驱动全部周期任务）。
    *
@@ -472,6 +478,8 @@ async function main(): Promise<void> {
     settings,
     {
       onRestartRequested: (info) => restartHandler?.(info),
+      // `/stop`（立即停机）：命令层只调这个钩子，真正退出由下面的 `stopHandler` 负责（不自启）
+      onStopRequested: (info) => stopHandler?.(info) ?? false,
       // 两条「新版本」来源（包模式 / 逐文件模式）合成同一个控制面：`/deploy cancel`、
       // `/deploy now`、卡片按钮与后台「状态」页都只认它（包模式优先 —— 它还要替换产物）。
       deploy: combineDeployControls([deployInstaller, deployWatcher]),
@@ -509,6 +517,21 @@ async function main(): Promise<void> {
   // `runtime.load()` 里 —— 只读巡检进程同样会跑 `load()`。补完立刻 flush 落库。
   runtime.seedSuperAdminNotifications();
   await runtime.flush();
+  // 停机 / 静默（ADR-0070）：留痕清理 + 启动时的可见性。
+  // ① 上次是被 `/stop` 停的 → 清掉留痕并记一条（审计里已有 who/when）；
+  // ② 现在仍在静默期 / 永久静默 → 明确记一条「只有超管会被服务」，免得以为机器人坏了。
+  const stoppedBefore = runtime.stop.clearStoppedMarker();
+  if (stoppedBefore) {
+    log.warn("previous run was stopped by /stop", {
+      by: stoppedBefore.setBy,
+      at: stoppedBefore.setAt,
+    });
+  }
+  if (runtime.stop.silenced()) {
+    log.warn("starting in silence mode: only super admins will be served", {
+      until: runtime.stop.current()?.until ?? "forever",
+    });
+  }
   // `.env` 里热改项的**一次性导入**（ADR-0066）：把老部署写在 `.env` 里的那些项写库一次，
   // 保证升级瞬间「行为不漂移」；此后一切以库为准（`.env` 删掉这些行也没有影响）。
   // 同样放在自检返回**之后**：自检（`--check`）既不导入、也不写导入留痕。
@@ -603,6 +626,12 @@ async function main(): Promise<void> {
       scheduler.restart();
     }
   });
+  /**
+   * 停机静默（ADR-0070）期间**会发消息**的周期任务一律不跑：定时发言 / 活动提醒 / 申诉轮转 /
+   * 入群对账。清理类（保留期清理）与运维类（部署监测 / 包安装器）继续跑 —— 它们不发用户消息，
+   * 停掉反而有害（该清的隐私数据要清、部署要能落地）。
+   */
+  const notSilenced = (): boolean => !runtime.stop.silenced();
   scheduler.register({
     name: "retention",
     minIntervalMs: DEFAULT_RETENTION_INTERVAL_MS,
@@ -614,7 +643,8 @@ async function main(): Promise<void> {
   });
   scheduler.register({
     name: "activity-reminder",
-    enabled: () => runtime.health.isAvailable("activity"),
+    enabled: () =>
+      notSilenced() && runtime.health.isAvailable("activity"),
     run: async () => {
       await activityReminder.runOnce();
     },
@@ -623,7 +653,7 @@ async function main(): Promise<void> {
     name: "appeal-watcher",
     // 启动时不扫（与旧行为一致：首次派发在 notifyAppeal 里完成）
     runOnStart: false,
-    enabled: () => runtime.health.isAvailable("sanction"),
+    enabled: () => notSilenced() && runtime.health.isAvailable("sanction"),
     run: async () => {
       await appealWatcher.runOnce();
     },
@@ -659,6 +689,7 @@ async function main(): Promise<void> {
     name: "join-reconcile",
     minIntervalMs: () => runtime.platform.get("joinSyncIntervalMs"),
     enabled: () =>
+      notSilenced() &&
       runtime.platform.get("joinSyncIntervalMs") > 0 &&
       runtime.health.isAvailable("join"),
     run: async () => {
@@ -679,7 +710,8 @@ async function main(): Promise<void> {
   // 精度 = 扫描周期（最小 1 分钟），够 cron 的分钟粒度用。
   scheduler.register({
     name: "scheduled-announce",
-    enabled: () => runtime.platform.get("scheduledAnnounceEnabled"),
+    enabled: () =>
+      notSilenced() && runtime.platform.get("scheduledAnnounceEnabled"),
     run: async () => {
       await runtime.scheduledAnnouncements.runOnce();
     },
@@ -805,6 +837,29 @@ async function main(): Promise<void> {
       deployWatcher.blockVersion(info.targetVersion ?? onDiskVersion(), detail);
       void announceRestartAbort(info, detail);
     });
+  };
+
+  /**
+   * `/stop` 的落点（ADR-0070）：**优雅关闭并退出，不自启**。
+   *
+   * 与 `/restart` 的区别只有一件事：**不拉自我重启助手** —— 进程退出后就停在那儿，
+   * 要靠人工（或你自己的 systemd / pm2 / docker）再拉起来。所以：
+   * ① 先写 `data/stop-state.json` 留痕（下次启动能看出「上次是被 /stop 停的」）；
+   * ② 延迟一小会儿再退出，让「正在停机」回执卡片先发出去（与重启同一个理由）。
+   */
+  stopHandler = (info) => {
+    log.warn("stop requested: shutting down without respawn", {
+      requestedBy: info.requestedBy,
+      reason: info.reason ?? "manual",
+    });
+    runtime.stop.markStopped({
+      by: info.requestedBy,
+      reason: info.reason ?? "manual",
+    });
+    setTimeout(() => {
+      void shutdown();
+    }, STOP_EXIT_DELAY_MS);
+    return true;
   };
 
   /**

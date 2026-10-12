@@ -90,6 +90,8 @@ import {
   ScheduledAnnouncementStore,
 } from "./services/scheduledAnnouncements.js";
 import { createRestartHook, type RestartHook, type RestartRequestHandler } from "./services/restart.js";
+import { StopService, STOP_STATE_FILE, type StopHook } from "./services/stop.js";
+import { PlatformLevel } from "./core/enums.js";
 import type { DeployControl } from "./services/deployWatcher.js";
 import type { InstallerControl } from "./services/deployInstaller.js";
 import {
@@ -152,6 +154,10 @@ export interface Runtime {
   scheduledAnnouncements: ScheduledAnnouncementService;
   /** `/restart` 的重启钩子（未装配时该指令拒绝执行）。 */
   restart: RestartHook;
+  /** 停机 / 静默状态（`/stop`、`/stop <时长>`、`/start`，ADR-0070）。 */
+  stop: StopService;
+  /** `/stop`（立即停机）的钩子；未装配时 `available === false`（只能静默）。 */
+  stopProcess: StopHook;
   /** 部署监测（新版本自动重启）的控制面；未装配时没有待重启状态。 */
   deploy: DeployControl | undefined;
   /**
@@ -273,6 +279,18 @@ export interface RuntimeDependencies {
    * `/restart` 会明确拒绝而不是把进程杀掉。
    */
   onRestartRequested?: RestartRequestHandler | undefined;
+  /**
+   * `/stop`（立即停机）的落点：由 `main.ts` 注入「写留痕 + 优雅关闭 + 进程退出（**不自启**）」。
+   * 缺省（纯单测 / 没有进程管理器）时 `stopProcess.available === false`，`/stop` 只提供静默。
+   */
+  onStopRequested?:
+    | ((info: { requestedBy: string; reason?: string | undefined }) => boolean)
+    | undefined;
+  /**
+   * 停机 / 静默状态文件（ADR-0070）；缺省 `data/stop-state.json`。
+   * 单测把它指到临时目录，避免碰仓库里的 `data/`。
+   */
+  stopStateFile?: string | undefined;
   /** 部署监测（新版本自动重启）的控制面；由 `main.ts` 构造后注入。 */
   deploy?: DeployControl | undefined;
   /** 包安装器的控制面（回滚入口）；由 `main.ts` 构造后注入；未装配时没有回滚按钮。 */
@@ -330,7 +348,27 @@ export function createRuntime(
   /** 运行模式：有机器人凭据就是 official，否则 fake（管理 API 的运维页也要显示它）。 */
   const mode: Runtime["mode"] =
     settings.qqBotAppId && settings.qqBotClientSecret ? "official" : "fake";
-  const richMessages = new RichMessageSender(api);
+  /**
+   * 停机 / 静默（ADR-0070）：`/stop <时长>`、`/stop forever`、`/start`。
+   * 状态存在 `data/stop-state.json`（启动早期就要生效，不能等连库）。
+   */
+  const stop = new StopService(dependencies.stopStateFile ?? STOP_STATE_FILE);
+  const richMessages = new RichMessageSender(api, {
+    /**
+     * 出站守卫（ADR-0070）：静默期间**群聊一律不发**（整群都看得见），
+     * 私信只发给**平台超管**（其余一律丢弃）—— 这样「所有群聊 / 私信功能静默」
+     * 对所有发送路径都成立（指令回复、推送卡、定时发言、活动提醒…）。
+     */
+    sendGuard: (target, targetId) => {
+      if (!stop.silenced()) {
+        return true;
+      }
+      if (target === "group") {
+        return false;
+      }
+      return permissions.meetsGlobal(targetId, PlatformLevel.GlobalSuperAdmin);
+    },
+  });
   const auditLog = new AuditLogStore(repositories.audit, writeQueue);
   const joinAudit = new JoinAuditService(
     auditLog,
@@ -400,6 +438,10 @@ export function createRuntime(
     groupLabel: (groupId) => display.group(groupId),
   });
   const restart = createRestartHook(dependencies.onRestartRequested);
+  const stopProcess: StopHook = {
+    available: dependencies.onStopRequested !== undefined,
+    request: (info) => dependencies.onStopRequested?.(info) ?? false,
+  };
   const notifications = new NotificationService(api, permissions, {
     subscriptions: repositories.notificationSubscriptions,
     deliveries: repositories.notificationDeliveries,
@@ -670,6 +712,8 @@ export function createRuntime(
     cardSender: richMessages,
     diagnostics: { settings, writeQueue, migration: dependencies.migration },
     restart,
+    stop,
+    stopProcess,
     deploy: dependencies.deploy,
     install: dependencies.installer,
     migrate: dataMigration,
@@ -749,6 +793,26 @@ export function createRuntime(
         // 失败卡上的「自检结果」：把 data/startup-check.json 原文发过来
         if (parsed.action === "detail") {
           return adminCommands.startupCheckCard(userId).rich;
+        }
+        return undefined;
+      },
+    ],
+    [
+      "stop",
+      async (parsed, event) => {
+        const userId = event.userId;
+        if (!userId) {
+          return undefined;
+        }
+        // 停机 / 静默（ADR-0070）：`cb:stop:go` / `cb:stop:silence:<spec>` / `cb:stop:resume`
+        if (parsed.action === "go") {
+          return adminCommands.stopGoCard(userId).rich;
+        }
+        if (parsed.action === "silence") {
+          return adminCommands.stopSilenceCallbackCard(userId, parsed.args[0]).rich;
+        }
+        if (parsed.action === "resume") {
+          return adminCommands.stopResumeCard(userId).rich;
         }
         return undefined;
       },
@@ -1277,6 +1341,8 @@ export function createRuntime(
     // 平台配置刚从库里读出来：把「需要主动生效」的两项按覆盖值推一遍
     applyHotSetting("joinRequestTtlDays");
     applyHotSetting("displayTimezone");
+    // 停机 / 静默状态（ADR-0070）：**只读**加载（自检也会跑 `load()`，ADR-0069 要求不写盘）
+    stop.load();
     // ⚠️ 这里**不补超管默认订阅行**（ADR-0069）：补订阅是**写库**，而 `load()` 也会被
     // `node dist/main.js --check`（自检）与只读巡检跑到 —— 自检的语义是「这份构建能不能起来」
     // 的只读演练，不该顺手改持久化状态（真机踩过：一次自检给 `notification_subscriptions` 插 6 行）。
@@ -1337,6 +1403,8 @@ export function createRuntime(
     notifyTopics,
     scheduledAnnouncements,
     restart,
+    stop,
+    stopProcess,
     deploy: dependencies.deploy,
     installer: dependencies.installer,
     blacklist,

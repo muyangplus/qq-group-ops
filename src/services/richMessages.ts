@@ -4,6 +4,9 @@ import { getLogger } from "../core/logger.js";
 
 const log = getLogger("rich-messages");
 
+/** 被出站守卫拦下时写进 `RichSendResult.detail` 的话（不是失败，是「按策略不发」）。 */
+export const SILENCED_DETAIL = "停机静默：本条未发送";
+
 /** 一条富消息：Markdown 正文 + 可选按钮 + 纯文本降级。 */
 export interface RichMessage {
   markdown: string;
@@ -33,6 +36,22 @@ export interface RichReplyOptions {
   msgId?: string | undefined;
   /** 被动回复全部失败后是否降级为主动发送（默认 true）。 */
   activeFallback?: boolean | undefined;
+}
+
+/**
+ * 出站守卫（ADR-0070 停机静默）：返回 `false` 就**不发这一条**。
+ *
+ * 只在 `runtime.ts` 装配时注入 —— 静默期间群聊一律不发、私信只发给平台超管。
+ * 被拦下的发送返回 `{ ok: true, mode: "none", detail: "停机静默：本条未发送" }`：
+ * 它是「按策略不发」而不是发送失败，别让调用方走降级 / 重试 / 报错那几条路。
+ */
+export type RichSendGuard = (
+  target: "user" | "group",
+  targetId: string,
+) => boolean;
+
+export interface RichMessageSenderOptions {
+  sendGuard?: RichSendGuard | undefined;
 }
 
 interface Attempt {
@@ -65,7 +84,31 @@ export class RichMessageSender {
    */
   private readonly keyboardDisabled = { user: false, group: false };
 
-  public constructor(private readonly api: QQOfficialAPI) {}
+  public constructor(
+    private readonly api: QQOfficialAPI,
+    private readonly options: RichMessageSenderOptions = {},
+  ) {}
+
+  /**
+   * 出站守卫：静默时直接「按策略不发」（见 `RichSendGuard`）。
+   *
+   * 返回 `undefined` = 可以发；否则返回那条「跳过」的结果。
+   */
+  private guardResult(
+    target: "user" | "group",
+    targetId: string,
+  ): RichSendResult | undefined {
+    const guard = this.options.sendGuard;
+    if (!guard || guard(target, targetId)) {
+      return undefined;
+    }
+    log.debug("outbound message skipped (silenced)", {
+      target,
+      targetId,
+      cardTitle: "（静默中）",
+    });
+    return { ok: true, detail: SILENCED_DETAIL, mode: "none" };
+  }
 
   /** 群里是否还能用自定义按钮（群卡片/群广播的主要判据）。 */
   public get keyboardAvailable(): boolean {
@@ -82,7 +125,8 @@ export class RichMessageSender {
     userOpenid: string,
     message: RichMessage,
   ): Promise<RichSendResult> {
-    return this.run("user", userOpenid, message, {});
+    const guarded = this.guardResult("user", userOpenid);
+    return guarded ? Promise.resolve(guarded) : this.run("user", userOpenid, message, {});
   }
 
   /** 主动群聊发送。 */
@@ -90,7 +134,8 @@ export class RichMessageSender {
     groupId: string,
     message: RichMessage,
   ): Promise<RichSendResult> {
-    return this.run("group", groupId, message, {});
+    const guarded = this.guardResult("group", groupId);
+    return guarded ? Promise.resolve(guarded) : this.run("group", groupId, message, {});
   }
 
   /**
@@ -104,6 +149,10 @@ export class RichMessageSender {
     groupId: string,
     content: string,
   ): Promise<RichSendResult> {
+    const guarded = this.guardResult("group", groupId);
+    if (guarded) {
+      return guarded;
+    }
     try {
       const response = await this.api.sendGroupMessage(groupId, content);
       return { ok: true, detail: "", mode: "text", ...messageIdField(response) };
@@ -121,6 +170,10 @@ export class RichMessageSender {
     userOpenid: string,
     content: string,
   ): Promise<RichSendResult> {
+    const guarded = this.guardResult("user", userOpenid);
+    if (guarded) {
+      return guarded;
+    }
     try {
       const response = await this.api.sendPrivateMessage(userOpenid, content);
       return { ok: true, detail: "", mode: "text", ...messageIdField(response) };
@@ -139,7 +192,10 @@ export class RichMessageSender {
     message: RichMessage,
     options: RichReplyOptions = {},
   ): Promise<RichSendResult> {
-    return this.run("user", userOpenid, message, options);
+    const guarded = this.guardResult("user", userOpenid);
+    return guarded
+      ? Promise.resolve(guarded)
+      : this.run("user", userOpenid, message, options);
   }
 
   /** 回复群消息：优先被动回复，失败降级为主动发送。 */
@@ -148,7 +204,10 @@ export class RichMessageSender {
     message: RichMessage,
     options: RichReplyOptions = {},
   ): Promise<RichSendResult> {
-    return this.run("group", groupId, message, options);
+    const guarded = this.guardResult("group", groupId);
+    return guarded
+      ? Promise.resolve(guarded)
+      : this.run("group", groupId, message, options);
   }
 
   private async run(

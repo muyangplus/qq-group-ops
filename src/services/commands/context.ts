@@ -31,6 +31,7 @@ import type { PlatformSettingsStore } from "../platformSettings.js";
 import type { PermissionService } from "../permissions.js";
 import type { PunishmentService } from "../punishments.js";
 import type { RestartHook } from "../restart.js";
+import type { StopHook, StopService } from "../stop.js";
 import type { RichMessageSender } from "../richMessages.js";
 import type { ScheduledAnnouncementService } from "../scheduledAnnouncements.js";
 import type { UserProfileService } from "../userProfiles.js";
@@ -133,6 +134,10 @@ export interface AdminCommandContext {
   readonly moderationNotifier: ModerationNotifier | undefined;
   /** `/restart` 的重启钩子；未装配时该指令拒绝执行。 */
   readonly restart: RestartHook | undefined;
+  /** 停机 / 静默状态（`/stop`、`/stop <时长>`、`/start`，ADR-0070）；未装配时这些指令拒绝执行。 */
+  readonly stop: StopService | undefined;
+  /** `/stop`（立即停机）的钩子：由 `main.ts` 注入；未装配时只能静默、不能停进程。 */
+  readonly stopProcess: StopHook | undefined;
   /** 一次性数据迁移（`/migrate`，仅全局超管、只私信）；未装配时该指令拒绝执行。 */
   readonly migrate: DataMigrationService | undefined;
   /** 个人数据匿名化 / 导出（`/data`，仅全局超管、只私信）；未装配时该指令拒绝执行。 */

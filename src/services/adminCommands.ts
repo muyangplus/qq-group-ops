@@ -62,6 +62,13 @@ import {
   startupCheckCard,
 } from "./commands/restartCommands.js";
 import {
+  stopCard,
+  stopGoCard,
+  stopResumeCard,
+  stopSilenceCallbackCard,
+  stopSilenceCard,
+} from "./commands/stopCommands.js";
+import {
   deployCancelCard,
   deployRestartNowCard,
   deployRollbackCard,
@@ -106,6 +113,7 @@ import type {
   DiagnosticsDeps,
 } from "./commands/context.js";
 import type { RestartHook } from "./restart.js";
+import type { StopHook, StopService } from "./stop.js";
 import type { DeployControl } from "./deployWatcher.js";
 import type { InstallerControl } from "./deployInstaller.js";
 import type { CardButton } from "./cardTemplate.js";
@@ -222,6 +230,11 @@ export interface AdminCommandServiceOptions {
   /** `/restart` 的重启钩子（`main.ts` 注入）；缺省时该指令拒绝执行。 */
   restart?: RestartHook | undefined;
 
+  /** 停机 / 静默状态（`/stop`、`/start`，ADR-0070）；缺省时这些指令拒绝执行。 */
+  stop?: StopService | undefined;
+  /** `/stop`（立即停机）的钩子；缺省时只能静默、不能停进程。 */
+  stopProcess?: StopHook | undefined;
+
   /** 部署监测的控制面（新版本卡上的「取消 / 立即重启」按钮）。 */
   deploy?: DeployControl | undefined;
   /** 包安装器的控制面（`/status proc` 的「回滚到上一版本」）。 */
@@ -300,6 +313,12 @@ export class AdminCommandService {
 
   private readonly restart: RestartHook | undefined;
 
+  /** 停机 / 静默状态（`/stop`、`/start`）。 */
+  private readonly stop: StopService | undefined;
+
+  /** `/stop`（立即停机）钩子。 */
+  private readonly stopProcess: StopHook | undefined;
+
   private readonly deploy: DeployControl | undefined;
 
   /** 包安装器的控制面（回滚入口）；未装配时 `/status proc` 不渲染回滚按钮。 */
@@ -358,6 +377,8 @@ export class AdminCommandService {
     this.explicitCardSender = options.cardSender;
     this.diagnostics = options.diagnostics;
     this.restart = options.restart;
+    this.stop = options.stop;
+    this.stopProcess = options.stopProcess;
     this.deploy = options.deploy;
     this.install = options.install;
     this.migrate = options.migrate;
@@ -614,6 +635,8 @@ export class AdminCommandService {
       helpers,
       diagnostics: this.diagnostics,
       restart: this.restart,
+      stop: this.stop,
+      stopProcess: this.stopProcess,
       deploy: this.deploy,
       install: this.install,
       migrate: this.migrate,
@@ -762,6 +785,26 @@ export class AdminCommandService {
       case "restart":
       case "重启":
         return restartCard(this.context(), userId);
+      case "stop":
+      case "停机":
+      case "停用": {
+        // 只走私信（停机 / 静默是运维动作，不该在群里广播）：群里发则结果私信 + 群里静默。
+        // ⚠️ `parts[0]` 是命令本身（`dispatchCommand` 收的是整份 token），时长从 `parts[1]` 起。
+        const arg = parts[1]?.trim() ?? "";
+        const card =
+          arg.length > 0
+            ? stopSilenceCard(this.context(), userId, arg)
+            : stopCard(this.context(), userId);
+        return this.privateOnlyResult(groupId, userId, card);
+      }
+      case "start":
+      case "恢复":
+      case "启动":
+        return this.privateOnlyResult(
+          groupId,
+          userId,
+          stopResumeCard(this.context(), userId),
+        );
       case "migrate":
       case "迁移": {
         const sub = (parts[1] ?? "").trim().toLowerCase();
@@ -873,6 +916,26 @@ export class AdminCommandService {
   /** `/restart`：重启确认卡（仅全局超管；真正执行在 `cb:restart:go`）。 */
   public restartCard(userId: string): CardResult {
     return restartCard(this.context(), userId);
+  }
+
+  /** `/stop`：停机 / 静默选择卡（仅全局超管、只走私信）。 */
+  public stopCard(userId: string): CardResult {
+    return stopCard(this.context(), userId);
+  }
+
+  /** 回调：`cb:stop:go` —— 真正停机（回执先发，随后进程优雅退出、不自启）。 */
+  public stopGoCard(userId: string): CardResult {
+    return stopGoCard(this.context(), userId);
+  }
+
+  /** 回调：`cb:stop:silence:<spec>` —— 卡片上的「静默 1 小时 / 1 天 / 永久」。 */
+  public stopSilenceCallbackCard(userId: string, spec: string | undefined): CardResult {
+    return stopSilenceCallbackCard(this.context(), userId, spec);
+  }
+
+  /** 回调：`cb:stop:resume` —— 手动恢复（等价 `/start`）。 */
+  public stopResumeCard(userId: string): CardResult {
+    return stopResumeCard(this.context(), userId);
   }
 
   /** 回调：`cb:restart:go` —— 安排重启并回执（`force` = 跳过退出前自检）。 */

@@ -1,17 +1,40 @@
 import type { EventGateway } from "./adapters/eventGateway.js";
 import { isRateLimitedError } from "./adapters/qqOfficial.js";
+import { PlatformLevel } from "./core/enums.js";
 import { getLogger } from "./core/logger.js";
 import type { Runtime } from "./runtime.js";
+import type { QQEvent } from "./services/eventRouter.js";
 import { withGroupMention } from "./services/groupMention.js";
 import type { RichMessage } from "./services/richMessages.js";
 
 const log = getLogger("gateway-runner");
+
+/**
+ * 事件发起人是不是平台超管。
+ *
+ * 停机静默（ADR-0070）期间**只有超管的事件会被处理** —— 否则超管没法用 `/start` 恢复；
+ * 出站还有第二道守卫（`RichMessageSender.sendGuard`）：群聊一律不发、私信只发给超管。
+ */
+function isSuperAdminEvent(runtime: Runtime, event: QQEvent): boolean {
+  const userId = "userId" in event ? event.userId : undefined;
+  return (
+    typeof userId === "string" &&
+    userId.length > 0 &&
+    runtime.permissions.meetsGlobal(userId, PlatformLevel.GlobalSuperAdmin)
+  );
+}
 
 export async function attachGateway(
   runtime: Runtime,
   gateway: EventGateway,
 ): Promise<void> {
   await gateway.start(async (event) => {
+    // 停机静默（ADR-0070）：非超管的事件**完全不处理** —— 不回复、不审核、不推送。
+    // 用户口径（2026-10-12）：静默期间「所有群聊 / 私信功能静默」，只有超管仍可用。
+    if (runtime.stop.silenced() && !isSuperAdminEvent(runtime, event)) {
+      log.debug("event dropped during silence", { type: event.type });
+      return;
+    }
     const result = await runtime.router.handle(event);
     // 回复用户前先确保本次事件产生的状态变更已落库。
     await runtime.flush();

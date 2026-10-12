@@ -80,6 +80,7 @@ import {
   type ClassAliasService,
 } from "../classAliases.js";
 import { NOTIFY_SCOPE_ALL, type NotificationService } from "../notifications.js";
+import { describeStopUntil } from "../stop.js";
 import type { PermissionService } from "../permissions.js";
 import { formatParseNotes, parseProfileInput } from "../profileParser.js";
 import {
@@ -279,6 +280,13 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
     )} / ${formatBytes(mem.heapTotal)}）`,
     `**待审批申请**：${ctx.joinAudit.pendingCount()} 条`,
   ];
+  // 停机 / 静默（ADR-0070）：静默中只有超管的消息会被处理 —— 这是排查「机器人怎么不理人」的第一线索
+  if (ctx.stop?.silenced() === true) {
+    const state = ctx.stop.current();
+    lines.push(
+      `**停机 / 静默**：静默中（到 ${state ? describeStopUntil(state) : "未知"}）—— **非超管的消息一律不处理**，\`/start\` 恢复`,
+    );
+  }
   // 构建自证（ADR-0065）：跑的是哪份产物（指纹）、哪次构建（commit），以及和磁盘上那份是否一致。
   const buildInfo = runningBuildInfo();
   if (buildInfo) {
