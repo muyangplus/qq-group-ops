@@ -203,4 +203,37 @@ describe("runtime 仓储装配完整性", () => {
     // 补完要立刻落库（写队列不 flush 就丢）
     expect(mainSource.slice(seedAt, seedAt + 120)).toContain("await runtime.flush()");
   });
+
+  /**
+   * ADR-0073（0.30.0 真机事故）：安装器的 `root` 原本可选、缺省「状态文件的上一级」，
+   * 而状态文件缺省是 `data/deploy-state.json` ⇒ 生产装配忘了传时 `root` = **`data`**，
+   * 整目录替换做在 `data/dist` 上、**live 产物一个字节没动**，却写下 `applied=0.30.0` +
+   * 回执 + 「deployment applied」日志（三道自检全读旧 dist、全「通过」，直到
+   * `/status proc` 露出「运行 0.29.1 / 记账 0.30.0」）。
+   *
+   * 现在 `deployRoot` 是**必填**，且生产装配必须是 `process.cwd()`（替换面 `dist/`、`web/dist/`、
+   * `scripts/` 都在工作目录下）。这条守卫盯着「别再被漏掉或写错」。
+   */
+  it("包安装器的替换根必须显式 = process.cwd()（ADR-0073：报成功却没换产物）", () => {
+    const mainSource = readFileSync(
+      fileURLToPath(new URL("../src/main.ts", import.meta.url)),
+      "utf8",
+    );
+    const installerAt = mainSource.indexOf("new DeployInstaller({");
+    expect(installerAt).toBeGreaterThan(0);
+    const body = mainSource.slice(installerAt, mainSource.indexOf("});", installerAt));
+    expect(body).toContain("deployRoot: process.cwd()");
+
+    // 选项本身必填（缺省值就是那次事故的成因）—— 类型层面也钉住
+    const source = readFileSync(
+      fileURLToPath(new URL("../src/services/deployInstaller.ts", import.meta.url)),
+      "utf8",
+    );
+    const optionsAt = source.indexOf("export interface DeployInstallerOptions {");
+    expect(optionsAt).toBeGreaterThan(0);
+    const options = source.slice(optionsAt, source.indexOf("graceMs?:", optionsAt));
+    expect(options).toContain("deployRoot: string;");
+    expect(options).not.toContain("deployRoot?:");
+    expect(source).not.toContain("options.root ??");
+  });
 });

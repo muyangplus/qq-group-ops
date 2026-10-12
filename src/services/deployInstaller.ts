@@ -151,8 +151,18 @@ export interface DeployInstallerOptions {
   stateFile?: string;
   /** 回执文件；缺省 `data/deploy-receipt.json`。 */
   installerReceiptFile?: string;
-  /** 应用根目录（替换面相对它解析）；缺省「状态文件的上一级」。 */
-  root?: string;
+  /**
+   * **应用根目录（替换面相对它解析）—— 必填，没有缺省。**
+   *
+   * ⚠️ 真机事故（2026-10-12，0.30.0 发布）：这里原本是可选、缺省「状态文件的上一级」，
+   * 而 `stateFile` 缺省是 `data/deploy-state.json` ⇒ 生产装配忘了传时 `root` 变成 **`data`**，
+   * 于是整目录替换做在 `data/dist`、`data/web/dist`、`data/scripts` 上，**live 产物一个字节没动**，
+   * 却照样写 `applied=0.30.0` + 回执 + 「deployment applied」日志（三道自检都读到旧 dist，
+   * 全都「通过」——直到 `/status proc` 里「运行 0.29.1 vs 记账 0.30.0」露馅）。
+   * 改成必填：**谁都得显式说清「要替换的是哪个根」**（生产是 `process.cwd()`，
+   * 单测是临时目录），tsc 会替我们守住这件事。
+   */
+  deployRoot: string;
   /** 交接给既有重启用例（`src/services/restart.ts` 的 `RestartHook`）。 */
   restart: (info: { requestedBy: string; reason: "deploy"; targetVersion: string }) => boolean;
   /** 私信投递（半传 / 自证失败 / 替换失败都私信超管）。 */
@@ -278,7 +288,8 @@ export class DeployInstaller implements DeployControl {
 
   public constructor(options: DeployInstallerOptions) {
     this.stateFile = options.stateFile ?? DEPLOY_STATE_FILE;
-    this.root = options.root ?? dirname(this.stateFile);
+    // 必填（见 `DeployInstallerOptions.deployRoot` 的事故说明）：不再从 `stateFile` 猜。
+    this.root = options.deployRoot;
     this.incomingDir = options.incomingDir ?? INCOMING_DIR;
     this.archiveDir = options.archiveDir ?? PACKAGE_ARCHIVE_DIR;
     this.workDir = options.workDir ?? PACKAGE_UNPACK_DIR;
@@ -664,6 +675,23 @@ export class DeployInstaller implements DeployControl {
       swapTargets(this.root, unpackDir);
     } catch (error) {
       return fail("replace_failed", `替换产物目录失败（已整体回退，现役产物未变）：${describeError(error)}`);
+    }
+
+    // ④′ **对着现役产物再自证一次**（不是对着解包目录）：换完之后的 `dist/` 必须真的就是这一份包。
+    // 挡的是「换到了别的地方 / 只换了一半 / 换完被改过」——ADR-0073 的真机事故（root 算成 `data/`，
+    // live 产物一个字节没动却报「已应用」）正是少了这一道；有了它，报成功之前必须先证明
+    // 「现役产物 == 这份包」。
+    const liveCheck = verifyBuildInfo(join(this.root, "dist"));
+    if (!liveCheck.ok) {
+      const restored = await this.restorePrevious(previous);
+      const result = await fail(
+        "replace_failed",
+        `替换后现役 dist 自证不过（${liveCheck.detail}）：已把产物还原成上一个包，继续跑旧版本。`,
+      );
+      return {
+        ...result,
+        ...(restored !== undefined ? { restoredVersion: restored } : {}),
+      };
     }
 
     // ⑤ 交接给既有重启用例
@@ -1202,14 +1230,20 @@ export function markFailed(
  */
 export function swapTargets(root: string, unpackDir: string, targets = DEPLOY_TARGETS): void {
   const backupSuffix = `.prev-${process.pid}`;
+  // ⚠️ 缺目标**必须报错**，绝不静默跳过：`dist/` 是代码本体，缺了就等于「什么都没换」；
+  // `web/dist` / `scripts` 缺了会留下半套产物。ADR-0073：0.30.0 那次「报成功但现役产物没动」
+  // 能瞒过三道自检，这里原来的 `continue` 是最后一环 —— 换成抛错之后，这种包根本进不去。
+  const missing = targets.filter((target) => !existsSync(join(unpackDir, target)));
+  if (missing.length > 0) {
+    throw new Error(
+      `产物包缺少 ${missing.join(" / ")}（包必须包含 ${targets.join(" / ")}）`,
+    );
+  }
   const done: Array<{ target: string; hadPrev: boolean }> = [];
   try {
     for (const target of targets) {
       const live = join(root, target);
       const staged = join(unpackDir, target);
-      if (!existsSync(staged)) {
-        continue;
-      }
       mkdirSync(dirname(live), { recursive: true });
       const backup = `${live}${backupSuffix}`;
       rmSync(backup, { recursive: true, force: true });

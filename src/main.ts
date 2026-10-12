@@ -422,6 +422,11 @@ async function main(): Promise<void> {
    * 通知走「渲染成卡片」这一步放在 `main.ts`（服务层不依赖卡片模板）。
    */
   const deployInstaller = new DeployInstaller({
+    // **替换面相对谁解析**：就是进程的工作目录（`dist/`、`web/dist/`、`scripts/` 都在这儿）。
+    // ⚠️ 这一项必须显式给：0.30.0 发布时就是漏了它，缺省值把根算成了 `data/`，
+    // 于是「替换产物」做在 `data/dist` 上、live 产物没动，却报「已应用」并写下记账
+    // （真机现象：`/status proc` 里运行版本与部署记账不一致）。见 ADR-0073。
+    deployRoot: process.cwd(),
     // 热配置：宽限期与「到点动不动手」都用的时候取当前值（`/config` 改完立即生效）。
     // 宽限期是 ADR-0065 的后续修正：包模式**不再「到了就应用」**，而是与逐文件模式一样
     // 「先提醒 → 等 `deployRestartDelayMinutes` → 再替换产物并重启」（可取消 / 可立即应用）。

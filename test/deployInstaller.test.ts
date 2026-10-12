@@ -199,7 +199,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
     workDir,
     stateFile,
     installerReceiptFile: join(root, "data/deploy-receipt.json"),
-    root,
+    deployRoot: root,
     // 不传 `graceMs` = 老行为（校验通过直接应用）；传了才走「先提醒、等宽限期」。
     ...(graceMs !== undefined ? { graceMs: () => graceMs } : {}),
     autoApply: () => autoApply,
@@ -390,6 +390,30 @@ describe("DeployInstaller", () => {
     // 没有 `.restore-*` / `.prev*` 残骸
     expect(readdirSync(h.workDir).filter((name) => name.startsWith("."))).toEqual([]);
     expect(readdirSync(h.root).filter((name) => name.includes(".prev-"))).toEqual([]);
+  });
+
+  it("产物包缺目标目录（web/dist / scripts）→ 拒绝，不再静默跳过（ADR-0073）", async () => {
+    // 现役产物先落地
+    h.deliver("0.28.0", buildFiles("a"));
+    expect((await h.installer.runOnce())?.ok).toBe(true);
+
+    // 包里有 dist（自证能过），但**没有** web/dist / scripts：老实现会 `continue` 跳过它们、
+    // 照样报「已应用」—— 那种「半套产物」正是 ADR-0073 要挡的。
+    const partial = { ...buildFiles("b") };
+    delete partial["web/dist/index.html"];
+    delete partial["scripts/classIndex.mjs"];
+    h.deliver("0.28.1", partial);
+
+    const result = await h.installer.runOnce();
+
+    expect(result?.ok).toBe(false);
+    expect(result?.code).toBe("replace_failed");
+    expect(String(result?.message)).toContain("缺少");
+    // 现役产物一点没变（连 dist 都退回原样）
+    expect(h.at("dist/main.js")).toBe("main-a\n");
+    expect(h.at("web/dist/index.html")).toBe("<html>a</html>\n");
+    // 也没排重启
+    expect(h.restarts.map((item) => item.targetVersion)).toEqual(["0.28.0"]);
   });
 
   it("归档只保留最近 3 个包", async () => {
