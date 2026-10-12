@@ -287,37 +287,44 @@ server {
 
 ## 备份与恢复（SQLite）
 
-默认库是 `data/qq-group-ops.db`（WAL 模式），因此**`.db` / `-wal` / `-shm` 是一套**：
-只拷 `.db` 会丢掉还在 WAL 里、尚未 checkpoint 的提交。
+默认库是 `data/qq-group-ops.db`（WAL 模式）。**备份一律首选 `VACUUM INTO`**（ADR-0071）：
+它把库内容写成一个**新的单文件**，是一致快照（含还在 WAL 里、尚未 checkpoint 的提交）——
+热库也能直接做，**不用停服务**，也不用带上 `-wal` / `-shm`。
 
-**备份**（会话期间也可以做，机器人不必停）：
+**自动备份**：`/migrate` 执行前会自动做一次（同目录、命名 `{原名}_YYYYMMDD_HHMMSS{扩展名}`）。
+日志与结果卡里会写明这次是 `VACUUM INTO 一致快照`，还是兜底的 `文件拷贝（不是原子快照）`。
+
+**手工备份**（想自己来一份时；同样不必停服务）：
 
 ```bash
-systemctl stop qqops           # 想绝对干净就先停服务（可选）
-cp data/qq-group-ops.db* /backup/qqops-$(date +%Y%m%d_%H%M%S)/   # 三个文件一起拷
+node -e "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('data/qq-group-ops.db',{readOnly:true});db.exec(\"VACUUM INTO 'backup/qqops-$(date +%Y%m%d_%H%M%S).db'\");db.close()"
 ```
 
-- `/migrate` 执行前会**自动**做一次同样的拷贝（同目录、命名 `{原名}_YYYYMMDD_HHMMSS{扩展名}`）；
+- 目标文件**必须不存在**（`VACUUM INTO` 的硬要求），所以文件名带时间戳；
+- 源库以**只读**打开 —— 备份过程不改动线上库；
+- 老 SQLite（< 3.27）或那份文件**根本不是 SQLite** 时，程序会退回「拷 `.db` + `-wal` + `-shm`」，
+  并在 `mode` / `detail` 里**如实标注不是原子快照**（绝不假装干净）。
+  ⚠️ 那种情况下 `.db` / `-wal` / `-shm` **是一套**：只拷 `.db` 会丢掉 WAL 里尚未 checkpoint 的提交；
 - PostgreSQL 不做文件备份：迁移前自行 `pg_dump`（结果卡里也会提醒）。
 
 **恢复**（**必须先停服务**，否则在线改文件会把库写坏）：
 
 ```bash
 systemctl stop qqops
-cp /backup/<那个时间点>/qq-group-ops.db data/qq-group-ops.db
-cp /backup/<那个时间点>/qq-group-ops.db-wal data/qq-group-ops.db-wal   # 备份里没有就删掉这个目标文件
-cp /backup/<那个时间点>/qq-group-ops.db-shm data/qq-group-ops.db-shm
+# ① VACUUM INTO 的快照：一个文件就够（原来的 -wal / -shm 一并清掉）
+rm -f data/qq-group-ops.db-wal data/qq-group-ops.db-shm
+cp backup/qqops-<时间戳>.db data/qq-group-ops.db
+# ② 若是「文件拷贝」那种备份：三个一起放回去（备份里没有 -wal 就删掉目标文件）
+# cp backup/<时间戳>/qq-group-ops.db-wal data/qq-group-ops.db-wal
 node -e "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('data/qq-group-ops.db');console.log(db.prepare('PRAGMA integrity_check').get());db.close()"
 systemctl start qqops
 ```
 
-- 打开备份检查前先把它**单独放到一个干净目录**（身边没有 `-wal` 才是「只要 .db」的现场），
-  避免误以为数据都在；
 - `integrity_check` 要回 `ok`；再抽查关键表（`SELECT COUNT(*) FROM join_requests` 之类）与备份时刻对得上；
 - 这套「备份 → 破坏 → 恢复 → 校验」的流程有**本机演练用例**照着跑：
   `node node_modules/vitest/vitest.mjs run --configLoader runner test/dbBackup.test.ts`
-  （覆盖热库、WAL 里的未落盘提交、只拷 `.db` 会丢数据这三种情形）。真机演练（D8-b）
-  就是把同一条流程在被托管的库上再走一遍。
+  （覆盖：真库的 `VACUUM INTO` 单文件快照、热库 + WAL 未落盘提交的恢复、兜底拷贝路径、非 SQLite 文件）。
+  真机演练（D8-b）就是把同一条流程在被托管的库上再走一遍 —— **备份这一步现在不必先停服务**。
 
 ## 配置搬家：`.env` → 系统配置（ADR-0066）
 
