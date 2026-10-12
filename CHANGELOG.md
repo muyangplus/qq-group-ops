@@ -7,6 +7,18 @@
 
 ## [Unreleased]
 
+## [0.30.1] - 2026-10-12
+
+> ⚠️ **升级提示（任何旧版 → 0.30.1）**：
+> **首次升级必须走逐文件模式**：Actions → `CD · FTP 发布` → `Run workflow` → **`mode=files`**。
+> 原因：0.30.0 及更早的包安装器把「整目录替换」做在了 `data/` 下（替换根缺省成 `data`，ADR-0073），
+> 包模式会**「报成功但现役产物一个字节没换」**；只有 `mode=files` 能把 `dist/**` 真正传上去。
+> 升到 0.30.1 之后包模式恢复正常 —— 可再用一次普通发版验证（`workflow_dispatch` 不选 mode 即包模式）。
+> 另外：`/status proc` 已把「运行版本 / 磁盘产物 / 部署记账」三个来源分开写，出现
+> ⚠️「记账与运行版本不一致」就是踩了上面这个坑（或「应用了但还没重启」）。
+> 老 bug 还会在 `data/` 下留下 `dist/`、`web/`、`scripts/`、`package.json`、`pnpm-lock.yaml`
+> —— 不会再被读，但建议手工清掉。
+
 ### 修复
 
 - **（P0）包模式部署「报成功但没换产物」**（ADR-0073；真机 2026-10-12 发布 0.30.0 时暴露）：
@@ -1676,7 +1688,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.30.1...HEAD
+[0.30.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.30.0...v0.30.1
 [0.30.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.29.1...v0.30.0
 [0.29.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.29.0...v0.29.1
 [0.29.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.3...v0.29.0
