@@ -1893,3 +1893,42 @@
 - 能力边界：`--check` 仍然会**读**库、跑迁移检查、加载班级库 —— 只保证「不写持久化状态」
   （自检自己的产物 `data/startup-check.json` 与日志除外）。「有没有别的写路径」由真机
   §4.8 第 6 条的「前后对比行数」兜底。
+
+## ADR-0070：`/stop` 临时停机 / 静默 —— 突发 bug 时的「先摁住」开关
+
+- 状态：已实现（**未发版**，2026-10-12；按「含用户可见新功能」的约定，下一版是 **0.30.0**）
+  —— 见 CHANGELOG 的 `[Unreleased]`；真机验收在 TODO §4.10（R23）
+- 背景（用户 2026-10-12 提出）：机器人出 bug 时（乱发消息 / 误处罚 / 刷屏）需要**立刻让它停手**，
+  而当时只有两个办法：`/restart`（重启后还是同一份代码，往往照旧）或登服务器 `pkill`
+  （难操作、没审计、还可能忘了它起没起来）。用户口径：`/stop` 可以**直接停进程**，也可以
+  **静默 XX 时间**（可为永久、手动恢复）；静默期间**除超管外不回复任何消息**，
+  所有群聊 / 私信功能静默。
+- 决策：
+  1. **两种模式，一个恢复入口**：`/stop` = 立即停机（进程优雅退出、**不自启**）；
+     `/stop <时长|forever>` = 静默；`/start` = 恢复（等价卡片上的「立即恢复」按钮）；
+  2. **状态持久化** `data/stop-state.json`：静默必须跨重启生效 —— 否则一次部署重启就把它
+     恢复成「在服务」了。到期判断**只读现算**（不需要定时器，也满足 ADR-0069 的「`load()` 只读」），
+     「清停机留痕」放在自检早退之后（`main.ts`）；
+  3. **静默 = 三层闸门**（只挡一层都不够）：
+     ① **事件层**（`gatewayRunner`）：非超管的事件**完全不处理** —— 不回复、不审核、不处罚、不推送；
+     ② **出站层**（`RichMessageSender.sendGuard`）：群聊**一律不发**、私信只发给平台超管
+     （拦下时回 `ok:true` + `mode:"none"`：这是「按策略不发」，不是发送失败）；
+     ③ **周期任务**：会发消息的四项停跑（定时发言 / 活动提醒 / 申诉轮转 / 入群对账）；
+     保留期清理、部署监测、包安装器照跑 —— 停掉反而有害（该清的隐私数据要清、部署要能落地）；
+  4. **超管仍可用**：事件层与出站层都对平台超管放行，否则没人能 `/start` 恢复；
+  5. **指令面**：`/stop` / `/stop <时长>` / `/start`，仅全局超管、**只走私信**（群里发则结果私信 +
+     群里静默），每个动作写审计（`platform_silence` / `platform_stop` / `platform_resume`）；
+     `/status proc` 多一行「停机 / 静默：静默中（到 …）」，`/help stop` 有完整说明。
+- 理由：突发 bug 的第一需求是「先让它别说话」，不是「换个版本重启」—— 重启往往还会踩同一个 bug。
+  把「停手」（静默，进程还在、能收超管指令）与「停进程」（停机，彻底退出）分成两件事，
+  代价与恢复方式都写清楚，比让人 SSH 上去 `pkill` 可控得多。
+- 影响：新 `src/services/stop.ts`、`src/services/commands/stopCommands.ts`；
+  `src/gatewayRunner.ts`（事件闸门）、`src/services/richMessages.ts`（`sendGuard`）、
+  `src/runtime.ts`（装配 + 出站规则 + 回调 renderer + `stopStateFile`）、
+  `src/main.ts`（停机钩子 + 任务闸门 + 启动留痕）、`src/services/adminCommands.ts`、
+  `src/services/commands/{context,statusCommands}.ts`、`src/services/helpTopics.ts`；
+  测试 `test/stop.test.ts`（8 条）与 `test/commands/stop.test.ts`（13 条）；
+  `docs/COMMANDS.md`（指令表 + 一节说明）、`docs/OPERATIONS.md`（应急 SOP）、CHANGELOG、TODO。
+- 能力边界：静默**不是关机** —— 进程仍在收事件（否则没法恢复），只是把非超管的丢弃；
+  停机**不自启**，要人工或你自己的守护进程拉起；静默**不清理任何数据**；
+  静默期间 `/stop`、`/start`、`/status proc` 这类超管指令照常可用（这也是唯一的运维入口）。
