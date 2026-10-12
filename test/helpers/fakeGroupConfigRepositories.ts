@@ -68,6 +68,13 @@ export class FakeGroupConfigRepository implements GroupConfigRepository {
     groupId: string,
     keywords: readonly string[],
   ): Promise<void> {
+    // 与真实 SQL 一致（`replaceKeywords` = DELETE + 逐条 INSERT）：
+    // **空列表 = 这个群一行关键词都没有** → `findAll()` 里不带 `keywords` 键，
+    // 不能被当成「显式配过一组空关键词」（那会让清掉的关键词在重启后虚报成「已覆盖」）。
+    if (keywords.length === 0) {
+      this.keywords.delete(groupId);
+      return;
+    }
     this.keywords.set(groupId, [...keywords]);
   }
 

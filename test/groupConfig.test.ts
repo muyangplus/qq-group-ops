@@ -164,8 +164,10 @@ describe("GroupConfigStore", () => {
     // 全局清字段 → 回落种子默认，不影响其它全局覆盖
     expect(store.default.warningMessage).toBe("种子文案");
     expect(store.default.autoApproveJoin).toBe(true);
-    // 种子里的显式项仍是「显式」（只是回落到了种子），被清掉的字段不再算覆盖
+    // 种子里的显式项仍是「显式」（只是回落到了种子）；被清掉的字段不再算覆盖；
+    // **别的显式覆盖不受影响**（autoApproveJoin 还配着，重启后也算覆盖 —— ADR-0072）
     expect([...store.overriddenFields(DEFAULT_GROUP_ID)].sort()).toEqual([
+      "autoApproveJoin",
       "keywords",
     ]);
     // 未覆盖的群继续继承全局

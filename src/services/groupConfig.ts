@@ -113,6 +113,10 @@ export class GroupConfigStore {
     this.overridden.clear();
     this.defaultConfig = cloneConfig(this.seedDefault);
     this.overriddenDefault.clear();
+    // 构造函数显式给的种子字段，重启后仍算「显式」（清持久化覆盖改不掉它们，见 ADR-0072）
+    for (const field of this.seedFields) {
+      this.overriddenDefault.add(field);
+    }
 
     if (this.repository) {
       const overrides = await this.repository.findAll();
@@ -232,8 +236,17 @@ export class GroupConfigStore {
     } as EffectiveGroupConfig;
     const repository = this.repository;
     if (repository) {
+      // ⚠️ 只落**显式覆盖**的字段（ADR-0072）：整行快照会把「继承种子默认」的字段也写成非空，
+      // `load()` 里 `overriddenFieldsOf()` 就会把它们全算成「已覆盖」—— 生效值没错，
+      // 但 `/rules all` 的覆盖率总览与后台规则页会虚报一堆没配过的字段
+      // （真机反馈：重启前后展示不一致）。
+      // 生效值不受影响：`load()` 从种子默认起算，再叠这份显式集合，结果与整行快照一致。
+      const explicit = new Set<keyof GroupConfigOverride>([
+        ...this.overriddenDefault,
+        ...overriddenFieldsOf(normalized),
+      ]);
       const snapshot: GroupConfigOverride = {
-        ...this.defaultConfig,
+        ...fieldsFromConfig(this.defaultConfig, [...explicit]),
         groupId: DEFAULT_GROUP_ID,
       };
       this.queue?.enqueue("group-config.default.save", () =>
@@ -356,26 +369,30 @@ export class GroupConfigStore {
         ...fieldsFromConfig(this.seedDefault, sqlTargets),
         groupId: DEFAULT_GROUP_ID,
       } as EffectiveGroupConfig;
-      this.overriddenDefault.clear();
-      for (const field of this.seedFields) {
-        this.overriddenDefault.add(field);
-      }
+      // 显式集合只去掉**这次清掉**的字段（其余显式覆盖要保持，含构造函数种子项）——
+      // 之前这里整份重建（只留种子项），会把别的显式覆盖从展示里抹掉，重启后又冒出来（ADR-0072）。
       for (const field of targets) {
         this.overriddenDefault.delete(field);
       }
       const repository = this.repository;
-      if (repository && sqlTargets.length > 0) {
-        this.queue?.enqueue("group-config.default.save", () =>
-          repository.saveOverride({
-            ...this.defaultConfig,
-            groupId: DEFAULT_GROUP_ID,
-          }),
-        );
+      if (repository) {
+        if (sqlTargets.length > 0) {
+          // 与 `setDefaultOverride` 同一口径：只落**显式**字段（ADR-0072）——
+          // 被清的字段已经从这份集合里去掉，重启后才不会又显示成「已覆盖」。
+          this.queue?.enqueue("group-config.default.save", () =>
+            repository.saveOverride({
+              ...fieldsFromConfig(this.defaultConfig, [
+                ...this.overriddenDefault,
+              ]),
+              groupId: DEFAULT_GROUP_ID,
+            }),
+          );
+        }
         if (targets.has("keywords")) {
+          // 清关键词 = **删空**那张关键词表：写回「种子关键词」会被 `findAll()` 当成显式覆盖，
+          // 重启后又虚报成「已覆盖」（而且清掉这个动作本身就丢了）。值本来就会回落到种子关键词。
           this.queue?.enqueue("group-config.default.keywords", () =>
-            repository.replaceKeywords(DEFAULT_GROUP_ID, [
-              ...this.seedDefault.keywords,
-            ]),
+            repository.replaceKeywords(DEFAULT_GROUP_ID, []),
           );
         }
       }
