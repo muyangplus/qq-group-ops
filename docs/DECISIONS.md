@@ -1864,3 +1864,32 @@
 - 能力边界：**不做时间窗去重** —— 用户口径是「非 @ 不响应」，不是「限流」；群里被 @ 多次仍会各回一次
   （每次都是明确的人在 @ 机器人）；私信除首次外不再主动推菜单。全量模式下的图片**不再**触发任何回复
   （也不会因此漏掉审核：图片没有正文可审）。
+
+## ADR-0069：自检（`--check`）全程只读 —— 补超管默认订阅挪出自检路径
+
+- 状态：已实现（**未发版**，2026-10-12）—— 见 CHANGELOG 的 `[Unreleased]`；真机验收在 TODO §4.8 第 6 条
+- 背景：`node dist/main.js --check` 是重启前的自检（层 4A）：只跑到「模块加载完成」就退出，用退出码
+  告诉 `scripts/respawn.mjs` 这份构建能不能起来。但 `runtime.load()` 里有一笔**写库** ——
+  「给现有超管补默认通知订阅」（`NotificationService.seedSuperAdminDefaults`，走写队列、
+  `finishStartupCheck` 时 flush）。真机实测：一次 `--check` 给 `notification_subscriptions` 插了 6 行。
+  影响看不出来（订阅行本来就是幂等的「默认开」），但它让「自检 = 只读演练」这句话不成立，
+  排查启动期怪异现象时容易误判（ADR-0066 当时把这条明确排除在「导入器不写库」之外，记在 TODO §2）。
+  同一笔写库还会被**只读巡检**进程（`pnpm admin:api` 那份装配）带上。
+- 决策：
+  1. **`load()` 只读**：把补订阅从 `load()` 里删掉（`load()` 只做读库 + 内存装配）；
+  2. 新增 `Runtime.seedSuperAdminNotifications()`（显式、可测、幂等）：权限 / 通知模块正常时补一次
+     并返回补了几行；模块降级时返回 0（不抛、不拦启动）；
+  3. **由 `main.ts` 在自检早退之后**调用它，并紧接着 `await runtime.flush()` 落库（写队列不 flush 就丢）；
+  4. `startupCheck.ts` 的注释同步改成「自检只读」，并写清**两笔**启动副作用都不在自检里：
+     `.env` 热改项的一次性导入（ADR-0066）与本条的补默认订阅。
+- 理由：自检要回答的问题只有一个 ——「这份构建能不能起来」。它跑的是真实 `load()`（`--check` 的价值
+  就在这里），所以**凡是写库的启动副作用都必须排在它之后**，否则「自检」会悄悄改变运行状态。
+  顺带把只读巡检那条路也修干净了。
+- 影响：`src/runtime.ts`（`load()` + `seedSuperAdminNotifications`）、`src/main.ts`（调用点 + 注释）、
+  `src/startupCheck.ts`（注释）、`test/startupCheckReadOnly.test.ts`（新：只跑 `load()` 不写订阅行、
+  显式调用才补且落库幂等）、`test/runtimeWiring.test.ts`（守卫：`load()` 里不许出现补订阅、
+  `main.ts` 的调用必须在自检早退之后且紧邻 `flush()`）、CHANGELOG、TODO §4.8 第 6 条
+  （真机验收加上「订阅表行数也前后一致」）。
+- 能力边界：`--check` 仍然会**读**库、跑迁移检查、加载班级库 —— 只保证「不写持久化状态」
+  （自检自己的产物 `data/startup-check.json` 与日志除外）。「有没有别的写路径」由真机
+  §4.8 第 6 条的「前后对比行数」兜底。

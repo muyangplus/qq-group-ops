@@ -34,6 +34,11 @@
   同时**一条消息最多一张卡**：命中规则时只回处罚通知、`/`指令只回指令结果，都不再叠一张常用菜单；
   首次私信如果自己已有回复（例 `/help`）→ **不补菜单但保留「首次」标记**（下次普通消息再补）。
   口径见 [ADR-0068](./docs/DECISIONS.md)。
+- **自检（`node dist/main.js --check`）不再写库**：「给现有超管补默认通知订阅」原来写在
+  `runtime.load()` 里，而**自检与只读巡检**都要跑 `load()` —— 真机实测一次自检给
+  `notification_subscriptions` 插了 6 行。现在那一笔挪到正常启动路径上（`main.ts`，
+  **排在自检早退之后**），只能由 `runtime.seedSuperAdminNotifications()` 显式触发并立刻 flush；
+  `load()` 保持只读。口径见 [ADR-0069](./docs/DECISIONS.md)。
 
 ### 变更
 
