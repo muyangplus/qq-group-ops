@@ -7,6 +7,18 @@
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-12
+
+> ⚠️ **升级提示（0.29.1 → 0.30.0）**：
+> ① **包模式部署现在「先提醒 → 宽限期 → 应用并重启」**（ADR-0065 后续修正）：本版起，
+>    CD 传完会先私信超管一张「发现新版本」卡，默认 `deployRestartDelayMinutes`=**10 分钟**后
+>    才替换产物并重启；想马上上线就点卡上的「立即应用并重启」，想不上就点「取消自动应用」。
+> ② 新增运维指令 **`/stop` / `/start`**（仅全局超管、只走私信）：临时停机（退出后**不自启**）
+>    或静默（`/stop 30m|2h|1d|forever`），静默期间除超管外一律不处理。详见
+>    [COMMANDS.md](./docs/COMMANDS.md) 的「临时停机 / 静默」。
+> ③ SQLite 备份改用 **`VACUUM INTO` 单文件原子快照**（`/migrate` 前的自动备份也走它）。
+> ④ 本版**不需要首跳**（服务器已在 0.29.1，具备 `DeployInstaller`）：Release 发布后走默认包模式即可。
+
 ### 新增
 
 - **`/stop` 临时停机 / 静默**（ADR-0070）：突发 bug 时「先摁住」的开关 ——
@@ -18,7 +30,6 @@
   群里一条都不发、私信只回超管；定时发言 / 活动提醒 / 申诉轮转 / 入群对账也停掉
   （保留期清理与部署监测照跑）。状态存 `data/stop-state.json`，**重启 / 部署重启都不丢**；
   `/status proc` 会写明「静默中」。
-  ⚠️ 按「含用户可见新功能 = MINOR」的约定，**下一版是 `0.30.0`**。
 
 ### 修复
 
@@ -1642,7 +1653,8 @@
 - **可观测性**：结构化日志（控制台 + 文件），统一调用与耗时记录，日志不含敏感信息。
 - **交付形态**：Dockerfile 与 Docker Compose，附带架构、配置、路线图、合规、决策记录与验收清单等文档。
 
-[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.29.1...HEAD
+[Unreleased]: https://github.com/muyangplus/qq-group-ops/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.29.1...v0.30.0
 [0.29.1]: https://github.com/muyangplus/qq-group-ops/compare/v0.29.0...v0.29.1
 [0.29.0]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.3...v0.29.0
 [0.27.3]: https://github.com/muyangplus/qq-group-ops/compare/v0.27.2...v0.27.3
