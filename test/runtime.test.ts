@@ -229,7 +229,7 @@ describe("createRuntime", () => {
     expect(dm).toContain("报名成功");
     expect(dm).toContain("小明");
 
-    // 私聊里同样的指令仍然原地回复（首次私信还会额外推一次主菜单）
+    // 私聊里同样的指令仍然原地回复（这条消息自己有回复 → 首次私信不再额外补主菜单）
     const privateMessagesBeforeJoin = api.sentPrivateMessages.length;
     await gateway.emit({
       type: "private_message",

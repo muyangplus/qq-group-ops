@@ -137,6 +137,8 @@ describe("QQOfficialGateway", () => {
         userId: "u1",
         messageId: "m1",
         content: "/test",
+        // `GROUP_AT_MESSAGE_CREATE` = 被 @ 了（决定空正文要不要回常用菜单）
+        mentioned: true,
       },
     ]);
 
@@ -197,6 +199,8 @@ describe("QQOfficialGateway", () => {
         userId: "u2",
         messageId: "m2",
         content: "/myperm",
+        // 全量消息通道（没被 @）
+        mentioned: false,
       },
     ]);
 

@@ -77,7 +77,7 @@ describe("QQOfficialEventMapper", () => {
         content: "<@!1234567890>",
         author: { member_openid: "u1" },
       }),
-    ).toMatchObject({ content: "" });
+    ).toMatchObject({ content: "", mentioned: true });
   });
 
   it("maps group at-messages", () => {
@@ -94,6 +94,8 @@ describe("QQOfficialEventMapper", () => {
       userId: "u1",
       messageId: "m1",
       content: "hello",
+      // AT 通道的事件 = 官方只在被 @ 时推 → 一定是「被 @ 了」
+      mentioned: true,
     });
   });
 
@@ -111,7 +113,52 @@ describe("QQOfficialEventMapper", () => {
       userId: "u1",
       messageId: "m1",
       content: "hello",
+      mentioned: false,
     });
+  });
+
+  /**
+   * `mentioned` 是「空正文要不要回主菜单」的唯一判据（2026-10-12 真机修复）：
+   * 全量消息模式下图片 / 文件 / 语音的正文是空的，不能当成「空 @机器人」。
+   */
+  it("distinguishes a real bot mention from an empty (image) message", () => {
+    // 全量通道里客户端同样会带提及前缀 → 算 @（@机器人 + 图片 也是 @）
+    expect(
+      mapper.map("GROUP_MESSAGE_CREATE", {
+        id: "m1",
+        group_openid: "g1",
+        content: "<@!123456> /menu",
+        author: { id: "u1" },
+      }),
+    ).toMatchObject({ content: "/menu", mentioned: true });
+    // 图片 / 文件：正文为空 → 不算 @
+    expect(
+      mapper.map("GROUP_MESSAGE_CREATE", {
+        id: "m2",
+        group_openid: "g1",
+        content: "",
+        author: { id: "u1" },
+      }),
+    ).toMatchObject({ content: "", mentioned: false });
+    // 只剩一个零宽空格（客户端偶发）也**不算** @：这里比的是「提及有没有被剥掉」，
+    // 不是「正文长度有没有变」
+    expect(
+      mapper.map("GROUP_MESSAGE_CREATE", {
+        id: "m3",
+        group_openid: "g1",
+        content: "\u200B",
+        author: { id: "u1" },
+      }),
+    ).toMatchObject({ content: "", mentioned: false });
+    // 半路 @ 别人的正常聊天不算（@昵称 后面不是指令、也不在开头）
+    expect(
+      mapper.map("GROUP_MESSAGE_CREATE", {
+        id: "m4",
+        group_openid: "g1",
+        content: "@张三 你好",
+        author: { id: "u1" },
+      }),
+    ).toMatchObject({ mentioned: false });
   });
 
   it("strips the leading bot mention from @ messages", () => {
@@ -124,7 +171,7 @@ describe("QQOfficialEventMapper", () => {
       }),
     ).toMatchObject({ content: "/menu" });
 
-    // 只有 @机器人、没有内容：映射成空内容，router 会返回主菜单
+    // 只有 @机器人、没有内容：映射成空内容 + mentioned（router 才会回主菜单）
     expect(
       mapper.map("GROUP_AT_MESSAGE_CREATE", {
         id: "m2",
@@ -132,7 +179,7 @@ describe("QQOfficialEventMapper", () => {
         content: "<@!123456>",
         author: { member_openid: "u1" },
       }),
-    ).toMatchObject({ content: "" });
+    ).toMatchObject({ content: "", mentioned: true });
   });
 
   it("only strips leading mentions", () => {

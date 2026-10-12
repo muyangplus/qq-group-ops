@@ -173,6 +173,71 @@ describe("EventRouter", () => {
     expect(api.sentMessages).toHaveLength(1);
   });
 
+  /**
+   * 空正文的消息只有**真的 @ 了机器人**时才回常用菜单（2026-10-12 真机修复）。
+   *
+   * 全量消息模式（`GROUP_MESSAGE_CREATE`）下图片 / 文件 / 语音的正文就是空的：之前会被
+   * 当成「空 @机器人」，一次发 N 张图片就回 N 张菜单卡、@ 用户 N 次。
+   */
+  it("ignores an empty group message that does not mention the bot", async () => {
+    const result = await router.handle({
+      type: "group_message",
+      groupId: "g1",
+      userId: "member",
+      messageId: "m1",
+      content: "",
+    });
+
+    expect(result.kind).toBe("message");
+    expect(result.detail).toBe("empty_not_mentioned");
+    expect(api.sentMessages).toHaveLength(0);
+  });
+
+  it("still returns the main menu for an empty group mention", async () => {
+    const result = await router.handle({
+      type: "group_message",
+      groupId: "g1",
+      userId: "mod",
+      messageId: "m2",
+      content: "",
+      mentioned: true,
+    });
+
+    expect(result.kind).toBe("command");
+    expect(String(result.rich?.markdown ?? result.text ?? "")).toContain("常用菜单");
+  });
+
+  it("returns the main menu when the bot is mentioned with plain text (not a command)", async () => {
+    const result = await router.handle({
+      type: "group_message",
+      groupId: "g1",
+      userId: "mod",
+      messageId: "m3",
+      content: "你好",
+      mentioned: true,
+    });
+
+    expect(result.kind).toBe("command");
+    expect(String(result.rich?.markdown ?? result.text ?? "")).toContain("常用菜单");
+  });
+
+  it("does not add the menu when the mentioned message already hit a rule", async () => {
+    const result = await router.handle({
+      type: "group_message",
+      groupId: "g1",
+      userId: "u1",
+      messageId: "m4",
+      content: "这是广告",
+      mentioned: true,
+    });
+
+    // 命中规则：照旧走审核（回处罚卡），**不**再叠一张常用菜单
+    expect(result.kind).toBe("message");
+    expect(result.action).toBe(ModerationAction.Warn);
+    expect(api.sentMessages).toHaveLength(1);
+    expect(String(api.sentMessages[0]?.content ?? "")).not.toContain("常用菜单");
+  });
+
   it("queues join requests", async () => {
     const result = await router.handle({
       type: "join_request",

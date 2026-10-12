@@ -85,7 +85,12 @@ export class QQOfficialEventMapper implements OfficialEventMapper {
   }
 
   public map(eventType: string, data: unknown): QQEvent | null {
-    if (eventType === "GROUP_AT_MESSAGE_CREATE" || eventType === "GROUP_MESSAGE_CREATE") {
+    if (eventType === "GROUP_AT_MESSAGE_CREATE") {
+      // 官方只在**有人 @ 机器人**时推这个类型 → 一定是「被 @ 了」
+      return mapGroupMessage(data, true);
+    }
+    if (eventType === "GROUP_MESSAGE_CREATE") {
+      // 全量消息模式：群里所有消息都推（含图片 / 文件 / 语音这类**正文为空**的消息）
       return mapGroupMessage(data);
     }
     if (eventType === "GROUP_JOIN_REQUEST") {
@@ -176,7 +181,7 @@ function mapInteraction(data: unknown): QQEvent | null {
   };
 }
 
-function mapGroupMessage(data: unknown): QQEvent | null {
+function mapGroupMessage(data: unknown, mentionedByEventType = false): QQEvent | null {
   if (!isRecord(data)) {
     return null;
   }
@@ -220,7 +225,22 @@ function mapGroupMessage(data: unknown): QQEvent | null {
     userId,
     messageId,
     content,
+    // 「真的 @ 了机器人」：事件类型本身（AT 通道），或正文里**剥掉了一个提及前缀**
+    // （全量通道里客户端同样会带 `<@!botid>`）。
+    // ⚠️ 与「只剥了不可见字符」区分开：图片消息的正文可能只有一个零宽空格，
+    // 那种情况 `content` 也会变短，但它**不是** @（用 `stripLeadingNoise` 做对照）。
+    mentioned: mentionedByEventType || content !== stripLeadingNoise(rawContent),
   };
+}
+
+/**
+ * 只剥开头空白 / 不可见字符（**不剥提及**）。
+ *
+ * 与 `stripBotMention` 的结果对照，就能判断「正文里到底有没有提及被剥掉」——
+ * 光比 `content !== rawContent` 会把「正文只有一个零宽空格」也算成提及。
+ */
+function stripLeadingNoise(content: string): string {
+  return content.replace(LEADING_NOISE, "");
 }
 
 /** 客户端可能把 @全体 写成这些样子（大小写不敏感）。 */

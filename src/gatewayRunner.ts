@@ -15,15 +15,11 @@ export async function attachGateway(
     const result = await runtime.router.handle(event);
     // 回复用户前先确保本次事件产生的状态变更已落库。
     await runtime.flush();
-    // 私信首次交互：记录并准备推送一次主菜单（dev 只记内存，正式入库）
-    const privateUserId =
-      event.type === "private_message" ? event.userId : undefined;
-    const firstPrivate =
-      privateUserId !== undefined ? runtime.menuState.claim(privateUserId) : false;
-    if (
+    /** 这条事件自己产出要发出去的东西（回复 / 卡片）——**一条消息最多一张卡**。 */
+    const hasReply =
       (result.kind === "command" || result.kind === "private_message") &&
-      (result.text || result.rich)
-    ) {
+      Boolean(result.text || result.rich);
+    if (hasReply) {
       // §B4 群内静默：结果只私信的动作（群里报名 / 取消报名）由 handler 自己私信，
       // 这里**跳过群回复**——连「原因已私信」都不发。
       if (result.silent === true) {
@@ -38,11 +34,17 @@ export async function attachGateway(
         });
       }
     }
-    // 空私信的回复本身就是主菜单，不再重复推一次
-    const menuAlreadyReplied =
-      event.type === "private_message" && event.content.trim().length === 0;
-    if (firstPrivate && !menuAlreadyReplied && privateUserId !== undefined) {
-      await pushMainMenu(runtime, privateUserId);
+    // 私信首次交互：**只有这条消息自己什么都没产出**时，才补一次主菜单
+    // （未绑定用户那张卡里自带「请执行 /bind qq」提示）。
+    // - 一条消息最多一张卡：首次就发 `/help` 时只回 /help 卡，不再叠一张主菜单
+    //   （真机反馈 2026-10-12「本来就要发送其他内容时不该再提醒，避免多卡刷屏」）；
+    // - 那种情况**不消耗**「首次」标记 —— 用户下次发一条普通消息（或空正文）时再把常用菜单给他。
+    const privateUserId =
+      event.type === "private_message" ? event.userId : undefined;
+    if (!hasReply && privateUserId !== undefined) {
+      if (runtime.menuState.claim(privateUserId)) {
+        await pushMainMenu(runtime, privateUserId);
+      }
     }
   });
 }

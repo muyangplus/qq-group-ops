@@ -1,4 +1,4 @@
-import type { ModerationAction } from "../core/enums.js";
+import { ModerationAction } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import { newIncomingMessage } from "../core/models.js";
 import type { AdminCommandService } from "./adminCommands.js";
@@ -28,6 +28,18 @@ export interface GroupMessageEvent {
   userId: string;
   messageId: string;
   content: string;
+  /**
+   * 这条消息是不是**真的 @ 了机器人**。
+   *
+   * 来源两个（任一成立即真）：官方事件类型是 `GROUP_AT_MESSAGE_CREATE`（只有被 @ 才会推），
+   * 或正文开头剥掉了一个提及前缀（全量消息通道里客户端也会带 `<@!botid>`）。
+   *
+   * **为什么必须有它**：全量消息模式（官方 `GROUP_MESSAGE_CREATE`，群管理里开了「接收所有消息」）
+   * 下，图片 / 文件 / 语音的正文就是空的 —— 只有真正 @ 了机器人时，空正文才该被当成
+   * 「空 @机器人 → 回主菜单」；否则一次发 N 张图片就会回 N 张菜单卡、@ 用户 N 次
+   * （真机反馈 2026-10-12）。缺省 `false`（老映射器 / 单测不必每条都填）。
+   */
+  mentioned?: boolean | undefined;
 }
 
 export interface JoinRequestEvent {
@@ -151,8 +163,35 @@ export class EventRouter {
             noMention: commandResult.noMention,
           };
         }
-        if (content.length === 0) {
-          // 群里 @机器人 但没带内容：回主菜单（菜单渲染在指令服务里）
+        if (content.length === 0 && event.mentioned !== true) {
+          // ⚠️ 只有**真的 @ 了机器人**才算「空 @机器人」：
+          // 全量消息模式下图片 / 文件 / 语音的正文就是空的，之前会被当成空 @ 回一张常用菜单 ——
+          // 一次发 N 张图片 = N 张菜单卡 + @ 用户 N 次（真机反馈 2026-10-12）。
+          // 没 @ 也不是指令的消息：一条都不回（没有正文可审，也不用写审计）。
+          log.debug("empty group message ignored (bot not mentioned)", {
+            groupId: event.groupId,
+            userId: event.userId,
+          });
+          return {
+            kind: "message",
+            action: ModerationAction.Allow,
+            executed: false,
+            detail: "empty_not_mentioned",
+          };
+        }
+        const result = await this.messageGuard.handleMessage(
+          newIncomingMessage(
+            event.groupId,
+            event.userId,
+            event.messageId,
+            event.content,
+          ),
+        );
+        // 「绑定提醒」就是常用菜单（未绑定用户那张卡里带「请执行 /bind qq」）。
+        // 触发条件（用户 2026-10-12 口径「非 @机器人 只响应 /指令」）：
+        // ① **真的 @ 了机器人**（`mentioned`）—— 群里普通发言、全量模式下的图片都不算；
+        // ② 这条消息**没有被别的路径回复**（命中规则会回处罚通知）→ 不再叠一张菜单（避免多卡刷屏）。
+        if (event.mentioned === true && result.matches.length === 0) {
           const menuResult = await this.adminCommands.handle(
             event.groupId,
             event.userId,
@@ -165,14 +204,6 @@ export class EventRouter {
             rich: menuResult.rich,
           };
         }
-        const result = await this.messageGuard.handleMessage(
-          newIncomingMessage(
-            event.groupId,
-            event.userId,
-            event.messageId,
-            event.content,
-          ),
-        );
         return {
           kind: "message",
           action: result.action,
@@ -261,18 +292,10 @@ export class EventRouter {
           };
         }
         if (content.length === 0) {
-          // 私信空消息：同样回主菜单
-          const menuResult = await this.adminCommands.handle(
-            undefined,
-            event.userId,
-            "/menu",
-          );
-          return {
-            kind: "private_message",
-            ok: menuResult.ok,
-            text: menuResult.text,
-            rich: menuResult.rich,
-          };
+          // 私信空正文（图片 / 文件 / 语音）：**不在这里回菜单** —— 否则连发 N 张图会回 N 张卡。
+          // 改由 `gatewayRunner` 的「首次私信」那一次推送负责：第一次私信只推一张常用菜单
+          // （未绑定用户那张卡自带绑定提示），之后不再打扰。
+          return { kind: "private_message", ok: true, text: "" };
         }
         return { kind: "private_message", ok: true, text: "" };
       }

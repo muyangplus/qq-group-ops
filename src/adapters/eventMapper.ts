@@ -18,7 +18,15 @@ export class JsonEventMapper implements EventMapper {
       if (!groupId || !userId || !messageId || content === undefined) {
         return null;
       }
-      return { type: "group_message", groupId, userId, messageId, content };
+      return {
+        type: "group_message",
+        groupId,
+        userId,
+        messageId,
+        content,
+        // 透传（缺省不填 = 没 @ 机器人）：只在 `eventRouter` 判断「空正文要不要回主菜单」时用
+        ...(raw.mentioned === true ? { mentioned: true } : {}),
+      };
     }
 
     if (raw.type === "join_request") {
