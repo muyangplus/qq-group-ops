@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { FakeQQOfficialAPI } from "../../src/adapters/fakeQqOfficial.js";
@@ -135,6 +137,33 @@ describe("AdminCommandService · /status 进程信息", () => {
     // 没有可回滚目标 → 不写「可回滚到 …」，但记账本身照旧显示
     expect(bare.rich.markdown).not.toContain("可回滚到");
     expect(bare.rich.markdown).toContain("**部署记账**：上次应用的包 v0.21.0");
+  });
+
+  it("重启失败留证要带时间（留证文件不会自动删，不写时间会被误读成刚发生的）", () => {
+    const file = "data/restart-failed.json";
+    const existed = existsSync(file);
+    const previous = existed ? readFileSync(file, "utf8") : undefined;
+    mkdirSync("data", { recursive: true });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        reason: "new process exited right after start",
+        at: "2026-09-29T01:03:12.478Z",
+      }),
+      "utf8",
+    );
+    try {
+      const card = processCard(contextWith({}), "root");
+      expect(card.rich.markdown).toContain("**最近一次重启失败**：");
+      expect(card.rich.markdown).toContain("2026-09-29");
+      expect(card.rich.markdown).toContain("留证 `data/restart-failed.json`");
+    } finally {
+      if (previous === undefined) {
+        rmSync(file, { force: true });
+      } else {
+        writeFileSync(file, previous, "utf8");
+      }
+    }
   });
 
   it("没装配安装器时（纯单测 / 老装配）也不渲染回滚入口", () => {

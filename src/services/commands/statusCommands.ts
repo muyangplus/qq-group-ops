@@ -381,7 +381,15 @@ function processDetailLines(ctx: AdminCommandContext): string[] {
   } else {
     const failure = readRestartFailure();
     if (failure?.reason !== undefined && failure.reason.length > 0) {
-      lines.push(`**最近一次重启失败**：${failure.reason}`);
+      // **带上时间**：`data/restart-failed.json` 是留证文件、不会被自动删，不带时间会让
+      // 两周前的一次失败看起来像刚发生的（真机上就差点被误读）。留证文件本身写在括号里。
+      const at =
+        typeof failure.at === "string" && failure.at.length > 0
+          ? `${formatDisplayTime(new Date(failure.at))} —— `
+          : "";
+      lines.push(
+        `**最近一次重启失败**：${at}${failure.reason}（留证 \`data/restart-failed.json\`）`,
+      );
     }
   }
   const settings = diagnostics.settings;
