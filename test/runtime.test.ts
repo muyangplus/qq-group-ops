@@ -169,13 +169,18 @@ describe("createRuntime", () => {
    *
    * 覆盖 `AdminCommandService` → `EventRouter`（透传 `silent`）→ `gatewayRunner`
    * （`silent === true` 时跳过一次 `sendReply`）的整条链路。
+   *
+   * ⚠️ ADR-0074 起，群里只有**本群审核员（120）及以上**会被响应，所以报名人设为该群审核员；
+   * **成员**在群里发同一条指令现在是「一条都不回、也不私信」（见下一条用例），
+   * 成员报名改走活动卡上的「报名」按钮（回调路径，见 `test/activityCallbacks.test.ts`）。
    */
   it("keeps the group silent for /activity join and DMs the result (§B4)", async () => {
     const runtime = createRuntime(loadSettings({ ADMIN_USER_IDS: "admin" }));
     const api = runtime.api as unknown as FakeQQOfficialAPI;
     runtime.identityMap.bindUser("admin", "10001");
-    runtime.identityMap.bindUser("member", "10002");
+    runtime.identityMap.bindUser("mod", "10002");
     runtime.identityMap.bindGroup("g1", "654321");
+    runtime.permissions.grantModerator("g1", "mod");
     // 个人资料写入需要班级库（学院由班级库自动带出）
     runtime.userProfiles.setRoster(
       MemberRoster.fromIndex({
@@ -190,9 +195,9 @@ describe("createRuntime", () => {
         },
       }),
     );
-    runtime.userProfiles.set("member", "name", "小明");
-    runtime.userProfiles.set("member", "studentId", "22123456789");
-    runtime.userProfiles.set("member", "className", "材化2211");
+    runtime.userProfiles.set("mod", "name", "小明");
+    runtime.userProfiles.set("mod", "studentId", "22123456789");
+    runtime.userProfiles.set("mod", "className", "材化2211");
 
     const gateway = new FakeEventGateway();
     await attachGateway(runtime, gateway);
@@ -218,7 +223,7 @@ describe("createRuntime", () => {
     await gateway.emit({
       type: "group_message",
       groupId: "g1",
-      userId: "member",
+      userId: "mod",
       messageId: "m3",
       content: `/activity join #${created.code}`,
     });
@@ -233,7 +238,7 @@ describe("createRuntime", () => {
     const privateMessagesBeforeJoin = api.sentPrivateMessages.length;
     await gateway.emit({
       type: "private_message",
-      userId: "member",
+      userId: "mod",
       messageId: "m4",
       content: `/activity quit #${created.code}`,
     });
@@ -242,5 +247,67 @@ describe("createRuntime", () => {
       .map((item) => String(item.markdown ?? ""))
       .join("\n");
     expect(privateText).toContain("已取消报名");
+  });
+
+  /**
+   * ADR-0074（用户口径 2026-10-15）：群里**审核员以下**的消息「一条都不回」——
+   * 连「结果只私信」的静默动作也不做（不报名、不私信、不回复）；**审查照旧**（另有用例）。
+   */
+  it("ignores group commands from below-moderator members (ADR-0074)", async () => {
+    const runtime = createRuntime(loadSettings({ ADMIN_USER_IDS: "admin" }));
+    const api = runtime.api as unknown as FakeQQOfficialAPI;
+    runtime.identityMap.bindUser("admin", "10001");
+    runtime.identityMap.bindUser("member", "10002");
+    runtime.identityMap.bindGroup("g1", "654321");
+    runtime.userProfiles.setRoster(
+      MemberRoster.fromIndex({
+        classes: ["材化2211"],
+        majors: ["材料化学"],
+        classInfo: {
+          材化2211: {
+            major: "材料化学",
+            college: "化学与生命科学学院",
+            year: "2022",
+          },
+        },
+      }),
+    );
+    runtime.userProfiles.set("member", "name", "小明");
+    runtime.userProfiles.set("member", "studentId", "22123456789");
+    runtime.userProfiles.set("member", "className", "材化2211");
+
+    const gateway = new FakeEventGateway();
+    await attachGateway(runtime, gateway);
+
+    await gateway.emit({
+      type: "group_message",
+      groupId: "g1",
+      userId: "admin",
+      messageId: "m1",
+      content: "/activity create 迎新晚会",
+    });
+    const created = runtime.activity.listActivities("g1")[0]!;
+    await gateway.emit({
+      type: "group_message",
+      groupId: "g1",
+      userId: "admin",
+      messageId: "m2",
+      content: `/activity open #${created.code}`,
+    });
+
+    const groupMessagesBefore = api.sentMessages.length;
+    const privateMessagesBefore = api.sentPrivateMessages.length;
+    await gateway.emit({
+      type: "group_message",
+      groupId: "g1",
+      userId: "member",
+      messageId: "m3",
+      content: `/activity join #${created.code}`,
+    });
+
+    // 群里一条不回、也不私信 —— 报名根本没发生
+    expect(api.sentMessages).toHaveLength(groupMessagesBefore);
+    expect(api.sentPrivateMessages).toHaveLength(privateMessagesBefore);
+    expect(runtime.activity.listRegistrations(created.activityId)).toEqual([]);
   });
 });

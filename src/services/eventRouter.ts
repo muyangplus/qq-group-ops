@@ -1,4 +1,4 @@
-import { ModerationAction } from "../core/enums.js";
+import { ModerationAction, PermissionLevel } from "../core/enums.js";
 import { getLogger } from "../core/logger.js";
 import { newIncomingMessage } from "../core/models.js";
 import type { AdminCommandService } from "./adminCommands.js";
@@ -129,9 +129,27 @@ export interface InteractionHandler {
   handle(event: InteractionEvent): Promise<{ handled: boolean; detail: string }>;
 }
 
+/**
+ * 群里「谁能触发响应」的档位判定（ADR-0074）。
+ *
+ * 只用到这两个方法，`PermissionService` 天然满足这个形状；用结构类型注入，
+ * 单测不必造一份完整的权限服务。
+ */
+export interface GroupLevelGate {
+  meetsInGroup(userId: string, groupId: string, level: PermissionLevel): boolean;
+  levelFor(userId: string, groupId: string): PermissionLevel;
+}
+
 export class EventRouter {
   public constructor(
     private readonly messageGuard: MessageGuardService,
+    /**
+     * 群里响应门槛（ADR-0074）：**必填**。
+     *
+     * 缺省会让「审核员以下也能触发回复」的旧行为悄悄回来 —— 而这类「忘接线 = 静默降级」
+     * 正是包安装器踩过的坑（ADR-0073：替换根漏传、照常报成功），所以这里不留缺省值。
+     */
+    private readonly permissions: GroupLevelGate,
     private readonly joinAudit: JoinAuditService,
     private readonly adminCommands: AdminCommandService,
     private readonly joinApproval?: JoinApprovalService,
@@ -148,21 +166,6 @@ export class EventRouter {
     switch (event.type) {
       case "group_message": {
         const content = event.content.trim();
-        if (content.startsWith("/")) {
-          const commandResult = await this.adminCommands.handle(
-            event.groupId,
-            event.userId,
-            content,
-          );
-          return {
-            kind: "command",
-            ok: commandResult.ok,
-            text: commandResult.text,
-            rich: commandResult.rich,
-            silent: commandResult.silent,
-            noMention: commandResult.noMention,
-          };
-        }
         if (content.length === 0 && event.mentioned !== true) {
           // ⚠️ 只有**真的 @ 了机器人**才算「空 @机器人」：
           // 全量消息模式下图片 / 文件 / 语音的正文就是空的，之前会被当成空 @ 回一张常用菜单 ——
@@ -177,6 +180,57 @@ export class EventRouter {
             action: ModerationAction.Allow,
             executed: false,
             detail: "empty_not_mentioned",
+          };
+        }
+        // ADR-0074：群里**只有本群审核员（120）及以上**的消息会被响应。
+        // 审核员以下的任何消息（`/指令`、`@机器人`、普通发言）**一条都不回**，也不回
+        // 「权限不足」—— 级别不够就是**不允许使用**，静默即可（用户口径 2026-10-15）。
+        // 但**审查照旧**：关键词 / 正则命中仍要处置（撤回 / 禁言 / 处罚卡），那是机器人的本职，
+        // 不是「响应消息」。判据放在指令分发**之前**，所以下面的路径天然只服务审核员及以上。
+        if (
+          !this.permissions.meetsInGroup(
+            event.userId,
+            event.groupId,
+            PermissionLevel.Moderator,
+          )
+        ) {
+          const reviewed = await this.messageGuard.handleMessage(
+            newIncomingMessage(
+              event.groupId,
+              event.userId,
+              event.messageId,
+              event.content,
+            ),
+          );
+          log.debug("group message from below-moderator: reviewed only", {
+            groupId: event.groupId,
+            userId: event.userId,
+            level: this.permissions.levelFor(event.userId, event.groupId),
+            mentioned: event.mentioned === true,
+            action: reviewed.action,
+            executed: reviewed.executed,
+            detail: reviewed.detail,
+          });
+          return {
+            kind: "message",
+            action: reviewed.action,
+            executed: reviewed.executed,
+            detail: reviewed.detail,
+          };
+        }
+        if (content.startsWith("/")) {
+          const commandResult = await this.adminCommands.handle(
+            event.groupId,
+            event.userId,
+            content,
+          );
+          return {
+            kind: "command",
+            ok: commandResult.ok,
+            text: commandResult.text,
+            rich: commandResult.rich,
+            silent: commandResult.silent,
+            noMention: commandResult.noMention,
           };
         }
         const result = await this.messageGuard.handleMessage(

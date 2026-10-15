@@ -236,4 +236,31 @@ describe("runtime 仓储装配完整性", () => {
     expect(options).not.toContain("deployRoot?:");
     expect(source).not.toContain("options.root ??");
   });
+
+  /**
+   * ADR-0074（用户口径 2026-10-15）：群里只有**本群审核员（120）及以上**会被响应，
+   * 成员消息「只审不回」。门槛判定是 `EventRouter` 的**必填**依赖 —— 漏接线就会让
+   * 「成员也能触发回复」悄悄回来（同 ADR-0073 的教训：忘传 = 静默降级）。
+   */
+  it("群消息响应门槛在生产装配里显式传入（ADR-0074）", () => {
+    const runtimeSource = readFileSync(
+      fileURLToPath(new URL("../src/runtime.ts", import.meta.url)),
+      "utf8",
+    );
+    const at = runtimeSource.indexOf("new EventRouter(");
+    expect(at).toBeGreaterThan(0);
+    expect(runtimeSource.slice(at, at + 900)).toMatch(
+      /new EventRouter\(\s*messageGuard,\s*(?:\/\/[^\n]*\n\s*)*permissions,/u,
+    );
+
+    // 构造函数本身必填（给缺省值 = 旧行为静默复活）
+    const routerSource = readFileSync(
+      fileURLToPath(new URL("../src/services/eventRouter.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(routerSource).toContain(
+      "private readonly permissions: GroupLevelGate,",
+    );
+    expect(routerSource).not.toContain("permissions?: GroupLevelGate");
+  });
 });

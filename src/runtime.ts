@@ -1433,6 +1433,9 @@ export function createRuntime(
         : undefined,
     router: new EventRouter(
       messageGuard,
+      // ADR-0074：群里只有本群审核员（120）及以上会被响应（成员消息只审不回），
+      // 门槛判定必须在生产接线里显式传进去 —— 漏传会让「成员也能触发回复」悄悄回来。
+      permissions,
       joinAudit,
       adminCommands,
       joinApproval,

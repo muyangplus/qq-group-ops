@@ -54,6 +54,7 @@ describe("EventRouter", () => {
     notifications = new NotificationService(api, permissions, { configStore });
     router = new EventRouter(
       messageGuard,
+      permissions,
       joinAudit,
       adminCommands,
       joinApproval,
@@ -236,6 +237,81 @@ describe("EventRouter", () => {
     expect(result.action).toBe(ModerationAction.Warn);
     expect(api.sentMessages).toHaveLength(1);
     expect(String(api.sentMessages[0]?.content ?? "")).not.toContain("常用菜单");
+  });
+
+  /**
+   * ADR-0074（用户口径 2026-10-15）：群里**审核员以下**的消息「一条都不回」——
+   * 含 `/指令` 与 `@机器人`，也不回「权限不足」；**唯一例外是命中规则的审查处置**
+   * （撤回 / 禁言 / 处罚卡照旧，那是机器人的本职，不算「响应消息」）。
+   */
+  it("does not respond to a below-moderator group command", async () => {
+    const result = await router.handle({
+      type: "group_message",
+      groupId: "g1",
+      userId: "member",
+      messageId: "n1",
+      content: "/test",
+    });
+
+    expect(result.kind).toBe("message");
+    expect(result.action).toBe(ModerationAction.Allow);
+    expect(result.rich).toBeUndefined();
+    expect(api.sentMessages).toHaveLength(0);
+  });
+
+  it("does not return the menu when a below-moderator mentions the bot", async () => {
+    const result = await router.handle({
+      type: "group_message",
+      groupId: "g1",
+      userId: "member",
+      messageId: "n2",
+      content: "你好",
+      mentioned: true,
+    });
+
+    expect(result.kind).toBe("message");
+    expect(api.sentMessages).toHaveLength(0);
+  });
+
+  it("still moderates a below-moderator message that hits a rule", async () => {
+    const result = await router.handle({
+      type: "group_message",
+      groupId: "g1",
+      userId: "member",
+      messageId: "n3",
+      content: "这是广告",
+    });
+
+    expect(result.kind).toBe("message");
+    expect(result.action).toBe(ModerationAction.Warn);
+    expect(api.sentMessages).toHaveLength(1);
+  });
+
+  it("keeps moderating a below-moderator slash-looking message (no /-prefix escape)", async () => {
+    const result = await router.handle({
+      type: "group_message",
+      groupId: "g1",
+      userId: "member",
+      messageId: "n4",
+      content: "/这是广告",
+    });
+
+    expect(result.kind).toBe("message");
+    expect(result.action).toBe(ModerationAction.Warn);
+    expect(api.sentMessages).toHaveLength(1);
+  });
+
+  it("keeps member commands working in private messages", async () => {
+    const result = await router.handle({
+      type: "private_message",
+      userId: "member",
+      messageId: "pm1",
+      content: "/menu",
+    });
+
+    expect(result.kind).toBe("private_message");
+    expect(result.ok).toBe(true);
+    expect(String(result.rich?.markdown ?? result.text ?? "")).toContain("常用菜单");
   });
 
   it("queues join requests", async () => {
